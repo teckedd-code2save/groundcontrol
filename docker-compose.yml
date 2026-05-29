@@ -20,8 +20,6 @@ services:
       - /etc:/etc
       - /var/www:/var/www
       - /root/.ssh:/root/.ssh:ro
-      - /proc:/proc:ro
-    pid: host
     networks:
       - groundcontrol
     healthcheck:

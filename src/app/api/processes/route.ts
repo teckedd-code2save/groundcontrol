@@ -3,31 +3,30 @@ import { execOnVps } from "@/lib/vps";
 
 export async function GET() {
   try {
+    // Try procps ps first, fallback to busybox ps
     const result = await execOnVps(
-      `ps aux --sort=-%cpu | head -51 | awk '{printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n", $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11}'`
+      `ps -eo pid,ppid,user,%cpu,%mem,vsz,rss,stat,comm,args 2>/dev/null || ps aux 2>/dev/null || ps`
     );
     if (!result.stdout.trim()) return NextResponse.json([]);
 
     const lines = result.stdout.trim().split("\n");
-    const headers = lines[0].split("|");
+    // Skip header line and parse
     const processes = lines.slice(1).map((line) => {
-      const parts = line.split("|");
+      const parts = line.trim().split(/\s+/);
       return {
-        user: parts[0],
-        pid: parts[1],
-        cpu: parts[2],
-        mem: parts[3],
-        vsz: parts[4],
-        rss: parts[5],
-        tty: parts[6],
-        stat: parts[7],
-        start: parts[8],
-        time: parts[9],
-        command: parts.slice(10).join(" "),
+        pid: parts[0] || "",
+        ppid: parts[1] || "",
+        user: parts[2] || "",
+        cpu: parts[3] || "0.0",
+        mem: parts[4] || "0.0",
+        vsz: parts[5] || "",
+        rss: parts[6] || "",
+        stat: parts[7] || "",
+        command: parts.slice(9).join(" ") || parts[8] || "",
       };
     });
 
-    return NextResponse.json({ headers, processes });
+    return NextResponse.json(processes);
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

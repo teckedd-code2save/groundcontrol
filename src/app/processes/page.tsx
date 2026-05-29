@@ -3,28 +3,26 @@
 import { useEffect, useState } from "react";
 
 interface Process {
-  user: string;
   pid: string;
+  ppid: string;
+  user: string;
   cpu: string;
   mem: string;
   vsz: string;
   rss: string;
-  tty: string;
   stat: string;
-  start: string;
-  time: string;
   command: string;
 }
 
 export default function ProcessesPage() {
-  const [data, setData] = useState<{ headers: string[]; processes: Process[] } | null>(null);
+  const [processes, setProcesses] = useState<Process[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/processes")
       .then((res) => res.json())
       .then((data) => {
-        setData(data);
+        if (Array.isArray(data)) setProcesses(data);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -34,7 +32,7 @@ export default function ProcessesPage() {
     <div className="p-8 max-w-7xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Processes</h1>
-        <p className="text-muted mt-1">Top processes by CPU usage on your VPS</p>
+        <p className="text-muted mt-1">Processes running on your VPS</p>
       </div>
 
       {loading ? (
@@ -59,7 +57,7 @@ export default function ProcessesPage() {
               </tr>
             </thead>
             <tbody>
-              {data?.processes.map((proc, i) => (
+              {processes.map((proc, i) => (
                 <tr key={i} className="border-b border-border/50 hover:bg-background/50 transition-colors">
                   <td className="p-3 font-mono">{proc.pid}</td>
                   <td className="p-3">{proc.user}</td>
@@ -79,6 +77,9 @@ export default function ProcessesPage() {
               ))}
             </tbody>
           </table>
+          {processes.length === 0 && (
+            <p className="text-muted text-sm p-4 text-center">No processes found</p>
+          )}
         </div>
       )}
     </div>

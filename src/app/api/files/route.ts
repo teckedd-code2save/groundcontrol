@@ -7,26 +7,26 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await execOnVps(
-      `ls -la "${path.replace(/"/g, '\\"')}" | awk '{printf "%s|%s|%s|%s|%s|%s|%s\n", $1,$2,$3,$4,$5,$6,$7,$8,$9}'`
+      `ls -la "${path.replace(/"/g, '\\"')}"`
     );
     if (!result.stdout.trim()) return NextResponse.json({ files: [] });
 
     const lines = result.stdout.trim().split("\n").slice(1);
     const files = lines.map((line) => {
-      const parts = line.split("|");
-      const perms = parts[0];
+      const match = line.match(/^([\-dlcbsp][rwxst\-]{9}[+@]?)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+\s+\S+\s+\S+)\s+(.+)$/);
+      if (!match) return null;
+      const perms = match[1];
       const isDir = perms.startsWith("d");
-      const name = parts.slice(6).join("|");
       return {
-        name: name.trim(),
+        name: match[7].trim(),
         perms,
-        owner: parts[2],
-        group: parts[3],
-        size: parts[4],
-        date: `${parts[5]} ${parts[6]}`,
+        owner: match[3],
+        group: match[4],
+        size: match[5],
+        date: match[6],
         isDir,
       };
-    }).filter((f) => f.name && f.name !== "." && f.name !== "..");
+    }).filter(Boolean);
 
     return NextResponse.json({ path, files });
   } catch (err: any) {
