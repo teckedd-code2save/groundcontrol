@@ -31,8 +31,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Install openssl + docker-cli for VPS management
-RUN apk add --no-cache openssl docker-cli
+# Install openssl + docker-cli + procps for VPS management
+RUN apk add --no-cache openssl docker-cli procps
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
