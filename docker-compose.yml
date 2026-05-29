@@ -5,16 +5,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${WEB_IMAGE:-groundcontrol-web:local}
+    image: ghcr.io/teckedd-code2save/groundcontrol:latest
     container_name: groundcontrol-web
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${HOST_PORT:-3000}:3000"
+      - "127.0.0.1:${HOST_PORT:-3003}:3000"
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/prisma/prod.db
     volumes:
       - groundcontrol-db:/app/prisma
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt:/opt
+      - /etc:/etc
+      - /var/www:/var/www
+      - /root/.ssh:/root/.ssh:ro
+      - /proc:/proc:ro
+    pid: host
     networks:
       - groundcontrol
     healthcheck:
