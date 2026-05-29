@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${WEB_IMAGE:-groundcontrol-web:local}
+    container_name: groundcontrol-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/prisma/prod.db
+    volumes:
+      - groundcontrol-db:/app/prisma
+    networks:
+      - groundcontrol
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/vps/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  groundcontrol-db:
+
+networks:
+  groundcontrol:
+    driver: bridge

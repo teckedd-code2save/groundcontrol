@@ -1,0 +1,60 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const navItems = [
+  { href: "/dashboard", label: "Dashboard", icon: "◈" },
+  { href: "/containers", label: "Containers", icon: "◉" },
+  { href: "/projects", label: "Projects", icon: "◆" },
+  { href: "/deploy", label: "Deploy", icon: "▶" },
+  { href: "/terminal", label: "Terminal", icon: "⌘" },
+  { href: "/settings", label: "Settings", icon: "⚙" },
+];
+
+export function Sidebar() {
+  const pathname = usePathname();
+
+  return (
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-card border-r border-border flex flex-col z-50">
+      <div className="p-6 border-b border-border">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-sm orb-pulse">
+            GC
+          </div>
+          <div>
+            <h1 className="font-bold text-sm tracking-tight">GroundControl</h1>
+            <p className="text-[10px] text-muted font-mono uppercase tracking-wider">VPS Cockpit</p>
+          </div>
+        </div>
+      </div>
+
+      <nav className="flex-1 p-4 space-y-1">
+        {navItems.map((item) => {
+          const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-200 ${
+                active
+                  ? "bg-accent/10 text-accent border border-accent/30"
+                  : "text-foreground/70 hover:text-foreground hover:bg-border/50 border border-transparent"
+              }`}
+            >
+              <span className="font-mono text-xs w-5">{item.icon}</span>
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="p-4 border-t border-border">
+        <div className="flex items-center gap-2 px-4 py-2">
+          <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
+          <span className="text-xs text-muted font-mono">VPS Online</span>
+        </div>
+      </div>
+    </aside>
+  );
+}

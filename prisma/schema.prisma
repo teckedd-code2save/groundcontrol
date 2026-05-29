@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model VpsConfig {
+  id        Int      @id @default(autoincrement())
+  name      String   @default("primary")
+  host      String
+  port      Int      @default(22)
+  username  String   @default("root")
+  privateKey String?
+  authType  String   @default("key") // key | password
+  password  String?
+  isLocal   Boolean  @default(false) // true = running on VPS, exec directly
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Project {
+  id          Int      @id @default(autoincrement())
+  slug        String   @unique
+  name        String
+  domain      String?
+  path        String   // /opt/slug or /var/www/slug
+  repoUrl     String?
+  caddyFile   String?
+  dockerCompose String?
+  category    String   @default("app") // app | static | docker
+  status      String   @default("unknown")
+  lastDeploy  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model DeploymentLog {
+  id        Int      @id @default(autoincrement())
+  projectSlug String
+  status    String   @default("running") // running | success | failed | rolled_back
+  commitSha String?
+  branch    String   @default("main")
+  output    String?
+  error     String?
+  durationMs Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Alert {
+  id        Int      @id @default(autoincrement())
+  title     String
+  message   String
+  severity  String   @default("info") // info | warning | error | critical
+  source    String   @default("system")
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
