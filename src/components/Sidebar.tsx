@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: "◈" },
   { href: "/containers", label: "Containers", icon: "◉" },
   { href: "/projects", label: "Projects", icon: "◆" },
+  { href: "/processes", label: "Processes", icon: "◍" },
+  { href: "/files", label: "Files", icon: "▤" },
   { href: "/deploy", label: "Deploy", icon: "▶" },
   { href: "/terminal", label: "Terminal", icon: "⌘" },
   { href: "/settings", label: "Settings", icon: "⚙" },
@@ -14,6 +17,14 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [user, setUser] = useState<{ username: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setUser(data))
+      .catch(() => {});
+  }, []);
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-64 bg-card border-r border-border flex flex-col z-50">
@@ -49,7 +60,21 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border space-y-3">
+        {user && (
+          <div className="flex items-center justify-between px-4 py-2">
+            <span className="text-xs font-mono text-muted">{user.username}</span>
+            <button
+              onClick={async () => {
+                await fetch("/api/auth/logout", { method: "POST" });
+                window.location.href = "/login";
+              }}
+              className="text-xs text-muted hover:text-error transition-colors"
+            >
+              logout
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-2 px-4 py-2">
           <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
           <span className="text-xs text-muted font-mono">VPS Online</span>

@@ -7,6 +7,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String   // bcrypt hash
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model VpsConfig {
   id        Int      @id @default(autoincrement())
   name      String   @default("primary")
@@ -57,5 +66,22 @@ model Alert {
   severity  String   @default("info") // info | warning | error | critical
   source    String   @default("system")
   read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model MetricSnapshot {
+  id        Int      @id @default(autoincrement())
+  cpuLoad1  Float
+  cpuLoad5  Float
+  cpuLoad15 Float
+  memUsed   Float
+  memTotal  Float
+  memPercent Float
+  diskUsed  Float
+  diskTotal Float
+  diskPercent Float
+  containerCount Int
+  runningContainers Int
+  unhealthyContainers Int
   createdAt DateTime @default(now())
 }

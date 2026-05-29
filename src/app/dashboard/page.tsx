@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { StatCard } from "@/components/StatCard";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 interface SystemStats {
   uptime: number;
@@ -19,33 +28,62 @@ interface Container {
   stats?: { cpu: string; mem: string };
 }
 
+interface MetricSnapshot {
+  id: number;
+  cpuLoad1: number;
+  cpuLoad5: number;
+  memPercent: number;
+  diskPercent: number;
+  containerCount: number;
+  runningContainers: number;
+  unhealthyContainers: number;
+  createdAt: string;
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
+  const [metrics, setMetrics] = useState<MetricSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [statsRes, containersRes] = await Promise.all([
-          fetch("/api/vps/stats"),
-          fetch("/api/containers"),
-        ]);
-        if (!statsRes.ok) throw new Error("Failed to fetch stats");
-        if (!containersRes.ok) throw new Error("Failed to fetch containers");
-        const statsData = await statsRes.json();
-        const containersData = await containersRes.json();
-        setStats(statsData);
-        setContainers(containersData);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
+  async function collectMetrics() {
+    try {
+      await fetch("/api/metrics", { method: "POST" });
+    } catch (err) {
+      console.error("Failed to collect metrics", err);
     }
+  }
+
+  async function fetchData() {
+    try {
+      const [statsRes, containersRes, metricsRes] = await Promise.all([
+        fetch("/api/vps/stats"),
+        fetch("/api/containers"),
+        fetch("/api/metrics?limit=60"),
+      ]);
+      if (!statsRes.ok) throw new Error("Failed to fetch stats");
+      if (!containersRes.ok) throw new Error("Failed to fetch containers");
+      const statsData = await statsRes.json();
+      const containersData = await containersRes.json();
+      const metricsData = await metricsRes.json();
+      setStats(statsData);
+      setContainers(containersData);
+      setMetrics(metricsData.reverse());
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    collectMetrics();
+    const interval = setInterval(() => {
+      fetchData();
+      collectMetrics();
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -109,6 +147,69 @@ export default function DashboardPage() {
               icon="▶"
             />
           </div>
+
+          {/* Metrics Charts */}
+          {metrics.length > 1 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+              <div className="bg-card border border-border rounded-xl p-5">
+                <h3 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">
+                  CPU Load (1m) · Last hour
+                </h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <AreaChart data={metrics}>
+                    <defs>
+                      <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ff5500" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#ff5500" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                    <XAxis
+                      dataKey="createdAt"
+                      tickFormatter={(v) => new Date(v).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      stroke="#666"
+                      fontSize={10}
+                    />
+                    <YAxis stroke="#666" fontSize={10} />
+                    <Tooltip
+                      contentStyle={{ background: "#111", border: "1px solid #333", borderRadius: 8 }}
+                      labelFormatter={(v) => new Date(v).toLocaleString()}
+                    />
+                    <Area type="monotone" dataKey="cpuLoad1" stroke="#ff5500" fill="url(#cpuGrad)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="bg-card border border-border rounded-xl p-5">
+                <h3 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">
+                  Memory % · Last hour
+                </h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <AreaChart data={metrics}>
+                    <defs>
+                      <linearGradient id="memGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#c77dff" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#c77dff" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                    <XAxis
+                      dataKey="createdAt"
+                      tickFormatter={(v) => new Date(v).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      stroke="#666"
+                      fontSize={10}
+                    />
+                    <YAxis stroke="#666" fontSize={10} domain={[0, 100]} />
+                    <Tooltip
+                      contentStyle={{ background: "#111", border: "1px solid #333", borderRadius: 8 }}
+                      labelFormatter={(v) => new Date(v).toLocaleString()}
+                    />
+                    <Area type="monotone" dataKey="memPercent" stroke="#c77dff" fill="url(#memGrad)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Load Average */}
