@@ -20,6 +20,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const [user, setUser] = useState<{ username: string } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -27,6 +28,21 @@ export function Sidebar() {
       .then((data) => setUser(data))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    fetch("/api/alerts")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setUnreadAlerts(data.filter((a: any) => !a.read).length))
+      .catch(() => {});
+    const interval = setInterval(() => {
+      fetch("/api/alerts")
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => setUnreadAlerts(data.filter((a: any) => !a.read).length))
+        .catch(() => {});
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -96,7 +112,12 @@ export function Sidebar() {
                 }`}
               >
                 <span className="font-mono text-xs w-5">{item.icon}</span>
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.href === "/alerts" && unreadAlerts > 0 && (
+                  <span className="ml-auto text-[10px] font-mono bg-accent text-white px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
+                    {unreadAlerts}
+                  </span>
+                )}
               </Link>
             );
           })}
