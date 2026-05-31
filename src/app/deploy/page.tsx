@@ -14,17 +14,38 @@ interface DeployLog {
   createdAt: string;
 }
 
-const projects = [
-  { slug: "rentaweekend", name: "Rent My Weekend", domain: "rentmyweekend.serendepify.com" },
-  { slug: "urbanize", name: "Urbanize", domain: "urbanize.serendepify.com" },
-  { slug: "perfume-emporio", name: "Perfume Emporio", domain: "perfumeemporium.serendepify.com" },
-  { slug: "optimi", name: "Optimi", domain: "auridux.com" },
-];
+interface CaddySite {
+  file: string;
+  domain: string;
+  root: string | null;
+  proxy: string | null;
+  content: string;
+}
+
+interface ProjectData {
+  directories: string[];
+  caddySites: CaddySite[];
+}
+
+function deriveProjectName(slug: string): string {
+  const map: Record<string, string> = {
+    urbanize: "Urbanize",
+    perfume: "Perfume Emporio",
+    "perfume-emporio": "Perfume Emporio",
+    optimi: "Optimi",
+    rentaweekend: "Rent My Weekend",
+    "rent-my-weekend": "Rent My Weekend",
+    groundcontrol: "GroundControl",
+  };
+  return map[slug] || slug.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+}
 
 export default function DeployPage() {
   const [logs, setLogs] = useState<DeployLog[]>([]);
+  const [projects, setProjects] = useState<{ slug: string; name: string; domain: string | null }[]>([]);
   const [deploying, setDeploying] = useState<string | null>(null);
   const [selectedLog, setSelectedLog] = useState<DeployLog | null>(null);
+  const [loadingProjects, setLoadingProjects] = useState(true);
 
   async function fetchLogs() {
     const res = await fetch("/api/deploy");
@@ -32,8 +53,31 @@ export default function DeployPage() {
     setLogs(data);
   }
 
+  async function fetchProjects() {
+    try {
+      const res = await fetch("/api/projects");
+      const data: ProjectData = await res.json();
+      const slugs = data.directories
+        .filter((d) => d !== "groundcontrol")
+        .map((slug) => {
+          const site = data.caddySites.find((s) => s.domain.includes(slug.replace(/-/g, "")));
+          return {
+            slug,
+            name: deriveProjectName(slug),
+            domain: site?.domain || null,
+          };
+        });
+      setProjects(slugs);
+    } catch {
+      setProjects([]);
+    } finally {
+      setLoadingProjects(false);
+    }
+  }
+
   useEffect(() => {
     fetchLogs();
+    fetchProjects();
     const interval = setInterval(fetchLogs, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -59,33 +103,49 @@ export default function DeployPage() {
         <p className="text-muted mt-1">Trigger safe deployments using docker compose on your VPS</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {projects.map((project) => (
-          <div
-            key={project.slug}
-            className="bg-card border border-border rounded-xl p-5 hover:border-border-hover transition-colors"
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="font-medium">{project.name}</h3>
-                <p className="text-xs text-muted font-mono mt-1">
-                  <SensitiveField value={project.domain} />
-                </p>
+      {loadingProjects ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="bg-card border border-border rounded-xl p-5 h-28 animate-pulse" />
+          ))}
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="bg-card border border-border rounded-xl p-6 mb-8 text-muted text-sm">
+          No projects found in /opt/. Deploy a repo to <code>/opt/&lt;slug&gt;/</code> to see it here.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {projects.map((project) => (
+            <div
+              key={project.slug}
+              className="bg-card border border-border rounded-xl p-5 hover:border-border-hover transition-colors"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="font-medium">{project.name}</h3>
+                  {project.domain ? (
+                    <p className="text-xs text-muted font-mono mt-1">
+                      <SensitiveField value={project.domain} />
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted font-mono mt-1">No domain mapped</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => triggerDeploy(project.slug)}
+                  disabled={deploying === project.slug}
+                  className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+                >
+                  {deploying === project.slug ? "Deploying..." : "Deploy"}
+                </button>
               </div>
-              <button
-                onClick={() => triggerDeploy(project.slug)}
-                disabled={deploying === project.slug}
-                className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
-              >
-                {deploying === project.slug ? "Deploying..." : "Deploy"}
-              </button>
+              <div className="text-xs text-muted font-mono">
+                /opt/{project.slug} · docker compose up -d
+              </div>
             </div>
-            <div className="text-xs text-muted font-mono">
-              /opt/{project.slug} · docker compose up -d
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <section>
         <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">

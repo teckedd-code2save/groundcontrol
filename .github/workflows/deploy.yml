@@ -61,6 +61,10 @@ jobs:
           script: |
             cd /opt/groundcontrol || exit 1
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Sync docker-compose.yml from repo so infra changes (ports, env, volumes) propagate
+            curl -sfL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml" \
+              -o docker-compose.yml || echo "docker-compose.yml sync skipped (using existing)"
             docker compose pull
             docker compose up -d --remove-orphans
             docker logout ghcr.io

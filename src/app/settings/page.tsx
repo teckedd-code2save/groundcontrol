@@ -241,6 +241,153 @@ export default function SettingsPage() {
 
       {/* Change Password */}
       <ChangePasswordSection />
+
+      {/* Admin: User Management */}
+      <UserManagementSection />
+    </div>
+  );
+}
+
+function UserManagementSection() {
+  const [user, setUser] = useState<{ username: string; role: string } | null>(null);
+  const [users, setUsers] = useState<{ id: number; username: string; role: string; createdAt: string }[]>([]);
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setUser(data))
+      .catch(() => {});
+  }, []);
+
+  async function fetchUsers() {
+    try {
+      const res = await fetch("/api/auth/users");
+      if (res.ok) setUsers(await res.json());
+    } catch {
+      setUsers([]);
+    }
+  }
+
+  useEffect(() => {
+    if (user?.role === "admin") fetchUsers();
+  }, [user]);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setResult(null);
+    if (!newUsername || !newPassword) {
+      setResult({ success: false, message: "Username and password required" });
+      return;
+    }
+    if (newPassword.length < 8) {
+      setResult({ success: false, message: "Password must be at least 8 characters" });
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: newUsername, password: newPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult({ success: true, message: `User ${data.username} created` });
+        setNewUsername("");
+        setNewPassword("");
+        fetchUsers();
+      } else {
+        setResult({ success: false, message: data.error || "Failed to create user" });
+      }
+    } catch {
+      setResult({ success: false, message: "Network error" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm("Delete this user?")) return;
+    try {
+      const res = await fetch(`/api/auth/users?id=${id}`, { method: "DELETE" });
+      if (res.ok) fetchUsers();
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!user || user.role !== "admin") return null;
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6 mt-8">
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
+        User Management
+      </h2>
+
+      <form onSubmit={handleCreate} className="space-y-4 max-w-md mb-6">
+        <div className="grid grid-cols-2 gap-4">
+          <input
+            type="text"
+            placeholder="Username"
+            value={newUsername}
+            onChange={(e) => setNewUsername(e.target.value)}
+            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
+          />
+          <SensitiveInput
+            label=""
+            value={newPassword}
+            onChange={setNewPassword}
+            type="password"
+            placeholder="Password (min 8)"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+        >
+          {loading ? "Creating..." : "Create User"}
+        </button>
+        {result && (
+          <div
+            className={`p-3 rounded-lg text-sm ${
+              result.success
+                ? "bg-success/10 border border-success/30 text-success"
+                : "bg-error/10 border border-error/30 text-error"
+            }`}
+          >
+            {result.message}
+          </div>
+        )}
+      </form>
+
+      <div className="space-y-2">
+        {users.map((u) => (
+          <div
+            key={u.id}
+            className="flex items-center justify-between py-2 px-3 bg-background/50 rounded-lg"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium">{u.username}</span>
+              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-border text-muted">
+                {u.role}
+              </span>
+            </div>
+            {u.username !== user.username && (
+              <button
+                onClick={() => handleDelete(u.id)}
+                className="text-xs font-mono text-error/70 hover:text-error transition-colors"
+              >
+                delete
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
