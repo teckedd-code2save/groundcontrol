@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { execOnVps } from "@/lib/vps";
+import { createAlert } from "@/lib/alerts";
 
 export async function GET() {
   const logs = await prisma.deploymentLog.findMany({
@@ -33,15 +34,26 @@ export async function POST(req: NextRequest) {
       );
       const duration = Date.now() - startTime;
 
+      const status = result.code === 0 ? "success" : "failed";
+
       await prisma.deploymentLog.update({
         where: { id: log.id },
         data: {
-          status: result.code === 0 ? "success" : "failed",
+          status,
           output: result.stdout,
           error: result.stderr,
           durationMs: duration,
         },
       });
+
+      if (status === "failed") {
+        await createAlert({
+          title: `Deploy Failed: ${projectSlug}`,
+          message: result.stderr || "Docker compose deploy failed. Check logs for details.",
+          severity: "error",
+          source: "deploy",
+        });
+      }
     } catch (err: any) {
       await prisma.deploymentLog.update({
         where: { id: log.id },
@@ -50,6 +62,13 @@ export async function POST(req: NextRequest) {
           error: err.message,
           durationMs: Date.now() - startTime,
         },
+      });
+
+      await createAlert({
+        title: `Deploy Failed: ${projectSlug}`,
+        message: err.message,
+        severity: "error",
+        source: "deploy",
       });
     }
   })();

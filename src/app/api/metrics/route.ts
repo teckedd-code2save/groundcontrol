@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSystemStats, getDockerContainers } from "@/lib/vps";
+import { createAlert } from "@/lib/alerts";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -40,6 +41,52 @@ export async function POST() {
         unhealthyContainers: unhealthy,
       },
     });
+
+    // Generate alerts for critical conditions
+    const memPercent = parseFloat(stats.memory.percent);
+    const diskPercent = parseFloat(stats.disk.percent);
+
+    if (memPercent > 90) {
+      await createAlert({
+        title: "High Memory Usage",
+        message: `Memory usage is at ${memPercent}%. Consider restarting containers or scaling up.`,
+        severity: "critical",
+        source: "metrics",
+      });
+    } else if (memPercent > 80) {
+      await createAlert({
+        title: "Elevated Memory Usage",
+        message: `Memory usage is at ${memPercent}%.`,
+        severity: "warning",
+        source: "metrics",
+      });
+    }
+
+    if (diskPercent > 90) {
+      await createAlert({
+        title: "High Disk Usage",
+        message: `Disk usage is at ${diskPercent}%. Clean up logs and old images to free space.`,
+        severity: "critical",
+        source: "metrics",
+      });
+    } else if (diskPercent > 80) {
+      await createAlert({
+        title: "Elevated Disk Usage",
+        message: `Disk usage is at ${diskPercent}%.`,
+        severity: "warning",
+        source: "metrics",
+      });
+    }
+
+    if (unhealthy > 0) {
+      const names = containers.filter((c) => c.status.includes("unhealthy")).map((c) => c.name).join(", ");
+      await createAlert({
+        title: "Unhealthy Containers",
+        message: `${unhealthy} container(s) unhealthy: ${names}`,
+        severity: "error",
+        source: "containers",
+      });
+    }
 
     return NextResponse.json(snapshot);
   } catch (err: any) {

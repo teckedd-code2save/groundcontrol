@@ -242,8 +242,107 @@ export default function SettingsPage() {
       {/* Change Password */}
       <ChangePasswordSection />
 
+      {/* Database Backup / Restore */}
+      <BackupRestoreSection />
+
       {/* Admin: User Management */}
       <UserManagementSection />
+    </div>
+  );
+}
+
+function BackupRestoreSection() {
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function handleBackup() {
+    try {
+      const res = await fetch("/api/backup");
+      if (!res.ok) throw new Error("Backup failed");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `groundcontrol-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setResult({ success: false, message: err.message });
+    }
+  }
+
+  async function handleRestore(e: React.FormEvent) {
+    e.preventDefault();
+    if (!restoreFile) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", restoreFile);
+      const res = await fetch("/api/backup", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult({ success: true, message: "Database restored. Refresh the page." });
+        setRestoreFile(null);
+      } else {
+        setResult({ success: false, message: data.error || "Restore failed" });
+      }
+    } catch {
+      setResult({ success: false, message: "Network error" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6 mt-8">
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
+        Database Backup & Restore
+      </h2>
+      <div className="space-y-4 max-w-md">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleBackup}
+            className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+          >
+            Download Backup
+          </button>
+        </div>
+
+        <form onSubmit={handleRestore} className="space-y-3">
+          <div>
+            <label className="block text-xs font-mono text-muted mb-1.5">Restore from file</label>
+            <input
+              type="file"
+              accept=".db"
+              onChange={(e) => setRestoreFile(e.target.files?.[0] || null)}
+              className="w-full text-xs file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border file:border-border file:bg-background file:text-foreground hover:file:border-accent"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!restoreFile || loading}
+            className="px-4 py-2 text-xs font-mono bg-error/10 border border-error/30 text-error rounded-lg hover:bg-error/20 transition-colors disabled:opacity-50"
+          >
+            {loading ? "Restoring..." : "Restore Database"}
+          </button>
+          {result && (
+            <div
+              className={`p-3 rounded-lg text-sm ${
+                result.success
+                  ? "bg-success/10 border border-success/30 text-success"
+                  : "bg-error/10 border border-error/30 text-error"
+              }`}
+            >
+              {result.message}
+            </div>
+          )}
+        </form>
+      </div>
     </div>
   );
 }
