@@ -31,14 +31,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Install openssl + docker-cli + procps for VPS management
-RUN apk add --no-cache openssl docker-cli procps
+LABEL org.opencontainers.image.source="https://github.com/teckedd-code2save/groundcontrol"
+LABEL org.opencontainers.image.description="groundcontrol — Next.js app"
+LABEL org.opencontainers.image.licenses="UNLICENSED"
+
+# Install openssl + docker-cli + procps + wget for VPS management & healthchecks
+RUN apk add --no-cache openssl docker-cli procps wget
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules ./node_modules
 
 # Ensure db directory exists for SQLite
 RUN mkdir -p /app/prisma
