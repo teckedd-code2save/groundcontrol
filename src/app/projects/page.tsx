@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SensitiveField } from "@/components/SensitiveField";
 
 interface CaddySite {
   file: string;
@@ -59,7 +60,9 @@ export default function ProjectsPage() {
                   className="bg-card border border-border rounded-xl p-5 hover:border-border-hover transition-colors"
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <div className="font-medium text-accent">{site.domain}</div>
+                    <div className="font-medium text-accent">
+                      <SensitiveField value={site.domain} />
+                    </div>
                     <div className="text-xs text-muted font-mono">{site.file}</div>
                   </div>
                   {site.root && (
@@ -69,11 +72,11 @@ export default function ProjectsPage() {
                   )}
                   {site.proxy && (
                     <div className="text-xs font-mono text-muted mb-1">
-                      proxy: {site.proxy}
+                      proxy: <SensitiveField value={site.proxy} />
                     </div>
                   )}
                   <pre className="mt-3 text-[10px] font-mono text-muted bg-background/50 p-3 rounded-lg overflow-auto max-h-32 scrollbar-thin">
-                    {site.content}
+                    <SensitiveField value={site.content} />
                   </pre>
                 </div>
               ))}

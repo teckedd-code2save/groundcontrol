@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SensitiveField } from "@/components/SensitiveField";
 
 interface Container {
   name: string;
@@ -155,7 +156,7 @@ export default function ContainersPage() {
 
               {container.ports && (
                 <div className="mt-2 text-xs text-muted font-mono pl-7">
-                  {container.ports}
+                  <SensitiveField value={container.ports} />
                 </div>
               )}
             </div>

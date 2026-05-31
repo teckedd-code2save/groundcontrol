@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SensitiveField } from "@/components/SensitiveField";
 
 interface DeployLog {
   id: number;
@@ -67,7 +68,9 @@ export default function DeployPage() {
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="font-medium">{project.name}</h3>
-                <p className="text-xs text-muted font-mono mt-1">{project.domain}</p>
+                <p className="text-xs text-muted font-mono mt-1">
+                  <SensitiveField value={project.domain} />
+                </p>
               </div>
               <button
                 onClick={() => triggerDeploy(project.slug)}

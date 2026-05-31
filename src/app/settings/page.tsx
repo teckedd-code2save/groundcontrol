@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SensitiveField, SensitiveInput } from "@/components/SensitiveField";
 
 interface VpsConfig {
   id: number;
@@ -16,10 +17,10 @@ interface VpsConfig {
 export default function SettingsPage() {
   const [configs, setConfigs] = useState<VpsConfig[]>([]);
   const [form, setForm] = useState({
-    name: "primary",
-    host: "128.140.12.62",
+    name: "",
+    host: "",
     port: 22,
-    username: "root",
+    username: "",
     privateKey: "",
     password: "",
     authType: "key",
@@ -46,10 +47,10 @@ export default function SettingsPage() {
       body: JSON.stringify(form),
     });
     setForm({
-      name: "primary",
-      host: "128.140.12.62",
+      name: "",
+      host: "",
       port: 22,
-      username: "root",
+      username: "",
       privateKey: "",
       password: "",
       authType: "key",
@@ -102,33 +103,27 @@ export default function SettingsPage() {
                 className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
               />
             </div>
-            <div>
-              <label className="block text-xs font-mono text-muted mb-1.5">Host</label>
-              <input
-                type="text"
-                value={form.host}
-                onChange={(e) => setForm({ ...form, host: e.target.value })}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-mono text-muted mb-1.5">Port</label>
-              <input
-                type="number"
-                value={form.port}
-                onChange={(e) => setForm({ ...form, port: parseInt(e.target.value) })}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-mono text-muted mb-1.5">Username</label>
-              <input
-                type="text"
-                value={form.username}
-                onChange={(e) => setForm({ ...form, username: e.target.value })}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
-              />
-            </div>
+            <SensitiveInput
+              label="Host"
+              value={form.host}
+              onChange={(v) => setForm({ ...form, host: v })}
+              type="text"
+              className="md:col-span-1"
+            />
+            <SensitiveInput
+              label="Port"
+              value={form.port}
+              onChange={(v) => setForm({ ...form, port: parseInt(v) || 0 })}
+              type="number"
+              className="md:col-span-1"
+            />
+            <SensitiveInput
+              label="Username"
+              value={form.username}
+              onChange={(v) => setForm({ ...form, username: v })}
+              type="text"
+              className="md:col-span-2"
+            />
           </div>
 
           <div>
@@ -152,26 +147,21 @@ export default function SettingsPage() {
           </div>
 
           {form.authType === "key" ? (
-            <div>
-              <label className="block text-xs font-mono text-muted mb-1.5">Private Key</label>
-              <textarea
-                value={form.privateKey}
-                onChange={(e) => setForm({ ...form, privateKey: e.target.value })}
-                rows={6}
-                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----..."
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent transition-colors resize-none"
-              />
-            </div>
+            <SensitiveInput
+              label="Private Key"
+              value={form.privateKey}
+              onChange={(v) => setForm({ ...form, privateKey: v })}
+              type="textarea"
+              rows={6}
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----..."
+            />
           ) : (
-            <div>
-              <label className="block text-xs font-mono text-muted mb-1.5">Password</label>
-              <input
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
-              />
-            </div>
+            <SensitiveInput
+              label="Password"
+              value={form.password}
+              onChange={(v) => setForm({ ...form, password: v })}
+              type="password"
+            />
           )}
 
           <div className="flex items-center gap-3">
@@ -220,7 +210,7 @@ export default function SettingsPage() {
 
       {/* Saved Configs */}
       {configs.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-6">
+        <div className="bg-card border border-border rounded-xl p-6 mb-8">
           <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">
             Saved Connections
           </h2>
@@ -232,9 +222,9 @@ export default function SettingsPage() {
               >
                 <div>
                   <div className="font-medium text-sm">{config.name}</div>
-                  <div className="text-xs text-muted font-mono mt-0.5">
-                    {config.username}@{config.host}:{config.port} · {config.authType} ·{" "}
-                    {config.isLocal ? "local" : "ssh"}
+                  <div className="text-xs text-muted font-mono mt-0.5 flex items-center gap-1 flex-wrap">
+                    <SensitiveField value={`${config.username}@${config.host}:${config.port}`} />
+                    <span>· {config.authType} · {config.isLocal ? "local" : "ssh"}</span>
                   </div>
                 </div>
                 <button
@@ -248,6 +238,97 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Change Password */}
+      <ChangePasswordSection />
+    </div>
+  );
+}
+
+function ChangePasswordSection() {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function handleChange(e: React.FormEvent) {
+    e.preventDefault();
+    setResult(null);
+    if (newPassword !== confirmPassword) {
+      setResult({ success: false, message: "New passwords do not match" });
+      return;
+    }
+    if (newPassword.length < 8) {
+      setResult({ success: false, message: "Password must be at least 8 characters" });
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult({ success: true, message: "Password updated successfully" });
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        setResult({ success: false, message: data.error || "Failed to update password" });
+      }
+    } catch {
+      setResult({ success: false, message: "Network error" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6">
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
+        Change Password
+      </h2>
+      <form onSubmit={handleChange} className="space-y-4 max-w-md">
+        <SensitiveInput
+          label="Current Password"
+          value={currentPassword}
+          onChange={setCurrentPassword}
+          type="password"
+        />
+        <SensitiveInput
+          label="New Password"
+          value={newPassword}
+          onChange={setNewPassword}
+          type="password"
+        />
+        <SensitiveInput
+          label="Confirm New Password"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          type="password"
+        />
+        <button
+          type="submit"
+          disabled={loading}
+          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+        >
+          {loading ? "Updating..." : "Update Password"}
+        </button>
+        {result && (
+          <div
+            className={`p-3 rounded-lg text-sm ${
+              result.success
+                ? "bg-success/10 border border-success/30 text-success"
+                : "bg-error/10 border border-error/30 text-error"
+            }`}
+          >
+            {result.message}
+          </div>
+        )}
+      </form>
     </div>
   );
 }
