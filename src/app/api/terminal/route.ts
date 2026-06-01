@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { execOnVps } from "@/lib/vps";
+import { requireAuth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const { command } = await req.json();
+    await requireAuth(req);
+    const { command, cwd } = await req.json();
     if (!command || typeof command !== "string") {
       return NextResponse.json({ error: "Command required" }, { status: 400 });
     }
@@ -20,7 +22,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Command blocked for safety" }, { status: 403 });
     }
 
-    const result = await execOnVps(command);
+    const result = await execOnVps(command, null, cwd || "/");
     return NextResponse.json({
       stdout: result.stdout,
       stderr: result.stderr,

@@ -17,3 +17,15 @@ export async function PATCH(req: NextRequest) {
   });
   return NextResponse.json({ ok: true });
 }
+
+export async function DELETE(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ error: "id required" }, { status: 400 });
+  }
+  await prisma.alert.delete({
+    where: { id: parseInt(id) },
+  });
+  return NextResponse.json({ ok: true });
+}

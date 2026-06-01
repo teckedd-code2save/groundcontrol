@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SensitiveField } from "@/components/SensitiveField";
 
 interface FileEntry {
   name: string;
@@ -109,7 +110,9 @@ export default function FilesPage() {
                     )}
                   </td>
                   <td className="p-3 font-mono text-xs text-muted">{file.perms}</td>
-                  <td className="p-3 font-mono text-xs text-muted">{file.owner}:{file.group}</td>
+                  <td className="p-3 font-mono text-xs text-muted">
+                    <SensitiveField value={`${file.owner}:${file.group}`} />
+                  </td>
                   <td className="p-3 font-mono text-xs text-muted">{file.size}</td>
                   <td className="p-3 font-mono text-xs text-muted">{file.date}</td>
                 </tr>

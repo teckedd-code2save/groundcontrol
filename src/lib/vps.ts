@@ -31,7 +31,8 @@ export async function getActiveVps(): Promise<VpsConnection | null> {
 
 export async function execOnVps(
   command: string,
-  vps?: VpsConnection | null
+  vps?: VpsConnection | null,
+  cwd?: string
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const conn = vps || (await getActiveVps());
   if (!conn) {
@@ -40,7 +41,7 @@ export async function execOnVps(
 
   if (conn.isLocal) {
     try {
-      const { stdout, stderr } = await execAsync(command, { timeout: 30000 });
+      const { stdout, stderr } = await execAsync(command, { timeout: 30000, cwd });
       return { stdout, stderr, code: 0 };
     } catch (err: any) {
       return {
@@ -77,7 +78,7 @@ export async function execOnVps(
     sshCache.set(conn.id, ssh);
   }
 
-  const result = await ssh.execCommand(command, { cwd: "/root" });
+  const result = await ssh.execCommand(command, { cwd: cwd || "/root" });
   return {
     stdout: result.stdout,
     stderr: result.stderr,

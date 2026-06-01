@@ -63,11 +63,13 @@ export default function ProjectsPage() {
                     <div className="font-medium text-accent">
                       <SensitiveField value={site.domain} />
                     </div>
-                    <div className="text-xs text-muted font-mono">{site.file}</div>
+                    <div className="text-xs text-muted font-mono">
+                      <SensitiveField value={site.file} />
+                    </div>
                   </div>
                   {site.root && (
                     <div className="text-xs font-mono text-muted mb-1">
-                      root: {site.root}
+                      root: <SensitiveField value={site.root} />
                     </div>
                   )}
                   {site.proxy && (
