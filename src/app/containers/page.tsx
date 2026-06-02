@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { ActionConfirm } from "@/components/ActionConfirm";
 
 interface Container {
   name: string;
@@ -27,6 +28,7 @@ export default function ContainersPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ action: "start" | "stop" | "restart"; name: string } | null>(null);
 
   async function fetchContainers() {
     try {
@@ -57,6 +59,8 @@ export default function ContainersPage() {
       await fetchContainers();
     } finally {
       setActionLoading(null);
+      setRemoveTarget(null);
+      setPendingAction(null);
     }
   }
 
@@ -129,23 +133,23 @@ export default function ContainersPage() {
                     {container.state === "running" ? (
                       <>
                         <button
-                          onClick={() => handleAction("restart", container.name)}
+                          onClick={() => setPendingAction({ action: "restart", name: container.name })}
                           disabled={actionLoading === container.name}
                           className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
                         >
                           {actionLoading === container.name ? "..." : "restart"}
                         </button>
                         <button
-                          onClick={() => handleAction("stop", container.name)}
+                          onClick={() => setPendingAction({ action: "stop", name: container.name })}
                           disabled={actionLoading === container.name}
                           className="px-3 py-1.5 text-xs font-mono border border-error/30 text-error rounded hover:bg-error/10 transition-colors disabled:opacity-50"
                         >
-                          stop
+                          {actionLoading === container.name ? "..." : "stop"}
                         </button>
                       </>
                     ) : (
                       <button
-                        onClick={() => handleAction("start", container.name)}
+                        onClick={() => setPendingAction({ action: "start", name: container.name })}
                         disabled={actionLoading === container.name}
                         className="px-3 py-1.5 text-xs font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50"
                       >
@@ -186,10 +190,20 @@ export default function ContainersPage() {
         resourceType="Container"
         onConfirm={() => {
           if (removeTarget) handleAction("remove", removeTarget);
-          setRemoveTarget(null);
         }}
         onCancel={() => setRemoveTarget(null)}
       />
+
+      {pendingAction && (
+        <ActionConfirm
+          open={!!pendingAction}
+          action={pendingAction.action}
+          targetName={pendingAction.name}
+          targetType="Container"
+          onConfirm={() => handleAction(pendingAction.action, pendingAction.name)}
+          onCancel={() => setPendingAction(null)}
+        />
+      )}
 
       {/* Logs Modal */}
       {selectedContainer && (

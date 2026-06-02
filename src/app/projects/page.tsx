@@ -67,16 +67,6 @@ export default function ProjectsPage() {
                       <SensitiveField value={site.file} />
                     </div>
                   </div>
-                  {site.root && (
-                    <div className="text-xs font-mono text-muted mb-1">
-                      root: <SensitiveField value={site.root} />
-                    </div>
-                  )}
-                  {site.proxy && (
-                    <div className="text-xs font-mono text-muted mb-1">
-                      proxy: <SensitiveField value={site.proxy} />
-                    </div>
-                  )}
                   <pre className="mt-3 text-[10px] font-mono text-muted bg-background/50 p-3 rounded-lg overflow-auto max-h-32 scrollbar-thin">
                     <SensitiveField value={site.content} />
                   </pre>

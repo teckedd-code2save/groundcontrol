@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
+import { ActionConfirm } from "@/components/ActionConfirm";
 
 interface DeployLog {
   id: number;
@@ -46,6 +47,7 @@ export default function DeployPage() {
   const [deploying, setDeploying] = useState<string | null>(null);
   const [selectedLog, setSelectedLog] = useState<DeployLog | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
+  const [confirmDeploy, setConfirmDeploy] = useState<string | null>(null);
 
   async function fetchLogs() {
     const res = await fetch("/api/deploy");
@@ -93,6 +95,7 @@ export default function DeployPage() {
       await fetchLogs();
     } finally {
       setDeploying(null);
+      setConfirmDeploy(null);
     }
   }
 
@@ -132,7 +135,7 @@ export default function DeployPage() {
                   )}
                 </div>
                 <button
-                  onClick={() => triggerDeploy(project.slug)}
+                  onClick={() => setConfirmDeploy(project.slug)}
                   disabled={deploying === project.slug}
                   className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
                 >
@@ -217,13 +220,15 @@ export default function DeployPage() {
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-mono text-sm">
                 Deploy: <span className="text-accent">{selectedLog.projectSlug}</span>
-                <span className={`ml-3 text-xs px-2 py-0.5 rounded-full ${
-                  selectedLog.status === "success"
-                    ? "bg-success/10 text-success"
-                    : selectedLog.status === "failed"
-                    ? "bg-error/10 text-error"
-                    : "bg-accent/10 text-accent"
-                }`}>
+                <span
+                  className={`ml-3 text-xs px-2 py-0.5 rounded-full ${
+                    selectedLog.status === "success"
+                      ? "bg-success/10 text-success"
+                      : selectedLog.status === "failed"
+                      ? "bg-error/10 text-error"
+                      : "bg-accent/10 text-accent"
+                  }`}
+                >
                   {selectedLog.status}
                 </span>
               </h3>
@@ -254,6 +259,17 @@ export default function DeployPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {confirmDeploy && (
+        <ActionConfirm
+          open={!!confirmDeploy}
+          action="deploy"
+          targetName={confirmDeploy}
+          targetType="Project"
+          onConfirm={() => triggerDeploy(confirmDeploy)}
+          onCancel={() => setConfirmDeploy(null)}
+        />
       )}
     </div>
   );

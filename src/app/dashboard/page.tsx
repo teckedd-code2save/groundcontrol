@@ -41,10 +41,21 @@ interface MetricSnapshot {
   createdAt: string;
 }
 
+interface Alert {
+  id: number;
+  title: string;
+  message: string;
+  severity: string;
+  source: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
   const [metrics, setMetrics] = useState<MetricSnapshot[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -58,19 +69,22 @@ export default function DashboardPage() {
 
   async function fetchData() {
     try {
-      const [statsRes, containersRes, metricsRes] = await Promise.all([
+      const [statsRes, containersRes, metricsRes, alertsRes] = await Promise.all([
         fetch("/api/vps/stats"),
         fetch("/api/containers"),
         fetch("/api/metrics?limit=60"),
+        fetch("/api/alerts?limit=10"),
       ]);
       if (!statsRes.ok) throw new Error("Failed to fetch stats");
       if (!containersRes.ok) throw new Error("Failed to fetch containers");
       const statsData = await statsRes.json();
       const containersData = await containersRes.json();
       const metricsData = await metricsRes.json();
+      const alertsData = await alertsRes.json();
       setStats(statsData);
       setContainers(containersData);
       setMetrics(metricsData.reverse());
+      setAlerts(alertsData);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -97,6 +111,77 @@ export default function DashboardPage() {
 
   const runningContainers = containers.filter((c) => c.state === "running").length;
   const unhealthyContainers = containers.filter((c) => c.status.includes("unhealthy")).length;
+  const stoppedContainers = containers.filter((c) => c.state !== "running").length;
+
+  function generateIntelligence(): { title: string; items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string }[] } {
+    const items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string }[] = [];
+
+    // Containers
+    if (containers.length === 0) {
+      items.push({ label: "Containers", status: "warn", detail: "No containers detected. Docker may not be running.", href: "/containers" });
+    } else if (stoppedContainers > 0) {
+      items.push({ label: "Containers", status: "critical", detail: `${stoppedContainers} of ${containers.length} containers are stopped.`, href: "/containers" });
+    } else if (unhealthyContainers > 0) {
+      items.push({ label: "Containers", status: "warn", detail: `${unhealthyContainers} container${unhealthyContainers > 1 ? "s" : ""} failing health checks.`, href: "/containers" });
+    } else {
+      items.push({ label: "Containers", status: "good", detail: `${runningContainers} containers running smoothly.`, href: "/containers" });
+    }
+
+    // Memory
+    if (stats) {
+      const memPct = parseFloat(stats.memory.percent);
+      if (memPct > 90) {
+        items.push({ label: "Memory", status: "critical", detail: `Usage at ${memPct}%. System may become unstable.`, href: "/topology" });
+      } else if (memPct > 75) {
+        items.push({ label: "Memory", status: "warn", detail: `Usage at ${memPct}%. Monitor closely.`, href: "/topology" });
+      } else {
+        items.push({ label: "Memory", status: "good", detail: `Usage at ${memPct}%. Plenty of headroom.`, href: "/topology" });
+      }
+    }
+
+    // Disk
+    if (stats) {
+      const diskPct = parseFloat(stats.disk.percent);
+      if (diskPct > 90) {
+        items.push({ label: "Disk", status: "critical", detail: `Usage at ${diskPct}%. Clean up logs and prune Docker.`, href: "/topology" });
+      } else if (diskPct > 75) {
+        items.push({ label: "Disk", status: "warn", detail: `Usage at ${diskPct}%. Consider pruning unused images.`, href: "/topology" });
+      } else {
+        items.push({ label: "Disk", status: "good", detail: `Usage at ${diskPct}%. Healthy capacity.`, href: "/topology" });
+      }
+    }
+
+    // Load
+    if (stats) {
+      const loadRatio = (stats.load[0] || 0) / (stats.cpuCount || 1);
+      if (loadRatio > 2) {
+        items.push({ label: "Load", status: "critical", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. System overloaded.`, href: "/topology" });
+      } else if (loadRatio > 1) {
+        items.push({ label: "Load", status: "warn", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. Elevated but stable.`, href: "/topology" });
+      } else {
+        items.push({ label: "Load", status: "good", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. Idle capacity available.`, href: "/topology" });
+      }
+    }
+
+    // Alerts
+    const unreadAlerts = alerts.filter((a) => !a.read);
+    if (unreadAlerts.length > 0) {
+      items.push({ label: "Alerts", status: "warn", detail: `${unreadAlerts.length} unread alert${unreadAlerts.length > 1 ? "s" : ""} require attention.`, href: "/alerts" });
+    } else if (alerts.length > 0) {
+      items.push({ label: "Alerts", status: "good", detail: "All alerts reviewed. Systems stable.", href: "/alerts" });
+    }
+
+    const criticalCount = items.filter((i) => i.status === "critical").length;
+    const warnCount = items.filter((i) => i.status === "warn").length;
+
+    let title = "All systems operational";
+    if (criticalCount > 0) title = `${criticalCount} critical issue${criticalCount > 1 ? "s" : ""} need immediate attention`;
+    else if (warnCount > 0) title = `${warnCount} warning${warnCount > 1 ? "s" : ""} detected — review recommended`;
+
+    return { title, items };
+  }
+
+  const intelligence = generateIntelligence();
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -119,6 +204,44 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          {/* Intelligence Overview */}
+          <div className="bg-card border border-border rounded-xl p-5 mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2a10 10 0 1 0 10 10H12V2z" />
+                <path d="M12 2a10 10 0 0 1 10 10" />
+                <path d="M12 12L2.5 8.5" />
+              </svg>
+              <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Intelligence Overview</h2>
+            </div>
+            <h3 className="text-lg font-medium mb-3">{intelligence.title}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {intelligence.items.map((item) => (
+                <a
+                  key={item.label}
+                  href={item.href}
+                  className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                    item.status === "critical"
+                      ? "bg-error/5 border-error/20 hover:bg-error/10"
+                      : item.status === "warn"
+                      ? "bg-warning/5 border-warning/20 hover:bg-warning/10"
+                      : "bg-success/5 border-success/20 hover:bg-success/10"
+                  }`}
+                >
+                  <div
+                    className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                      item.status === "critical" ? "bg-error" : item.status === "warn" ? "bg-warning" : "bg-success"
+                    }`}
+                  />
+                  <div>
+                    <div className="text-xs font-mono font-medium">{item.label}</div>
+                    <div className="text-[11px] text-muted mt-0.5 leading-relaxed">{item.detail}</div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <StatCard
               title="Uptime"

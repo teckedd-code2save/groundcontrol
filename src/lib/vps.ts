@@ -213,6 +213,21 @@ export async function getContainerLogs(
   return result.stdout;
 }
 
+export async function getDockerComposeCommand(vps?: VpsConnection | null): Promise<string> {
+  const conn = vps || (await getActiveVps());
+  // Try docker compose (plugin) first, fallback to docker-compose (standalone)
+  const pluginCheck = await execOnVps("docker compose version 2>/dev/null", conn);
+  if (pluginCheck.code === 0) {
+    return "docker compose";
+  }
+  const standaloneCheck = await execOnVps("docker-compose version 2>/dev/null", conn);
+  if (standaloneCheck.code === 0) {
+    return "docker-compose";
+  }
+  // Default to plugin syntax; error will surface naturally if neither exists
+  return "docker compose";
+}
+
 export async function controlContainer(
   action: "start" | "stop" | "restart" | "remove",
   containerName: string,
@@ -220,6 +235,12 @@ export async function controlContainer(
 ) {
   const conn = vps || (await getActiveVps());
   const result = await execOnVps(`docker ${action} ${containerName}`, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+export async function pruneDocker(vps?: VpsConnection | null) {
+  const conn = vps || (await getActiveVps());
+  const result = await execOnVps("docker system prune -f", conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
