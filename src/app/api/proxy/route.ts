@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps } from "@/lib/vps";
+import { execOnVps, resolveBinary } from "@/lib/vps";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   try {
     await requireAuth(req);
 
+    const caddyBin = await resolveBinary("caddy");
+    const nginxBin = await resolveBinary("nginx");
+
     // Caddy status
     const caddyStatus = await execOnVps("systemctl is-active caddy 2>/dev/null || echo 'inactive'");
-    const caddyVersion = await execOnVps("caddy version 2>/dev/null || echo 'not installed'");
+    const caddyVersion = await execOnVps(`${caddyBin} version 2>/dev/null || echo 'not installed'`);
 
     // Nginx status
     const nginxStatus = await execOnVps("systemctl is-active nginx 2>/dev/null || echo 'inactive'");
-    const nginxVersion = await execOnVps("nginx -v 2>&1 || echo 'not installed'");
+    const nginxVersion = await execOnVps(`${nginxBin} -v 2>&1 || echo 'not installed'`);
 
     // Caddy configs
     const caddyConfigs = await execOnVps(
@@ -50,18 +53,21 @@ export async function POST(req: NextRequest) {
     await requireAuth(req);
     const { action, server } = await req.json();
 
+    const caddyBin = await resolveBinary("caddy");
+    const nginxBin = await resolveBinary("nginx");
+
     let result;
     switch (action) {
       case "reload":
         result = await execOnVps(
           server === "nginx"
-            ? "nginx -t && systemctl reload nginx"
-            : "caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || systemctl reload caddy"
+            ? `${nginxBin} -t && systemctl reload nginx`
+            : `${caddyBin} reload --config /etc/caddy/Caddyfile 2>/dev/null || systemctl reload caddy`
         );
         break;
       case "test":
         result = await execOnVps(
-          server === "nginx" ? "nginx -t" : "caddy validate --config /etc/caddy/Caddyfile 2>/dev/null || echo 'caddy validate not available'"
+          server === "nginx" ? `${nginxBin} -t` : `${caddyBin} validate --config /etc/caddy/Caddyfile 2>/dev/null || echo 'caddy validate not available'`
         );
         break;
       case "logs":

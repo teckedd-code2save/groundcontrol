@@ -228,6 +228,38 @@ export async function getDockerComposeCommand(vps?: VpsConnection | null): Promi
   return "docker compose";
 }
 
+export async function resolveBinary(
+  name: string,
+  vps?: VpsConnection | null
+): Promise<string> {
+  const conn = vps || (await getActiveVps());
+  // Try `which` first
+  const which = await execOnVps(`which ${name} 2>/dev/null || echo ""`, conn);
+  const path = which.stdout.trim();
+  if (path) return path;
+
+  // Common fallback paths
+  const candidates = [
+    `/usr/local/bin/${name}`,
+    `/usr/bin/${name}`,
+    `/bin/${name}`,
+    `/opt/${name}/${name}`,
+    `/snap/bin/${name}`,
+  ];
+  for (const p of candidates) {
+    const test = await execOnVps(`test -x ${p} && echo ${p} || echo ""`, conn);
+    if (test.stdout.trim()) return test.stdout.trim();
+  }
+
+  // Also try docker container name for caddy/nginx
+  if (name === "caddy" || name === "nginx") {
+    const docker = await execOnVps(`docker ps --format "{{.Names}}" | grep -E "^${name}$" || echo ""`, conn);
+    if (docker.stdout.trim()) return `docker exec ${docker.stdout.trim()}`;
+  }
+
+  return name; // fallback to bare name — error will surface naturally
+}
+
 export async function controlContainer(
   action: "start" | "stop" | "restart" | "remove",
   containerName: string,
