@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SensitiveField, SensitiveInput } from "@/components/SensitiveField";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 
 interface VpsConfig {
   id: number;
@@ -28,6 +29,7 @@ export default function SettingsPage() {
   });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [deleteConfigTarget, setDeleteConfigTarget] = useState<VpsConfig | null>(null);
 
   async function fetchConfigs() {
     const res = await fetch("/api/vps");
@@ -75,8 +77,10 @@ export default function SettingsPage() {
     }
   }
 
-  async function deleteConfig(id: number) {
-    await fetch(`/api/vps?id=${id}`, { method: "DELETE" });
+  async function doDeleteConfig() {
+    if (!deleteConfigTarget) return;
+    await fetch(`/api/vps?id=${deleteConfigTarget.id}`, { method: "DELETE" });
+    setDeleteConfigTarget(null);
     await fetchConfigs();
   }
 
@@ -228,7 +232,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <button
-                  onClick={() => deleteConfig(config.id)}
+                  onClick={() => setDeleteConfigTarget(config)}
                   className="text-xs font-mono text-error/70 hover:text-error transition-colors"
                 >
                   remove
@@ -236,6 +240,14 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+
+          <ConfirmDelete
+            open={!!deleteConfigTarget}
+            resourceName={deleteConfigTarget?.name || ""}
+            resourceType="VPS Connection"
+            onConfirm={doDeleteConfig}
+            onCancel={() => setDeleteConfigTarget(null)}
+          />
         </div>
       )}
 
@@ -354,6 +366,7 @@ function UserManagementSection() {
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [deleteUserTarget, setDeleteUserTarget] = useState<{ id: number; username: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -409,14 +422,15 @@ function UserManagementSection() {
     }
   }
 
-  async function handleDelete(id: number) {
-    if (!confirm("Delete this user?")) return;
+  async function doDeleteUser() {
+    if (!deleteUserTarget) return;
     try {
-      const res = await fetch(`/api/auth/users?id=${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/auth/users?id=${deleteUserTarget.id}`, { method: "DELETE" });
       if (res.ok) fetchUsers();
     } catch {
       // ignore
     }
+    setDeleteUserTarget(null);
   }
 
   if (!user || user.role !== "admin") return null;
@@ -478,7 +492,7 @@ function UserManagementSection() {
             </div>
             {u.username !== user.username && (
               <button
-                onClick={() => handleDelete(u.id)}
+                onClick={() => setDeleteUserTarget(u)}
                 className="text-xs font-mono text-error/70 hover:text-error transition-colors"
               >
                 delete
@@ -487,6 +501,14 @@ function UserManagementSection() {
           </div>
         ))}
       </div>
+
+      <ConfirmDelete
+        open={!!deleteUserTarget}
+        resourceName={deleteUserTarget?.username || ""}
+        resourceType="User"
+        onConfirm={doDeleteUser}
+        onCancel={() => setDeleteUserTarget(null)}
+      />
     </div>
   );
 }

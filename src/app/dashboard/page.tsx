@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { StatCard } from "@/components/StatCard";
+import HealthScore from "@/components/HealthScore";
 import {
   AreaChart,
   Area,
@@ -146,6 +147,10 @@ export default function DashboardPage() {
               trend={unhealthyContainers > 0 ? "down" : "up"}
               icon="▶"
             />
+          </div>
+
+          <div className="mb-8">
+            <HealthScore />
           </div>
 
           {/* Metrics Charts */}

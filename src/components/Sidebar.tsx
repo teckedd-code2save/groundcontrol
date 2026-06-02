@@ -6,13 +6,15 @@ import { useEffect, useState } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: "◈" },
+  { href: "/topology", label: "Topology", icon: "◐" },
   { href: "/containers", label: "Containers", icon: "◉" },
+  { href: "/proxy", label: "Reverse Proxy", icon: "◫" },
   { href: "/projects", label: "Projects", icon: "◆" },
   { href: "/processes", label: "Processes", icon: "◍" },
   { href: "/files", label: "Files", icon: "▤" },
   { href: "/deploy", label: "Deploy", icon: "▶" },
   { href: "/terminal", label: "Terminal", icon: "⌘" },
-  { href: "/alerts", label: "Alerts", icon: "◐" },
+  { href: "/alerts", label: "Alerts", icon: "◑" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 

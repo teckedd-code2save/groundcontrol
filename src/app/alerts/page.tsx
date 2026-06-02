@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 
 interface Alert {
   id: number;
@@ -24,6 +25,7 @@ export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<Alert | null>(null);
 
   async function fetchAlerts() {
     try {
@@ -49,8 +51,10 @@ export default function AlertsPage() {
     fetchAlerts();
   }
 
-  async function deleteAlert(id: number) {
-    await fetch(`/api/alerts?id=${id}`, { method: "DELETE" });
+  async function doDelete() {
+    if (!deleteTarget) return;
+    await fetch(`/api/alerts?id=${deleteTarget.id}`, { method: "DELETE" });
+    setDeleteTarget(null);
     fetchAlerts();
   }
 
@@ -176,7 +180,7 @@ export default function AlertsPage() {
                         </button>
                       )}
                       <button
-                        onClick={() => deleteAlert(alert.id)}
+                        onClick={() => setDeleteTarget(alert)}
                         className="px-3 py-1.5 text-xs font-mono border border-error/30 text-error rounded hover:bg-error/10 transition-colors"
                       >
                         Delete
@@ -189,6 +193,14 @@ export default function AlertsPage() {
           })}
         </div>
       )}
+
+      <ConfirmDelete
+        open={!!deleteTarget}
+        resourceName={deleteTarget?.title || ""}
+        resourceType="Alert"
+        onConfirm={doDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

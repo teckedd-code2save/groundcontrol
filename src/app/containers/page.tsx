@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 
 interface Container {
   name: string;
@@ -25,6 +26,7 @@ export default function ContainersPage() {
   const [logs, setLogs] = useState("");
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
   async function fetchContainers() {
     try {
@@ -44,7 +46,7 @@ export default function ContainersPage() {
     return () => clearInterval(interval);
   }, []);
 
-  async function handleAction(action: "start" | "stop" | "restart", name: string) {
+  async function handleAction(action: "start" | "stop" | "restart" | "remove", name: string) {
     setActionLoading(name);
     try {
       await fetch("/api/containers", {
@@ -150,6 +152,13 @@ export default function ContainersPage() {
                         {actionLoading === container.name ? "..." : "start"}
                       </button>
                     )}
+                    <button
+                      onClick={() => setRemoveTarget(container.name)}
+                      disabled={actionLoading === container.name}
+                      className="px-3 py-1.5 text-xs font-mono border border-muted/30 text-muted rounded hover:border-error hover:text-error transition-colors disabled:opacity-50"
+                    >
+                      remove
+                    </button>
                   </div>
                 </div>
               </div>
@@ -170,6 +179,17 @@ export default function ContainersPage() {
           )}
         </div>
       )}
+
+      <ConfirmDelete
+        open={!!removeTarget}
+        resourceName={removeTarget || ""}
+        resourceType="Container"
+        onConfirm={() => {
+          if (removeTarget) handleAction("remove", removeTarget);
+          setRemoveTarget(null);
+        }}
+        onCancel={() => setRemoveTarget(null)}
+      />
 
       {/* Logs Modal */}
       {selectedContainer && (
