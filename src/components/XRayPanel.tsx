@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ActionConfirm, ActionType } from "@/components/ActionConfirm";
 import { ContainerIcon, getContainerType, getContainerTypeLabel, HostIcon, SiteIcon, CaddyIcon } from "@/components/TopoIcons";
+import { matchContainersToSite } from "@/lib/topology";
 
 interface XRayTarget {
   type: "container" | "site" | "host" | "caddy";
@@ -50,14 +51,8 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
       } else if (target.type === "site") {
         const [containersRes] = await Promise.all([fetch("/api/containers")]);
         const containers = await containersRes.json();
-        // Find containers related to this site
         const site = target.data;
-        const domainSlug = site.domain.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const proxyBase = site.proxy?.replace(/:.*/, "").toLowerCase() || "";
-        const related = containers.filter((c: any) => {
-          const n = c.name.toLowerCase();
-          return (proxyBase && n.includes(proxyBase)) || (domainSlug && (n.includes(domainSlug) || domainSlug.includes(n)));
-        });
+        const related = matchContainersToSite(site.domain, site.proxy, containers);
         setDetail({ ...site, relatedContainers: related });
       } else if (target.type === "host") {
         const res = await fetch("/api/vps/stats");
@@ -314,24 +309,18 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted">Domain</span>
-                    <span className="font-mono text-xs">
-                      <SensitiveField value={detail.domain} />
-                    </span>
+                    <span className="font-mono text-xs text-foreground/80">{detail.domain}</span>
                   </div>
                   {detail.root && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted">Root</span>
-                      <span className="font-mono text-xs">
-                        <SensitiveField value={detail.root} />
-                      </span>
+                      <span className="font-mono text-xs text-foreground/80">{detail.root}</span>
                     </div>
                   )}
                   {detail.proxy && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted">Proxy</span>
-                      <span className="font-mono text-xs">
-                        <SensitiveField value={detail.proxy} />
-                      </span>
+                      <span className="font-mono text-xs text-foreground/80">{detail.proxy}</span>
                     </div>
                   )}
                 </div>

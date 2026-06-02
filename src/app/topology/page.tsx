@@ -11,6 +11,7 @@ import {
   ContainerIcon,
   getContainerType,
 } from "@/components/TopoIcons";
+import { matchContainersToSite } from "@/lib/topology";
 
 interface CaddySite {
   domain: string;
@@ -62,17 +63,7 @@ function isRawDomain(domain: string): boolean {
   return false;
 }
 
-function matchContainersToSite(site: CaddySite, containers: Container[]): Container[] {
-  const domainSlug = site.domain.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const proxyBase = site.proxy?.replace(/:.*/, "").toLowerCase() || "";
-
-  return containers.filter((c) => {
-    const cName = c.name.toLowerCase();
-    if (proxyBase && cName.includes(proxyBase)) return true;
-    if (domainSlug && (cName.includes(domainSlug) || domainSlug.includes(cName))) return true;
-    return false;
-  });
-}
+// Using matchContainersToSite from @/lib/topology
 
 function containerHealth(c: Container): TopoNode["health"] {
   if (c.state !== "running") return "critical";
@@ -131,7 +122,7 @@ export default function TopologyPage() {
       const usedContainers = new Set<string>();
       const siteGroups: SiteGroup[] = [];
       for (const site of sites) {
-        const matched = matchContainersToSite(site, containers);
+        const matched = matchContainersToSite(site.domain, site.proxy, containers);
         matched.forEach((c) => usedContainers.add(c.name));
         siteGroups.push({ site, containers: matched });
       }
