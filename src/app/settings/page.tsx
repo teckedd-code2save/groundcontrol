@@ -261,6 +261,9 @@ export default function SettingsPage() {
       {/* System Paths */}
       <SystemPathsSection />
 
+      {/* AI Configuration */}
+      <AIConfigSection />
+
       {/* Admin: User Management */}
       <UserManagementSection />
     </div>
@@ -344,14 +347,14 @@ function SystemPathsSection() {
   }
 
   const fields = [
-    { key: "projectRoot", label: "Project Root", placeholder: "/opt" },
-    { key: "caddySitesDir", label: "Caddy Sites Directory", placeholder: "/etc/caddy/sites" },
-    { key: "caddyFile", label: "Caddy Main Config", placeholder: "/etc/caddy/Caddyfile" },
-    { key: "nginxSitesDir", label: "Nginx Sites Directory", placeholder: "/etc/nginx/sites-available" },
-    { key: "nginxLogPath", label: "Nginx Error Log", placeholder: "/var/log/nginx/error.log" },
-    { key: "staticRoot", label: "Static Files Root", placeholder: "/var/www" },
-    { key: "sshDefaultCwd", label: "SSH Default CWD", placeholder: "/root" },
-    { key: "certDomain", label: "SSL Cert Domain", placeholder: "yourdomain.com (optional)" },
+    { key: "projectRoot", label: "Project Root", placeholder: "/opt", desc: "Base directory where your apps and projects are deployed (e.g. /opt, /var/www, /home/user/apps)" },
+    { key: "caddySitesDir", label: "Caddy Sites Directory", placeholder: "/etc/caddy/sites", desc: "Directory containing individual Caddy site config files" },
+    { key: "caddyFile", label: "Caddy Main Config", placeholder: "/etc/caddy/Caddyfile", desc: "Path to the main Caddyfile if sites are defined there instead of separate files" },
+    { key: "nginxSitesDir", label: "Nginx Sites Directory", placeholder: "/etc/nginx/sites-available", desc: "Directory containing Nginx virtual host configs" },
+    { key: "nginxLogPath", label: "Nginx Error Log", placeholder: "/var/log/nginx/error.log", desc: "Path to Nginx error log for debugging" },
+    { key: "staticRoot", label: "Static Files Root", placeholder: "/var/www", desc: "Directory served for static websites and file hosting" },
+    { key: "sshDefaultCwd", label: "SSH Default Working Directory", placeholder: "/root", desc: "Default directory when opening the terminal" },
+    { key: "certDomain", label: "SSL Certificate Domain", placeholder: "yourdomain.com (optional)", desc: "Primary domain for SSL certificate generation and monitoring" },
   ];
 
   return (
@@ -361,9 +364,10 @@ function SystemPathsSection() {
       </h2>
       <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {fields.map((f) => (
+          {fields.map((f: any) => (
             <div key={f.key}>
-              <label className="block text-xs font-mono text-muted mb-1.5">{f.label}</label>
+              <label className="block text-xs font-mono text-muted mb-1">{f.label}</label>
+              <p className="text-[10px] text-muted/60 mb-1.5 leading-relaxed">{f.desc}</p>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -411,6 +415,94 @@ function SystemPathsSection() {
         onSelect={onPickerSelect}
         initialPath={pickerPath}
       />
+    </div>
+  );
+}
+
+function AIConfigSection() {
+  const [status, setStatus] = useState<{ configured: boolean; hasEnvKey: boolean } | null>(null);
+  const [key, setKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/ai/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setStatus(data))
+      .catch(() => {});
+  }, []);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/ai/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ openaiApiKey: key || undefined }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatus(data);
+        setResult({ success: true, message: data.configured ? "API key saved" : "API key cleared" });
+        setKey("");
+      } else {
+        setResult({ success: false, message: data.error || "Failed to save" });
+      }
+    } catch {
+      setResult({ success: false, message: "Network error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6 mt-8">
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">AI Configuration</h2>
+      <p className="text-[10px] text-muted/60 mb-6 leading-relaxed">
+        Configure OpenAI API key for the GroundControl AI assistant. The key is stored server-side in a config file.
+        If an environment variable OPENAI_API_KEY is set, it takes priority.
+      </p>
+
+      <div className="flex items-center gap-2 mb-4">
+        <div className={`w-2 h-2 rounded-full ${status?.configured || status?.hasEnvKey ? "bg-success" : "bg-error"}`} />
+        <span className="text-xs font-mono">
+          {status?.hasEnvKey ? "Using env var OPENAI_API_KEY" : status?.configured ? "API key configured" : "No API key configured"}
+        </span>
+      </div>
+
+      <form onSubmit={handleSave} className="space-y-3 max-w-md">
+        <div>
+          <label className="block text-xs font-mono text-muted mb-1">OpenAI API Key</label>
+          <input
+            type="password"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="sk-..."
+            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors font-mono"
+          />
+          <p className="text-[10px] text-muted/60 mt-1">Leave empty and save to clear the stored key.</p>
+        </div>
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save API Key"}
+        </button>
+        {result && (
+          <div
+            className={`p-3 rounded-lg text-sm ${
+              result.success
+                ? "bg-success/10 border border-success/30 text-success"
+                : "bg-error/10 border border-error/30 text-error"
+            }`}
+          >
+            {result.message}
+          </div>
+        )}
+      </form>
     </div>
   );
 }

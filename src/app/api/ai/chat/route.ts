@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
+import { getOpenAIKey } from "@/lib/ai-config";
 import OpenAI from "openai";
 
 function getOpenAI() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return new OpenAI({ apiKey: getOpenAIKey() });
 }
 
 export async function POST(req: NextRequest) {
@@ -15,9 +16,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Messages array required" }, { status: 400 });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
+    const apiKey = getOpenAIKey();
+    if (!apiKey) {
       return NextResponse.json(
-        { error: "OPENAI_API_KEY not configured. Set it in your environment." },
+        { error: "OPENAI_API_KEY not configured. Add it in Settings → AI Configuration." },
         { status: 503 }
       );
     }

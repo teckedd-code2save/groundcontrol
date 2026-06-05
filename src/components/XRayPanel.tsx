@@ -40,14 +40,17 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
     setLoading(true);
     try {
       if (target.type === "container") {
-        const [containersRes, logsRes] = await Promise.all([
+        const [containersRes, logsRes, projectsRes] = await Promise.all([
           fetch("/api/containers"),
           fetch(`/api/containers/logs?name=${target.id}&tail=50`),
+          fetch("/api/projects"),
         ]);
         const containers = await containersRes.json();
         const container = containers.find((c: any) => c.name === target.id);
         const logsData = await logsRes.json();
-        setDetail(container || null);
+        const projects = await projectsRes.json();
+        const sites = (projects.caddySites || []).map((s: any) => s.domain);
+        setDetail({ ...container, _sites: sites });
         setLogs(logsData.logs || "No logs");
       } else if (target.type === "site") {
         const [containersRes, mapsRes] = await Promise.all([fetch("/api/containers"), fetch("/api/site-maps")]);
@@ -384,6 +387,31 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                     Remove
                   </button>
                 </div>
+
+                {/* Assign to Site */}
+                {detail._sites && detail._sites.length > 0 && (
+                  <div className="bg-background/30 rounded-lg p-3">
+                    <label className="block text-[10px] font-mono text-muted mb-1.5">Assign to Site</label>
+                    <div className="flex gap-2">
+                      <select
+                        className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            linkContainerToSite(target.id, e.target.value);
+                            e.target.value = "";
+                          }
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="">Select a site...</option>
+                        {detail._sites.map((domain: string) => (
+                          <option key={domain} value={domain}>{domain}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="text-[10px] text-muted mt-1.5">Assignments persist until manually changed.</p>
+                  </div>
+                )}
 
                 <div>
                   <h4 className="text-xs font-mono text-muted mb-2">Recent Logs</h4>

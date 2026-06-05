@@ -118,7 +118,7 @@ export default function AIChatWidget() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 flex h-[500px] w-[360px] flex-col rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+        <div className="fixed bottom-24 right-2 sm:right-6 z-50 flex h-[500px] w-[calc(100vw-1rem)] sm:w-[360px] flex-col rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
           {/* Header */}
           <div className="flex items-center gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300">

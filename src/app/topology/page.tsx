@@ -226,8 +226,12 @@ export default function TopologyPage() {
       // Row 3: Sites (horizontal, inside host)
       const siteY = proxyBottom + HOST_PAD;
       const siteCount = Math.max(sites.length, 1);
+      const MIN_SITE_SPACING = 200; // minimum px between site centers to prevent overlap
       const usableWidth = W - PADDING * 2 - HOST_PAD * 2;
-      const siteSpacing = usableWidth / (siteCount + 1);
+      const requiredWidth = siteCount * MIN_SITE_SPACING;
+      // Expand SVG width if needed so sites don't overlap
+      const layoutW = Math.max(W, requiredWidth + PADDING * 2 + HOST_PAD * 2);
+      const siteSpacing = (layoutW - PADDING * 2 - HOST_PAD * 2) / (siteCount + 1);
 
       sites.forEach((site, i) => {
         const id = `site-${site.domain}`;
@@ -275,7 +279,7 @@ export default function TopologyPage() {
 
       // Unmapped containers on the right side
       if (unmapped.length > 0) {
-        const unmappedX = W - PADDING - HOST_PAD - 80;
+        const unmappedX = layoutW - PADDING - HOST_PAD - 80;
         const unmappedLabelY = containerStartY - NODE_GAP;
         topoNodes.push({
           id: "unmapped-label",
@@ -306,15 +310,18 @@ export default function TopologyPage() {
         maxContainerColumnHeight = Math.max(maxContainerColumnHeight, unmapped.length * (NODE_HEIGHT + NODE_GAP));
       }
 
+      // Use layoutW for host width calculations too
+      const effectiveW = layoutW;
+
       // Host node (drawn as a background rect)
       const hostBottom = containerStartY + maxContainerColumnHeight + HOST_PAD;
       topoNodes.push({
         id: "host",
         label: "VPS Host",
         type: "host",
-        x: W / 2,
+        x: layoutW / 2,
         y: (hostTop + hostBottom) / 2,
-        width: W - PADDING * 2,
+        width: layoutW - PADDING * 2,
         height: hostBottom - hostTop,
         health:
           parseFloat(stats.memory?.percent || "0") > 90 || parseFloat(stats.disk?.percent || "0") > 90
@@ -323,9 +330,9 @@ export default function TopologyPage() {
         data: stats,
       });
 
-      // Set SVG height
+      // Set SVG dimensions — width may expand to fit all sites
       const totalHeight = hostBottom + PADDING;
-      setDimensions((d) => ({ ...d, height: totalHeight }));
+      setDimensions({ width: layoutW, height: totalHeight });
 
       setNodes(topoNodes);
       setEdges(topoEdges);
@@ -405,7 +412,7 @@ export default function TopologyPage() {
             <div className="animate-pulse text-muted text-sm font-mono">Mapping infrastructure...</div>
           </div>
         ) : (
-          <svg width="100%" height={dimensions.height} viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}>
+          <svg width={dimensions.width} height={dimensions.height} viewBox={`0 0 ${dimensions.width} ${dimensions.height}`} style={{ minWidth: "100%" }}>
             <defs>
               <marker id="arrowdown" markerWidth="8" markerHeight="6" refX="4" refY="6" orient="auto">
                 <polygon points="0 0, 8 0, 4 6" fill="#555" />
