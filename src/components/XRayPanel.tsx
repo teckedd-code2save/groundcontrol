@@ -24,6 +24,7 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [logs, setLogs] = useState("");
   const [pendingAction, setPendingAction] = useState<{ action: ActionType; name: string } | null>(null);
+  const [allContainers, setAllContainers] = useState<any[]>([]);
 
   useEffect(() => {
     if (!target) {
@@ -49,11 +50,41 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
         setDetail(container || null);
         setLogs(logsData.logs || "No logs");
       } else if (target.type === "site") {
-        const [containersRes] = await Promise.all([fetch("/api/containers")]);
+        const [containersRes, mapsRes] = await Promise.all([fetch("/api/containers"), fetch("/api/site-maps")]);
         const containers = await containersRes.json();
+        const siteMaps = await mapsRes.json();
         const site = target.data;
-        const related = matchContainersToSite(site.domain, site.proxy, containers);
-        setDetail({ ...site, relatedContainers: related });
+
+        const matched: any[] = [];
+        const matchedNames = new Set<string>();
+
+        // Strategy 1: Manual mappings
+        const manual = siteMaps
+          .filter((m: any) => m.siteDomain === site.domain)
+          .map((m: any) => containers.find((c: any) => c.name === m.containerName))
+          .filter(Boolean);
+        manual.forEach((c: any) => { matched.push(c); matchedNames.add(c.name); });
+
+        // Strategy 2: Docker Compose project labels
+        const domainSlugs = site.domain.toLowerCase().replace(/^www\./, "").replace(/\.(com|net|org|io|dev|app|co|uk|us|de|fr|nl|be|eu|tech|cloud|space|online|store|site|blog|info|biz|ai|gh|za|ng)$/i, "").split(".");
+        containers.forEach((c: any) => {
+          if (matchedNames.has(c.name)) return;
+          const proj = (c.composeProject || "").toLowerCase();
+          for (const slug of domainSlugs) {
+            if (slug.length > 2 && (proj === slug || proj.includes(slug) || slug.includes(proj))) {
+              matched.push(c);
+              matchedNames.add(c.name);
+              return;
+            }
+          }
+        });
+
+        // Strategy 3: Heuristics
+        const heuristic = matchContainersToSite(site.domain, site.proxy, containers.filter((c: any) => !matchedNames.has(c.name)));
+        heuristic.forEach((c: any) => { matched.push(c); matchedNames.add(c.name); });
+
+        setAllContainers(containers);
+        setDetail({ ...site, relatedContainers: matched, siteMaps });
       } else if (target.type === "host") {
         const res = await fetch("/api/vps/stats");
         setDetail(await res.json());
@@ -118,7 +149,30 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
     }
   }
 
-  function getWhatsWrong(): string[] {
+  async function linkContainer(containerName: string) {
+    if (!target || target.type !== "site") return;
+    try {
+      await fetch("/api/site-maps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteDomain: target.name, containerName }),
+      });
+      await loadDetail();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function unlinkContainer(mapId: number) {
+    try {
+      await fetch(`/api/site-maps?id=${mapId}`, { method: "DELETE" });
+      await loadDetail();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function getWhatsWrong() {
     if (!detail) return [];
     const issues: string[] = [];
 
@@ -326,12 +380,15 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                 </div>
 
                 {/* Related Containers */}
-                {detail.relatedContainers && detail.relatedContainers.length > 0 && (
-                  <div>
-                    <h4 className="text-xs font-mono text-muted mb-2">Related Containers</h4>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-mono text-muted">Related Containers ({detail.relatedContainers?.length || 0})</h4>
+                  </div>
+                  {detail.relatedContainers && detail.relatedContainers.length > 0 ? (
                     <div className="space-y-2">
                       {detail.relatedContainers.map((c: any) => {
                         const ctype = getContainerType(c.name, c.image);
+                        const isManual = detail.siteMaps?.some((m: any) => m.siteDomain === detail.domain && m.containerName === c.name);
                         return (
                           <div key={c.name} className="bg-background/50 rounded-lg p-3">
                             <div className="flex items-center justify-between mb-1">
@@ -339,16 +396,32 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                                 <ContainerIcon className="w-4 h-4" type={ctype} />
                                 <span className="text-xs font-mono font-medium">{c.name}</span>
                                 <span className="text-[10px] text-muted bg-border/50 px-1.5 py-0.5 rounded">{getContainerTypeLabel(ctype)}</span>
+                                {c.composeProject && (
+                                  <span className="text-[10px] text-accent/70 bg-accent/10 px-1.5 py-0.5 rounded">{c.composeProject}:{c.composeService}</span>
+                                )}
                               </div>
-                              <div
-                                className={`w-2 h-2 rounded-full ${
-                                  c.state === "running"
-                                    ? c.status?.includes("unhealthy")
-                                      ? "bg-warning"
-                                      : "bg-success"
-                                    : "bg-error"
-                                }`}
-                              />
+                              <div className="flex items-center gap-2">
+                                {isManual && (
+                                  <button
+                                    onClick={() => {
+                                      const map = detail.siteMaps.find((m: any) => m.siteDomain === detail.domain && m.containerName === c.name);
+                                      if (map) unlinkContainer(map.id);
+                                    }}
+                                    className="text-[10px] text-muted hover:text-error transition-colors"
+                                  >
+                                    Unlink
+                                  </button>
+                                )}
+                                <div
+                                  className={`w-2 h-2 rounded-full ${
+                                    c.state === "running"
+                                      ? c.status?.includes("unhealthy")
+                                        ? "bg-warning"
+                                        : "bg-success"
+                                      : "bg-error"
+                                  }`}
+                                />
+                              </div>
                             </div>
                             <div className="grid grid-cols-3 gap-2 text-[10px] font-mono text-muted">
                               <span>CPU {c.stats?.cpu || "—"}</span>
@@ -359,8 +432,39 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                         );
                       })}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="text-xs text-muted bg-background/30 rounded-lg p-3">
+                      No containers auto-detected for this site.
+                      <br />
+                      <span className="text-[10px]">Try linking containers manually below, or ensure Docker Compose project names match the domain.</span>
+                    </div>
+                  )}
+
+                  {/* Manual Link */}
+                  {allContainers.length > 0 && (
+                    <div className="mt-3 flex gap-2">
+                      <select
+                        className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            linkContainer(e.target.value);
+                            e.target.value = "";
+                          }
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="">Link a container...</option>
+                        {allContainers
+                          .filter((c: any) => !detail.relatedContainers?.some((r: any) => r.name === c.name))
+                          .map((c: any) => (
+                            <option key={c.name} value={c.name}>
+                              {c.name} {c.composeProject ? `(${c.composeProject})` : ""}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
 
                 <div className="flex gap-2">
                   <button

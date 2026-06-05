@@ -4,6 +4,7 @@ import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
 import { AuthGuard } from "@/components/AuthGuard";
 import CommandPalette from "@/components/CommandPalette";
+import AIChatWidget from "@/components/AIChatWidget";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,6 +38,7 @@ export default function RootLayout({
             {children}
           </main>
           <CommandPalette />
+          <AIChatWidget />
         </AuthGuard>
       </body>
     </html>

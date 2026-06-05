@@ -27,6 +27,8 @@ interface Container {
   status: string;
   state: string;
   stats?: { cpu: string; mem: string; pids: string };
+  composeProject?: string;
+  composeService?: string;
 }
 
 interface SiteGroup {
@@ -118,11 +120,47 @@ export default function TopologyPage() {
       const services: any[] = projects.services || [];
       const sites = allSites.filter((s) => !isRawDomain(s.domain));
 
-      // Group containers by site
+      // Fetch manual site→container mappings
+      let siteMaps: { siteDomain: string; containerName: string }[] = [];
+      try {
+        const mapsRes = await fetch("/api/site-maps");
+        if (mapsRes.ok) siteMaps = await mapsRes.json();
+      } catch {
+        // ignore
+      }
+
+      // Group containers by site using multi-strategy matching
       const usedContainers = new Set<string>();
       const siteGroups: SiteGroup[] = [];
       for (const site of sites) {
-        const matched = matchContainersToSite(site.domain, site.proxy, containers);
+        const matched: Container[] = [];
+        const matchedNames = new Set<string>();
+
+        // Strategy 1: Manual mappings from DB
+        const manual = siteMaps
+          .filter((m) => m.siteDomain === site.domain)
+          .map((m) => containers.find((c) => c.name === m.containerName))
+          .filter(Boolean) as Container[];
+        manual.forEach((c) => { matched.push(c); matchedNames.add(c.name); });
+
+        // Strategy 2: Docker Compose project label matching
+        const domainSlugs = site.domain.toLowerCase().replace(/^www\./, "").replace(/\.(com|net|org|io|dev|app|co|uk|us|de|fr|nl|be|eu|tech|cloud|space|online|store|site|blog|info|biz|ai|gh|za|ng)$/i, "").split(".");
+        containers.forEach((c) => {
+          if (matchedNames.has(c.name)) return;
+          const proj = (c.composeProject || "").toLowerCase();
+          for (const slug of domainSlugs) {
+            if (slug.length > 2 && (proj === slug || proj.includes(slug) || slug.includes(proj))) {
+              matched.push(c);
+              matchedNames.add(c.name);
+              return;
+            }
+          }
+        });
+
+        // Strategy 3: Heuristic matching (proxy target + domain slug)
+        const heuristic = matchContainersToSite(site.domain, site.proxy, containers.filter((c) => !matchedNames.has(c.name)));
+        heuristic.forEach((c) => { matched.push(c); matchedNames.add(c.name); });
+
         matched.forEach((c) => usedContainers.add(c.name));
         siteGroups.push({ site, containers: matched });
       }

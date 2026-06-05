@@ -257,8 +257,125 @@ export default function SettingsPage() {
       {/* Database Backup / Restore */}
       <BackupRestoreSection />
 
+      {/* System Paths */}
+      <SystemPathsSection />
+
       {/* Admin: User Management */}
       <UserManagementSection />
+    </div>
+  );
+}
+
+function SystemPathsSection() {
+  const [config, setConfig] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/system-config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        setConfig(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!config) return;
+    setSaving(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/system-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectRoot: config.projectRoot,
+          caddySitesDir: config.caddySitesDir,
+          caddyFile: config.caddyFile,
+          nginxSitesDir: config.nginxSitesDir,
+          nginxLogPath: config.nginxLogPath,
+          staticRoot: config.staticRoot,
+          sshDefaultCwd: config.sshDefaultCwd,
+          certDomain: config.certDomain,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setConfig(data);
+        setResult({ success: true, message: "System paths updated" });
+      } else {
+        setResult({ success: false, message: data.error || "Failed to update" });
+      }
+    } catch {
+      setResult({ success: false, message: "Network error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="bg-card border border-border rounded-xl p-6 mt-8 animate-pulse">
+        <div className="h-4 bg-border rounded w-1/3 mb-4" />
+        <div className="h-8 bg-border rounded mb-2" />
+        <div className="h-8 bg-border rounded" />
+      </div>
+    );
+  }
+
+  const fields = [
+    { key: "projectRoot", label: "Project Root", placeholder: "/opt" },
+    { key: "caddySitesDir", label: "Caddy Sites Directory", placeholder: "/etc/caddy/sites" },
+    { key: "caddyFile", label: "Caddy Main Config", placeholder: "/etc/caddy/Caddyfile" },
+    { key: "nginxSitesDir", label: "Nginx Sites Directory", placeholder: "/etc/nginx/sites-available" },
+    { key: "nginxLogPath", label: "Nginx Error Log", placeholder: "/var/log/nginx/error.log" },
+    { key: "staticRoot", label: "Static Files Root", placeholder: "/var/www" },
+    { key: "sshDefaultCwd", label: "SSH Default CWD", placeholder: "/root" },
+    { key: "certDomain", label: "SSL Cert Domain", placeholder: "yourdomain.com (optional)" },
+  ];
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6 mt-8">
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
+        System Paths
+      </h2>
+      <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {fields.map((f) => (
+            <div key={f.key}>
+              <label className="block text-xs font-mono text-muted mb-1.5">{f.label}</label>
+              <input
+                type="text"
+                value={config?.[f.key] || ""}
+                onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                placeholder={f.placeholder}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors font-mono"
+              />
+            </div>
+          ))}
+        </div>
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save Paths"}
+        </button>
+        {result && (
+          <div
+            className={`p-3 rounded-lg text-sm ${
+              result.success
+                ? "bg-success/10 border border-success/30 text-success"
+                : "bg-error/10 border border-error/30 text-error"
+            }`}
+          >
+            {result.message}
+          </div>
+        )}
+      </form>
     </div>
   );
 }

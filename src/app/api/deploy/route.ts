@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { execOnVps, getDockerComposeCommand } from "@/lib/vps";
+import { execOnVps, getDockerComposeCommand, getSystemConfig } from "@/lib/vps";
 import { createAlert } from "@/lib/alerts";
 
 export async function GET() {
@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
 
   (async () => {
     try {
-      const projectPath = `/opt/${projectSlug}`;
+      const config = await getSystemConfig();
+      const projectPath = `${config.projectRoot}/${projectSlug}`;
       const composeCmd = await getDockerComposeCommand();
       const result = await execOnVps(
         `cd ${projectPath} && ${composeCmd} pull && ${composeCmd} up -d --remove-orphans`

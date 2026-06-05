@@ -200,6 +200,23 @@ export async function getDockerStats(vps?: VpsConnection | null) {
     });
 }
 
+export async function getDockerContainerLabels(vps?: VpsConnection | null) {
+  const conn = vps || (await getActiveVps());
+  const result = await execOnVps(
+    `docker ps -aq | xargs -r docker inspect --format "{{.Name}}|{{index .Config.Labels \\"com.docker.compose.project\\"}}|{{index .Config.Labels \\"com.docker.compose.service\\"}}" 2>/dev/null || echo ""`,
+    conn
+  );
+  if (!result.stdout.trim()) return [];
+
+  return result.stdout
+    .trim()
+    .split("\n")
+    .map((line) => {
+      const [name, project, service] = line.split("|");
+      return { name: name.replace(/^\//, ""), project: project || "", service: service || "" };
+    });
+}
+
 export async function getContainerLogs(
   containerName: string,
   tail: number = 100,
@@ -211,6 +228,26 @@ export async function getContainerLogs(
     conn
   );
   return result.stdout;
+}
+
+let systemConfigCache: any = null;
+let systemConfigCacheTime = 0;
+
+export async function getSystemConfig() {
+  if (systemConfigCache && Date.now() - systemConfigCacheTime < 30000) {
+    return systemConfigCache;
+  }
+  let config = await prisma.systemConfig.findFirst();
+  if (!config) {
+    config = await prisma.systemConfig.create({ data: {} });
+  }
+  systemConfigCache = config;
+  systemConfigCacheTime = Date.now();
+  return config;
+}
+
+export function invalidateSystemConfigCache() {
+  systemConfigCache = null;
 }
 
 export async function getDockerComposeCommand(vps?: VpsConnection | null): Promise<string> {
@@ -300,17 +337,18 @@ export async function getSystemdServices(vps?: VpsConnection | null) {
 
 export async function scanProjects(vps?: VpsConnection | null) {
   const conn = vps || (await getActiveVps());
+  const config = await getSystemConfig();
 
-  // Scan /opt/ directories
+  // Scan project root directories
   const optResult = await execOnVps(
-    `ls -1 /opt/ 2>/dev/null`,
+    `ls -1 ${config.projectRoot}/ 2>/dev/null`,
     conn
   );
   const optDirs = optResult.stdout.trim().split("\n").filter(Boolean);
 
   // Scan Caddy sites
   const caddyResult = await execOnVps(
-    `for f in /etc/caddy/sites/*.caddy; do echo "---FILE:$f---"; cat "$f"; done`,
+    `for f in ${config.caddySitesDir}/*.caddy; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`,
     conn
   );
 

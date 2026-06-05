@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps, resolveBinary } from "@/lib/vps";
+import { execOnVps, resolveBinary, getSystemConfig } from "@/lib/vps";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   try {
     await requireAuth(req);
+    const config = await getSystemConfig();
 
     const caddyBin = await resolveBinary("caddy");
     const nginxBin = await resolveBinary("nginx");
@@ -19,12 +20,12 @@ export async function GET(req: NextRequest) {
 
     // Caddy configs
     const caddyConfigs = await execOnVps(
-      `for f in /etc/caddy/sites/*.caddy; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`
+      `for f in ${config.caddySitesDir}/*.caddy; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`
     );
 
     // Nginx configs
     const nginxConfigs = await execOnVps(
-      `for f in /etc/nginx/sites-available/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`
+      `for f in ${config.nginxSitesDir}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`
     );
 
     // Parse configs
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
   try {
     await requireAuth(req);
     const { action, server } = await req.json();
+    const config = await getSystemConfig();
 
     const caddyBin = await resolveBinary("caddy");
     const nginxBin = await resolveBinary("nginx");
@@ -62,18 +64,18 @@ export async function POST(req: NextRequest) {
         result = await execOnVps(
           server === "nginx"
             ? `${nginxBin} -t && systemctl reload nginx`
-            : `${caddyBin} reload --config /etc/caddy/Caddyfile 2>/dev/null || systemctl reload caddy`
+            : `${caddyBin} reload --config ${config.caddyFile} 2>/dev/null || systemctl reload caddy`
         );
         break;
       case "test":
         result = await execOnVps(
-          server === "nginx" ? `${nginxBin} -t` : `${caddyBin} validate --config /etc/caddy/Caddyfile 2>/dev/null || echo 'caddy validate not available'`
+          server === "nginx" ? `${nginxBin} -t` : `${caddyBin} validate --config ${config.caddyFile} 2>/dev/null || echo 'caddy validate not available'`
         );
         break;
       case "logs":
         result = await execOnVps(
           server === "nginx"
-            ? "tail -n 100 /var/log/nginx/error.log 2>/dev/null || journalctl -u nginx --no-pager -n 100"
+            ? `tail -n 100 ${config.nginxLogPath} 2>/dev/null || journalctl -u nginx --no-pager -n 100`
             : "journalctl -u caddy --no-pager -n 100 2>/dev/null || docker logs --tail 100 caddy 2>/dev/null || echo 'No caddy logs found'"
         );
         break;

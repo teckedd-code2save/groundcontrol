@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDockerContainers, getDockerStats, controlContainer, getContainerLogs } from "@/lib/vps";
+import { getDockerContainers, getDockerStats, getDockerContainerLabels, controlContainer } from "@/lib/vps";
 
 export async function GET() {
   try {
-    const [containers, stats] = await Promise.all([
+    const [containers, stats, labels] = await Promise.all([
       getDockerContainers(),
       getDockerStats(),
+      getDockerContainerLabels(),
     ]);
 
     const statsMap = new Map(stats.map((s) => [s.name, s]));
+    const labelsMap = new Map(labels.map((l) => [l.name, l]));
+
     const merged = containers.map((c) => ({
       ...c,
       stats: statsMap.get(c.name) || null,
+      composeProject: labelsMap.get(c.name)?.project || "",
+      composeService: labelsMap.get(c.name)?.service || "",
     }));
 
     return NextResponse.json(merged);

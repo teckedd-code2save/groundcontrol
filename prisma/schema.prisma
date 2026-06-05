@@ -85,3 +85,25 @@ model MetricSnapshot {
   unhealthyContainers Int
   createdAt DateTime @default(now())
 }
+
+model SiteContainerMap {
+  id            Int      @id @default(autoincrement())
+  siteDomain    String
+  containerName String
+  createdAt     DateTime @default(now())
+
+  @@unique([siteDomain, containerName])
+}
+
+model SystemConfig {
+  id            Int    @id @default(autoincrement())
+  projectRoot   String @default("/opt")
+  caddySitesDir String @default("/etc/caddy/sites")
+  caddyFile     String @default("/etc/caddy/Caddyfile")
+  nginxSitesDir String @default("/etc/nginx/sites-available")
+  nginxLogPath  String @default("/var/log/nginx/error.log")
+  staticRoot    String @default("/var/www")
+  sshDefaultCwd String @default("/root")
+  certDomain    String @default("")
+  updatedAt     DateTime @updatedAt
+}

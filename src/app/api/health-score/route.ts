@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSystemStats, getDockerContainers, getDockerStats, execOnVps } from "@/lib/vps";
+import { getSystemStats, getDockerContainers, getDockerStats, execOnVps, getSystemConfig } from "@/lib/vps";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   try {
     await requireAuth(req);
+    const config = await getSystemConfig();
 
     const [stats, containers, containerStats] = await Promise.all([
       getSystemStats(),
@@ -53,15 +54,17 @@ export async function GET(req: NextRequest) {
     if (caddyStatus.stdout.trim() !== "active") proxyScore -= 15;
 
     // Check SSL cert expiry (rough check)
-    const certCheck = await execOnVps(
-      "openssl x509 -in /etc/caddy/certs/groundcontrol.serendepify.com.crt -noout -dates 2>/dev/null || echo 'notfound'"
-    );
-    if (certCheck.stdout.includes("notAfter")) {
-      const notAfter = certCheck.stdout.match(/notAfter=(.+)/);
-      if (notAfter) {
-        const expiry = new Date(notAfter[1]);
-        const daysUntil = Math.floor((expiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        if (daysUntil < 7) proxyScore -= 5;
+    if (config.certDomain) {
+      const certCheck = await execOnVps(
+        `openssl x509 -in /etc/caddy/certs/${config.certDomain}.crt -noout -dates 2>/dev/null || echo 'notfound'`
+      );
+      if (certCheck.stdout.includes("notAfter")) {
+        const notAfter = certCheck.stdout.match(/notAfter=(.+)/);
+        if (notAfter) {
+          const expiry = new Date(notAfter[1]);
+          const daysUntil = Math.floor((expiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          if (daysUntil < 7) proxyScore -= 5;
+        }
       }
     }
     proxyScore = Math.max(0, proxyScore);

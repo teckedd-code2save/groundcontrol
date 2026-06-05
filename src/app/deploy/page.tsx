@@ -48,6 +48,7 @@ export default function DeployPage() {
   const [selectedLog, setSelectedLog] = useState<DeployLog | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [confirmDeploy, setConfirmDeploy] = useState<string | null>(null);
+  const [projectRoot, setProjectRoot] = useState("/opt");
 
   async function fetchLogs() {
     const res = await fetch("/api/deploy");
@@ -80,6 +81,10 @@ export default function DeployPage() {
   useEffect(() => {
     fetchLogs();
     fetchProjects();
+    fetch("/api/system-config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c) => { if (c?.projectRoot) setProjectRoot(c.projectRoot); })
+      .catch(() => {});
     const interval = setInterval(fetchLogs, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -143,7 +148,7 @@ export default function DeployPage() {
                 </button>
               </div>
               <div className="text-xs text-muted font-mono">
-                /opt/{project.slug} · docker compose up -d
+                {projectRoot}/{project.slug} · docker compose up -d
               </div>
             </div>
           ))}
