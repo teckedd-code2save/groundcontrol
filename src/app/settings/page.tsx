@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { SensitiveField, SensitiveInput } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
+import VpsFilePicker from "@/components/VpsFilePicker";
 
 interface VpsConfig {
   id: number;
@@ -271,6 +272,9 @@ function SystemPathsSection() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerTarget, setPickerTarget] = useState<string>("");
+  const [pickerPath, setPickerPath] = useState("/");
 
   useEffect(() => {
     fetch("/api/system-config")
@@ -316,6 +320,19 @@ function SystemPathsSection() {
     }
   }
 
+  function openPicker(key: string, currentValue: string) {
+    setPickerTarget(key);
+    setPickerPath(currentValue && currentValue.startsWith("/") ? currentValue : "/");
+    setPickerOpen(true);
+  }
+
+  function onPickerSelect(path: string) {
+    if (pickerTarget && config) {
+      setConfig({ ...config, [pickerTarget]: path });
+    }
+    setPickerOpen(false);
+  }
+
   if (loading) {
     return (
       <div className="bg-card border border-border rounded-xl p-6 mt-8 animate-pulse">
@@ -347,13 +364,25 @@ function SystemPathsSection() {
           {fields.map((f) => (
             <div key={f.key}>
               <label className="block text-xs font-mono text-muted mb-1.5">{f.label}</label>
-              <input
-                type="text"
-                value={config?.[f.key] || ""}
-                onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
-                placeholder={f.placeholder}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors font-mono"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={config?.[f.key] || ""}
+                  onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                  placeholder={f.placeholder}
+                  className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => openPicker(f.key, config?.[f.key] || "")}
+                  className="shrink-0 px-2.5 py-2 border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
+                  title="Browse VPS filesystem"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                  </svg>
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -376,6 +405,12 @@ function SystemPathsSection() {
           </div>
         )}
       </form>
+      <VpsFilePicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={onPickerSelect}
+        initialPath={pickerPath}
+      />
     </div>
   );
 }

@@ -137,7 +137,7 @@ export default function CommandPalette() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-50 p-3 bg-card border border-border rounded-full shadow-lg hover:border-accent hover:text-accent transition-colors"
+        className="fixed bottom-6 left-6 z-50 p-3 bg-card border border-border rounded-full shadow-lg hover:border-accent hover:text-accent transition-colors"
         title="Command Palette (Cmd+K)"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

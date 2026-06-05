@@ -343,6 +343,7 @@ export default function TopologyPage() {
   }, [dimensions.width]);
 
   function handleNodeClick(node: TopoNode) {
+    if (node.id === "unmapped-label") return; // System label is not clickable
     if (node.type === "container") {
       setXrayTarget({ type: "container", id: node.data.name, name: node.data.name, data: node.data });
     } else if (node.type === "site") {

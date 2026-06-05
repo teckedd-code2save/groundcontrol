@@ -202,19 +202,30 @@ export async function getDockerStats(vps?: VpsConnection | null) {
 
 export async function getDockerContainerLabels(vps?: VpsConnection | null) {
   const conn = vps || (await getActiveVps());
-  const result = await execOnVps(
-    `docker ps -aq | xargs -r docker inspect --format "{{.Name}}|{{index .Config.Labels \\"com.docker.compose.project\\"}}|{{index .Config.Labels \\"com.docker.compose.service\\"}}" 2>/dev/null || echo ""`,
+  // Fetch container names first, then inspect each individually to avoid xargs -r portability issues
+  const namesResult = await execOnVps(
+    `docker ps -aq --format "{{.Names}}" 2>/dev/null || echo ""`,
     conn
   );
-  if (!result.stdout.trim()) return [];
+  const names = namesResult.stdout.trim().split("\n").filter(Boolean);
+  if (names.length === 0) return [];
 
-  return result.stdout
-    .trim()
-    .split("\n")
-    .map((line) => {
-      const [name, project, service] = line.split("|");
-      return { name: name.replace(/^\//, ""), project: project || "", service: service || "" };
-    });
+  const results: { name: string; project: string; service: string }[] = [];
+  for (const name of names) {
+    try {
+      const inspect = await execOnVps(
+        `docker inspect --format "{{.Name}}|{{index .Config.Labels \\"com.docker.compose.project\\"}}|{{index .Config.Labels \\"com.docker.compose.service\\"}}" "${name}" 2>/dev/null || echo ""`,
+        conn
+      );
+      const [n, project, service] = inspect.stdout.trim().split("|");
+      if (n) {
+        results.push({ name: n.replace(/^\//, ""), project: project || "", service: service || "" });
+      }
+    } catch {
+      // skip containers we can't inspect
+    }
+  }
+  return results;
 }
 
 export async function getContainerLogs(
@@ -270,16 +281,25 @@ export async function resolveBinary(
   vps?: VpsConnection | null
 ): Promise<string> {
   const conn = vps || (await getActiveVps());
-  // Try `which` first
+
+  // Try `which` first (works on most systems)
   const which = await execOnVps(`which ${name} 2>/dev/null || echo ""`, conn);
   const path = which.stdout.trim();
-  if (path) return path;
+  if (path && !path.includes("not found")) return path;
 
-  // Common fallback paths
+  // Try `command -v` (more portable on BusyBox/Alpine)
+  const commandV = await execOnVps(`command -v ${name} 2>/dev/null || echo ""`, conn);
+  const commandPath = commandV.stdout.trim();
+  if (commandPath && commandPath.startsWith("/")) return commandPath;
+
+  // Common fallback paths (Debian/Ubuntu/Alpine)
   const candidates = [
     `/usr/local/bin/${name}`,
+    `/usr/local/sbin/${name}`,
     `/usr/bin/${name}`,
+    `/usr/sbin/${name}`,
     `/bin/${name}`,
+    `/sbin/${name}`,
     `/opt/${name}/${name}`,
     `/snap/bin/${name}`,
   ];
@@ -287,6 +307,10 @@ export async function resolveBinary(
     const test = await execOnVps(`test -x ${p} && echo ${p} || echo ""`, conn);
     if (test.stdout.trim()) return test.stdout.trim();
   }
+
+  // Alpine: check if installed via apk
+  const apk = await execOnVps(`apk info -L ${name} 2>/dev/null | grep -E "bin/${name}$" || echo ""`, conn);
+  if (apk.stdout.trim()) return apk.stdout.trim();
 
   // Also try docker container name for caddy/nginx
   if (name === "caddy" || name === "nginx") {
@@ -346,31 +370,61 @@ export async function scanProjects(vps?: VpsConnection | null) {
   );
   const optDirs = optResult.stdout.trim().split("\n").filter(Boolean);
 
-  // Scan Caddy sites
+  // Scan Caddy sites — try all files in sites dir, not just .caddy extension
   const caddyResult = await execOnVps(
-    `for f in ${config.caddySitesDir}/*.caddy; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`,
+    `for f in ${config.caddySitesDir}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`,
     conn
   );
 
+  // Also try the main Caddyfile if sites dir yielded nothing
+  let mainCaddyfile = "";
+  if (!caddyResult.stdout.trim()) {
+    const mainResult = await execOnVps(
+      `cat ${config.caddyFile} 2>/dev/null || echo ""`,
+      conn
+    );
+    mainCaddyfile = mainResult.stdout;
+  }
+
   // Parse Caddy configs to extract domains and roots
   const sites: any[] = [];
-  const blocks = caddyResult.stdout.split("---FILE:");
-  for (const block of blocks) {
-    if (!block.trim()) continue;
-    const [filePath, ...contentLines] = block.split("\n");
-    const content = contentLines.join("\n");
-    const domainMatch = content.match(/^(\S+\.\S+)\s*\{/);
-    const rootMatch = content.match(/root\s+\*?\s+(\S+)/);
-    const proxyMatch = content.match(/reverse_proxy\s+(\S+)/);
-    if (domainMatch) {
+  const seenDomains = new Set<string>();
+
+  function parseCaddyBlock(content: string, filePath: string) {
+    // Caddy v2 block format: domain { ... }
+    // Also handles :port, multiple domains on one line, and domain:port
+    const blockRegex = /^(\S+(?:\.\S+)*)\s*\{([\s\S]*?)\n\}/gm;
+    let m;
+    while ((m = blockRegex.exec(content)) !== null) {
+      const domain = m[1].trim();
+      const blockContent = m[2];
+      if (!domain || seenDomains.has(domain)) continue;
+      // Skip raw port bindings and localhost unless they have a root/proxy
+      const rootMatch = blockContent.match(/root\s+\*?\s+(\S+)/);
+      const proxyMatch = blockContent.match(/reverse_proxy\s+(\S+)/);
+      if (domain.match(/^:\d+$/) && !rootMatch && !proxyMatch) continue;
+      seenDomains.add(domain);
       sites.push({
-        file: filePath.replace("---", ""),
-        domain: domainMatch[1],
+        file: filePath,
+        domain,
         root: rootMatch ? rootMatch[1] : null,
         proxy: proxyMatch ? proxyMatch[1] : null,
-        content,
+        content: m[0],
       });
     }
+  }
+
+  if (caddyResult.stdout.trim()) {
+    const blocks = caddyResult.stdout.split("---FILE:");
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+      const [filePath, ...contentLines] = block.split("\n");
+      parseCaddyBlock(contentLines.join("\n"), filePath.replace("---", ""));
+    }
+  }
+
+  if (mainCaddyfile.trim()) {
+    parseCaddyBlock(mainCaddyfile, config.caddyFile);
   }
 
   return { optDirs, caddySites: sites };

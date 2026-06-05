@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "@/components/StatCard";
 import HealthScore from "@/components/HealthScore";
+import MemoryPanel from "@/components/MemoryPanel";
 import {
   AreaChart,
   Area,
@@ -58,6 +59,7 @@ export default function DashboardPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
 
   async function collectMetrics() {
     try {
@@ -113,8 +115,8 @@ export default function DashboardPage() {
   const unhealthyContainers = containers.filter((c) => c.status.includes("unhealthy")).length;
   const stoppedContainers = containers.filter((c) => c.state !== "running").length;
 
-  function generateIntelligence(): { title: string; items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string }[] } {
-    const items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string }[] = [];
+  function generateIntelligence(): { title: string; items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string; action?: () => void }[] } {
+    const items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string; action?: () => void }[] = [];
 
     // Containers
     if (containers.length === 0) {
@@ -131,11 +133,11 @@ export default function DashboardPage() {
     if (stats) {
       const memPct = parseFloat(stats.memory.percent);
       if (memPct > 90) {
-        items.push({ label: "Memory", status: "critical", detail: `Usage at ${memPct}%. System may become unstable.`, href: "/topology" });
+        items.push({ label: "Memory", status: "critical", detail: `Usage at ${memPct}%. System may become unstable.`, action: () => setMemoryPanelOpen(true) });
       } else if (memPct > 75) {
-        items.push({ label: "Memory", status: "warn", detail: `Usage at ${memPct}%. Monitor closely.`, href: "/topology" });
+        items.push({ label: "Memory", status: "warn", detail: `Usage at ${memPct}%. Monitor closely.`, action: () => setMemoryPanelOpen(true) });
       } else {
-        items.push({ label: "Memory", status: "good", detail: `Usage at ${memPct}%. Plenty of headroom.`, href: "/topology" });
+        items.push({ label: "Memory", status: "good", detail: `Usage at ${memPct}%. Plenty of headroom.` });
       }
     }
 
@@ -143,11 +145,11 @@ export default function DashboardPage() {
     if (stats) {
       const diskPct = parseFloat(stats.disk.percent);
       if (diskPct > 90) {
-        items.push({ label: "Disk", status: "critical", detail: `Usage at ${diskPct}%. Clean up logs and prune Docker.`, href: "/topology" });
+        items.push({ label: "Disk", status: "critical", detail: `Usage at ${diskPct}%. Clean up logs and prune Docker.`, action: () => setMemoryPanelOpen(true) });
       } else if (diskPct > 75) {
-        items.push({ label: "Disk", status: "warn", detail: `Usage at ${diskPct}%. Consider pruning unused images.`, href: "/topology" });
+        items.push({ label: "Disk", status: "warn", detail: `Usage at ${diskPct}%. Consider pruning unused images.`, action: () => setMemoryPanelOpen(true) });
       } else {
-        items.push({ label: "Disk", status: "good", detail: `Usage at ${diskPct}%. Healthy capacity.`, href: "/topology" });
+        items.push({ label: "Disk", status: "good", detail: `Usage at ${diskPct}%. Healthy capacity.` });
       }
     }
 
@@ -216,29 +218,40 @@ export default function DashboardPage() {
             </div>
             <h3 className="text-lg font-medium mb-3">{intelligence.title}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {intelligence.items.map((item) => (
-                <a
-                  key={item.label}
-                  href={item.href}
-                  className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-                    item.status === "critical"
-                      ? "bg-error/5 border-error/20 hover:bg-error/10"
-                      : item.status === "warn"
-                      ? "bg-warning/5 border-warning/20 hover:bg-warning/10"
-                      : "bg-success/5 border-success/20 hover:bg-success/10"
-                  }`}
-                >
-                  <div
-                    className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                      item.status === "critical" ? "bg-error" : item.status === "warn" ? "bg-warning" : "bg-success"
-                    }`}
-                  />
-                  <div>
-                    <div className="text-xs font-mono font-medium">{item.label}</div>
-                    <div className="text-[11px] text-muted mt-0.5 leading-relaxed">{item.detail}</div>
-                  </div>
-                </a>
-              ))}
+              {intelligence.items.map((item) => {
+                const className = `flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
+                  item.status === "critical"
+                    ? "bg-error/5 border-error/20 hover:bg-error/10"
+                    : item.status === "warn"
+                    ? "bg-warning/5 border-warning/20 hover:bg-warning/10"
+                    : "bg-success/5 border-success/20 hover:bg-success/10"
+                }`;
+                const content = (
+                  <>
+                    <div
+                      className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                        item.status === "critical" ? "bg-error" : item.status === "warn" ? "bg-warning" : "bg-success"
+                      }`}
+                    />
+                    <div>
+                      <div className="text-xs font-mono font-medium">{item.label}</div>
+                      <div className="text-[11px] text-muted mt-0.5 leading-relaxed">{item.detail}</div>
+                    </div>
+                  </>
+                );
+                if (item.action) {
+                  return (
+                    <button key={item.label} onClick={item.action} className={className + " text-left w-full"}>
+                      {content}
+                    </button>
+                  );
+                }
+                return (
+                  <a key={item.label} href={item.href} className={className}>
+                    {content}
+                  </a>
+                );
+              })}
             </div>
           </div>
 
@@ -395,6 +408,7 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+      <MemoryPanel open={memoryPanelOpen} onClose={() => setMemoryPanelOpen(false)} />
     </div>
   );
 }
