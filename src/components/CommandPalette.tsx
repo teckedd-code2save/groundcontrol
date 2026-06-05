@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import Link from "next/link";
 
 interface CommandItem {
   id: string;
@@ -54,7 +53,6 @@ export default function CommandPalette() {
       setQuery("");
       setSelected(0);
       inputRef.current?.focus();
-      // Fetch dynamic data
       fetch("/api/containers")
         .then((r) => (r.ok ? r.json() : []))
         .then((d) => setContainers(Array.isArray(d) ? d : []))
@@ -133,17 +131,20 @@ export default function CommandPalette() {
     }
   }
 
+  // Top-right search bar trigger
   if (!open) {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 left-6 z-50 p-3 bg-card border border-border rounded-full shadow-lg hover:border-accent hover:text-accent transition-colors"
+        className="fixed top-4 right-4 z-50 flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg shadow-sm hover:border-accent hover:text-accent transition-colors"
         title="Command Palette (Cmd+K)"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
+        <span className="text-xs text-muted hidden sm:inline">Search...</span>
+        <span className="hidden md:inline text-[10px] font-mono text-muted border border-border rounded px-1">⌘K</span>
       </button>
     );
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 interface FileEntry {
   name: string;
@@ -17,7 +17,7 @@ interface VpsFilePickerProps {
   onClose: () => void;
   onSelect: (path: string) => void;
   initialPath?: string;
-  selectFile?: boolean; // if false, only allow selecting directories
+  selectFile?: boolean;
 }
 
 export default function VpsFilePicker({ open, onClose, onSelect, initialPath = "/", selectFile = false }: VpsFilePickerProps) {
@@ -25,17 +25,8 @@ export default function VpsFilePicker({ open, onClose, onSelect, initialPath = "
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [history, setHistory] = useState<string[]>([initialPath]);
 
-  useEffect(() => {
-    if (open) {
-      setPath(initialPath);
-      setHistory([initialPath]);
-      loadPath(initialPath);
-    }
-  }, [open, initialPath]);
-
-  async function loadPath(p: string) {
+  const loadPath = useCallback(async (p: string) => {
     setLoading(true);
     setError("");
     try {
@@ -50,25 +41,37 @@ export default function VpsFilePicker({ open, onClose, onSelect, initialPath = "
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      const start = initialPath && initialPath.startsWith("/") ? initialPath : "/";
+      setPath(start);
+      loadPath(start);
+    }
+  }, [open, initialPath, loadPath]);
 
   function enterDir(name: string) {
     const newPath = path.endsWith("/") ? `${path}${name}` : `${path}/${name}`;
-    setHistory((h) => [...h, newPath]);
     loadPath(newPath);
   }
 
   function goUp() {
     const parent = path.replace(/\/?[^/]*$/, "") || "/";
-    setHistory((h) => [...h, parent]);
     loadPath(parent);
   }
 
-  function goBack() {
-    if (history.length <= 1) return;
-    const newHistory = history.slice(0, -1);
-    setHistory(newHistory);
-    loadPath(newHistory[newHistory.length - 1]);
+  function selectCurrent() {
+    onSelect(path);
+  }
+
+  function selectEntry(name: string, isDir: boolean) {
+    const fullPath = path.endsWith("/") ? `${path}${name}` : `${path}/${name}`;
+    if (!selectFile && isDir) {
+      onSelect(fullPath);
+    } else if (selectFile && !isDir) {
+      onSelect(fullPath);
+    }
   }
 
   if (!open) return null;
@@ -78,20 +81,15 @@ export default function VpsFilePicker({ open, onClose, onSelect, initialPath = "
       <div className="w-full max-w-lg bg-card border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
-          <div className="flex items-center gap-2">
-            <button onClick={goBack} disabled={history.length <= 1} className="text-muted hover:text-foreground disabled:opacity-30 transition-colors">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-            </button>
-            <button onClick={goUp} className="text-muted hover:text-foreground transition-colors">
+          <div className="flex items-center gap-2 min-w-0">
+            <button onClick={goUp} disabled={path === "/"} className="text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
               </svg>
             </button>
-            <span className="text-xs font-mono text-muted truncate max-w-[200px]">{path}</span>
+            <span className="text-xs font-mono text-muted truncate">{path}</span>
           </div>
-          <button onClick={onClose} className="text-muted hover:text-foreground transition-colors">✕</button>
+          <button onClick={onClose} className="text-muted hover:text-foreground transition-colors shrink-0">✕</button>
         </div>
 
         {/* File list */}
@@ -111,43 +109,36 @@ export default function VpsFilePicker({ open, onClose, onSelect, initialPath = "
                 </button>
               )}
               {files
-                .filter((f) => f.isDir || selectFile)
+                .filter((f) => f.name !== "." && f.name !== "..")
                 .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
                 .map((file) => (
-                  <div key={file.name} className="flex items-center justify-between px-4 py-2 hover:bg-background/50 transition-colors">
+                  <div key={file.name} className="flex items-center px-4 py-2 hover:bg-background/50 transition-colors group">
                     <button
-                      onClick={() => file.isDir && enterDir(file.name)}
-                      className="flex items-center gap-3 flex-1 text-left"
+                      onClick={() => file.isDir ? enterDir(file.name) : selectEntry(file.name, false)}
+                      className="flex items-center gap-3 flex-1 text-left min-w-0"
                     >
                       {file.isDir ? (
-                        <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <svg className="w-4 h-4 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                         </svg>
                       ) : (
-                        <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <svg className="w-4 h-4 text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                       )}
-                      <span className={`text-sm ${file.isDir ? "text-foreground" : "text-muted"}`}>
+                      <span className={`text-sm truncate ${file.isDir ? "text-foreground" : "text-muted"}`}>
                         {file.name}
                       </span>
                     </button>
-                    {!selectFile && file.isDir && (
+                    {/* Select button — visible on hover or for non-navigable items */}
+                    {(!selectFile && file.isDir) || (selectFile && !file.isDir) ? (
                       <button
-                        onClick={() => onSelect(path.endsWith("/") ? `${path}${file.name}` : `${path}/${file.name}`)}
-                        className="text-[10px] font-mono px-2 py-1 bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors"
+                        onClick={() => selectEntry(file.name, file.isDir)}
+                        className="text-[10px] font-mono px-2 py-1 bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors opacity-0 group-hover:opacity-100"
                       >
                         Select
                       </button>
-                    )}
-                    {selectFile && !file.isDir && (
-                      <button
-                        onClick={() => onSelect(path.endsWith("/") ? `${path}${file.name}` : `${path}/${file.name}`)}
-                        className="text-[10px] font-mono px-2 py-1 bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors"
-                      >
-                        Select
-                      </button>
-                    )}
+                    ) : null}
                   </div>
                 ))}
               {files.length === 0 && !loading && <div className="p-8 text-center text-sm text-muted">Empty directory</div>}
@@ -157,15 +148,13 @@ export default function VpsFilePicker({ open, onClose, onSelect, initialPath = "
 
         {/* Footer */}
         <div className="flex items-center justify-between p-4 border-t border-border">
-          <span className="text-[10px] text-muted font-mono">{files.filter((f) => f.isDir).length} dirs</span>
-          {!selectFile && (
-            <button
-              onClick={() => onSelect(path)}
-              className="text-xs font-mono px-3 py-1.5 bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors"
-            >
-              Select Current Dir
-            </button>
-          )}
+          <span className="text-[10px] text-muted font-mono">{files.filter((f) => f.isDir).length} dirs · {files.filter((f) => !f.isDir).length} files</span>
+          <button
+            onClick={selectCurrent}
+            className="text-xs font-mono px-3 py-1.5 bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors"
+          >
+            Select Current Dir
+          </button>
         </div>
       </div>
     </div>

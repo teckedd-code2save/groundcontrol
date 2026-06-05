@@ -10,22 +10,63 @@ export async function GET(req: NextRequest) {
     const caddyBin = await resolveBinary("caddy");
     const nginxBin = await resolveBinary("nginx");
 
-    // Caddy status
-    const caddyStatus = await execOnVps("systemctl is-active caddy 2>/dev/null || echo 'inactive'");
-    const caddyVersion = await execOnVps(`${caddyBin} version 2>/dev/null || echo 'not installed'`);
+    // Detect init system: systemd vs OpenRC vs none
+    const hasSystemd = await execOnVps("which systemctl 2>/dev/null || echo ''");
+    const hasOpenRC = await execOnVps("which rc-service 2>/dev/null || echo ''");
+    const initSystem = hasSystemd.stdout.trim() ? "systemd" : hasOpenRC.stdout.trim() ? "openrc" : "none";
+
+    // Caddy status — try multiple methods
+    let caddyActive = false;
+    let caddyVersion = "not installed";
+    if (initSystem === "systemd") {
+      const status = await execOnVps("systemctl is-active caddy 2>/dev/null || echo 'inactive'");
+      caddyActive = status.stdout.trim() === "active";
+    } else if (initSystem === "openrc") {
+      const status = await execOnVps("rc-service caddy status 2>/dev/null || echo 'stopped'");
+      caddyActive = status.stdout.trim().toLowerCase().includes("started");
+    }
+    // Also check if caddy process is running
+    if (!caddyActive) {
+      const proc = await execOnVps("ps | grep -v grep | grep caddy 2>/dev/null || echo ''");
+      caddyActive = !!proc.stdout.trim();
+    }
+    // Also check docker container
+    if (!caddyActive) {
+      const docker = await execOnVps("docker ps --format '{{.Names}}' | grep -E '^caddy$' || echo ''");
+      caddyActive = !!docker.stdout.trim();
+    }
+
+    const versionRes = await execOnVps(`${caddyBin} version 2>/dev/null || echo 'not installed'`);
+    caddyVersion = versionRes.stdout.trim();
+    if (caddyVersion.includes("not installed") && caddyActive) {
+      caddyVersion = "running (docker or embedded)";
+    }
 
     // Nginx status
-    const nginxStatus = await execOnVps("systemctl is-active nginx 2>/dev/null || echo 'inactive'");
-    const nginxVersion = await execOnVps(`${nginxBin} -v 2>&1 || echo 'not installed'`);
+    let nginxActive = false;
+    let nginxVersion = "not installed";
+    if (initSystem === "systemd") {
+      const status = await execOnVps("systemctl is-active nginx 2>/dev/null || echo 'inactive'");
+      nginxActive = status.stdout.trim() === "active";
+    } else if (initSystem === "openrc") {
+      const status = await execOnVps("rc-service nginx status 2>/dev/null || echo 'stopped'");
+      nginxActive = status.stdout.trim().toLowerCase().includes("started");
+    }
+    if (!nginxActive) {
+      const proc = await execOnVps("ps | grep -v grep | grep nginx 2>/dev/null || echo ''");
+      nginxActive = !!proc.stdout.trim();
+    }
+    const nginxVerRes = await execOnVps(`${nginxBin} -v 2>&1 || echo 'not installed'`);
+    nginxVersion = nginxVerRes.stdout.trim();
 
-    // Caddy configs
+    // Caddy configs — scan all files, not just .caddy
     const caddyConfigs = await execOnVps(
-      `for f in ${config.caddySitesDir}/*.caddy; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`
+      `for f in ${config.caddySitesDir}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`
     );
 
     // Nginx configs
     const nginxConfigs = await execOnVps(
-      `for f in ${config.nginxSitesDir}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done`
+      `for f in ${config.nginxSitesDir}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`
     );
 
     // Parse configs
@@ -34,13 +75,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       caddy: {
-        active: caddyStatus.stdout.trim() === "active",
-        version: caddyVersion.stdout.trim(),
+        active: caddyActive,
+        version: caddyVersion,
         sites: caddySites,
       },
       nginx: {
-        active: nginxStatus.stdout.trim() === "active",
-        version: nginxVersion.stdout.trim(),
+        active: nginxActive,
+        version: nginxVersion,
         sites: nginxSites,
       },
     });

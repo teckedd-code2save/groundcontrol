@@ -7,7 +7,7 @@ import { ContainerIcon, getContainerType, getContainerTypeLabel, HostIcon, SiteI
 import { matchContainersToSite } from "@/lib/topology";
 
 interface XRayTarget {
-  type: "container" | "site" | "host" | "caddy";
+  type: "container" | "site" | "host" | "caddy" | "system";
   id: string;
   name: string;
   data?: any;
@@ -91,6 +91,19 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
       } else if (target.type === "caddy") {
         const res = await fetch("/api/proxy");
         setDetail(await res.json());
+      } else if (target.type === "system") {
+        const [containersRes, mapsRes, projectsRes] = await Promise.all([
+          fetch("/api/containers"),
+          fetch("/api/site-maps"),
+          fetch("/api/projects"),
+        ]);
+        const containers = await containersRes.json();
+        const siteMaps = await mapsRes.json();
+        const projects = await projectsRes.json();
+        const unmapped = target.data?.containers || [];
+        const sites = (projects.caddySites || []).map((s: any) => s.domain);
+        setAllContainers(containers);
+        setDetail({ unmapped, siteMaps, sites });
       }
     } catch (err) {
       console.error(err);
@@ -163,6 +176,19 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
     }
   }
 
+  async function linkContainerToSite(containerName: string, siteDomain: string) {
+    try {
+      await fetch("/api/site-maps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteDomain, containerName }),
+      });
+      await loadDetail();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function unlinkContainer(mapId: number) {
     try {
       await fetch(`/api/site-maps?id=${mapId}`, { method: "DELETE" });
@@ -191,6 +217,10 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
       if (!detail.domain) issues.push("No domain configured");
       if (!detail.root && !detail.proxy) issues.push("No root or proxy target configured");
       if (detail.relatedContainers?.length === 0) issues.push("No containers mapped to this site");
+    }
+
+    if (target?.type === "system") {
+      if (detail.unmapped?.length > 0) issues.push(`${detail.unmapped.length} container${detail.unmapped.length > 1 ? "s" : ""} not assigned to any site`);
     }
 
     if (target?.type === "host") {
@@ -242,12 +272,19 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                 ? "border-warning/30 text-warning"
                 : target.type === "caddy" && issues.length > 0
                 ? "border-warning/30 text-warning"
+                : target.type === "system" && issues.length > 0
+                ? "border-warning/30 text-warning"
                 : "border-accent/30 text-accent"
             }`}
           >
             {target.type === "host" && <HostIcon className="w-4 h-4" />}
             {target.type === "site" && <SiteIcon className="w-4 h-4" />}
             {target.type === "caddy" && <CaddyIcon className="w-4 h-4" />}
+            {target.type === "system" && (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            )}
             {target.type === "container" && <ContainerIcon className="w-4 h-4" type={getContainerType(target.name)} />}
           </div>
           <div>
@@ -544,6 +581,64 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                     <pre className="bg-background/50 rounded-lg p-3 text-[10px] font-mono text-foreground/70 whitespace-pre-wrap max-h-64 overflow-auto scrollbar-thin">
                       {logs}
                     </pre>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* System / Unmapped Containers */}
+            {target.type === "system" && detail && (
+              <>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-mono text-muted">
+                    Unmapped Containers ({detail.unmapped?.length || 0})
+                  </h4>
+                </div>
+                {detail.unmapped && detail.unmapped.length > 0 ? (
+                  <div className="space-y-2">
+                    {detail.unmapped.map((c: any) => (
+                      <div key={c.name} className="bg-background/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <ContainerIcon className="w-4 h-4" type={getContainerType(c.name, c.image)} />
+                            <span className="text-xs font-mono font-medium">{c.name}</span>
+                            {c.composeProject && (
+                              <span className="text-[10px] text-accent/70 bg-accent/10 px-1.5 py-0.5 rounded">{c.composeProject}</span>
+                            )}
+                          </div>
+                          <div
+                            className={`w-2 h-2 rounded-full ${
+                              c.state === "running"
+                                ? c.status?.includes("unhealthy")
+                                  ? "bg-warning"
+                                  : "bg-success"
+                                : "bg-error"
+                            }`}
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <select
+                            className="flex-1 bg-background border border-border rounded-lg px-2 py-1 text-[10px] font-mono outline-none focus:border-accent"
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                linkContainerToSite(c.name, e.target.value);
+                                e.target.value = "";
+                              }
+                            }}
+                            defaultValue=""
+                          >
+                            <option value="">Assign to site...</option>
+                            {detail.sites?.map((domain: string) => (
+                              <option key={domain} value={domain}>{domain}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted bg-background/30 rounded-lg p-3">
+                    All containers are mapped to sites.
                   </div>
                 )}
               </>

@@ -241,6 +241,19 @@ export async function getContainerLogs(
   return result.stdout;
 }
 
+const DEFAULT_SYSTEM_CONFIG = {
+  id: 0,
+  projectRoot: "/opt",
+  caddySitesDir: "/etc/caddy/sites",
+  caddyFile: "/etc/caddy/Caddyfile",
+  nginxSitesDir: "/etc/nginx/sites-available",
+  nginxLogPath: "/var/log/nginx/error.log",
+  staticRoot: "/var/www",
+  sshDefaultCwd: "/root",
+  certDomain: "",
+  updatedAt: new Date(),
+};
+
 let systemConfigCache: any = null;
 let systemConfigCacheTime = 0;
 
@@ -248,13 +261,19 @@ export async function getSystemConfig() {
   if (systemConfigCache && Date.now() - systemConfigCacheTime < 30000) {
     return systemConfigCache;
   }
-  let config = await prisma.systemConfig.findFirst();
-  if (!config) {
-    config = await prisma.systemConfig.create({ data: {} });
+  try {
+    let config = await prisma.systemConfig.findFirst();
+    if (!config) {
+      config = await prisma.systemConfig.create({ data: {} });
+    }
+    systemConfigCache = config;
+    systemConfigCacheTime = Date.now();
+    return config;
+  } catch (err: any) {
+    // Table may not exist (migration not run). Return defaults so the app doesn't crash.
+    console.warn("SystemConfig table missing, using defaults:", err.message);
+    return DEFAULT_SYSTEM_CONFIG;
   }
-  systemConfigCache = config;
-  systemConfigCacheTime = Date.now();
-  return config;
 }
 
 export function invalidateSystemConfigCache() {

@@ -60,7 +60,11 @@ export default function MemoryPanel({ open, onClose }: MemoryPanelProps) {
       if (action === "prune") {
         const res = await fetch("/api/containers/prune", { method: "POST" });
         const data = await res.json();
-        setResult(data.output || data.error || "Prune complete");
+        if (!res.ok) {
+          setResult(`Prune failed: ${data.error || "Unknown error"}`);
+        } else {
+          setResult(data.output || "Prune complete");
+        }
       } else if (action === "stop" && name) {
         await fetch("/api/containers", {
           method: "POST",

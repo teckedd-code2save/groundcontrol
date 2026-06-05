@@ -78,7 +78,7 @@ export default function TopologyPage() {
   const [edges, setEdges] = useState<TopoEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [xrayTarget, setXrayTarget] = useState<{
-    type: "container" | "site" | "host" | "caddy";
+    type: "container" | "site" | "host" | "caddy" | "system";
     id: string;
     name: string;
     data?: any;
@@ -286,7 +286,7 @@ export default function TopologyPage() {
           width: 120,
           height: NODE_HEIGHT,
           health: "unknown",
-          data: {},
+          data: { _unmapped: unmapped },
         });
         unmapped.forEach((c, j) => {
           const id = `container-${c.name}`;
@@ -343,7 +343,12 @@ export default function TopologyPage() {
   }, [dimensions.width]);
 
   function handleNodeClick(node: TopoNode) {
-    if (node.id === "unmapped-label") return; // System label is not clickable
+    if (node.id === "unmapped-label") {
+      // Open system panel with all unmapped containers
+      const unmappedContainers = node.data?._unmapped || [];
+      setXrayTarget({ type: "system", id: "system", name: "Unmapped Containers", data: { containers: unmappedContainers } });
+      return;
+    }
     if (node.type === "container") {
       setXrayTarget({ type: "container", id: node.data.name, name: node.data.name, data: node.data });
     } else if (node.type === "site") {
