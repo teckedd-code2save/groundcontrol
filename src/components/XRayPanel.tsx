@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ActionConfirm, ActionType } from "@/components/ActionConfirm";
 import { ContainerIcon, getContainerType, getContainerTypeLabel, HostIcon, SiteIcon, CaddyIcon } from "@/components/TopoIcons";
-import { matchContainersToSite } from "@/lib/topology";
+import { linkSitesToContainers } from "@/lib/topology";
 
 interface XRayTarget {
   type: "container" | "site" | "host" | "caddy" | "system";
@@ -53,41 +53,27 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
         setDetail({ ...container, _sites: sites });
         setLogs(logsData.logs || "No logs");
       } else if (target.type === "site") {
-        const [containersRes, mapsRes] = await Promise.all([fetch("/api/containers"), fetch("/api/site-maps")]);
+        const [containersRes, mapsRes, projectsRes] = await Promise.all([
+          fetch("/api/containers"),
+          fetch("/api/site-maps"),
+          fetch("/api/projects"),
+        ]);
         const containers = await containersRes.json();
         const siteMaps = await mapsRes.json();
+        const projects = await projectsRes.json();
         const site = target.data;
+        const dbProjects = projects.projects || [];
 
-        const matched: any[] = [];
-        const matchedNames = new Set<string>();
-
-        // Strategy 1: Manual mappings
-        const manual = siteMaps
-          .filter((m: any) => m.siteDomain === site.domain)
-          .map((m: any) => containers.find((c: any) => c.name === m.containerName))
-          .filter(Boolean);
-        manual.forEach((c: any) => { matched.push(c); matchedNames.add(c.name); });
-
-        // Strategy 2: Docker Compose project labels
-        const domainSlugs = site.domain.toLowerCase().replace(/^www\./, "").replace(/\.(com|net|org|io|dev|app|co|uk|us|de|fr|nl|be|eu|tech|cloud|space|online|store|site|blog|info|biz|ai|gh|za|ng)$/i, "").split(".");
-        containers.forEach((c: any) => {
-          if (matchedNames.has(c.name)) return;
-          const proj = (c.composeProject || "").toLowerCase();
-          for (const slug of domainSlugs) {
-            if (slug.length > 2 && (proj === slug || proj.includes(slug) || slug.includes(proj))) {
-              matched.push(c);
-              matchedNames.add(c.name);
-              return;
-            }
-          }
-        });
-
-        // Strategy 3: Heuristics
-        const heuristic = matchContainersToSite(site.domain, site.proxy, containers.filter((c: any) => !matchedNames.has(c.name)));
-        heuristic.forEach((c: any) => { matched.push(c); matchedNames.add(c.name); });
+        const { siteGroups } = linkSitesToContainers(
+          [site],
+          containers,
+          siteMaps,
+          dbProjects
+        );
+        const group = siteGroups[0];
 
         setAllContainers(containers);
-        setDetail({ ...site, relatedContainers: matched, siteMaps });
+        setDetail({ ...site, relatedContainers: group?.containers || [], siteMaps });
       } else if (target.type === "host") {
         const res = await fetch("/api/vps/stats");
         setDetail(await res.json());
@@ -103,8 +89,14 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
         const containers = await containersRes.json();
         const siteMaps = await mapsRes.json();
         const projects = await projectsRes.json();
-        const unmapped = target.data?.containers || [];
-        const sites = (projects.caddySites || []).map((s: any) => s.domain);
+        const dbProjects = projects.projects || [];
+        const allSites = (projects.caddySites || []).map((s: any) => ({
+          domain: s.domain,
+          root: s.root,
+          proxy: s.proxy,
+        }));
+        const { unmapped } = linkSitesToContainers(allSites, containers, siteMaps, dbProjects);
+        const sites = allSites.map((s: any) => s.domain);
         setAllContainers(containers);
         setDetail({ unmapped, siteMaps, sites });
       }
