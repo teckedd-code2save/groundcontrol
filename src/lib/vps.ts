@@ -210,16 +210,16 @@ export async function getDockerContainerLabels(vps?: VpsConnection | null) {
   const names = namesResult.stdout.trim().split("\n").filter(Boolean);
   if (names.length === 0) return [];
 
-  const results: { name: string; project: string; service: string }[] = [];
+  const results: { name: string; project: string; service: string; workingDir: string }[] = [];
   for (const name of names) {
     try {
       const inspect = await execOnVps(
-        `docker inspect --format "{{.Name}}|{{index .Config.Labels \\"com.docker.compose.project\\"}}|{{index .Config.Labels \\"com.docker.compose.service\\"}}" "${name}" 2>/dev/null || echo ""`,
+        `docker inspect --format "{{.Name}}|{{index .Config.Labels \\"com.docker.compose.project\\"}}|{{index .Config.Labels \\"com.docker.compose.service\\"}}|{{index .Config.Labels \\"com.docker.compose.project.working_dir\\"}}" "${name}" 2>/dev/null || echo ""`,
         conn
       );
-      const [n, project, service] = inspect.stdout.trim().split("|");
+      const [n, project, service, workingDir] = inspect.stdout.trim().split("|");
       if (n) {
-        results.push({ name: n.replace(/^\//, ""), project: project || "", service: service || "" });
+        results.push({ name: n.replace(/^\//, ""), project: project || "", service: service || "", workingDir: workingDir || "" });
       }
     } catch {
       // skip containers we can't inspect

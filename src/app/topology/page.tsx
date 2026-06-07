@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { type Node, type Edge } from "@xyflow/react";
 import TopologyFlow from "@/components/TopologyFlow";
+import type { TopologyFilters } from "@/components/TopologyFlow";
 import XRayPanel from "@/components/XRayPanel";
 import { linkSitesToContainers } from "@/lib/topology";
 import type { TopoNodeData } from "@/components/TopoNode";
@@ -23,6 +24,7 @@ interface Container {
   stats?: { cpu: string; mem: string; pids: string };
   composeProject?: string;
   composeService?: string;
+  composeWorkingDir?: string;
 }
 
 function isRawDomain(domain: string): boolean {
@@ -42,6 +44,8 @@ export default function TopologyPage() {
   const [nodes, setNodes] = useState<Node<TopoNodeData>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dbProjects, setDbProjects] = useState<{ slug: string; name: string; domain?: string | null; path?: string | null }[]>([]);
+  const [filters, setFilters] = useState<TopologyFilters>({});
   const [xrayTarget, setXrayTarget] = useState<{
     type: "container" | "site" | "host" | "caddy" | "nginx" | "system";
     id: string;
@@ -61,7 +65,8 @@ export default function TopologyPage() {
       const containers: Container[] = await containersRes.json();
 
       const allSites: CaddySite[] = projects.caddySites || [];
-      const dbProjects = projects.projects || [];
+      const dbProjectsData = projects.projects || [];
+      setDbProjects(dbProjectsData);
       const services: any[] = projects.services || [];
       const sites = allSites.filter((s) => !isRawDomain(s.domain));
       const hasNginx = services.some((s) => s.name.toLowerCase().includes("nginx"));
@@ -78,7 +83,7 @@ export default function TopologyPage() {
         sites,
         containers,
         siteMaps,
-        dbProjects
+        dbProjectsData
       );
 
       const topoNodes: Node<TopoNodeData>[] = [];
@@ -147,6 +152,8 @@ export default function TopologyPage() {
               stats: c.stats,
               state: c.state,
               status: c.status,
+              composeProject: c.composeProject,
+              composeWorkingDir: c.composeWorkingDir,
             },
           });
           topoEdges.push({ id: `e-${siteId}-${id}`, source: siteId, target: id });
@@ -174,6 +181,8 @@ export default function TopologyPage() {
               stats: c.stats,
               state: c.state,
               status: c.status,
+              composeProject: c.composeProject,
+              composeWorkingDir: c.composeWorkingDir,
             },
           });
           topoEdges.push({ id: `e-unmapped-${id}`, source: "unmapped", target: id });
@@ -230,6 +239,39 @@ export default function TopologyPage() {
         </div>
       </div>
 
+      {/* Filter Bar */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <select
+          className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+          value={filters.status || ""}
+          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as TopologyFilters["status"] || undefined }))}
+        >
+          <option value="">All Statuses</option>
+          <option value="running">Running</option>
+          <option value="stopped">Stopped</option>
+          <option value="unhealthy">Unhealthy</option>
+          <option value="unknown">Unknown</option>
+        </select>
+        <select
+          className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+          value={filters.projectSlug || ""}
+          onChange={(e) => setFilters((f) => ({ ...f, projectSlug: e.target.value || undefined }))}
+        >
+          <option value="">All Projects</option>
+          {dbProjects.map((p) => (
+            <option key={p.slug} value={p.slug}>{p.name || p.slug}</option>
+          ))}
+        </select>
+        {(filters.status || filters.projectSlug) && (
+          <button
+            onClick={() => setFilters({})}
+            className="text-xs text-muted hover:text-foreground transition-colors"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
       <div className="flex-1 bg-card border border-border rounded-xl relative overflow-hidden">
         {loading && nodes.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -239,6 +281,8 @@ export default function TopologyPage() {
           <TopologyFlow
             initialNodes={nodes}
             initialEdges={edges}
+            filters={filters}
+            dbProjects={dbProjects}
             onNodeClick={handleNodeClick}
           />
         )}

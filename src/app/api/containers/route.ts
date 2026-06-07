@@ -17,6 +17,7 @@ export async function GET() {
       stats: statsMap.get(c.name) || null,
       composeProject: labelsMap.get(c.name)?.project || "",
       composeService: labelsMap.get(c.name)?.service || "",
+      composeWorkingDir: labelsMap.get(c.name)?.workingDir || "",
     }));
 
     return NextResponse.json(merged);

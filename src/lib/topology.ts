@@ -14,6 +14,7 @@ export interface Container {
   stats?: any;
   composeProject?: string;
   composeService?: string;
+  composeWorkingDir?: string;
 }
 
 export interface SiteMap {
@@ -111,10 +112,12 @@ export function linkSitesToContainers<T extends Container>(
     const project = findProjectForSite(site, dbProjects);
     if (project) {
       const projSlug = project.slug.toLowerCase();
+      const projPath = (project.path || "").toLowerCase().replace(/\/$/, "");
       containers.forEach((c) => {
         if (matchedNames.has(c.name)) return;
         const composeProj = (c.composeProject || "").toLowerCase();
         const cName = c.name.toLowerCase();
+        const workingDir = (c.composeWorkingDir || "").toLowerCase().replace(/\/$/, "");
 
         // Match by compose project name
         if (
@@ -126,14 +129,23 @@ export function linkSitesToContainers<T extends Container>(
           return;
         }
 
+        // Match by working directory (e.g. /opt/myproject matches /opt/myproject or /opt/myproject/subdir)
+        if (projPath && workingDir && (workingDir === projPath || workingDir.startsWith(projPath + "/"))) {
+          matched.push(c);
+          matchedNames.add(c.name);
+          return;
+        }
+
         // Match by container name: myproject-web-1, myproject_db_1, etc.
+        // Also handle stripped suffixes: myproject-web-1 -> myproject-web starts with myproject
+        const nameBase = cName.replace(/[-_]\d+$/, "");
         if (
           projSlug.length > 2 &&
           (cName === projSlug ||
             cName.startsWith(projSlug + "-") ||
             cName.startsWith(projSlug + "_") ||
-            cName.includes("-" + projSlug + "-") ||
-            cName.includes("_" + projSlug + "_"))
+            nameBase.startsWith(projSlug + "-") ||
+            nameBase.startsWith(projSlug + "_"))
         ) {
           matched.push(c);
           matchedNames.add(c.name);

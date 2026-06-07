@@ -20,6 +20,10 @@ export type TopoNodeData = {
   stats?: { cpu: string; mem: string; pids: string };
   state?: string;
   status?: string;
+  composeProject?: string;
+  composeWorkingDir?: string;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 };
 
 const healthColor = {
@@ -55,6 +59,7 @@ function NodeIcon({ data }: { data: TopoNodeData }) {
 const TopoNode = memo(function TopoNode(props: Node<TopoNodeData>) {
   const data = props.data;
   const isUnhealthy = data.health === "warning" || data.health === "critical";
+  const isExpandable = data.type === "site" || (data.type === "container" && data.label === "Unmapped");
 
   return (
     <div
@@ -88,12 +93,26 @@ const TopoNode = memo(function TopoNode(props: Node<TopoNodeData>) {
           >
             {data.label.length > 18 ? data.label.slice(0, 16) + "..." : data.label}
           </div>
-          {data.type === "container" && (
+          {data.type === "container" && data.label !== "Unmapped" && (
             <div className="text-[9px] font-mono text-muted truncate">
               {data.state === "running" ? "running" : data.state} · CPU {data.stats?.cpu || "—"}
             </div>
           )}
         </div>
+
+        {/* Expand/collapse toggle */}
+        {isExpandable && data.onToggleExpand && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onToggleExpand?.();
+            }}
+            className="text-muted hover:text-foreground text-[10px] px-1 transition-colors"
+            title={data.expanded ? "Collapse" : "Expand"}
+          >
+            {data.expanded ? "▼" : "▶"}
+          </button>
+        )}
 
         {/* Health dot */}
         <div
