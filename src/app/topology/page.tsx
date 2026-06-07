@@ -1,17 +1,11 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { type Node, type Edge } from "@xyflow/react";
+import TopologyFlow from "@/components/TopologyFlow";
 import XRayPanel from "@/components/XRayPanel";
-import {
-  InternetIcon,
-  CaddyIcon,
-  NginxIcon,
-  SiteIcon,
-  HostIcon,
-  ContainerIcon,
-  getContainerType,
-} from "@/components/TopoIcons";
 import { linkSitesToContainers } from "@/lib/topology";
+import type { TopoNodeData } from "@/components/TopoNode";
 
 interface CaddySite {
   domain: string;
@@ -31,33 +25,6 @@ interface Container {
   composeService?: string;
 }
 
-interface SiteGroup {
-  site: CaddySite;
-  containers: Container[];
-}
-
-interface UnmappedContainer {
-  container: Container;
-}
-
-interface TopoNode {
-  id: string;
-  label: string;
-  type: "internet" | "host" | "caddy" | "nginx" | "site" | "container";
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  health: "healthy" | "warning" | "critical" | "unknown";
-  data: any;
-  summary?: { total: number; running: number; unhealthy: number };
-}
-
-interface TopoEdge {
-  from: string;
-  to: string;
-}
-
 function isRawDomain(domain: string): boolean {
   if (!domain || domain === "localhost" || domain === "127.0.0.1") return true;
   if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) return true;
@@ -65,63 +32,40 @@ function isRawDomain(domain: string): boolean {
   return false;
 }
 
-// Using matchContainersToSite from @/lib/topology
-
-function containerHealth(c: Container): TopoNode["health"] {
+function containerHealth(c: Container): TopoNodeData["health"] {
   if (c.state !== "running") return "critical";
   if (c.status.includes("unhealthy")) return "warning";
   return "healthy";
 }
 
 export default function TopologyPage() {
-  const [nodes, setNodes] = useState<TopoNode[]>([]);
-  const [edges, setEdges] = useState<TopoEdge[]>([]);
+  const [nodes, setNodes] = useState<Node<TopoNodeData>[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState(true);
   const [xrayTarget, setXrayTarget] = useState<{
-    type: "container" | "site" | "host" | "caddy" | "system";
+    type: "container" | "site" | "host" | "caddy" | "nginx" | "system";
     id: string;
     name: string;
     data?: any;
   } | null>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const NODE_HEIGHT = 48;
-  const NODE_GAP = 28;
-  const PADDING = 60;
-  const HOST_PAD = 48;
-
-  useEffect(() => {
-    function onResize() {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setDimensions({ width: rect.width, height: rect.height });
-      }
-    }
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   async function fetchTopology() {
     setLoading(true);
     try {
-      const [projectsRes, containersRes, statsRes] = await Promise.all([
+      const [projectsRes, containersRes] = await Promise.all([
         fetch("/api/projects"),
         fetch("/api/containers"),
-        fetch("/api/vps/stats"),
       ]);
 
       const projects = await projectsRes.json();
       const containers: Container[] = await containersRes.json();
-      const stats = await statsRes.json();
 
       const allSites: CaddySite[] = projects.caddySites || [];
       const dbProjects = projects.projects || [];
       const services: any[] = projects.services || [];
       const sites = allSites.filter((s) => !isRawDomain(s.domain));
+      const hasNginx = services.some((s) => s.name.toLowerCase().includes("nginx"));
 
-      // Fetch manual site→container mappings
       let siteMaps: { siteDomain: string; containerName: string }[] = [];
       try {
         const mapsRes = await fetch("/api/site-maps");
@@ -130,7 +74,6 @@ export default function TopologyPage() {
         // ignore
       }
 
-      // Group containers by site using project-aware matching
       const { siteGroups, unmapped } = linkSitesToContainers(
         sites,
         containers,
@@ -138,173 +81,104 @@ export default function TopologyPage() {
         dbProjects
       );
 
-      const hasNginx = services.some((s) => s.name.toLowerCase().includes("nginx"));
+      const topoNodes: Node<TopoNodeData>[] = [];
+      const topoEdges: Edge[] = [];
 
-      const topoNodes: TopoNode[] = [];
-      const topoEdges: TopoEdge[] = [];
-
-      const W = dimensions.width;
-
-      // Row 0: Internet (top center)
-      const internetY = PADDING + NODE_HEIGHT / 2;
+      // Internet
       topoNodes.push({
         id: "internet",
-        label: "Internet",
-        type: "internet",
-        x: W / 2,
-        y: internetY,
-        width: 130,
-        height: NODE_HEIGHT,
-        health: "healthy",
-        data: {},
+        type: "topoNode",
+        position: { x: 0, y: 0 },
+        data: { label: "Internet", type: "internet", health: "healthy" },
       });
 
-      // Row 1: VPS Host bounding box starts here
-      const hostTop = internetY + NODE_HEIGHT / 2 + HOST_PAD;
-
-      // Row 2: Caddy (inside host, top)
-      const caddyY = hostTop + HOST_PAD + NODE_HEIGHT / 2;
+      // Caddy
       topoNodes.push({
         id: "caddy",
-        label: "Caddy",
-        type: "caddy",
-        x: W / 2,
-        y: caddyY,
-        width: 130,
-        height: NODE_HEIGHT,
-        health: "healthy",
-        data: {},
+        type: "topoNode",
+        position: { x: 0, y: 0 },
+        data: { label: "Caddy", type: "proxy", subType: "caddy", health: "healthy" },
       });
-      topoEdges.push({ from: "internet", to: "caddy" });
+      topoEdges.push({ id: "e-internet-caddy", source: "internet", target: "caddy" });
 
+      // Nginx (optional)
       if (hasNginx) {
-        const nginxY = caddyY + NODE_HEIGHT + NODE_GAP;
         topoNodes.push({
           id: "nginx",
-          label: "Nginx",
-          type: "nginx",
-          x: W / 2,
-          y: nginxY,
-          width: 130,
-          height: NODE_HEIGHT,
-          health: "healthy",
-          data: {},
+          type: "topoNode",
+          position: { x: 0, y: 0 },
+          data: { label: "Nginx", type: "proxy", subType: "nginx", health: "healthy" },
         });
-        topoEdges.push({ from: "internet", to: "nginx" });
+        topoEdges.push({ id: "e-internet-nginx", source: "internet", target: "nginx" });
       }
 
-      const proxyBottom = hasNginx ? caddyY + NODE_HEIGHT + NODE_GAP + NODE_HEIGHT / 2 : caddyY + NODE_HEIGHT / 2;
-
-      // Row 3: Sites (horizontal, inside host)
-      const siteY = proxyBottom + HOST_PAD;
-      const siteCount = Math.max(sites.length, 1);
-      const MIN_SITE_SPACING = 200; // minimum px between site centers to prevent overlap
-      const usableWidth = W - PADDING * 2 - HOST_PAD * 2;
-      const requiredWidth = siteCount * MIN_SITE_SPACING;
-      // Expand SVG width if needed so sites don't overlap
-      const layoutW = Math.max(W, requiredWidth + PADDING * 2 + HOST_PAD * 2);
-      const siteSpacing = (layoutW - PADDING * 2 - HOST_PAD * 2) / (siteCount + 1);
-
-      sites.forEach((site, i) => {
+      // Sites
+      sites.forEach((site) => {
         const id = `site-${site.domain}`;
-        const x = PADDING + HOST_PAD + siteSpacing * (i + 1);
         topoNodes.push({
           id,
-          label: site.domain,
-          type: "site",
-          x,
-          y: siteY,
-          width: 160,
-          height: NODE_HEIGHT,
-          health: site.root || site.proxy ? "healthy" : "warning",
-          data: site,
+          type: "topoNode",
+          position: { x: 0, y: 0 },
+          data: {
+            label: site.domain,
+            type: "site",
+            health: site.root || site.proxy ? "healthy" : "warning",
+          },
         });
-        topoEdges.push({ from: "caddy", to: id });
-        if (hasNginx) topoEdges.push({ from: "nginx", to: id });
-      });
-
-      // Row 4: Containers under each site
-      const containerStartY = siteY + NODE_HEIGHT / 2 + NODE_GAP;
-      let maxContainerColumnHeight = 0;
-
-      siteGroups.forEach((group, i) => {
-        const siteX = PADDING + HOST_PAD + siteSpacing * (i + 1);
-        group.containers.forEach((c, j) => {
-          const id = `container-${c.name}`;
-          topoNodes.push({
-            id,
-            label: c.name,
-            type: "container",
-            x: siteX,
-            y: containerStartY + j * (NODE_HEIGHT + NODE_GAP) + NODE_HEIGHT / 2,
-            width: 160,
-            height: NODE_HEIGHT,
-            health: containerHealth(c),
-            data: c,
-          });
-          topoEdges.push({ from: `site-${group.site.domain}`, to: id });
-        });
-        if (group.containers.length > 0) {
-          maxContainerColumnHeight = Math.max(maxContainerColumnHeight, group.containers.length * (NODE_HEIGHT + NODE_GAP));
+        topoEdges.push({ id: `e-caddy-${id}`, source: "caddy", target: id });
+        if (hasNginx) {
+          topoEdges.push({ id: `e-nginx-${id}`, source: "nginx", target: id });
         }
       });
 
-      // Unmapped containers on the right side
-      if (unmapped.length > 0) {
-        const unmappedX = layoutW - PADDING - HOST_PAD - 80;
-        const unmappedLabelY = containerStartY - NODE_GAP;
-        topoNodes.push({
-          id: "unmapped-label",
-          label: "System",
-          type: "container",
-          x: unmappedX,
-          y: unmappedLabelY,
-          width: 120,
-          height: NODE_HEIGHT,
-          health: "unknown",
-          data: { _unmapped: unmapped },
-        });
-        unmapped.forEach((c, j) => {
+      // Containers under sites
+      siteGroups.forEach((group) => {
+        const siteId = `site-${group.site.domain}`;
+        group.containers.forEach((c) => {
           const id = `container-${c.name}`;
           topoNodes.push({
             id,
-            label: c.name,
-            type: "container",
-            x: unmappedX,
-            y: containerStartY + j * (NODE_HEIGHT + NODE_GAP) + NODE_HEIGHT / 2,
-            width: 160,
-            height: NODE_HEIGHT,
-            health: containerHealth(c),
-            data: c,
+            type: "topoNode",
+            position: { x: 0, y: 0 },
+            data: {
+              label: c.name,
+              type: "container",
+              health: containerHealth(c),
+              stats: c.stats,
+              state: c.state,
+              status: c.status,
+            },
           });
-          topoEdges.push({ from: "unmapped-label", to: id });
+          topoEdges.push({ id: `e-${siteId}-${id}`, source: siteId, target: id });
         });
-        maxContainerColumnHeight = Math.max(maxContainerColumnHeight, unmapped.length * (NODE_HEIGHT + NODE_GAP));
-      }
-
-      // Use layoutW for host width calculations too
-      const effectiveW = layoutW;
-
-      // Host node (drawn as a background rect)
-      const hostBottom = containerStartY + maxContainerColumnHeight + HOST_PAD;
-      topoNodes.push({
-        id: "host",
-        label: "VPS Host",
-        type: "host",
-        x: layoutW / 2,
-        y: (hostTop + hostBottom) / 2,
-        width: layoutW - PADDING * 2,
-        height: hostBottom - hostTop,
-        health:
-          parseFloat(stats.memory?.percent || "0") > 90 || parseFloat(stats.disk?.percent || "0") > 90
-            ? "warning"
-            : "healthy",
-        data: stats,
       });
 
-      // Set SVG dimensions — width may expand to fit all sites
-      const totalHeight = hostBottom + PADDING;
-      setDimensions({ width: layoutW, height: totalHeight });
+      // Unmapped containers
+      if (unmapped.length > 0) {
+        topoNodes.push({
+          id: "unmapped",
+          type: "topoNode",
+          position: { x: 0, y: 0 },
+          data: { label: "Unmapped", type: "container", health: "unknown" },
+        });
+        unmapped.forEach((c) => {
+          const id = `container-${c.name}`;
+          topoNodes.push({
+            id,
+            type: "topoNode",
+            position: { x: 0, y: 0 },
+            data: {
+              label: c.name,
+              type: "container",
+              health: containerHealth(c),
+              stats: c.stats,
+              state: c.state,
+              status: c.status,
+            },
+          });
+          topoEdges.push({ id: `e-unmapped-${id}`, source: "unmapped", target: id });
+        });
+      }
 
       setNodes(topoNodes);
       setEdges(topoEdges);
@@ -319,44 +193,22 @@ export default function TopologyPage() {
     fetchTopology();
     const interval = setInterval(fetchTopology, 10000);
     return () => clearInterval(interval);
-  }, [dimensions.width]);
+  }, []);
 
-  function handleNodeClick(node: TopoNode) {
-    if (node.id === "unmapped-label") {
-      // Open system panel with all unmapped containers
-      const unmappedContainers = node.data?._unmapped || [];
-      setXrayTarget({ type: "system", id: "system", name: "Unmapped Containers", data: { containers: unmappedContainers } });
+  const handleNodeClick = useCallback((node: Node<TopoNodeData>) => {
+    const data = node.data;
+    if (node.id === "unmapped") {
+      setXrayTarget({ type: "system", id: "system", name: "Unmapped Containers" });
       return;
     }
-    if (node.type === "container") {
-      setXrayTarget({ type: "container", id: node.data.name, name: node.data.name, data: node.data });
-    } else if (node.type === "site") {
-      setXrayTarget({ type: "site", id: node.data.domain, name: node.data.domain, data: node.data });
-    } else if (node.type === "host") {
-      setXrayTarget({ type: "host", id: "host", name: "VPS Host", data: node.data });
-    } else if (node.type === "caddy") {
-      setXrayTarget({ type: "caddy", id: "caddy", name: "Caddy", data: {} });
+    if (data.type === "container") {
+      setXrayTarget({ type: "container", id: data.label, name: data.label, data: node.data });
+    } else if (data.type === "site") {
+      setXrayTarget({ type: "site", id: data.label, name: data.label, data: node.data });
+    } else if (data.type === "proxy") {
+      setXrayTarget({ type: data.subType === "nginx" ? "nginx" : "caddy", id: node.id, name: data.label, data: {} });
     }
-  }
-
-  function NodeIcon({ type, health }: { type: TopoNode["type"]; health: TopoNode["health"] }) {
-    switch (type) {
-      case "internet":
-        return <InternetIcon className="w-4 h-4" />;
-      case "caddy":
-        return <CaddyIcon className="w-4 h-4" />;
-      case "nginx":
-        return <NginxIcon className="w-4 h-4" />;
-      case "site":
-        return <SiteIcon className="w-4 h-4" />;
-      case "container":
-        return <ContainerIcon className="w-4 h-4" />;
-      case "host":
-        return <HostIcon className="w-4 h-4" />;
-      default:
-        return null;
-    }
-  }
+  }, []);
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] flex flex-col">
@@ -378,175 +230,17 @@ export default function TopologyPage() {
         </div>
       </div>
 
-      <div ref={containerRef} className="flex-1 bg-card border border-border rounded-xl relative overflow-auto">
+      <div className="flex-1 bg-card border border-border rounded-xl relative overflow-hidden">
         {loading && nodes.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="animate-pulse text-muted text-sm font-mono">Mapping infrastructure...</div>
           </div>
         ) : (
-          <svg width={dimensions.width} height={dimensions.height} viewBox={`0 0 ${dimensions.width} ${dimensions.height}`} style={{ minWidth: "100%" }}>
-            <defs>
-              <marker id="arrowdown" markerWidth="8" markerHeight="6" refX="4" refY="6" orient="auto">
-                <polygon points="0 0, 8 0, 4 6" fill="#555" />
-              </marker>
-            </defs>
-
-            {/* Host background (drawn first so it's behind) */}
-            {(() => {
-              const host = nodes.find((n) => n.id === "host");
-              if (!host) return null;
-              return (
-                <g>
-                  <rect
-                    x={host.x - host.width / 2}
-                    y={host.y - host.height / 2}
-                    width={host.width}
-                    height={host.height}
-                    rx={16}
-                    fill="#0f0f0f"
-                    stroke="#2a2a2a"
-                    strokeWidth={1}
-                    strokeDasharray="6 4"
-                  />
-                  <text
-                    x={host.x - host.width / 2 + 16}
-                    y={host.y - host.height / 2 + 24}
-                    fill="#444"
-                    fontSize="10"
-                    fontFamily="monospace"
-                  >
-                    VPS Host
-                  </text>
-                </g>
-              );
-            })()}
-
-            {/* Edges */}
-            {edges.map((edge, i) => {
-              const from = nodes.find((n) => n.id === edge.from);
-              const to = nodes.find((n) => n.id === edge.to);
-              if (!from || !to) return null;
-              return (
-                <line
-                  key={i}
-                  x1={from.x}
-                  y1={from.y + from.height / 2}
-                  x2={to.x}
-                  y2={to.y - to.height / 2}
-                  stroke="#333"
-                  strokeWidth={1}
-                  strokeDasharray="4 4"
-                  markerEnd="url(#arrowdown)"
-                />
-              );
-            })}
-
-            {/* Animated traffic particles */}
-            {edges.slice(0, 20).map((edge, i) => {
-              const from = nodes.find((n) => n.id === edge.from);
-              const to = nodes.find((n) => n.id === edge.to);
-              if (!from || !to) return null;
-              return (
-                <circle key={`particle-${i}`} r="2" fill="#ff5500" opacity="0.5">
-                  <animateMotion
-                    dur={`${2 + Math.random() * 2}s`}
-                    repeatCount="indefinite"
-                    path={`M${from.x},${from.y + from.height / 2} L${to.x},${to.y - to.height / 2}`}
-                  />
-                </circle>
-              );
-            })}
-
-            {/* Nodes */}
-            {nodes.map((node) => {
-              if (node.type === "host") return null; // Host is drawn as background
-              const isUnhealthy = node.health === "warning" || node.health === "critical";
-              const strokeColor = isUnhealthy
-                ? node.health === "critical"
-                  ? "#dc2626"
-                  : "#d97706"
-                : "#2a2a2a";
-              const fillColor = "#161616";
-              const statusColor = node.health === "healthy" ? "#22c55e" : node.health === "warning" ? "#f59e0b" : node.health === "critical" ? "#ef4444" : "#6b7280";
-
-              return (
-                <g
-                  key={node.id}
-                  onClick={() => handleNodeClick(node)}
-                  className="cursor-pointer"
-                >
-                  {/* Soft glow for unhealthy */}
-                  {isUnhealthy && (
-                    <rect
-                      x={node.x - node.width / 2 - 6}
-                      y={node.y - node.height / 2 - 6}
-                      width={node.width + 12}
-                      height={node.height + 12}
-                      rx={12}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth={1}
-                      opacity={0.3}
-                    >
-                      <animate attributeName="opacity" values="0.3;0.1;0.3" dur="3s" repeatCount="indefinite" />
-                    </rect>
-                  )}
-                  <rect
-                    x={node.x - node.width / 2}
-                    y={node.y - node.height / 2}
-                    width={node.width}
-                    height={node.height}
-                    rx={10}
-                    fill={fillColor}
-                    stroke={strokeColor}
-                    strokeWidth={1}
-                  />
-                  {/* Icon */}
-                  <foreignObject
-                    x={node.x - node.width / 2 + 12}
-                    y={node.y - 10}
-                    width={20}
-                    height={20}
-                  >
-                    <div className="flex items-center justify-center h-full text-muted">
-                      <NodeIcon type={node.type} health={node.health} />
-                    </div>
-                  </foreignObject>
-                  {/* Label */}
-                  <text
-                    x={node.x - node.width / 2 + 36}
-                    y={node.y - 2}
-                    textAnchor="start"
-                    fill="#e5e5e5"
-                    fontSize="11"
-                    fontFamily="monospace"
-                  >
-                    {node.label.length > 16 ? node.label.slice(0, 14) + "..." : node.label}
-                  </text>
-                  {/* Subtitle */}
-                  <text
-                    x={node.x - node.width / 2 + 36}
-                    y={node.y + 13}
-                    textAnchor="start"
-                    fill="#555"
-                    fontSize="9"
-                    fontFamily="monospace"
-                  >
-                    {node.type === "container"
-                      ? (node.data.state === "running" ? "running" : node.data.state)
-                      : node.type}
-                  </text>
-                  {/* Status dot */}
-                  <circle
-                    cx={node.x + node.width / 2 - 12}
-                    cy={node.y}
-                    r="4"
-                    fill={statusColor}
-                  />
-                </g>
-              );
-            })}
-          </svg>
+          <TopologyFlow
+            initialNodes={nodes}
+            initialEdges={edges}
+            onNodeClick={handleNodeClick}
+          />
         )}
       </div>
 

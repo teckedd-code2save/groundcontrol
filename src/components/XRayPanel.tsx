@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ActionConfirm, ActionType } from "@/components/ActionConfirm";
-import { ContainerIcon, getContainerType, getContainerTypeLabel, HostIcon, SiteIcon, CaddyIcon } from "@/components/TopoIcons";
+import { ContainerIcon, getContainerType, getContainerTypeLabel, HostIcon, SiteIcon, CaddyIcon, NginxIcon } from "@/components/TopoIcons";
 import { linkSitesToContainers } from "@/lib/topology";
 
 interface XRayTarget {
-  type: "container" | "site" | "host" | "caddy" | "system";
+  type: "container" | "site" | "host" | "caddy" | "nginx" | "system";
   id: string;
   name: string;
   data?: any;
@@ -77,7 +77,7 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
       } else if (target.type === "host") {
         const res = await fetch("/api/vps/stats");
         setDetail(await res.json());
-      } else if (target.type === "caddy") {
+      } else if (target.type === "caddy" || target.type === "nginx") {
         const res = await fetch("/api/proxy");
         setDetail(await res.json());
       } else if (target.type === "system") {
@@ -122,23 +122,27 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "remove", name }),
         });
-      } else if (action === "reload-caddy") {
-        await fetch("/api/proxy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "reload", server: "caddy" }),
-        });
-      } else if (action === "test-caddy") {
-        await fetch("/api/proxy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "test", server: "caddy" }),
-        });
-      } else if (action === "logs-caddy") {
+      } else if (action === "reload-caddy" || action === "reload-nginx") {
         const res = await fetch("/api/proxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "logs", server: "caddy" }),
+          body: JSON.stringify({ action: "reload", server: action === "reload-caddy" ? "caddy" : "nginx" }),
+        });
+        const data = await res.json();
+        setLogs(data.output || data.error || `${action} completed`);
+      } else if (action === "test-caddy" || action === "test-nginx") {
+        const res = await fetch("/api/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "test", server: action === "test-caddy" ? "caddy" : "nginx" }),
+        });
+        const data = await res.json();
+        setLogs(data.output || data.error || `${action} completed`);
+      } else if (action === "logs-caddy" || action === "logs-nginx") {
+        const res = await fetch("/api/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "logs", server: action === "logs-caddy" ? "caddy" : "nginx" }),
         });
         const data = await res.json();
         setLogs(data.output || data.error || "No logs");
@@ -234,6 +238,11 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
       if (detail.caddy?.version?.includes("not installed")) issues.push("Caddy binary not found on VPS");
     }
 
+    if (target?.type === "nginx") {
+      if (!detail.nginx?.active) issues.push("Nginx is not running");
+      if (detail.nginx?.version?.includes("not installed")) issues.push("Nginx binary not found on VPS");
+    }
+
     return issues;
   }
 
@@ -265,7 +274,7 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                   : "border-success/30 text-success"
                 : target.type === "site" && issues.length > 0
                 ? "border-warning/30 text-warning"
-                : target.type === "caddy" && issues.length > 0
+                : (target.type === "caddy" || target.type === "nginx") && issues.length > 0
                 ? "border-warning/30 text-warning"
                 : target.type === "system" && issues.length > 0
                 ? "border-warning/30 text-warning"
@@ -275,6 +284,7 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
             {target.type === "host" && <HostIcon className="w-4 h-4" />}
             {target.type === "site" && <SiteIcon className="w-4 h-4" />}
             {target.type === "caddy" && <CaddyIcon className="w-4 h-4" />}
+            {target.type === "nginx" && <NginxIcon className="w-4 h-4" />}
             {target.type === "system" && (
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -561,21 +571,24 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setPendingAction({ action: "reload-caddy", name: "Caddy" })}
-                    className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded hover:bg-accent/10 transition-colors"
+                    disabled={actionLoading === "reload-caddy"}
+                    className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded hover:bg-accent/10 transition-colors disabled:opacity-50"
                   >
-                    Reload
+                    {actionLoading === "reload-caddy" ? "..." : "Reload"}
                   </button>
                   <button
                     onClick={() => handleAction("test-caddy")}
-                    className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors"
+                    disabled={actionLoading === "test-caddy"}
+                    className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
                   >
-                    Test Config
+                    {actionLoading === "test-caddy" ? "..." : "Test Config"}
                   </button>
                   <button
                     onClick={() => handleAction("logs-caddy")}
-                    className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors"
+                    disabled={actionLoading === "logs-caddy"}
+                    className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
                   >
-                    View Logs
+                    {actionLoading === "logs-caddy" ? "..." : "View Logs"}
                   </button>
                 </div>
 
@@ -598,6 +611,73 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
                 {logs && (
                   <div>
                     <h4 className="text-xs font-mono text-muted mb-2">Caddy Logs</h4>
+                    <pre className="bg-background/50 rounded-lg p-3 text-[10px] font-mono text-foreground/70 whitespace-pre-wrap max-h-64 overflow-auto scrollbar-thin">
+                      {logs}
+                    </pre>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Nginx Specific */}
+            {target.type === "nginx" && detail && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-background/50 rounded-lg p-3 text-center">
+                    <div className="text-xs text-muted mb-1">Status</div>
+                    <div className={`text-sm font-mono font-medium ${detail.nginx?.active ? "text-success" : "text-error"}`}>
+                      {detail.nginx?.active ? "Active" : "Inactive"}
+                    </div>
+                  </div>
+                  <div className="bg-background/50 rounded-lg p-3 text-center">
+                    <div className="text-xs text-muted mb-1">Version</div>
+                    <div className="text-sm font-mono font-medium truncate">{detail.nginx?.version || "—"}</div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setPendingAction({ action: "reload-nginx", name: "Nginx" })}
+                    disabled={actionLoading === "reload-nginx"}
+                    className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded hover:bg-accent/10 transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === "reload-nginx" ? "..." : "Reload"}
+                  </button>
+                  <button
+                    onClick={() => handleAction("test-nginx")}
+                    disabled={actionLoading === "test-nginx"}
+                    className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === "test-nginx" ? "..." : "Test Config"}
+                  </button>
+                  <button
+                    onClick={() => handleAction("logs-nginx")}
+                    disabled={actionLoading === "logs-nginx"}
+                    className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading === "logs-nginx" ? "..." : "View Logs"}
+                  </button>
+                </div>
+
+                {detail.nginx?.sites && detail.nginx.sites.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-mono text-muted mb-2">Nginx Sites ({detail.nginx.sites.length})</h4>
+                    <div className="space-y-2 max-h-48 overflow-auto scrollbar-thin">
+                      {detail.nginx.sites.map((s: any, i: number) => (
+                        <div key={i} className="bg-background/50 rounded-lg p-3">
+                          <div className="text-[10px] text-muted font-mono mb-1">{s.file}</div>
+                          <pre className="text-[10px] font-mono text-foreground/70 whitespace-pre-wrap">
+                            <SensitiveField value={s.content} />
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {logs && (
+                  <div>
+                    <h4 className="text-xs font-mono text-muted mb-2">Nginx Logs</h4>
                     <pre className="bg-background/50 rounded-lg p-3 text-[10px] font-mono text-foreground/70 whitespace-pre-wrap max-h-64 overflow-auto scrollbar-thin">
                       {logs}
                     </pre>

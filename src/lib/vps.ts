@@ -295,21 +295,26 @@ export async function getDockerComposeCommand(vps?: VpsConnection | null): Promi
   return "docker compose";
 }
 
+export type BinaryResolution =
+  | { type: "path"; path: string }
+  | { type: "docker"; container: string }
+  | { type: "not_found" };
+
 export async function resolveBinary(
   name: string,
   vps?: VpsConnection | null
-): Promise<string> {
+): Promise<BinaryResolution> {
   const conn = vps || (await getActiveVps());
 
   // Try `which` first (works on most systems)
   const which = await execOnVps(`which ${name} 2>/dev/null || echo ""`, conn);
   const path = which.stdout.trim();
-  if (path && !path.includes("not found")) return path;
+  if (path && !path.includes("not found")) return { type: "path", path };
 
   // Try `command -v` (more portable on BusyBox/Alpine)
   const commandV = await execOnVps(`command -v ${name} 2>/dev/null || echo ""`, conn);
   const commandPath = commandV.stdout.trim();
-  if (commandPath && commandPath.startsWith("/")) return commandPath;
+  if (commandPath && commandPath.startsWith("/")) return { type: "path", path: commandPath };
 
   // Common fallback paths (Debian/Ubuntu/Alpine)
   const candidates = [
@@ -324,20 +329,23 @@ export async function resolveBinary(
   ];
   for (const p of candidates) {
     const test = await execOnVps(`test -x ${p} && echo ${p} || echo ""`, conn);
-    if (test.stdout.trim()) return test.stdout.trim();
+    if (test.stdout.trim()) return { type: "path", path: test.stdout.trim() };
   }
 
   // Alpine: check if installed via apk
-  const apk = await execOnVps(`apk info -L ${name} 2>/dev/null | grep -E "bin/${name}$" || echo ""`, conn);
-  if (apk.stdout.trim()) return apk.stdout.trim();
+  const apk = await execOnVps(
+    `apk info -L ${name} 2>/dev/null | grep -E "(sbin|bin)/${name}$" || echo ""`,
+    conn
+  );
+  if (apk.stdout.trim()) return { type: "path", path: apk.stdout.trim() };
 
   // Also try docker container name for caddy/nginx
   if (name === "caddy" || name === "nginx") {
     const docker = await execOnVps(`docker ps --format "{{.Names}}" | grep -E "^${name}$" || echo ""`, conn);
-    if (docker.stdout.trim()) return `docker exec ${docker.stdout.trim()}`;
+    if (docker.stdout.trim()) return { type: "docker", container: docker.stdout.trim() };
   }
 
-  return name; // fallback to bare name — error will surface naturally
+  return { type: "not_found" };
 }
 
 export async function controlContainer(

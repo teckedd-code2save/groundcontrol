@@ -30,8 +30,9 @@ export async function POST(req: NextRequest) {
     // Auto-prefix PATH for known binaries that often live outside default non-interactive PATH
     if (["caddy", "nginx", "docker-compose"].includes(firstWord)) {
       try {
-        const binPath = await resolveBinary(firstWord);
-        if (binPath && !binPath.startsWith("docker exec")) {
+        const resolution = await resolveBinary(firstWord);
+        if (resolution.type === "path") {
+          const binPath = resolution.path;
           // If binary is in a non-standard path, prepend PATH export
           if (!binPath.startsWith("/usr/bin") && !binPath.startsWith("/bin")) {
             const dir = binPath.substring(0, binPath.lastIndexOf("/"));

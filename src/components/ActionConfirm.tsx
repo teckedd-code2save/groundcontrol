@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-export type ActionType = "deploy" | "start" | "stop" | "restart" | "remove" | "prune" | "reload-caddy";
+export type ActionType = "deploy" | "start" | "stop" | "restart" | "remove" | "prune" | "reload-caddy" | "reload-nginx";
 
 interface ActionConfirmProps {
   open: boolean;
@@ -47,6 +47,11 @@ const ACTION_META: Record<ActionType, { title: string; consequence: string; seve
   "reload-caddy": {
     title: "Reload Caddy",
     consequence: "This will reload the Caddy configuration. A bad config may briefly interrupt proxying.",
+    severity: "neutral",
+  },
+  "reload-nginx": {
+    title: "Reload Nginx",
+    consequence: "This will reload the Nginx configuration. A bad config may briefly interrupt proxying.",
     severity: "neutral",
   },
 };
