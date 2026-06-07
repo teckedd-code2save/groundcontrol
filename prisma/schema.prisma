@@ -96,14 +96,15 @@ model SiteContainerMap {
 }
 
 model SystemConfig {
-  id            Int    @id @default(autoincrement())
-  projectRoot   String @default("/opt")
-  caddySitesDir String @default("/etc/caddy/sites")
-  caddyFile     String @default("/etc/caddy/Caddyfile")
-  nginxSitesDir String @default("/etc/nginx/sites-available")
-  nginxLogPath  String @default("/var/log/nginx/error.log")
-  staticRoot    String @default("/var/www")
-  sshDefaultCwd String @default("/root")
-  certDomain    String @default("")
-  updatedAt     DateTime @updatedAt
+  id             Int    @id @default(autoincrement())
+  projectRoot    String @default("/opt")
+  caddySitesDir  String @default("/etc/caddy/sites")
+  caddyFile      String @default("/etc/caddy/Caddyfile")
+  nginxSitesDir  String @default("/etc/nginx/sites-available")
+  nginxLogPath   String @default("/var/log/nginx/error.log")
+  staticRoot     String @default("/var/www")
+  sshDefaultCwd  String @default("/root")
+  certDomain     String @default("")
+  composeCommand String? // override docker compose command: "docker compose", "docker-compose", "podman-compose"
+  updatedAt      DateTime @updatedAt
 }

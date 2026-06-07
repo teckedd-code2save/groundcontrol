@@ -307,6 +307,7 @@ function SystemPathsSection() {
           staticRoot: config.staticRoot,
           sshDefaultCwd: config.sshDefaultCwd,
           certDomain: config.certDomain,
+          composeCommand: config.composeCommand || null,
         }),
       });
       const data = await res.json();
@@ -355,6 +356,7 @@ function SystemPathsSection() {
     { key: "staticRoot", label: "Static Files Root", placeholder: "/var/www", desc: "Directory served for static websites and file hosting" },
     { key: "sshDefaultCwd", label: "SSH Default Working Directory", placeholder: "/root", desc: "Default directory when opening the terminal" },
     { key: "certDomain", label: "SSL Certificate Domain", placeholder: "yourdomain.com (optional)", desc: "Primary domain for SSL certificate generation and monitoring" },
+    { key: "composeCommand", label: "Docker Compose Command", placeholder: "auto", desc: "Override the docker compose command. Leave empty for auto-detect. Options: docker compose, docker-compose, podman-compose" },
   ];
 
   return (

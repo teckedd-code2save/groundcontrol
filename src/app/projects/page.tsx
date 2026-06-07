@@ -48,6 +48,16 @@ interface ProjectData {
   caddySites: CaddySite[];
 }
 
+async function safeJson(res: Response): Promise<{ ok: boolean; data: any; text: string }> {
+  const text = await res.text();
+  try {
+    const data = text ? JSON.parse(text) : {};
+    return { ok: res.ok, data, text };
+  } catch {
+    return { ok: res.ok, data: { error: text || "Invalid response" }, text };
+  }
+}
+
 function deriveProjectName(slug: string): string {
   const map: Record<string, string> = {
     urbanize: "Urbanize",
@@ -75,26 +85,26 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/projects").then((r) => r.json()),
-      fetch("/api/containers").then((r) => r.json()),
-      fetch("/api/docker-images").then((r) => r.json()),
+      fetch("/api/projects").then((r) => safeJson(r)),
+      fetch("/api/containers").then((r) => safeJson(r)),
+      fetch("/api/docker-images").then((r) => safeJson(r)),
       fetch("/api/system-config")
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null),
+        .then((r) => safeJson(r))
+        .catch(() => ({ ok: true, data: null, text: "" })),
     ])
-      .then(([projectsData, containersData, imagesData, config]) => {
-        setData(projectsData);
-        setContainers(containersData);
-        setImages(imagesData);
-        if (config?.projectRoot) setProjectRoot(config.projectRoot);
+      .then(([projectsRes, containersRes, imagesRes, configRes]) => {
+        setData(projectsRes.data);
+        setContainers(containersRes.data);
+        setImages(imagesRes.data);
+        if (configRes.data?.projectRoot) setProjectRoot(configRes.data.projectRoot);
         setLoading(false);
 
         // Fetch compose files for each project directory
-        const dirs = (projectsData?.directories || []).filter((d: string) => d !== "groundcontrol");
+        const dirs = (projectsRes.data?.directories || []).filter((d: string) => d !== "groundcontrol");
         for (const slug of dirs) {
           fetch(`/api/projects/compose?slug=${slug}`)
-            .then((r) => r.json())
-            .then((compose) => {
+            .then((r) => safeJson(r))
+            .then(({ data: compose }) => {
               setComposeData((prev) => {
                 const next = new Map(prev);
                 next.set(slug, compose);
@@ -118,8 +128,8 @@ export default function ProjectsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectSlug: slug, branch: "main" }),
       });
-      const data = await res.json();
-      if (data.error) setError(`Deploy failed: ${data.error}`);
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error) setError(`Deploy failed: ${data.error || "Unknown error"}`);
       else setError("");
     } catch (err: any) {
       setError(`Deploy failed: ${err.message}`);
@@ -136,9 +146,9 @@ export default function ProjectsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectSlug: slug, service }),
       });
-      const data = await res.json();
-      if (!data.success && data.error) {
-        setError(`Start service failed: ${data.error}`);
+      const { ok, data } = await safeJson(res);
+      if (!ok || (!data.success && data.error)) {
+        setError(`Start service failed: ${data.error || "Unknown error"}`);
       } else {
         setError("");
       }

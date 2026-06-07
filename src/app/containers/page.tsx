@@ -52,6 +52,16 @@ interface ImageContext {
   containers: Container[];
 }
 
+async function safeJson(res: Response): Promise<{ ok: boolean; data: any; text: string }> {
+  const text = await res.text();
+  try {
+    const data = text ? JSON.parse(text) : {};
+    return { ok: res.ok, data, text };
+  } catch {
+    return { ok: res.ok, data: { error: text || "Invalid response" }, text };
+  }
+}
+
 export default function ContainersPage() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [images, setImages] = useState<DockerImage[]>([]);
@@ -86,7 +96,7 @@ export default function ContainersPage() {
   async function fetchContainers() {
     try {
       const res = await fetch("/api/containers");
-      const data = await res.json();
+      const { data } = await safeJson(res);
       if (Array.isArray(data)) {
         setContainers(data);
         setError("");
@@ -103,7 +113,7 @@ export default function ContainersPage() {
   async function fetchImages() {
     try {
       const res = await fetch("/api/docker-images");
-      const data = await res.json();
+      const { data } = await safeJson(res);
       if (Array.isArray(data)) {
         setImages(data);
       }
@@ -117,12 +127,12 @@ export default function ContainersPage() {
   async function fetchCompose() {
     try {
       const res = await fetch("/api/projects");
-      const data = await res.json();
+      const { data } = await safeJson(res);
       const dirs = (data?.directories || []).filter((d: string) => d !== "groundcontrol");
       for (const slug of dirs) {
         fetch(`/api/projects/compose?slug=${slug}`)
-          .then((r) => r.json())
-          .then((compose) => {
+          .then((r) => safeJson(r))
+          .then(({ data: compose }) => {
             setComposeData((prev) => {
               const next = new Map(prev);
               next.set(slug, compose);
@@ -155,7 +165,7 @@ export default function ContainersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, name }),
       });
-      const data = await res.json();
+      const { data } = await safeJson(res);
       if (!data.success && data.error) {
         setError(`Action failed: ${data.error}`);
       } else {
@@ -177,9 +187,9 @@ export default function ContainersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectSlug, service }),
       });
-      const data = await res.json();
-      if (!data.success && data.error) {
-        setError(`Start service failed: ${data.error}`);
+      const { ok, data } = await safeJson(res);
+      if (!ok || (!data.success && data.error)) {
+        setError(`Start service failed: ${data.error || "Unknown error"}`);
       } else {
         setError("");
         await fetchContainers();
@@ -208,9 +218,9 @@ export default function ContainersPage() {
           command: runModal.command || undefined,
         }),
       });
-      const data = await res.json();
-      if (!data.success && data.error) {
-        setError(`Run failed: ${data.error}`);
+      const { ok, data } = await safeJson(res);
+      if (!ok || (!data.success && data.error)) {
+        setError(`Run failed: ${data.error || "Unknown error"}`);
       } else {
         setError("");
         await fetchContainers();
@@ -233,9 +243,9 @@ export default function ContainersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repository: pruneRepoTarget }),
       });
-      const data = await res.json();
-      if (data.error) {
-        setError(`Prune failed: ${data.error}`);
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error) {
+        setError(`Prune failed: ${data.error || "Unknown error"}`);
       } else {
         setError(data.errors?.length > 0 ? `Pruned ${data.removed?.length || 0}, errors: ${data.errors.join("; ")}` : "");
         await fetchImages();
@@ -253,7 +263,7 @@ export default function ContainersPage() {
     setSelectedContainer(name);
     try {
       const res = await fetch(`/api/containers/logs?name=${name}&tail=200`);
-      const data = await res.json();
+      const { data } = await safeJson(res);
       setLogs(data.logs || "No logs available");
     } catch (err) {
       setLogs("Failed to fetch logs");

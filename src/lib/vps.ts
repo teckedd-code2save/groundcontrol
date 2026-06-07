@@ -251,6 +251,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   staticRoot: "/var/www",
   sshDefaultCwd: "/root",
   certDomain: "",
+  composeCommand: null as string | null,
   updatedAt: new Date(),
 };
 
@@ -281,6 +282,11 @@ export function invalidateSystemConfigCache() {
 }
 
 export async function getDockerComposeCommand(vps?: VpsConnection | null): Promise<string> {
+  const config = await getSystemConfig();
+  if (config.composeCommand) {
+    return config.composeCommand;
+  }
+
   const conn = vps || (await getActiveVps());
   // Try docker compose (plugin) first, fallback to docker-compose (standalone)
   const pluginCheck = await execOnVps("docker compose version 2>/dev/null", conn);

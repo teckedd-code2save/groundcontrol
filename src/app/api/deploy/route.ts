@@ -36,11 +36,8 @@ export async function POST(req: NextRequest) {
         `cd ${projectPath} && ${composeCmd} pull && ${composeCmd} up -d --remove-orphans`
       );
 
-      // Fallback: if plugin syntax fails with "unknown command", try standalone
-      if (
-        result.code !== 0 &&
-        (result.stderr.includes("unknown command") || result.stderr.includes("not found"))
-      ) {
+      // Fallback: if plugin syntax fails for any reason, try standalone
+      if (result.code !== 0) {
         composeCmd = "docker-compose";
         result = await execOnVps(
           `cd ${projectPath} && ${composeCmd} pull && ${composeCmd} up -d --remove-orphans`
