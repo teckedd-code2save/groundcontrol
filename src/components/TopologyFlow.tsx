@@ -82,10 +82,21 @@ function buildParentMap(edges: Edge[]): Map<string, string[]> {
   return map;
 }
 
-function getDefaultExpanded(nodes: Node<TopoNodeData>[]): Set<string> {
+function getDefaultExpanded(nodes: Node<TopoNodeData>[], edges: Edge[]): Set<string> {
   const expanded = new Set<string>();
+  const parentMap = buildParentMap(edges);
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+
   for (const node of nodes) {
-    if (node.data.type === "site" && (node.data.health === "warning" || node.data.health === "critical")) {
+    if (node.data.type !== "site" && node.id !== "unmapped") continue;
+
+    const children = parentMap.get(node.id) || [];
+    const hasIssues = children.some((childId) => {
+      const child = nodeMap.get(childId);
+      return child && (child.data.health === "warning" || child.data.health === "critical");
+    });
+
+    if (hasIssues) {
       expanded.add(node.id);
     }
   }
@@ -156,14 +167,14 @@ export default function TopologyFlow({
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<TopoNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance<Node<TopoNodeData>, Edge> | null>(null);
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => getDefaultExpanded(initialNodes));
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => getDefaultExpanded(initialNodes, initialEdges));
 
   const parentMap = useMemo(() => buildParentMap(initialEdges), [initialEdges]);
 
   // Reset expanded when initial nodes change significantly
   useEffect(() => {
-    setExpandedNodes(getDefaultExpanded(initialNodes));
-  }, [initialNodes]);
+    setExpandedNodes(getDefaultExpanded(initialNodes, initialEdges));
+  }, [initialNodes, initialEdges]);
 
   const computeVisibleNodes = useCallback(
     (allNodes: Node<TopoNodeData>[], expanded: Set<string>, activeFilters: TopologyFilters, projects: DbProject[]) => {
