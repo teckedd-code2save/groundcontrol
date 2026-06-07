@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ActionConfirm } from "@/components/ActionConfirm";
@@ -29,6 +29,11 @@ interface DockerImage {
   createdAt: string;
 }
 
+interface ImageGroup {
+  repository: string;
+  images: DockerImage[];
+}
+
 export default function ContainersPage() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [images, setImages] = useState<DockerImage[]>([]);
@@ -45,6 +50,19 @@ export default function ContainersPage() {
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [nameFilter, setNameFilter] = useState<string>("");
+  const [imageRepoFilter, setImageRepoFilter] = useState<string>("");
+
+  // Run image modal
+  const [runModal, setRunModal] = useState<{
+    image: string;
+    name: string;
+    ports: string;
+    env: string;
+    command: string;
+  } | null>(null);
+
+  // Prune repo modal
+  const [pruneRepoTarget, setPruneRepoTarget] = useState<string | null>(null);
 
   async function fetchContainers() {
     try {
@@ -109,19 +127,61 @@ export default function ContainersPage() {
     }
   }
 
-  async function handlePruneImages() {
-    setActionLoading("prune");
+  async function handleRunImage() {
+    if (!runModal) return;
+    setActionLoading("run");
     try {
-      const res = await fetch("/api/containers/prune", { method: "POST" });
+      const ports = runModal.ports ? runModal.ports.split(",").map((p) => p.trim()).filter(Boolean) : [];
+      const env = runModal.env ? runModal.env.split(",").map((e) => e.trim()).filter(Boolean) : [];
+      const res = await fetch("/api/images/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: runModal.image,
+          name: runModal.name || undefined,
+          ports: ports.length > 0 ? ports : undefined,
+          env: env.length > 0 ? env : undefined,
+          command: runModal.command || undefined,
+        }),
+      });
       const data = await res.json();
-      if (data.success) {
-        await fetchImages();
+      if (!data.success && data.error) {
+        setError(`Run failed: ${data.error}`);
+      } else {
+        setError("");
         await fetchContainers();
-      } else if (data.error) {
-        setError(`Prune failed: ${data.error}`);
+        await fetchImages();
       }
+    } catch (err: any) {
+      setError(`Run failed: ${err.message}`);
     } finally {
       setActionLoading(null);
+      setRunModal(null);
+    }
+  }
+
+  async function handlePruneRepo() {
+    if (!pruneRepoTarget) return;
+    setActionLoading("prune-repo");
+    try {
+      const res = await fetch("/api/images/prune-repo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repository: pruneRepoTarget }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setError(`Prune failed: ${data.error}`);
+      } else {
+        setError(data.errors?.length > 0 ? `Pruned ${data.removed?.length || 0}, errors: ${data.errors.join("; ")}` : "");
+        await fetchImages();
+        await fetchContainers();
+      }
+    } catch (err: any) {
+      setError(`Prune failed: ${err.message}`);
+    } finally {
+      setActionLoading(null);
+      setPruneRepoTarget(null);
     }
   }
 
@@ -152,12 +212,49 @@ export default function ContainersPage() {
     unhealthy: containers.filter((c) => c.status.includes("unhealthy")).length,
   };
 
-  // Map image repo:tag -> containers using it
-  const imageToContainers = new Map<string, Container[]>();
-  for (const c of containers) {
-    const key = c.image;
-    if (!imageToContainers.has(key)) imageToContainers.set(key, []);
-    imageToContainers.get(key)!.push(c);
+  // Group images by repository, sort tags by createdAt desc
+  const groupedImages: ImageGroup[] = useMemo(() => {
+    const map = new Map<string, DockerImage[]>();
+    for (const img of images) {
+      if (!map.has(img.repository)) map.set(img.repository, []);
+      map.get(img.repository)!.push(img);
+    }
+    const groups: ImageGroup[] = [];
+    for (const [repository, imgs] of map) {
+      imgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      groups.push({ repository, images: imgs });
+    }
+    // Sort groups by total image count desc
+    groups.sort((a, b) => b.images.length - a.images.length);
+    return groups;
+  }, [images]);
+
+  const filteredGroups = groupedImages.filter((g) =>
+    !imageRepoFilter || g.repository.toLowerCase().includes(imageRepoFilter.toLowerCase())
+  );
+
+  // Map image full name -> containers using it
+  const imageToContainers = useMemo(() => {
+    const map = new Map<string, Container[]>();
+    for (const c of containers) {
+      if (!map.has(c.image)) map.set(c.image, []);
+      map.get(c.image)!.push(c);
+    }
+    return map;
+  }, [containers]);
+
+  function parseSize(sizeStr: string): number {
+    const match = sizeStr.match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i);
+    if (!match) return 0;
+    const val = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+    const mults: Record<string, number> = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+    return val * (mults[unit] || 1);
+  }
+
+  function openRunModal(image: string) {
+    const suggestedName = image.replace(/[^a-zA-Z0-9_-]/g, "-").substring(0, 40);
+    setRunModal({ image, name: suggestedName, ports: "", env: "", command: "" });
   }
 
   return (
@@ -168,8 +265,9 @@ export default function ContainersPage() {
       </div>
 
       {error && (
-        <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono">
-          {error}
+        <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono flex items-start justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError("")} className="ml-2 hover:text-foreground">✕</button>
         </div>
       )}
 
@@ -335,68 +433,112 @@ export default function ContainersPage() {
       ) : (
         /* Images Tab */
         <>
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-xs text-muted font-mono">
-              {images.length} images · hover to see which containers use each image
-            </p>
-            <button
-              onClick={handlePruneImages}
-              disabled={actionLoading === "prune"}
-              className="px-3 py-1.5 text-xs font-mono border border-warning/30 text-warning rounded hover:bg-warning/10 transition-colors disabled:opacity-50"
-            >
-              {actionLoading === "prune" ? "Pruning..." : "Prune unused"}
-            </button>
+          <div className="mb-6 flex flex-wrap items-center gap-3">
+            <input
+              type="text"
+              placeholder="Filter by repository..."
+              value={imageRepoFilter}
+              onChange={(e) => setImageRepoFilter(e.target.value)}
+              className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent w-64"
+            />
+            {imageRepoFilter && (
+              <button
+                onClick={() => setImageRepoFilter("")}
+                className="text-xs text-muted hover:text-foreground transition-colors"
+              >
+                Clear filter
+              </button>
+            )}
+            <div className="ml-auto text-xs text-muted font-mono">
+              {filteredGroups.length} repo{filteredGroups.length !== 1 ? "s" : ""} · {images.length} images
+            </div>
           </div>
 
           {imagesLoading ? (
-            <div className="space-y-3">
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="bg-card border border-border rounded-xl p-4 h-16 animate-pulse" />
+            <div className="space-y-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="bg-card border border-border rounded-xl p-4 h-24 animate-pulse" />
               ))}
             </div>
           ) : (
-            <div className="space-y-2">
-              {images.map((img) => {
-                const fullName = img.tag && img.tag !== "<none>" ? `${img.repository}:${img.tag}` : img.repository;
-                const usedBy = imageToContainers.get(fullName) || [];
-                const isUnused = usedBy.length === 0 && !img.repository.startsWith("<none>");
+            <div className="space-y-4">
+              {filteredGroups.map((group) => {
+                const latest = group.images[0];
+                const totalSize = group.images.reduce((sum, img) => sum + parseSize(img.size), 0);
+                const totalSizeStr = totalSize > 1024 ** 3
+                  ? `${(totalSize / 1024 ** 3).toFixed(2)}GB`
+                  : totalSize > 1024 ** 2
+                  ? `${(totalSize / 1024 ** 2).toFixed(0)}MB`
+                  : `${(totalSize / 1024).toFixed(0)}KB`;
                 return (
-                  <div
-                    key={img.id}
-                    className={`bg-card border rounded-xl p-4 hover:border-border-hover transition-colors ${
-                      isUnused ? "border-warning/20" : "border-border"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 min-w-0">
-                        <div className={`w-2 h-2 rounded-full shrink-0 ${isUnused ? "bg-warning" : "bg-success"}`} />
-                        <div className="min-w-0">
-                          <div className="text-sm font-mono truncate">{fullName}</div>
-                          <div className="text-[10px] text-muted font-mono mt-0.5">
-                            {img.id} · {img.createdAt}
-                          </div>
+                  <div key={group.repository} className="bg-card border border-border rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-mono font-medium truncate">{group.repository}</div>
+                        <div className="text-[10px] text-muted font-mono mt-0.5">
+                          {group.images.length} tag{group.images.length > 1 ? "s" : ""} · {totalSizeStr} total
                         </div>
                       </div>
-                      <div className="text-xs font-mono text-muted shrink-0 ml-4">
-                        {img.size}
+                      <div className="flex gap-2 shrink-0 ml-4">
+                        {group.images.length > 1 && (
+                          <button
+                            onClick={() => setPruneRepoTarget(group.repository)}
+                            disabled={actionLoading === "prune-repo"}
+                            className="px-3 py-1.5 text-xs font-mono border border-warning/30 text-warning rounded hover:bg-warning/10 transition-colors disabled:opacity-50"
+                          >
+                            prune old
+                          </button>
+                        )}
                       </div>
                     </div>
-                    {usedBy.length > 0 && (
-                      <div className="mt-2 pl-6 text-[10px] text-muted font-mono">
-                        Used by: {usedBy.map((c) => c.name).join(", ")}
-                      </div>
-                    )}
-                    {isUnused && (
-                      <div className="mt-2 pl-6 text-[10px] text-warning font-mono">
-                        Unused — safe to prune
-                      </div>
-                    )}
+                    <div className="space-y-1.5">
+                      {group.images.map((img, idx) => {
+                        const fullName = img.tag && img.tag !== "<none>" ? `${img.repository}:${img.tag}` : img.id;
+                        const usedBy = imageToContainers.get(fullName) || [];
+                        const isLarge = parseSize(img.size) > 1024 ** 3;
+                        return (
+                          <div
+                            key={img.id}
+                            className={`flex items-center justify-between p-2 rounded-lg border ${
+                              idx === 0 ? "bg-accent/5 border-accent/10" : "bg-background/30 border-border/30"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              {idx === 0 && <span className="text-[9px] font-mono text-accent shrink-0">latest</span>}
+                              <div className="min-w-0">
+                                <div className="text-xs font-mono truncate">
+                                  {img.tag && img.tag !== "<none>" ? img.tag : img.id}
+                                </div>
+                                <div className="text-[10px] text-muted font-mono">
+                                  {img.id} · {img.createdAt}
+                                  {usedBy.length > 0 && (
+                                    <span className="ml-2 text-success">used by {usedBy.length}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0 ml-4">
+                              <span className={`text-xs font-mono ${isLarge ? "text-warning" : "text-muted"}`}>
+                                {img.size}
+                              </span>
+                              <button
+                                onClick={() => openRunModal(fullName)}
+                                disabled={actionLoading === "run"}
+                                className="px-2 py-1 text-[10px] font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50"
+                              >
+                                run
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               })}
-              {images.length === 0 && (
+              {filteredGroups.length === 0 && (
                 <div className="text-center py-16 text-muted">
-                  <p className="text-lg">No images found</p>
+                  <p className="text-lg">No images match your filter</p>
                 </div>
               )}
             </div>
@@ -423,6 +565,105 @@ export default function ContainersPage() {
           onConfirm={() => handleAction(pendingAction.action, pendingAction.name)}
           onCancel={() => setPendingAction(null)}
         />
+      )}
+
+      {/* Run Image Modal */}
+      {runModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8">
+          <div className="bg-card border border-border rounded-xl w-full max-w-lg flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="font-mono text-sm">
+                Run: <span className="text-accent">{runModal.image}</span>
+              </h3>
+              <button onClick={() => setRunModal(null)} className="text-muted hover:text-foreground transition-colors">✕</button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Container Name</label>
+                <input
+                  type="text"
+                  value={runModal.name}
+                  onChange={(e) => setRunModal({ ...runModal, name: e.target.value })}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Ports (comma-separated, e.g. 8080:80)</label>
+                <input
+                  type="text"
+                  value={runModal.ports}
+                  onChange={(e) => setRunModal({ ...runModal, ports: e.target.value })}
+                  placeholder="8080:80, 3000:3000"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Env Vars (comma-separated, e.g. KEY=value)</label>
+                <input
+                  type="text"
+                  value={runModal.env}
+                  onChange={(e) => setRunModal({ ...runModal, env: e.target.value })}
+                  placeholder="NODE_ENV=production, PORT=3000"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Command Override</label>
+                <input
+                  type="text"
+                  value={runModal.command}
+                  onChange={(e) => setRunModal({ ...runModal, command: e.target.value })}
+                  placeholder="optional"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+              <button
+                onClick={() => setRunModal(null)}
+                className="px-4 py-2 text-xs font-mono border border-border rounded hover:border-accent transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRunImage}
+                disabled={actionLoading === "run"}
+                className="px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded hover:bg-success/20 transition-colors disabled:opacity-50"
+              >
+                {actionLoading === "run" ? "Starting..." : "Run Container"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Prune Repo Modal */}
+      {pruneRepoTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8">
+          <div className="bg-card border border-border rounded-xl w-full max-w-md flex flex-col">
+            <div className="p-4 border-b border-border">
+              <h3 className="font-mono text-sm">Prune Old Tags</h3>
+              <p className="text-xs text-muted mt-1">
+                Keep the most recent tag for <span className="text-accent font-mono">{pruneRepoTarget}</span> and remove all older tags.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+              <button
+                onClick={() => setPruneRepoTarget(null)}
+                className="px-4 py-2 text-xs font-mono border border-border rounded hover:border-accent transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePruneRepo}
+                disabled={actionLoading === "prune-repo"}
+                className="px-4 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded hover:bg-warning/20 transition-colors disabled:opacity-50"
+              >
+                {actionLoading === "prune-repo" ? "Pruning..." : "Prune Old Tags"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Logs Modal */}
