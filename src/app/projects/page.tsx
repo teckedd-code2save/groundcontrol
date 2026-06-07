@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ContainerIcon, getContainerType, getContainerTypeLabel } from "@/components/TopoIcons";
-import { linkSitesToContainers } from "@/lib/topology";
 import { ActionConfirm } from "@/components/ActionConfirm";
 
 interface CaddySite {
@@ -41,6 +40,18 @@ interface Container {
   composeWorkingDir?: string;
 }
 
+interface ComposeService {
+  name: string;
+  image?: string;
+  build?: boolean;
+}
+
+interface ComposeInfo {
+  services: ComposeService[];
+  raw: string;
+  error?: string;
+}
+
 export default function ProjectsPage() {
   const [data, setData] = useState<{
     directories: string[];
@@ -49,6 +60,7 @@ export default function ProjectsPage() {
     projects: DbProject[];
   } | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
+  const [composeData, setComposeData] = useState<Map<string, ComposeInfo>>(new Map());
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState<string | null>(null);
   const [confirmDeploy, setConfirmDeploy] = useState<string | null>(null);
@@ -67,6 +79,22 @@ export default function ProjectsPage() {
         setContainers(containersData);
         if (config?.projectRoot) setProjectRoot(config.projectRoot);
         setLoading(false);
+
+        // Fetch compose files for each project
+        if (projectsData?.projects?.length > 0) {
+          for (const p of projectsData.projects) {
+            fetch(`/api/projects/compose?slug=${p.slug}`)
+              .then((r) => r.json())
+              .then((compose) => {
+                setComposeData((prev) => {
+                  const next = new Map(prev);
+                  next.set(p.slug, compose);
+                  return next;
+                });
+              })
+              .catch(() => {});
+          }
+        }
       })
       .catch(() => setLoading(false));
   }, []);
@@ -150,6 +178,7 @@ export default function ProjectsPage() {
             const running = related.filter((c) => c.state === "running").length;
             const stopped = related.filter((c) => c.state !== "running").length;
             const site = data?.caddySites.find((s) => project.domain && s.domain.toLowerCase() === project.domain.toLowerCase());
+            const compose = composeData.get(project.slug);
 
             return (
               <div
@@ -186,6 +215,54 @@ export default function ProjectsPage() {
                     {deploying === project.slug ? "Deploying..." : "Deploy"}
                   </button>
                 </div>
+
+                {/* Deploy Preview — Compose Services */}
+                {compose && compose.services && compose.services.length > 0 && (
+                  <div className="mb-4 space-y-2">
+                    <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">
+                      Deploy Preview — {compose.services.length} service{compose.services.length > 1 ? "s" : ""}
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {compose.services.map((svc) => {
+                        const existing = related.find((c) => c.composeService === svc.name);
+                        const isRunning = existing?.state === "running";
+                        return (
+                          <div
+                            key={svc.name}
+                            className={`flex items-center gap-2 p-2 rounded-lg border ${
+                              isRunning ? "bg-background/50 border-border/50" : "bg-warning/5 border-warning/10"
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-mono truncate">{svc.name}</div>
+                              <div className="text-[10px] text-muted font-mono truncate">
+                                {svc.image || (svc.build ? "📦 build from Dockerfile" : "no image")}
+                              </div>
+                            </div>
+                            {existing ? (
+                              <div
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  isRunning ? "bg-success" : "bg-error"
+                                }`}
+                                title={isRunning ? "running" : "stopped"}
+                              />
+                            ) : (
+                              <span className="text-[9px] font-mono text-accent shrink-0">new</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="text-[10px] text-muted font-mono">
+                      Command: cd {projectRoot}/{project.slug} && docker compose pull && docker compose up -d --remove-orphans
+                    </div>
+                  </div>
+                )}
+                {compose && compose.error && (
+                  <div className="mb-4 text-[10px] text-warning font-mono bg-warning/5 p-2 rounded-lg">
+                    No compose file found at {projectRoot}/{project.slug}/docker-compose.yml
+                  </div>
+                )}
 
                 {/* Related Containers */}
                 {related.length > 0 ? (

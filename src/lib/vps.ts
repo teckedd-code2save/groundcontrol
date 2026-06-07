@@ -284,14 +284,19 @@ export async function getDockerComposeCommand(vps?: VpsConnection | null): Promi
   const conn = vps || (await getActiveVps());
   // Try docker compose (plugin) first, fallback to docker-compose (standalone)
   const pluginCheck = await execOnVps("docker compose version 2>/dev/null", conn);
-  if (pluginCheck.code === 0) {
+  if (pluginCheck.code === 0 && pluginCheck.stdout.toLowerCase().includes("compose")) {
     return "docker compose";
   }
   const standaloneCheck = await execOnVps("docker-compose version 2>/dev/null", conn);
-  if (standaloneCheck.code === 0) {
+  if (standaloneCheck.code === 0 && standaloneCheck.stdout.toLowerCase().includes("compose")) {
     return "docker-compose";
   }
-  // Default to plugin syntax; error will surface naturally if neither exists
+  // Also check if docker-compose binary exists on common paths even if `version` fails
+  const whichDc = await execOnVps(`which docker-compose 2>/dev/null || command -v docker-compose 2>/dev/null || echo ""`, conn);
+  if (whichDc.stdout.trim()) {
+    return "docker-compose";
+  }
+  // Default to plugin syntax; caller should retry with fallback if this fails
   return "docker compose";
 }
 
@@ -356,6 +361,23 @@ export async function controlContainer(
   const conn = vps || (await getActiveVps());
   const result = await execOnVps(`docker ${action} ${containerName}`, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+export async function getDockerImages(vps?: VpsConnection | null) {
+  const conn = vps || (await getActiveVps());
+  const result = await execOnVps(
+    `docker images --format "{{.Repository}}|{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedAt}}"`,
+    conn
+  );
+  if (!result.stdout.trim()) return [];
+
+  return result.stdout
+    .trim()
+    .split("\n")
+    .map((line) => {
+      const [repository, tag, id, size, createdAt] = line.split("|");
+      return { repository, tag, id, size, createdAt };
+    });
 }
 
 export async function pruneDocker(vps?: VpsConnection | null) {

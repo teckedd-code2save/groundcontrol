@@ -30,12 +30,24 @@ export async function POST(req: NextRequest) {
     try {
       const config = await getSystemConfig();
       const projectPath = `${config.projectRoot}/${projectSlug}`;
-      const composeCmd = await getDockerComposeCommand();
-      const result = await execOnVps(
+      let composeCmd = await getDockerComposeCommand();
+
+      let result = await execOnVps(
         `cd ${projectPath} && ${composeCmd} pull && ${composeCmd} up -d --remove-orphans`
       );
-      const duration = Date.now() - startTime;
 
+      // Fallback: if plugin syntax fails with "unknown command", try standalone
+      if (
+        result.code !== 0 &&
+        (result.stderr.includes("unknown command") || result.stderr.includes("not found"))
+      ) {
+        composeCmd = "docker-compose";
+        result = await execOnVps(
+          `cd ${projectPath} && ${composeCmd} pull && ${composeCmd} up -d --remove-orphans`
+        );
+      }
+
+      const duration = Date.now() - startTime;
       const status = result.code === 0 ? "success" : "failed";
 
       await prisma.deploymentLog.update({
