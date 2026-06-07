@@ -114,6 +114,11 @@ export default function DashboardPage() {
   const runningContainers = containers.filter((c) => c.state === "running").length;
   const unhealthyContainers = containers.filter((c) => c.status.includes("unhealthy")).length;
   const stoppedContainers = containers.filter((c) => c.state !== "running").length;
+  const counts = {
+    running: runningContainers,
+    stopped: stoppedContainers,
+    unhealthy: unhealthyContainers,
+  };
 
   function generateIntelligence(): { title: string; items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string; action?: () => void }[] } {
     const items: { label: string; status: "good" | "warn" | "critical"; detail: string; href?: string; action?: () => void }[] = [];
@@ -376,30 +381,49 @@ export default function DashboardPage() {
 
             {/* Container Quick View */}
             <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">Container Health</h3>
-              <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
-                {containers.slice(0, 8).map((container) => (
-                  <div
-                    key={container.name}
-                    className="flex items-center justify-between py-2 px-3 rounded-lg bg-background/50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-2 h-2 rounded-full ${
-                          container.state === "running"
-                            ? container.status.includes("unhealthy")
-                              ? "bg-warning"
-                              : "bg-success"
-                            : "bg-error"
-                        }`}
-                      />
-                      <span className="text-sm font-medium">{container.name}</span>
-                    </div>
-                    <div className="text-xs text-muted font-mono">
-                      {container.stats?.cpu || "—"}
-                    </div>
-                  </div>
-                ))}
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-mono uppercase tracking-wider text-muted">Container Health</h3>
+                <div className="flex items-center gap-2 text-[10px] font-mono">
+                  <span className="text-success">{counts.running} up</span>
+                  {counts.stopped > 0 && <span className="text-error">{counts.stopped} down</span>}
+                  {counts.unhealthy > 0 && <span className="text-warning">{counts.unhealthy} sick</span>}
+                </div>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
+                {containers.map((container) => {
+                  const isStopped = container.state !== "running";
+                  const isUnhealthy = container.status.includes("unhealthy");
+                  return (
+                    <a
+                      key={container.name}
+                      href={`/containers`}
+                      className={`flex items-center justify-between py-2 px-3 rounded-lg transition-colors ${
+                        isStopped ? "bg-error/5 border border-error/10 hover:bg-error/10" : "bg-background/50 hover:bg-background"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-2 h-2 rounded-full ${
+                            container.state === "running"
+                              ? isUnhealthy
+                                ? "bg-warning"
+                                : "bg-success"
+                              : "bg-error"
+                          }`}
+                        />
+                        <div>
+                          <span className={`text-sm font-medium ${isStopped ? "text-error/80" : ""}`}>{container.name}</span>
+                          {isStopped && (
+                            <span className="ml-2 text-[10px] font-mono text-error">stopped</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted font-mono">
+                        {container.stats?.cpu || (isStopped ? "—" : "—")}
+                      </div>
+                    </a>
+                  );
+                })}
                 {containers.length === 0 && (
                   <p className="text-sm text-muted py-4 text-center">No containers found</p>
                 )}

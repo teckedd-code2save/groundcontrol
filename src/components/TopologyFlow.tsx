@@ -291,6 +291,7 @@ export default function TopologyFlow({
         minZoom={0.2}
         maxZoom={2}
         defaultEdgeOptions={{
+          type: "smoothstep",
           style: { stroke: "#333", strokeWidth: 1, strokeDasharray: "4 4" },
           animated: true,
         }}

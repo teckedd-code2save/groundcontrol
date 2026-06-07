@@ -30,6 +30,10 @@ export default function ContainersPage() {
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<{ action: "start" | "stop" | "restart"; name: string } | null>(null);
 
+  // Filters
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [nameFilter, setNameFilter] = useState<string>("");
+
   async function fetchContainers() {
     try {
       const res = await fetch("/api/containers");
@@ -75,11 +79,56 @@ export default function ContainersPage() {
     }
   }
 
+  const filtered = containers.filter((c) => {
+    if (nameFilter && !c.name.toLowerCase().includes(nameFilter.toLowerCase())) return false;
+    if (statusFilter === "running") return c.state === "running" && !c.status.includes("unhealthy");
+    if (statusFilter === "stopped") return c.state !== "running";
+    if (statusFilter === "unhealthy") return c.status.includes("unhealthy");
+    if (statusFilter === "unknown") return !c.state || c.state === "unknown";
+    return true;
+  });
+
+  const counts = {
+    all: containers.length,
+    running: containers.filter((c) => c.state === "running" && !c.status.includes("unhealthy")).length,
+    stopped: containers.filter((c) => c.state !== "running").length,
+    unhealthy: containers.filter((c) => c.status.includes("unhealthy")).length,
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Containers</h1>
         <p className="text-muted mt-1">Manage Docker containers on your VPS</p>
+      </div>
+
+      {/* Filters */}
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          placeholder="Filter by name..."
+          value={nameFilter}
+          onChange={(e) => setNameFilter(e.target.value)}
+          className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent w-48"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+        >
+          <option value="">All ({counts.all})</option>
+          <option value="running">Running ({counts.running})</option>
+          <option value="stopped">Stopped ({counts.stopped})</option>
+          <option value="unhealthy">Unhealthy ({counts.unhealthy})</option>
+        </select>
+        {(statusFilter || nameFilter) && (
+          <button
+            onClick={() => { setStatusFilter(""); setNameFilter(""); }}
+            className="text-xs text-muted hover:text-foreground transition-colors"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -90,7 +139,7 @@ export default function ContainersPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {containers.map((container) => (
+          {filtered.map((container) => (
             <div
               key={container.id}
               className="bg-card border border-border rounded-xl p-4 hover:border-border-hover transition-colors"
@@ -115,7 +164,7 @@ export default function ContainersPage() {
                 </div>
 
                 <div className="flex items-center gap-4">
-                  {container.stats && (
+                  {container.stats && container.state === "running" && (
                     <div className="hidden md:flex gap-4 text-xs font-mono text-muted">
                       <span>CPU {container.stats.cpu}</span>
                       <span>MEM {container.stats.mem}</span>
@@ -175,10 +224,10 @@ export default function ContainersPage() {
             </div>
           ))}
 
-          {containers.length === 0 && (
+          {filtered.length === 0 && (
             <div className="text-center py-16 text-muted">
-              <p className="text-lg">No containers found</p>
-              <p className="text-sm mt-1">Docker may not be running or no containers are deployed</p>
+              <p className="text-lg">No containers match your filters</p>
+              <p className="text-sm mt-1">Try adjusting your search criteria</p>
             </div>
           )}
         </div>
