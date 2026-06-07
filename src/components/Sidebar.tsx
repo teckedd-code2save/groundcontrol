@@ -12,7 +12,6 @@ const navItems = [
   { href: "/projects", label: "Projects", icon: "◆" },
   { href: "/processes", label: "Processes", icon: "◍" },
   { href: "/files", label: "Files", icon: "▤" },
-  { href: "/deploy", label: "Deploy", icon: "▶" },
   { href: "/terminal", label: "Terminal", icon: "⌘" },
   { href: "/alerts", label: "Alerts", icon: "◑" },
   { href: "/settings", label: "Settings", icon: "⚙" },

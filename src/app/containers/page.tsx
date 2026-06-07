@@ -12,6 +12,8 @@ interface Container {
   ports: string;
   id: string;
   state: string;
+  composeProject?: string;
+  composeService?: string;
   stats?: {
     cpu: string;
     mem: string;
@@ -34,9 +36,26 @@ interface ImageGroup {
   images: DockerImage[];
 }
 
+interface ComposeService {
+  name: string;
+  image?: string;
+  build?: boolean;
+}
+
+interface ComposeInfo {
+  services: ComposeService[];
+}
+
+interface ImageContext {
+  projectSlug?: string;
+  service?: string;
+  containers: Container[];
+}
+
 export default function ContainersPage() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [images, setImages] = useState<DockerImage[]>([]);
+  const [composeData, setComposeData] = useState<Map<string, ComposeInfo>>(new Map());
   const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
   const [logs, setLogs] = useState("");
   const [loading, setLoading] = useState(true);
@@ -52,7 +71,7 @@ export default function ContainersPage() {
   const [nameFilter, setNameFilter] = useState<string>("");
   const [imageRepoFilter, setImageRepoFilter] = useState<string>("");
 
-  // Run image modal
+  // Run image modal (standalone only)
   const [runModal, setRunModal] = useState<{
     image: string;
     name: string;
@@ -95,9 +114,32 @@ export default function ContainersPage() {
     }
   }
 
+  async function fetchCompose() {
+    try {
+      const res = await fetch("/api/projects");
+      const data = await res.json();
+      const dirs = (data?.directories || []).filter((d: string) => d !== "groundcontrol");
+      for (const slug of dirs) {
+        fetch(`/api/projects/compose?slug=${slug}`)
+          .then((r) => r.json())
+          .then((compose) => {
+            setComposeData((prev) => {
+              const next = new Map(prev);
+              next.set(slug, compose);
+              return next;
+            });
+          })
+          .catch(() => {});
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   useEffect(() => {
     fetchContainers();
     fetchImages();
+    fetchCompose();
     const interval = setInterval(() => {
       fetchContainers();
       fetchImages();
@@ -124,6 +166,28 @@ export default function ContainersPage() {
       setActionLoading(null);
       setRemoveTarget(null);
       setPendingAction(null);
+    }
+  }
+
+  async function handleStartService(projectSlug: string, service: string) {
+    setActionLoading(`svc:${projectSlug}/${service}`);
+    try {
+      const res = await fetch("/api/compose-service", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectSlug, service }),
+      });
+      const data = await res.json();
+      if (!data.success && data.error) {
+        setError(`Start service failed: ${data.error}`);
+      } else {
+        setError("");
+        await fetchContainers();
+      }
+    } catch (err: any) {
+      setError(`Start service failed: ${err.message}`);
+    } finally {
+      setActionLoading(null);
     }
   }
 
@@ -212,6 +276,34 @@ export default function ContainersPage() {
     unhealthy: containers.filter((c) => c.status.includes("unhealthy")).length,
   };
 
+  // Build image context from compose files + existing containers
+  const imageContext = useMemo(() => {
+    const map = new Map<string, ImageContext>();
+
+    // Seed from existing containers
+    for (const c of containers) {
+      if (!map.has(c.image)) map.set(c.image, { containers: [] });
+      map.get(c.image)!.containers.push(c);
+      if (c.composeProject && c.composeService) {
+        map.get(c.image)!.projectSlug = c.composeProject;
+        map.get(c.image)!.service = c.composeService;
+      }
+    }
+
+    // Augment from compose files
+    for (const [slug, compose] of composeData) {
+      for (const svc of compose?.services || []) {
+        if (!svc.image) continue;
+        const ctx = map.get(svc.image) || { containers: [] };
+        ctx.projectSlug = slug;
+        ctx.service = svc.name;
+        map.set(svc.image, ctx);
+      }
+    }
+
+    return map;
+  }, [containers, composeData]);
+
   // Group images by repository, sort tags by createdAt desc
   const groupedImages: ImageGroup[] = useMemo(() => {
     const map = new Map<string, DockerImage[]>();
@@ -224,7 +316,6 @@ export default function ContainersPage() {
       imgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       groups.push({ repository, images: imgs });
     }
-    // Sort groups by total image count desc
     groups.sort((a, b) => b.images.length - a.images.length);
     return groups;
   }, [images]);
@@ -232,16 +323,6 @@ export default function ContainersPage() {
   const filteredGroups = groupedImages.filter((g) =>
     !imageRepoFilter || g.repository.toLowerCase().includes(imageRepoFilter.toLowerCase())
   );
-
-  // Map image full name -> containers using it
-  const imageToContainers = useMemo(() => {
-    const map = new Map<string, Container[]>();
-    for (const c of containers) {
-      if (!map.has(c.image)) map.set(c.image, []);
-      map.get(c.image)!.push(c);
-    }
-    return map;
-  }, [containers]);
 
   function parseSize(sizeStr: string): number {
     const match = sizeStr.match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i);
@@ -255,6 +336,64 @@ export default function ContainersPage() {
   function openRunModal(image: string) {
     const suggestedName = image.replace(/[^a-zA-Z0-9_-]/g, "-").substring(0, 40);
     setRunModal({ image, name: suggestedName, ports: "", env: "", command: "" });
+  }
+
+  function renderImageAction(fullName: string, ctx: ImageContext | undefined) {
+    if (ctx?.projectSlug && ctx?.service) {
+      const hasRunning = ctx.containers.some((c) => c.state === "running");
+      const hasStopped = ctx.containers.some((c) => c.state !== "running");
+      const loadingKey = `svc:${ctx.projectSlug}/${ctx.service}`;
+      if (hasRunning && !hasStopped) {
+        return (
+          <span className="text-[10px] font-mono text-success shrink-0">
+            compose service running
+          </span>
+        );
+      }
+      return (
+        <button
+          onClick={() => handleStartService(ctx.projectSlug!, ctx.service!)}
+          disabled={actionLoading === loadingKey}
+          className="px-2 py-1 text-[10px] font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50 shrink-0"
+        >
+          {actionLoading === loadingKey ? "..." : "start service"}
+        </button>
+      );
+    }
+
+    if (ctx?.containers && ctx.containers.length > 0) {
+      const stopped = ctx.containers.find((c) => c.state !== "running");
+      const running = ctx.containers.find((c) => c.state === "running");
+      if (stopped) {
+        return (
+          <button
+            onClick={() => handleAction("start", stopped.name)}
+            disabled={actionLoading === stopped.name}
+            className="px-2 py-1 text-[10px] font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50 shrink-0"
+          >
+            {actionLoading === stopped.name ? "..." : "start container"}
+          </button>
+        );
+      }
+      if (running) {
+        return (
+          <span className="text-[10px] font-mono text-success shrink-0">
+            container running
+          </span>
+        );
+      }
+    }
+
+    // Orphaned image — allow standalone run with warning
+    return (
+      <button
+        onClick={() => openRunModal(fullName)}
+        disabled={actionLoading === "run"}
+        className="px-2 py-1 text-[10px] font-mono border border-muted/30 text-muted rounded hover:border-warning hover:text-warning transition-colors disabled:opacity-50 shrink-0"
+      >
+        run standalone
+      </button>
+    );
   }
 
   return (
@@ -463,7 +602,6 @@ export default function ContainersPage() {
           ) : (
             <div className="space-y-4">
               {filteredGroups.map((group) => {
-                const latest = group.images[0];
                 const totalSize = group.images.reduce((sum, img) => sum + parseSize(img.size), 0);
                 const totalSizeStr = totalSize > 1024 ** 3
                   ? `${(totalSize / 1024 ** 3).toFixed(2)}GB`
@@ -494,7 +632,7 @@ export default function ContainersPage() {
                     <div className="space-y-1.5">
                       {group.images.map((img, idx) => {
                         const fullName = img.tag && img.tag !== "<none>" ? `${img.repository}:${img.tag}` : img.id;
-                        const usedBy = imageToContainers.get(fullName) || [];
+                        const ctx = imageContext.get(fullName);
                         const isLarge = parseSize(img.size) > 1024 ** 3;
                         return (
                           <div
@@ -511,8 +649,15 @@ export default function ContainersPage() {
                                 </div>
                                 <div className="text-[10px] text-muted font-mono">
                                   {img.id} · {img.createdAt}
-                                  {usedBy.length > 0 && (
-                                    <span className="ml-2 text-success">used by {usedBy.length}</span>
+                                  {ctx?.projectSlug && ctx?.service && (
+                                    <span className="ml-2 text-accent">
+                                      compose: {ctx.projectSlug}/{ctx.service}
+                                    </span>
+                                  )}
+                                  {ctx?.containers && ctx.containers.length > 0 && !ctx?.projectSlug && (
+                                    <span className="ml-2 text-success">
+                                      used by {ctx.containers.map((c) => c.name).join(", ")}
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -521,13 +666,7 @@ export default function ContainersPage() {
                               <span className={`text-xs font-mono ${isLarge ? "text-warning" : "text-muted"}`}>
                                 {img.size}
                               </span>
-                              <button
-                                onClick={() => openRunModal(fullName)}
-                                disabled={actionLoading === "run"}
-                                className="px-2 py-1 text-[10px] font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50"
-                              >
-                                run
-                              </button>
+                              {renderImageAction(fullName, ctx)}
                             </div>
                           </div>
                         );
@@ -567,17 +706,21 @@ export default function ContainersPage() {
         />
       )}
 
-      {/* Run Image Modal */}
+      {/* Run Standalone Modal */}
       {runModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8">
           <div className="bg-card border border-border rounded-xl w-full max-w-lg flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-mono text-sm">
-                Run: <span className="text-accent">{runModal.image}</span>
+                Run Standalone: <span className="text-accent">{runModal.image}</span>
               </h3>
               <button onClick={() => setRunModal(null)} className="text-muted hover:text-foreground transition-colors">✕</button>
             </div>
             <div className="p-4 space-y-3">
+              <div className="p-2 bg-warning/5 border border-warning/10 rounded-lg text-[10px] text-warning font-mono">
+                Warning: this creates a standalone container outside of docker compose.
+                For compose-managed services, use Projects or start the existing container instead.
+              </div>
               <div>
                 <label className="text-[10px] font-mono uppercase text-muted block mb-1">Container Name</label>
                 <input
@@ -630,7 +773,7 @@ export default function ContainersPage() {
                 disabled={actionLoading === "run"}
                 className="px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded hover:bg-success/20 transition-colors disabled:opacity-50"
               >
-                {actionLoading === "run" ? "Starting..." : "Run Container"}
+                {actionLoading === "run" ? "Starting..." : "Run Standalone"}
               </button>
             </div>
           </div>
