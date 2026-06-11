@@ -25,7 +25,32 @@ export async function POST(req: NextRequest) {
     }
 
     let cmd = command;
-    const words = command.trim().split(/\s+/);
+    let shHint: string | undefined;
+
+    // sh-portability: the remote VPS shell is BusyBox/sh — `bash` is not
+    // installed (`/bin/sh: bash: not found`). Rewrite a leading bash invocation
+    // to its POSIX-sh equivalent so the command runs instead of failing.
+    const bashMatch = cmd.match(/^\s*((?:\/usr)?\/bin\/)?bash\b([\s\S]*)$/);
+    if (bashMatch) {
+      const rest = (bashMatch[2] || "").trimStart();
+      const dashC = rest.match(/^-c\b\s*([\s\S]*)$/);
+      if (dashC) {
+        cmd = `sh -c ${dashC[1]}`.trim();
+        shHint = "Remote shell is sh (BusyBox); rewrote `bash -c` to `sh -c`.";
+      } else if (rest) {
+        cmd = `sh ${rest}`;
+        shHint = "Remote shell is sh (BusyBox); rewrote `bash` to `sh`.";
+      } else {
+        // Bare interactive `bash` can't run here; treat as a no-op with a hint.
+        return NextResponse.json({
+          stdout: "",
+          stderr: "Remote shell is sh (BusyBox) — `bash` is not installed. Drop the `bash` prefix and run commands directly.",
+          code: 127,
+        });
+      }
+    }
+
+    const words = cmd.trim().split(/\s+/);
     const firstWord = words[0];
     const isDockerCompose = firstWord === "docker" && words[1] === "compose";
 
@@ -33,7 +58,7 @@ export async function POST(req: NextRequest) {
       try {
         const composeCmd = await getDockerComposeCommand();
         if (composeCmd !== "docker compose") {
-          cmd = command.replace(/^\s*docker\s+compose\b/, composeCmd);
+          cmd = cmd.replace(/^\s*docker\s+compose\b/, composeCmd);
         }
       } catch {
         cmd = `${PATH_EXPORT} && ${cmd}`;
@@ -45,7 +70,7 @@ export async function POST(req: NextRequest) {
       try {
         const resolution = await resolveBinary(firstWord);
         if (resolution.type === "docker" && (firstWord === "caddy" || firstWord === "nginx")) {
-          cmd = command.replace(
+          cmd = cmd.replace(
             new RegExp(`^\\s*${firstWord}\\b`),
             `docker exec ${shQuote(resolution.container)} ${firstWord}`
           );
@@ -68,6 +93,7 @@ export async function POST(req: NextRequest) {
       stdout: result.stdout,
       stderr: result.stderr,
       code: result.code,
+      ...(shHint ? { hint: shHint } : {}),
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

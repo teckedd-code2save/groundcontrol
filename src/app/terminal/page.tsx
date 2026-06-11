@@ -3,9 +3,43 @@
 import { useEffect, useRef, useState } from "react";
 
 interface HistoryEntry {
-  type: "input" | "output" | "error";
+  type: "input" | "output" | "error" | "hint";
   text: string;
   cmd?: string;
+}
+
+// The remote VPS shell is BusyBox/sh — `bash` is not installed. Detect a
+// leading `bash` invocation and rewrite it to a POSIX-sh equivalent, surfacing
+// a hint so the user understands why. Mirrors the server-side fallback.
+function rewriteBashCommand(cmd: string): { command: string; hint?: string } {
+  // Match a leading `bash` token (optionally `/bin/bash`, `/usr/bin/bash`).
+  const m = cmd.match(/^((?:\/usr)?\/bin\/)?bash\b([\s\S]*)$/);
+  if (!m) return { command: cmd };
+
+  const rest = (m[2] || "").trimStart();
+
+  // `bash -c "..."` → `sh -c "..."`
+  const dashC = rest.match(/^-c\b\s*([\s\S]*)$/);
+  if (dashC) {
+    return {
+      command: `sh -c ${dashC[1]}`.trim(),
+      hint: "Remote shell is sh (BusyBox) — `bash` isn't installed. Rewrote `bash -c` → `sh -c`.",
+    };
+  }
+
+  // `bash script.sh ...` → `sh script.sh ...`
+  if (rest) {
+    return {
+      command: `sh ${rest}`,
+      hint: "Remote shell is sh (BusyBox) — `bash` isn't installed. Rewrote `bash` → `sh`.",
+    };
+  }
+
+  // Bare `bash` (would open an interactive shell, which we can't do here).
+  return {
+    command: "sh",
+    hint: "Remote shell is sh (BusyBox) — `bash` isn't installed. Drop the `bash` prefix and run commands directly.",
+  };
 }
 
 export default function TerminalPage() {
@@ -24,9 +58,15 @@ export default function TerminalPage() {
     inputRef.current?.focus();
   }, [working]);
 
-  async function executeCommand(cmd: string, currentCwd: string) {
+  async function executeCommand(
+    cmd: string,
+    currentCwd: string,
+    opts?: { skipInputEcho?: boolean }
+  ) {
     setWorking(true);
-    setHistory((h) => [...h, { type: "input", text: cmd }]);
+    if (!opts?.skipInputEcho) {
+      setHistory((h) => [...h, { type: "input", text: cmd }]);
+    }
     try {
       const res = await fetch("/api/terminal", {
         method: "POST",
@@ -80,12 +120,28 @@ export default function TerminalPage() {
       return;
     }
 
-    executeCommand(cmd, cwd);
+    // sh-portability: the remote shell is BusyBox/sh, not bash. Rewrite a
+    // leading `bash` and tell the user what happened.
+    const { command: runCmd, hint } = rewriteBashCommand(cmd);
+    if (hint) {
+      setHistory((h) => [
+        ...h,
+        { type: "input", text: cmd },
+        { type: "hint", text: `${hint} Running: ${runCmd}` },
+      ]);
+      executeCommand(runCmd, cwd, { skipInputEcho: true });
+      return;
+    }
+
+    executeCommand(runCmd, cwd);
   }
 
   function formatOutput(entry: HistoryEntry): React.ReactNode {
     if (entry.type === "error") {
       return <pre className="text-error/80 whitespace-pre-wrap pl-4">{entry.text}</pre>;
+    }
+    if (entry.type === "hint") {
+      return <pre className="text-warning/80 whitespace-pre-wrap pl-4">{entry.text}</pre>;
     }
     if (entry.type === "input") {
       return (
@@ -128,6 +184,9 @@ export default function TerminalPage() {
       <div className="mb-4">
         <h1 className="text-3xl font-bold tracking-tight">Terminal</h1>
         <p className="text-muted mt-1">Execute commands on your VPS directly from the browser</p>
+        <p className="text-warning/70 text-xs font-mono mt-1">
+          Remote shell is <span className="font-semibold">sh</span> (BusyBox) — <span className="font-semibold">bash</span> is not installed. Use POSIX sh syntax.
+        </p>
       </div>
 
       <div className="flex-1 bg-card border border-border rounded-xl flex flex-col overflow-hidden">
@@ -137,6 +196,7 @@ export default function TerminalPage() {
               <p>GroundControl Terminal v1.0</p>
               <p className="mt-1">Type commands to execute on the VPS. Use with care.</p>
               <p className="mt-1">Mounted: /opt, /var/www, /etc, /var/run/docker.sock</p>
+              <p className="mt-1 text-warning/70">Shell: sh (BusyBox) — bash is not available; `bash ...` is auto-rewritten to `sh ...`.</p>
             </div>
           )}
           {history.map((entry, i) => (

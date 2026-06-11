@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ActionConfirm } from "@/components/ActionConfirm";
+
+// Polling cadence. Container list is moderately expensive (docker ps + stats +
+// per-container inspect for labels), so we poll on a relaxed interval and pause
+// entirely when the tab is hidden to avoid the memory/CPU spikes from stacking
+// requests against the VPS.
+const CONTAINERS_POLL_MS = 8000;
+const IMAGES_POLL_MS = 30000;
 
 interface Container {
   name: string;
@@ -55,6 +62,36 @@ interface ImageContext {
   containers: Container[];
 }
 
+interface ContainerStateResult {
+  name: string;
+  id: string;
+  state: string;
+  status: string;
+  removed: boolean;
+}
+
+interface ActionResult {
+  success: boolean;
+  action: "start" | "stop" | "restart" | "remove";
+  name: string;
+  output: string;
+  error: string;
+  container: ContainerStateResult | null;
+}
+
+interface Toast {
+  id: number;
+  kind: "success" | "error";
+  message: string;
+}
+
+const ACTION_PAST: Record<string, string> = {
+  start: "started",
+  stop: "stopped",
+  restart: "restarted",
+  remove: "removed",
+};
+
 async function safeJson(res: Response): Promise<{ ok: boolean; data: any; text: string }> {
   const text = await res.text();
   try {
@@ -78,6 +115,24 @@ export default function ContainersPage() {
   const [pendingAction, setPendingAction] = useState<{ action: "start" | "stop" | "restart"; name: string } | null>(null);
   const [activeTab, setActiveTab] = useState<"containers" | "images">("containers");
   const [error, setError] = useState("");
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // AbortControllers for in-flight polling fetches, so a new tick (or unmount)
+  // cancels the previous request instead of stacking them up.
+  const containersAbort = useRef<AbortController | null>(null);
+  const imagesAbort = useRef<AbortController | null>(null);
+  // Guard against overlapping polls when the VPS is slow to respond.
+  const containersInFlight = useRef(false);
+  const imagesInFlight = useRef(false);
+  const toastSeq = useRef(0);
+
+  const pushToast = useCallback((kind: "success" | "error", message: string) => {
+    const id = ++toastSeq.current;
+    setToasts((t) => [...t, { id, kind, message }]);
+    setTimeout(() => {
+      setToasts((t) => t.filter((x) => x.id !== id));
+    }, 5000);
+  }, []);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -96,9 +151,15 @@ export default function ContainersPage() {
   // Prune repo modal
   const [pruneRepoTarget, setPruneRepoTarget] = useState<string | null>(null);
 
-  async function fetchContainers() {
+  const fetchContainers = useCallback(async () => {
+    // Skip if a previous poll is still running — prevents request pile-up.
+    if (containersInFlight.current) return;
+    containersInFlight.current = true;
+    containersAbort.current?.abort();
+    const controller = new AbortController();
+    containersAbort.current = controller;
     try {
-      const res = await fetch("/api/containers");
+      const res = await fetch("/api/containers", { signal: controller.signal });
       const { data } = await safeJson(res);
       if (Array.isArray(data)) {
         setContainers(data);
@@ -107,27 +168,34 @@ export default function ContainersPage() {
         setError(data.error);
       }
     } catch (err: any) {
-      setError(err.message);
+      if (err?.name !== "AbortError") setError(err.message);
     } finally {
+      containersInFlight.current = false;
       setLoading(false);
     }
-  }
+  }, []);
 
-  async function fetchImages() {
+  const fetchImages = useCallback(async () => {
+    if (imagesInFlight.current) return;
+    imagesInFlight.current = true;
+    imagesAbort.current?.abort();
+    const controller = new AbortController();
+    imagesAbort.current = controller;
     try {
-      const res = await fetch("/api/docker-images");
+      const res = await fetch("/api/docker-images", { signal: controller.signal });
       const { data } = await safeJson(res);
       if (Array.isArray(data)) {
         setImages(data);
       }
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") console.error(err);
     } finally {
+      imagesInFlight.current = false;
       setImagesLoading(false);
     }
-  }
+  }, []);
 
-  async function fetchCompose() {
+  const fetchCompose = useCallback(async () => {
     try {
       const res = await fetch("/api/projects");
       const { data } = await safeJson(res);
@@ -147,18 +215,74 @@ export default function ContainersPage() {
     } catch (err) {
       console.error(err);
     }
-  }
+  }, []);
 
   useEffect(() => {
+    // Initial load.
     fetchContainers();
     fetchImages();
     fetchCompose();
-    const interval = setInterval(() => {
-      fetchContainers();
-      fetchImages();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // Separate intervals: containers refresh more often than images. Both pause
+    // while the tab is hidden (document.hidden) so a backgrounded tab never
+    // hammers the VPS — the main cause of the reported memory spikes.
+    let containersTimer: ReturnType<typeof setInterval> | null = null;
+    let imagesTimer: ReturnType<typeof setInterval> | null = null;
+
+    function startPolling() {
+      if (!containersTimer) {
+        containersTimer = setInterval(() => {
+          if (!document.hidden) fetchContainers();
+        }, CONTAINERS_POLL_MS);
+      }
+      if (!imagesTimer) {
+        imagesTimer = setInterval(() => {
+          if (!document.hidden) fetchImages();
+        }, IMAGES_POLL_MS);
+      }
+    }
+
+    function stopPolling() {
+      if (containersTimer) { clearInterval(containersTimer); containersTimer = null; }
+      if (imagesTimer) { clearInterval(imagesTimer); imagesTimer = null; }
+      // Cancel any in-flight requests when we pause.
+      containersAbort.current?.abort();
+      imagesAbort.current?.abort();
+    }
+
+    function handleVisibility() {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        // Refresh immediately on return, then resume polling.
+        fetchContainers();
+        startPolling();
+      }
+    }
+
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      stopPolling();
+    };
+  }, [fetchContainers, fetchImages, fetchCompose]);
+
+  function reconcileContainer(result: ActionResult) {
+    setContainers((prev) => {
+      if (result.action === "remove" && (result.container === null || result.container.removed)) {
+        return prev.filter((c) => c.name !== result.name);
+      }
+      const fresh = result.container;
+      if (!fresh) return prev;
+      return prev.map((c) =>
+        c.name === result.name
+          ? { ...c, state: fresh.state || c.state, status: fresh.status || c.status, id: fresh.id || c.id }
+          : c
+      );
+    });
+  }
 
   async function handleAction(action: "start" | "stop" | "restart" | "remove", name: string) {
     setActionLoading(name);
@@ -168,13 +292,29 @@ export default function ContainersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, name }),
       });
-      const { data } = await safeJson(res);
-      if (!data.success && data.error) {
-        setError(`Action failed: ${data.error}`);
+      const { ok, data } = await safeJson(res);
+      const result = data as ActionResult;
+
+      if (!ok || !result.success) {
+        const detail = (result?.error || data?.error || "Unknown error").trim();
+        const msg = `${name}: ${action} failed${detail ? ` — ${detail}` : ""}`;
+        setError(msg);
+        pushToast("error", msg);
       } else {
         setError("");
+        // Reconcile this row from the authoritative state the API read back,
+        // so the badge flips to running/stopped immediately.
+        reconcileContainer(result);
+        const verb = ACTION_PAST[action] || action;
+        const statusHint = result.container?.status ? ` (${result.container.status})` : "";
+        pushToast("success", `${name} ${verb}${statusHint}`);
       }
+      // Reconcile against the full, real list (covers compose side-effects, etc).
       await fetchContainers();
+    } catch (err: any) {
+      const msg = `${name}: ${action} failed — ${err.message}`;
+      setError(msg);
+      pushToast("error", msg);
     } finally {
       setActionLoading(null);
       setRemoveTarget(null);
@@ -192,13 +332,18 @@ export default function ContainersPage() {
       });
       const { ok, data } = await safeJson(res);
       if (!ok || (!data.success && data.error)) {
-        setError(`Start service failed: ${data.error || "Unknown error"}`);
+        const msg = `Start service failed: ${data.error || "Unknown error"}`;
+        setError(msg);
+        pushToast("error", msg);
       } else {
         setError("");
+        pushToast("success", `${service} service started`);
         await fetchContainers();
       }
     } catch (err: any) {
-      setError(`Start service failed: ${err.message}`);
+      const msg = `Start service failed: ${err.message}`;
+      setError(msg);
+      pushToast("error", msg);
     } finally {
       setActionLoading(null);
     }
@@ -420,6 +565,30 @@ export default function ContainersPage() {
         <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono flex items-start justify-between">
           <span>{error}</span>
           <button onClick={() => setError("")} className="ml-2 hover:text-foreground">✕</button>
+        </div>
+      )}
+
+      {/* Action feedback toasts */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-[60] flex flex-col gap-2 max-w-sm">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className={`p-3 rounded-lg border text-xs font-mono shadow-lg flex items-start justify-between gap-2 ${
+                t.kind === "success"
+                  ? "bg-success/10 border-success/30 text-success"
+                  : "bg-error/10 border-error/30 text-error"
+              }`}
+            >
+              <span>{t.kind === "success" ? "✓ " : "✕ "}{t.message}</span>
+              <button
+                onClick={() => setToasts((cur) => cur.filter((x) => x.id !== t.id))}
+                className="hover:text-foreground shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
         </div>
       )}
 

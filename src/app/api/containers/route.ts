@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDockerContainers, getDockerStats, getDockerContainerLabels, controlContainer } from "@/lib/vps";
+import { getDockerContainers, getDockerStats, getDockerContainerLabels } from "@/lib/vps";
+import { controlContainerWithState, type ContainerAction } from "@/lib/container-control";
+
+const VALID_ACTIONS: ContainerAction[] = ["start", "stop", "restart", "remove"];
 
 export async function GET() {
   try {
@@ -31,7 +34,20 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const { action, name } = await req.json();
-    const result = await controlContainer(action, name);
+
+    if (!name || typeof name !== "string") {
+      return NextResponse.json({ error: "Container name required" }, { status: 400 });
+    }
+    if (!VALID_ACTIONS.includes(action)) {
+      return NextResponse.json(
+        { error: `Invalid action "${action}". Expected one of: ${VALID_ACTIONS.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
+    // Run the action then read back the real, fresh container state so the
+    // client can flip the badge to running/stopped without guessing.
+    const result = await controlContainerWithState(action as ContainerAction, name);
     return NextResponse.json(result);
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
