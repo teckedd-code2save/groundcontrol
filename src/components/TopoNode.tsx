@@ -9,12 +9,14 @@ import {
   NginxIcon,
   SiteIcon,
   ContainerIcon,
+  ProjectIcon,
+  ServiceIcon,
   getContainerType,
 } from "@/components/TopoIcons";
 
 export type TopoNodeData = {
   label: string;
-  type: "internet" | "proxy" | "site" | "container";
+  type: "internet" | "proxy" | "site" | "container" | "project" | "service";
   health: "healthy" | "warning" | "critical" | "unknown";
   subType?: "caddy" | "nginx";
   stats?: { cpu: string; mem: string; pids: string };
@@ -23,6 +25,17 @@ export type TopoNodeData = {
   composeProject?: string;
   composeWorkingDir?: string;
   projectSlug?: string;
+  /** Project node metadata. */
+  projectPath?: string;
+  projectParent?: string | null;
+  serviceCount?: number;
+  hasGit?: boolean;
+  /** Service node metadata. */
+  image?: string | null;
+  ports?: string[];
+  containerName?: string;
+  /** Secondary line shown under the label (image / path / etc.). */
+  sub?: string;
   expanded?: boolean;
   onToggleExpand?: () => void;
 };
@@ -50,32 +63,59 @@ function NodeIcon({ data }: { data: TopoNodeData }) {
       return data.subType === "nginx" ? <NginxIcon className={className} /> : <CaddyIcon className={className} />;
     case "site":
       return <SiteIcon className={className} />;
+    case "project":
+      return <ProjectIcon className={className} />;
+    case "service":
+      return <ServiceIcon className={className} />;
     case "container":
-      return <ContainerIcon className={className} type={getContainerType(data.label)} />;
+      return <ContainerIcon className={className} type={getContainerType(data.label, data.image || undefined as any)} />;
     default:
       return null;
   }
 }
 
+const NODE_DIMS: Record<string, { w: number; h: number }> = {
+  internet: { w: 140, h: 40 },
+  proxy: { w: 140, h: 40 },
+  site: { w: 180, h: 40 },
+  project: { w: 220, h: 56 },
+  service: { w: 210, h: 56 },
+  container: { w: 200, h: 56 },
+};
+
+function secondaryLine(data: TopoNodeData): string | null {
+  if (data.sub) return data.sub;
+  if (data.type === "project") {
+    const count = data.serviceCount ?? 0;
+    return `${count} service${count === 1 ? "" : "s"}${data.hasGit ? " · git" : ""}`;
+  }
+  if (data.type === "service") {
+    return data.image || "build";
+  }
+  if (data.type === "container" && data.label !== "Unmapped") {
+    return `${data.state === "running" ? "running" : data.state} · CPU ${data.stats?.cpu || "—"}`;
+  }
+  return null;
+}
+
 const TopoNode = memo(function TopoNode(props: Node<TopoNodeData>) {
   const data = props.data;
   const isUnhealthy = data.health === "warning" || data.health === "critical";
-  const isExpandable = data.type === "site" || (data.type === "container" && data.label === "Unmapped");
+  const dims = NODE_DIMS[data.type] || { w: 180, h: 40 };
+  const sub = secondaryLine(data);
+  const showExpand = !!data.onToggleExpand;
 
   return (
     <div
       className="group"
-      style={{
-        width: data.type === "container" ? 200 : data.type === "site" ? 180 : 140,
-        height: data.type === "container" ? 56 : 40,
-      }}
+      style={{ width: dims.w, height: dims.h }}
     >
       <Handle type="target" position={Position.Top} style={{ background: "#555", width: 6, height: 6 }} />
 
       <div
         className="w-full h-full rounded-lg flex items-center gap-2 px-3 relative"
         style={{
-          background: "#161616",
+          background: data.type === "project" ? "#1a1a22" : "#161616",
           border: `1px solid ${healthBorder[data.health]}`,
           boxShadow: isUnhealthy ? `0 0 12px ${healthColor[data.health]}22` : "none",
         }}
@@ -92,17 +132,17 @@ const TopoNode = memo(function TopoNode(props: Node<TopoNodeData>) {
             style={{ color: "#e5e5e5" }}
             title={data.label}
           >
-            {data.label.length > 18 ? data.label.slice(0, 16) + "..." : data.label}
+            {data.label.length > 22 ? data.label.slice(0, 20) + "..." : data.label}
           </div>
-          {data.type === "container" && data.label !== "Unmapped" && (
-            <div className="text-[9px] font-mono text-muted truncate">
-              {data.state === "running" ? "running" : data.state} · CPU {data.stats?.cpu || "—"}
+          {sub && (
+            <div className="text-[9px] font-mono text-muted truncate" title={sub}>
+              {sub}
             </div>
           )}
         </div>
 
         {/* Expand/collapse toggle */}
-        {isExpandable && data.onToggleExpand && (
+        {showExpand && (
           <button
             onClick={(e) => {
               e.stopPropagation();

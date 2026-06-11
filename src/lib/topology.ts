@@ -11,7 +11,7 @@ export interface Container {
   image: string;
   status: string;
   state: string;
-  stats?: unknown;
+  stats?: { cpu: string; mem: string; pids: string };
   composeProject?: string;
   composeService?: string;
   composeWorkingDir?: string;
@@ -131,6 +131,222 @@ function findProjectForSite(site: Site, dbProjects: DbProject[]): DbProject | un
     const pd = p.domain.toLowerCase();
     return pd === domain || pd === "www." + domain || domain === "www." + pd;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Project-centric topology
+// ---------------------------------------------------------------------------
+
+export interface ScannedComposeService {
+  name: string;
+  image?: string;
+  build?: boolean;
+  ports?: string[];
+}
+
+export interface ScannedProjectLite {
+  slug: string;
+  dirName: string;
+  name: string;
+  path: string;
+  composePath: string;
+  parent: string | null;
+  services: ScannedComposeService[];
+  domain?: string;
+  hasGit: boolean;
+}
+
+export interface ProjectServiceNode {
+  /** Compose service name. */
+  service: string;
+  /** Declared image (or null when the service is built locally). */
+  image: string | null;
+  build: boolean;
+  ports: string[];
+  /** Live container matched to this service, if running/known. */
+  container?: Container;
+}
+
+export interface ProjectTopologyNode {
+  slug: string;
+  name: string;
+  path: string;
+  parent: string | null;
+  domain?: string;
+  hasGit: boolean;
+  services: ProjectServiceNode[];
+  /** Containers that belong to the project but weren't matched to a service. */
+  extraContainers: Container[];
+  /** Caddy/Nginx sites whose proxy/domain map onto this project. */
+  sites: Site[];
+}
+
+export interface ProjectTopology {
+  projects: ProjectTopologyNode[];
+  /** Containers not claimed by any scanned project. */
+  unclaimedContainers: Container[];
+}
+
+function pathMatches(workingDir: string, projectPath: string): boolean {
+  const wd = workingDir.toLowerCase().replace(/\/$/, "");
+  const pp = projectPath.toLowerCase().replace(/\/$/, "");
+  if (!wd || !pp) return false;
+  return wd === pp || wd.startsWith(pp + "/");
+}
+
+/**
+ * Decide whether a live container belongs to a scanned project. The strongest
+ * signal is the compose `working_dir` label matching the project's path
+ * (handles nested projects unambiguously); we then fall back to compose project
+ * name / config-file path / name-prefix heuristics.
+ */
+function containerBelongsToScannedProject(
+  container: Container,
+  project: ScannedProjectLite
+): boolean {
+  const projPath = project.path;
+  const projDir = project.dirName.toLowerCase();
+  const slugTail = project.slug.split("/").pop()?.toLowerCase() || projDir;
+  const workingDir = container.composeWorkingDir || "";
+  const configFiles = container.composeConfigFiles || "";
+  const composeProj = (container.composeProject || "").toLowerCase();
+  const cName = container.name.toLowerCase();
+
+  // 1. working_dir label == project path (most reliable, handles nesting).
+  if (workingDir && pathMatches(workingDir, projPath)) return true;
+  // 2. config_files label points inside the project path.
+  if (configFiles && pathMatches(configFiles, projPath)) return true;
+  // 3. compose project label equals the directory / slug tail.
+  if (composeProj && (tokensMatch(composeProj, projDir) || tokensMatch(composeProj, slugTail))) {
+    return true;
+  }
+  // 4. container name prefixed by the dir name (compose default naming).
+  const nameBase = cName.replace(/[-_]\d+$/, "");
+  if (
+    projDir.length > 2 &&
+    (cName === projDir ||
+      cName.startsWith(projDir + "-") ||
+      cName.startsWith(projDir + "_") ||
+      nameBase.startsWith(projDir + "-") ||
+      nameBase.startsWith(projDir + "_"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function matchContainerToService(
+  service: ScannedComposeService,
+  projectContainers: Container[],
+  taken: Set<string>
+): Container | undefined {
+  const svc = service.name.toLowerCase();
+  // Prefer the compose service label.
+  let found = projectContainers.find(
+    (c) => !taken.has(c.name) && tokensMatch(c.composeService || "", svc)
+  );
+  if (found) return found;
+  // Then name-based: <project>-<service> or contains the service token.
+  found = projectContainers.find((c) => {
+    if (taken.has(c.name)) return false;
+    const n = c.name.toLowerCase();
+    return tokensMatch(n, svc) || n.endsWith("-" + svc) || n.endsWith("_" + svc) || n.includes(svc);
+  });
+  if (found) return found;
+  // Finally, by image.
+  if (service.image) {
+    const img = service.image.toLowerCase();
+    found = projectContainers.find(
+      (c) => !taken.has(c.name) && c.image.toLowerCase() === img
+    );
+  }
+  return found;
+}
+
+function siteMatchesProject(site: Site, project: ScannedProjectLite): boolean {
+  // Explicit domain declared in compose.
+  if (project.domain && site.domain.toLowerCase() === project.domain.toLowerCase()) {
+    return true;
+  }
+  // Proxy target name maps onto the project / a service / dir name.
+  const proxyHost = getProxyHost(site.proxy);
+  if (proxyHost) {
+    if (tokensMatch(proxyHost, project.dirName)) return true;
+    if (project.services.some((s) => tokensMatch(proxyHost, s.name))) return true;
+  }
+  // Domain slug maps onto the dir name.
+  const slugs = getSiteSlugs(site.domain);
+  return slugs.some((s) => tokensMatch(s, project.dirName));
+}
+
+/**
+ * Build a project-centric topology: each scanned project becomes a node that
+ * expands into its compose services (each linked to a live container/image),
+ * plus any Caddy/Nginx sites that proxy to it. Containers that match no scanned
+ * project are returned as `unclaimedContainers`.
+ */
+export function buildProjectTopology<T extends Container>(
+  projects: ScannedProjectLite[],
+  containers: T[],
+  sites: Site[],
+  siteMaps: SiteMap[] = []
+): ProjectTopology {
+  const claimed = new Set<string>();
+  const projectNodes: ProjectTopologyNode[] = [];
+
+  for (const project of projects) {
+    const projectContainers = containers.filter((c) =>
+      containerBelongsToScannedProject(c, project)
+    );
+    const taken = new Set<string>();
+
+    const services: ProjectServiceNode[] = project.services.map((svc) => {
+      const container = matchContainerToService(svc, projectContainers, taken);
+      if (container) taken.add(container.name);
+      return {
+        service: svc.name,
+        image: svc.image ?? null,
+        build: !!svc.build,
+        ports: svc.ports || [],
+        container,
+      };
+    });
+
+    const extraContainers = projectContainers.filter((c) => !taken.has(c.name));
+    projectContainers.forEach((c) => claimed.add(c.name));
+
+    // Link sites: manual maps first (by claimed container), then heuristic.
+    const matchedSites: Site[] = [];
+    const seenSiteDomains = new Set<string>();
+    const containerNames = new Set(projectContainers.map((c) => c.name));
+    for (const site of sites) {
+      if (seenSiteDomains.has(site.domain)) continue;
+      const manualHit = siteMaps.some(
+        (m) =>
+          m.siteDomain.toLowerCase() === site.domain.toLowerCase() &&
+          containerNames.has(m.containerName)
+      );
+      if (manualHit || siteMatchesProject(site, project)) {
+        matchedSites.push(site);
+        seenSiteDomains.add(site.domain);
+      }
+    }
+
+    projectNodes.push({
+      slug: project.slug,
+      name: project.name,
+      path: project.path,
+      parent: project.parent,
+      domain: project.domain,
+      hasGit: project.hasGit,
+      services,
+      extraContainers,
+      sites: matchedSites,
+    });
+  }
+
+  const unclaimedContainers = containers.filter((c) => !claimed.has(c.name));
+  return { projects: projectNodes, unclaimedContainers };
 }
 
 export function linkSitesToContainers<T extends Container>(
