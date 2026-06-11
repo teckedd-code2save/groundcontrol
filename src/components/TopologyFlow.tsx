@@ -26,6 +26,8 @@ const NODE_WIDTH: Record<string, number> = {
   internet: 140,
   proxy: 140,
   site: 180,
+  project: 220,
+  service: 210,
   container: 200,
 };
 
@@ -33,8 +35,17 @@ const NODE_HEIGHT: Record<string, number> = {
   internet: 40,
   proxy: 40,
   site: 40,
+  project: 56,
+  service: 56,
   container: 56,
 };
+
+// Node types that can be collapsed to hide their descendants.
+const EXPANDABLE_TYPES = new Set(["site", "project", "service"]);
+
+function isExpandableNode(node: Node<TopoNodeData>): boolean {
+  return EXPANDABLE_TYPES.has(node.data.type) || node.id === "unmapped" || node.id === "unclaimed";
+}
 
 export interface TopologyFilters {
   status?: "running" | "stopped" | "unhealthy" | "unknown";
@@ -82,21 +93,51 @@ function buildParentMap(edges: Edge[]): Map<string, string[]> {
   return map;
 }
 
+function buildChildToParent(edges: Edge[]): Map<string, string> {
+  // Last writer wins; the topology is a tree so each node has one parent.
+  const map = new Map<string, string>();
+  for (const edge of edges) {
+    if (!map.has(edge.target)) map.set(edge.target, edge.source);
+  }
+  return map;
+}
+
+/**
+ * Returns true if any descendant of `nodeId` is unhealthy. Walks the parent
+ * map transitively so a project expands when a grand-child container is down.
+ */
+function subtreeHasIssues(
+  nodeId: string,
+  parentMap: Map<string, string[]>,
+  nodeMap: Map<string, Node<TopoNodeData>>
+): boolean {
+  const stack = [...(parentMap.get(nodeId) || [])];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const child = nodeMap.get(id);
+    if (child && (child.data.health === "warning" || child.data.health === "critical")) {
+      return true;
+    }
+    stack.push(...(parentMap.get(id) || []));
+  }
+  return false;
+}
+
 function getDefaultExpanded(nodes: Node<TopoNodeData>[], edges: Edge[]): Set<string> {
   const expanded = new Set<string>();
   const parentMap = buildParentMap(edges);
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
   for (const node of nodes) {
-    if (node.data.type !== "site" && node.id !== "unmapped") continue;
+    const expandable = EXPANDABLE_TYPES.has(node.data.type) || node.id === "unmapped" || node.id === "unclaimed";
+    if (!expandable) continue;
 
-    const children = parentMap.get(node.id) || [];
-    const hasIssues = children.some((childId) => {
-      const child = nodeMap.get(childId);
-      return child && (child.data.health === "warning" || child.data.health === "critical");
-    });
-
-    if (hasIssues) {
+    // Always expand projects so their service/container layout is visible by
+    // default; expand other groupings only when something underneath is broken.
+    if (node.data.type === "project" || subtreeHasIssues(node.id, parentMap, nodeMap)) {
       expanded.add(node.id);
     }
   }
@@ -108,10 +149,8 @@ function containerMatchesFilters(
   filters: TopologyFilters,
   dbProjects: DbProject[]
 ): boolean {
-  if (data.type !== "container") return true;
-
-  // Status filter
-  if (filters.status) {
+  // Status filter only applies to live container nodes.
+  if (filters.status && data.type === "container") {
     if (filters.status === "running") {
       if (data.state !== "running" || data.status?.includes("unhealthy")) return false;
     } else if (filters.status === "stopped") {
@@ -123,26 +162,33 @@ function containerMatchesFilters(
     }
   }
 
-  // Project filter
-  if (filters.projectSlug && dbProjects.length > 0) {
-    const project = dbProjects.find((p) => p.slug === filters.projectSlug);
-    if (project) {
-      const projSlug = project.slug.toLowerCase();
-      const projPath = (project.path || "").toLowerCase().replace(/\/$/, "");
-      const composeProj = (data.composeProject || "").toLowerCase();
-      const cName = data.label.toLowerCase();
-      const workingDir = (data.composeWorkingDir || "").toLowerCase().replace(/\/$/, "");
-
-      const matchesProject =
-        (composeProj && (composeProj === projSlug || composeProj.includes(projSlug))) ||
-        (projPath && workingDir && (workingDir === projPath || workingDir.startsWith(projPath + "/"))) ||
-        (projSlug.length > 2 &&
-          (cName.startsWith(projSlug + "-") ||
-            cName.startsWith(projSlug + "_") ||
-            cName.replace(/[-_]\d+$/, "").startsWith(projSlug + "-") ||
-            cName.replace(/[-_]\d+$/, "").startsWith(projSlug + "_")));
-
-      if (!matchesProject) return false;
+  // Project filter: applies to project-tree nodes (project/service/container).
+  // Each carries `projectSlug` set to its owning scanned-project slug.
+  if (filters.projectSlug) {
+    const treeNode = data.type === "project" || data.type === "service" || data.type === "container";
+    if (treeNode && data.label !== "Unmapped") {
+      const nodeProj = (data.projectSlug || "").toLowerCase();
+      const filterSlug = filters.projectSlug.toLowerCase();
+      // Fall back to dbProject heuristics for legacy nodes lacking projectSlug.
+      if (nodeProj) {
+        if (nodeProj !== filterSlug) return false;
+      } else if (dbProjects.length > 0) {
+        const project = dbProjects.find((p) => p.slug === filters.projectSlug);
+        if (project) {
+          const projSlug = project.slug.toLowerCase();
+          const projPath = (project.path || "").toLowerCase().replace(/\/$/, "");
+          const composeProj = (data.composeProject || "").toLowerCase();
+          const cName = data.label.toLowerCase();
+          const workingDir = (data.composeWorkingDir || "").toLowerCase().replace(/\/$/, "");
+          const matchesProject =
+            (composeProj && (composeProj === projSlug || composeProj.includes(projSlug))) ||
+            (projPath && workingDir && (workingDir === projPath || workingDir.startsWith(projPath + "/"))) ||
+            (projSlug.length > 2 &&
+              (cName.startsWith(projSlug + "-") ||
+                cName.startsWith(projSlug + "_")));
+          if (!matchesProject) return false;
+        }
+      }
     }
   }
 
@@ -170,6 +216,7 @@ export default function TopologyFlow({
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => getDefaultExpanded(initialNodes, initialEdges));
 
   const parentMap = useMemo(() => buildParentMap(initialEdges), [initialEdges]);
+  const childToParent = useMemo(() => buildChildToParent(initialEdges), [initialEdges]);
 
   // Reset expanded when initial nodes change significantly
   useEffect(() => {
@@ -180,33 +227,26 @@ export default function TopologyFlow({
     (allNodes: Node<TopoNodeData>[], expanded: Set<string>, activeFilters: TopologyFilters, projects: DbProject[]) => {
       const hidden = new Set<string>();
 
+      // A node is hidden if any ancestor up the chain is collapsed. This walks
+      // the whole hierarchy (project → service → container) generically.
+      const ancestorCollapsed = (nodeId: string): boolean => {
+        let parent = childToParent.get(nodeId);
+        while (parent) {
+          if (!expanded.has(parent)) return true;
+          parent = childToParent.get(parent);
+        }
+        return false;
+      };
+
       for (const node of allNodes) {
-        // Filter out containers that don't match filters
+        // Filter out containers that don't match filters.
         if (!containerMatchesFilters(node.data, activeFilters, projects)) {
           hidden.add(node.id);
           continue;
         }
-
-        // Hide container children of collapsed sites
-        if (node.data.type === "container" && node.id !== "unmapped") {
-          let parentId: string | null = null;
-          for (const [source, targets] of parentMap.entries()) {
-            if (targets.includes(node.id)) {
-              parentId = source;
-              break;
-            }
-          }
-          if (parentId && !expanded.has(parentId)) {
-            hidden.add(node.id);
-          }
-        }
-      }
-
-      // Hide unmapped children if unmapped is collapsed
-      if (!expanded.has("unmapped")) {
-        const unmappedChildren = parentMap.get("unmapped") || [];
-        for (const childId of unmappedChildren) {
-          hidden.add(childId);
+        // Hide any node whose ancestor is collapsed.
+        if (childToParent.has(node.id) && ancestorCollapsed(node.id)) {
+          hidden.add(node.id);
         }
       }
 
@@ -215,14 +255,11 @@ export default function TopologyFlow({
         hidden: hidden.has(node.id),
         data: {
           ...node.data,
-          expanded:
-            node.data.type === "site" || node.id === "unmapped"
-              ? expanded.has(node.id)
-              : undefined,
+          expanded: isExpandableNode(node) ? expanded.has(node.id) : undefined,
         },
       }));
     },
-    [parentMap]
+    [childToParent]
   );
 
   useEffect(() => {
@@ -250,19 +287,21 @@ export default function TopologyFlow({
     });
   }, []);
 
-  // Inject onToggleExpand into node data
+  // Inject onToggleExpand into node data, but only for expandable nodes that
+  // actually have children to reveal.
   const nodesWithToggle = useMemo(() => {
-    return nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        onToggleExpand:
-          node.data.type === "site" || node.id === "unmapped"
-            ? () => toggleExpand(node.id)
-            : undefined,
-      },
-    })) as Node<TopoNodeData>[];
-  }, [nodes, toggleExpand]);
+    return nodes.map((node) => {
+      const hasChildren = (parentMap.get(node.id) || []).length > 0;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          onToggleExpand:
+            isExpandableNode(node) && hasChildren ? () => toggleExpand(node.id) : undefined,
+        },
+      };
+    }) as Node<TopoNodeData>[];
+  }, [nodes, toggleExpand, parentMap]);
 
   const handleNodeClick = useCallback(
     (_event: any, node: Node<TopoNodeData>) => {
