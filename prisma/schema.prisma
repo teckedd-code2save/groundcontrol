@@ -22,12 +22,15 @@ model VpsConfig {
   host      String
   port      Int      @default(22)
   username  String   @default("root")
-  privateKey String?
+  privateKey String? // AES-256-GCM encrypted at rest (see src/lib/crypto.ts)
   authType  String   @default("key") // key | password
-  password  String?
+  password  String? // AES-256-GCM encrypted at rest (see src/lib/crypto.ts)
   isLocal   Boolean  @default(false) // true = running on VPS, exec directly
+  isActive  Boolean  @default(false) // exactly one active VPS; all pages target it
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  systemConfig SystemConfig?
 }
 
 model Project {
@@ -97,6 +100,7 @@ model SiteContainerMap {
 
 model SystemConfig {
   id             Int    @id @default(autoincrement())
+  vpsConfigId    Int?   @unique // links this filesystem layout to a specific VPS; null = global/legacy default
   projectRoot    String @default("/opt")
   caddySitesDir  String @default("/etc/caddy/sites")
   caddyFile      String @default("/etc/caddy/Caddyfile")
@@ -107,4 +111,6 @@ model SystemConfig {
   certDomain     String @default("")
   composeCommand String? // override docker compose command: "docker compose", "docker-compose", "podman-compose"
   updatedAt      DateTime @updatedAt
+
+  vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
 }

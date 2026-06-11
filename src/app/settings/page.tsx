@@ -13,6 +13,9 @@ interface VpsConfig {
   username: string;
   authType: string;
   isLocal: boolean;
+  isActive: boolean;
+  hasKey: boolean;
+  hasPassword: boolean;
   createdAt: string;
 }
 
@@ -83,6 +86,17 @@ export default function SettingsPage() {
     await fetch(`/api/vps?id=${deleteConfigTarget.id}`, { method: "DELETE" });
     setDeleteConfigTarget(null);
     await fetchConfigs();
+  }
+
+  async function activateConfig(id: number) {
+    await fetch("/api/vps/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await fetchConfigs();
+    // System paths are per-VPS — tell that section to reload for the new server.
+    window.dispatchEvent(new CustomEvent("gc:active-vps-changed"));
   }
 
   return (
@@ -216,28 +230,61 @@ export default function SettingsPage() {
       {/* Saved Configs */}
       {configs.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-6 mb-8">
-          <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">
+          <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">
             Saved Connections
           </h2>
+          <p className="text-[11px] text-muted/70 mb-4 leading-relaxed">
+            These are servers you <strong>switch between</strong> — not separate accounts. Exactly one
+            connection is <span className="text-accent font-mono">active</span> at a time, and every page
+            (dashboard, projects, containers, terminal) talks to whichever server is active. Switching
+            changes which server GroundControl controls; each server keeps its own filesystem paths below.
+          </p>
           <div className="space-y-3">
             {configs.map((config) => (
               <div
                 key={config.id}
-                className="flex items-center justify-between py-3 px-4 bg-background/50 rounded-lg"
+                className={`flex items-center justify-between py-3 px-4 rounded-lg border ${
+                  config.isActive
+                    ? "bg-accent/5 border-accent/40"
+                    : "bg-background/50 border-transparent"
+                }`}
               >
                 <div>
-                  <div className="font-medium text-sm">{config.name}</div>
+                  <div className="font-medium text-sm flex items-center gap-2">
+                    {config.name}
+                    {config.isActive ? (
+                      <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
+                        active
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="text-xs text-muted font-mono mt-0.5 flex items-center gap-1 flex-wrap">
                     <SensitiveField value={`${config.username}@${config.host}:${config.port}`} />
-                    <span>· {config.authType} · {config.isLocal ? "local" : "ssh"}</span>
+                    <span>
+                      · {config.authType} · {config.isLocal ? "local" : "ssh"}
+                      {config.hasKey ? " · key set" : ""}
+                      {config.hasPassword ? " · password set" : ""}
+                    </span>
                   </div>
                 </div>
-                <button
-                  onClick={() => setDeleteConfigTarget(config)}
-                  className="text-xs font-mono text-error/70 hover:text-error transition-colors"
-                >
-                  remove
-                </button>
+                <div className="flex items-center gap-3">
+                  {config.isActive ? (
+                    <span className="text-xs font-mono text-accent/70">current target</span>
+                  ) : (
+                    <button
+                      onClick={() => activateConfig(config.id)}
+                      className="text-xs font-mono px-3 py-1.5 border border-accent/30 text-accent rounded-lg hover:bg-accent/10 transition-colors"
+                    >
+                      Switch to this server
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setDeleteConfigTarget(config)}
+                    className="text-xs font-mono text-error/70 hover:text-error transition-colors"
+                  >
+                    remove
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -280,13 +327,20 @@ function SystemPathsSection() {
   const [pickerPath, setPickerPath] = useState("/");
 
   useEffect(() => {
-    fetch("/api/system-config")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        setConfig(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    function load() {
+      setLoading(true);
+      fetch("/api/system-config")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          setConfig(data);
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    }
+    load();
+    // Reload when the active VPS changes (paths are per-VPS).
+    window.addEventListener("gc:active-vps-changed", load);
+    return () => window.removeEventListener("gc:active-vps-changed", load);
   }, []);
 
   async function handleSave(e: React.FormEvent) {
@@ -361,9 +415,15 @@ function SystemPathsSection() {
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 mt-8">
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
-        System Paths
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">
+        System Paths <span className="text-accent normal-case">(for the active VPS)</span>
       </h2>
+      <p className="text-[11px] text-muted/70 mb-6 leading-relaxed max-w-2xl">
+        These paths describe the filesystem layout of the <strong>currently active</strong> server.
+        Each VPS keeps its own set, so a second server with a different layout (different project root,
+        Caddy/Nginx dirs, etc.) can be adapted independently — switch the active server above, then edit
+        its paths here.
+      </p>
       <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {fields.map((f: any) => (
