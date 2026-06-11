@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSystemConfig, execOnVps } from "@/lib/vps";
+import { execOnVps, resolveComposeProjectPath, shQuote } from "@/lib/vps";
 
 interface ComposeService {
   name: string;
@@ -75,12 +75,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "slug required" }, { status: 400 });
     }
 
-    const config = await getSystemConfig();
-    const projectPath = `${config.projectRoot}/${slug}`;
+    const target = await resolveComposeProjectPath(slug);
+    const projectPath = target.projectPath;
 
     // Try docker-compose.yml first, then docker-compose.yaml
     const result = await execOnVps(
-      `cat ${projectPath}/docker-compose.yml 2>/dev/null || cat ${projectPath}/docker-compose.yaml 2>/dev/null || cat ${projectPath}/compose.yml 2>/dev/null || echo ""`
+      `cat ${shQuote(`${projectPath}/docker-compose.yml`)} 2>/dev/null || cat ${shQuote(`${projectPath}/docker-compose.yaml`)} 2>/dev/null || cat ${shQuote(`${projectPath}/compose.yml`)} 2>/dev/null || echo ""`
     );
 
     if (!result.stdout.trim()) {
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     }
 
     const services = parseComposeYaml(result.stdout);
-    return NextResponse.json({ services, raw: result.stdout });
+    return NextResponse.json({ services, raw: result.stdout, projectPath, source: target.source });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

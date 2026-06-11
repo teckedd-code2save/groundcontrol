@@ -25,6 +25,8 @@ interface Container {
   composeProject?: string;
   composeService?: string;
   composeWorkingDir?: string;
+  composeConfigFiles?: string;
+  projectSlug?: string;
 }
 
 function isRawDomain(domain: string): boolean {
@@ -62,7 +64,8 @@ export default function TopologyPage() {
       ]);
 
       const projects = await projectsRes.json();
-      const containers: Container[] = await containersRes.json();
+      const containersPayload = await containersRes.json();
+      const containers: Container[] = Array.isArray(containersPayload) ? containersPayload : [];
 
       const allSites: CaddySite[] = projects.caddySites || [];
       const dbProjectsData = projects.projects || [];
@@ -154,6 +157,7 @@ export default function TopologyPage() {
               status: c.status,
               composeProject: c.composeProject,
               composeWorkingDir: c.composeWorkingDir,
+              projectSlug: c.projectSlug,
             },
           });
           topoEdges.push({ id: `e-${siteId}-${id}`, source: siteId, target: id });
@@ -183,6 +187,7 @@ export default function TopologyPage() {
               status: c.status,
               composeProject: c.composeProject,
               composeWorkingDir: c.composeWorkingDir,
+              projectSlug: c.projectSlug,
             },
           });
           topoEdges.push({ id: `e-unmapped-${id}`, source: "unmapped", target: id });

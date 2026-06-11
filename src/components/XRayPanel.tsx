@@ -45,7 +45,8 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
           fetch(`/api/containers/logs?name=${target.id}&tail=50`),
           fetch("/api/projects"),
         ]);
-        const containers = await containersRes.json();
+        const containersPayload = await containersRes.json();
+        const containers = Array.isArray(containersPayload) ? containersPayload : [];
         const container = containers.find((c: any) => c.name === target.id);
         const logsData = await logsRes.json();
         const projects = await projectsRes.json();
@@ -58,7 +59,8 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
           fetch("/api/site-maps"),
           fetch("/api/projects"),
         ]);
-        const containers = await containersRes.json();
+        const containersPayload = await containersRes.json();
+        const containers = Array.isArray(containersPayload) ? containersPayload : [];
         const siteMaps = await mapsRes.json();
         const projects = await projectsRes.json();
         const site = target.data;
@@ -86,7 +88,8 @@ export default function XRayPanel({ target, onClose }: XRayProps) {
           fetch("/api/site-maps"),
           fetch("/api/projects"),
         ]);
-        const containers = await containersRes.json();
+        const containersPayload = await containersRes.json();
+        const containers = Array.isArray(containersPayload) ? containersPayload : [];
         const siteMaps = await mapsRes.json();
         const projects = await projectsRes.json();
         const dbProjects = projects.projects || [];

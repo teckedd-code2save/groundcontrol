@@ -11,10 +11,12 @@ export interface Container {
   image: string;
   status: string;
   state: string;
-  stats?: any;
+  stats?: unknown;
   composeProject?: string;
   composeService?: string;
   composeWorkingDir?: string;
+  composeConfigFiles?: string;
+  projectSlug?: string;
 }
 
 export interface SiteMap {
@@ -58,19 +60,65 @@ export function getSiteSlugs(domain: string): string[] {
   return Array.from(slugs).filter((s) => s.length > 2);
 }
 
+function normalizeToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function getProxyHost(proxy: string | null): string {
+  if (!proxy) return "";
+  const firstTarget = proxy.trim().split(/\s+/)[0] || "";
+  return firstTarget
+    .replace(/^https?:\/\//, "")
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .replace(/:.*/, "")
+    .toLowerCase();
+}
+
+function tokensMatch(a: string, b: string): boolean {
+  const left = normalizeToken(a);
+  const right = normalizeToken(b);
+  if (!left || !right) return false;
+  return left === right;
+}
+
+function containerBelongsToProject(container: Container, project: DbProject): boolean {
+  const projSlug = project.slug.toLowerCase();
+  const projPath = (project.path || "").toLowerCase().replace(/\/$/, "");
+  const composeProj = (container.composeProject || "").toLowerCase();
+  const projectSlug = (container.projectSlug || "").toLowerCase();
+  const workingDir = (container.composeWorkingDir || "").toLowerCase().replace(/\/$/, "");
+  const cName = container.name.toLowerCase();
+
+  if (composeProj && tokensMatch(composeProj, projSlug)) return true;
+  if (projectSlug && tokensMatch(projectSlug, projSlug)) return true;
+  if (projPath && workingDir && (workingDir === projPath || workingDir.startsWith(projPath + "/"))) return true;
+
+  const nameBase = cName.replace(/[-_]\d+$/, "");
+  return (
+    projSlug.length > 2 &&
+    (cName === projSlug ||
+      cName.startsWith(projSlug + "-") ||
+      cName.startsWith(projSlug + "_") ||
+      nameBase === projSlug ||
+      nameBase.startsWith(projSlug + "-") ||
+      nameBase.startsWith(projSlug + "_"))
+  );
+}
+
 export function matchContainersToSite<T extends { name: string; image: string }>(
   domain: string,
   proxy: string | null,
   containers: T[]
 ): T[] {
   const slugs = getSiteSlugs(domain);
-  const proxyBase = proxy?.replace(/:.*/, "").toLowerCase() || "";
+  const proxyBase = getProxyHost(proxy);
 
   return containers.filter((c) => {
     const cName = c.name.toLowerCase();
-    if (proxyBase && cName.includes(proxyBase)) return true;
+    if (proxyBase && tokensMatch(cName, proxyBase)) return true;
     for (const slug of slugs) {
-      if (cName.includes(slug)) return true;
+      if (tokensMatch(cName, slug)) return true;
     }
     return false;
   });
@@ -108,59 +156,44 @@ export function linkSitesToContainers<T extends Container>(
       matchedNames.add(c.name);
     });
 
-    // Strategy 2: Project-based matching (domain -> project -> containers)
-    const project = findProjectForSite(site, dbProjects);
-    if (project) {
-      const projSlug = project.slug.toLowerCase();
-      const projPath = (project.path || "").toLowerCase().replace(/\/$/, "");
+    // Strategy 2: Explicit proxy target matching. Caddy/Nginx usually proxy to
+    // the Docker service/container hostname, so this is more reliable than
+    // domain substring matching.
+    const proxyHost = getProxyHost(site.proxy);
+    if (proxyHost) {
       containers.forEach((c) => {
         if (matchedNames.has(c.name)) return;
-        const composeProj = (c.composeProject || "").toLowerCase();
-        const cName = c.name.toLowerCase();
-        const workingDir = (c.composeWorkingDir || "").toLowerCase().replace(/\/$/, "");
-
-        // Match by compose project name
         if (
-          composeProj &&
-          (composeProj === projSlug || composeProj.includes(projSlug) || projSlug.includes(composeProj))
+          tokensMatch(c.name, proxyHost) ||
+          tokensMatch(c.composeService || "", proxyHost) ||
+          tokensMatch(c.composeProject || "", proxyHost) ||
+          tokensMatch(c.projectSlug || "", proxyHost)
         ) {
           matched.push(c);
           matchedNames.add(c.name);
-          return;
-        }
-
-        // Match by working directory (e.g. /opt/myproject matches /opt/myproject or /opt/myproject/subdir)
-        if (projPath && workingDir && (workingDir === projPath || workingDir.startsWith(projPath + "/"))) {
-          matched.push(c);
-          matchedNames.add(c.name);
-          return;
-        }
-
-        // Match by container name: myproject-web-1, myproject_db_1, etc.
-        // Also handle stripped suffixes: myproject-web-1 -> myproject-web starts with myproject
-        const nameBase = cName.replace(/[-_]\d+$/, "");
-        if (
-          projSlug.length > 2 &&
-          (cName === projSlug ||
-            cName.startsWith(projSlug + "-") ||
-            cName.startsWith(projSlug + "_") ||
-            nameBase.startsWith(projSlug + "-") ||
-            nameBase.startsWith(projSlug + "_"))
-        ) {
-          matched.push(c);
-          matchedNames.add(c.name);
-          return;
         }
       });
     }
 
-    // Strategy 3: Docker Compose project label matching (domain slug)
+    // Strategy 3: Project-based matching (domain -> project -> containers)
+    const project = findProjectForSite(site, dbProjects);
+    if (project) {
+      containers.forEach((c) => {
+        if (matchedNames.has(c.name)) return;
+        if (containerBelongsToProject(c, project)) {
+          matched.push(c);
+          matchedNames.add(c.name);
+        }
+      });
+    }
+
+    // Strategy 4: Docker Compose project label matching (domain slug)
     const domainSlugs = getSiteSlugs(site.domain);
     containers.forEach((c) => {
       if (matchedNames.has(c.name)) return;
       const proj = (c.composeProject || "").toLowerCase();
       for (const slug of domainSlugs) {
-        if (proj === slug || proj.includes(slug) || slug.includes(proj)) {
+        if (tokensMatch(proj, slug) || tokensMatch(c.projectSlug || "", slug)) {
           matched.push(c);
           matchedNames.add(c.name);
           return;
@@ -168,7 +201,7 @@ export function linkSitesToContainers<T extends Container>(
       }
     });
 
-    // Strategy 4: Heuristic matching (proxy target + domain slug)
+    // Strategy 5: Heuristic matching (proxy target + domain slug)
     const heuristic = matchContainersToSite(
       site.domain,
       site.proxy,

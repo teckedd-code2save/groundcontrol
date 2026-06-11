@@ -4,6 +4,20 @@ import { promisify } from "util";
 import { prisma } from "./prisma";
 
 const execAsync = promisify(exec);
+const OS_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
+
+export function shQuote(value: string): string {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function withOsPath(command: string): string {
+  return `export PATH="${OS_PATH}:$PATH"; ${command}`;
+}
+
+function cleanDockerTemplateValue(value?: string): string {
+  const clean = (value || "").trim();
+  return clean === "<no value>" ? "" : clean;
+}
 
 export interface VpsConnection {
   id: number;
@@ -13,7 +27,7 @@ export interface VpsConnection {
   isLocal: boolean;
 }
 
-let sshCache: Map<number, NodeSSH> = new Map();
+const sshCache: Map<number, NodeSSH> = new Map();
 
 export async function getActiveVps(): Promise<VpsConnection | null> {
   const config = await prisma.vpsConfig.findFirst({
@@ -41,7 +55,7 @@ export async function execOnVps(
 
   if (conn.isLocal) {
     try {
-      const { stdout, stderr } = await execAsync(command, { timeout: 30000, cwd });
+      const { stdout, stderr } = await execAsync(withOsPath(command), { timeout: 30000, cwd });
       return { stdout, stderr, code: 0 };
     } catch (err: any) {
       return {
@@ -78,7 +92,7 @@ export async function execOnVps(
     sshCache.set(conn.id, ssh);
   }
 
-  const result = await ssh.execCommand(command, { cwd: cwd || "/root" });
+  const result = await ssh.execCommand(withOsPath(command), { cwd: cwd || "/root" });
   return {
     stdout: result.stdout,
     stderr: result.stderr,
@@ -166,6 +180,15 @@ export async function getSystemStats(vps?: VpsConnection | null) {
   };
 }
 
+export interface DockerContainerLabelInfo {
+  name: string;
+  project: string;
+  service: string;
+  workingDir: string;
+  configFiles: string;
+  projectSlug: string;
+}
+
 export async function getDockerContainers(vps?: VpsConnection | null) {
   const conn = vps || (await getActiveVps());
   const result = await execOnVps(
@@ -200,7 +223,7 @@ export async function getDockerStats(vps?: VpsConnection | null) {
     });
 }
 
-export async function getDockerContainerLabels(vps?: VpsConnection | null) {
+export async function getDockerContainerLabels(vps?: VpsConnection | null): Promise<DockerContainerLabelInfo[]> {
   const conn = vps || (await getActiveVps());
   // Fetch container names first, then inspect each individually to avoid xargs -r portability issues
   const namesResult = await execOnVps(
@@ -210,16 +233,25 @@ export async function getDockerContainerLabels(vps?: VpsConnection | null) {
   const names = namesResult.stdout.trim().split("\n").filter(Boolean);
   if (names.length === 0) return [];
 
-  const results: { name: string; project: string; service: string; workingDir: string }[] = [];
+  const results: DockerContainerLabelInfo[] = [];
   for (const name of names) {
     try {
       const inspect = await execOnVps(
-        `docker inspect --format "{{.Name}}|{{index .Config.Labels \\"com.docker.compose.project\\"}}|{{index .Config.Labels \\"com.docker.compose.service\\"}}|{{index .Config.Labels \\"com.docker.compose.project.working_dir\\"}}" "${name}" 2>/dev/null || echo ""`,
+        `docker inspect --format "{{.Name}}	{{index .Config.Labels \\"com.docker.compose.project\\"}}	{{index .Config.Labels \\"com.docker.compose.service\\"}}	{{index .Config.Labels \\"com.docker.compose.project.working_dir\\"}}	{{index .Config.Labels \\"com.docker.compose.project.config_files\\"}}" ${shQuote(name)} 2>/dev/null || echo ""`,
         conn
       );
-      const [n, project, service, workingDir] = inspect.stdout.trim().split("|");
+      const [n, project, service, workingDir, configFiles] = inspect.stdout.trim().split("\t");
+      const resolvedWorkingDir = cleanDockerTemplateValue(workingDir);
+      const resolvedProject = cleanDockerTemplateValue(project);
       if (n) {
-        results.push({ name: n.replace(/^\//, ""), project: project || "", service: service || "", workingDir: workingDir || "" });
+        results.push({
+          name: n.replace(/^\//, ""),
+          project: resolvedProject,
+          service: cleanDockerTemplateValue(service),
+          workingDir: resolvedWorkingDir,
+          configFiles: cleanDockerTemplateValue(configFiles),
+          projectSlug: resolvedWorkingDir.split("/").filter(Boolean).pop() || resolvedProject,
+        });
       }
     } catch {
       // skip containers we can't inspect
@@ -235,7 +267,7 @@ export async function getContainerLogs(
 ) {
   const conn = vps || (await getActiveVps());
   const result = await execOnVps(
-    `docker logs --tail ${tail} ${containerName} 2>&1`,
+    `docker logs --tail ${Math.max(1, Math.min(5000, Number(tail) || 100))} ${shQuote(containerName)} 2>&1`,
     conn
   );
   return result.stdout;
@@ -306,6 +338,98 @@ export async function getDockerComposeCommand(vps?: VpsConnection | null): Promi
   return "docker compose";
 }
 
+export async function runDockerCompose(
+  projectPath: string,
+  args: string,
+  vps?: VpsConnection | null
+) {
+  const conn = vps || (await getActiveVps());
+  const config = await getSystemConfig();
+  const configured = config.composeCommand?.trim();
+  const candidates = configured
+    ? [configured]
+    : ["docker compose", "docker-compose"];
+  let last = { stdout: "", stderr: "", code: 127 };
+
+  for (const composeCmd of candidates) {
+    const result = await execOnVps(
+      `cd ${shQuote(projectPath)} && ${composeCmd} ${args}`,
+      conn
+    );
+    if (result.code === 0) return result;
+    last = result;
+  }
+  return last;
+}
+
+export async function runDockerComposePipeline(
+  projectPath: string,
+  steps: string[],
+  vps?: VpsConnection | null
+) {
+  const conn = vps || (await getActiveVps());
+  const config = await getSystemConfig();
+  const configured = config.composeCommand?.trim();
+  const candidates = configured
+    ? [configured]
+    : ["docker compose", "docker-compose"];
+  let last = { stdout: "", stderr: "", code: 127 };
+
+  for (const composeCmd of candidates) {
+    const command = steps.map((step) => `${composeCmd} ${step}`).join(" && ");
+    const result = await execOnVps(`cd ${shQuote(projectPath)} && ${command}`, conn);
+    if (result.code === 0) return result;
+    last = result;
+  }
+  return last;
+}
+
+export async function resolveComposeProjectPath(
+  projectSlug: string,
+  service?: string,
+  vps?: VpsConnection | null
+): Promise<{ projectPath: string; projectSlug: string; service?: string; source: "labels" | "config" }> {
+  const config = await getSystemConfig();
+  const labels = await getDockerContainerLabels(vps);
+  const slug = projectSlug.toLowerCase();
+  const serviceSlug = service?.toLowerCase();
+
+  const byProject = labels.find((l) =>
+    l.workingDir &&
+    l.project.toLowerCase() === slug &&
+    (!serviceSlug || l.service.toLowerCase() === serviceSlug)
+  );
+  if (byProject) {
+    return {
+      projectPath: byProject.workingDir,
+      projectSlug: byProject.projectSlug || projectSlug,
+      service: byProject.service || service,
+      source: "labels",
+    };
+  }
+
+  const byFolder = labels.find((l) => {
+    if (!l.workingDir) return false;
+    const dirSlug = l.workingDir.split("/").filter(Boolean).pop()?.toLowerCase();
+    return dirSlug === slug && (!serviceSlug || l.service.toLowerCase() === serviceSlug);
+  });
+  if (byFolder) {
+    return {
+      projectPath: byFolder.workingDir,
+      projectSlug: byFolder.projectSlug || projectSlug,
+      service: byFolder.service || service,
+      source: "labels",
+    };
+  }
+
+  return {
+    projectPath: `${config.projectRoot.replace(/\/$/, "")}/${projectSlug}`,
+    projectSlug,
+    service,
+    source: "config",
+  };
+}
+
 export type BinaryResolution =
   | { type: "path"; path: string }
   | { type: "docker"; container: string }
@@ -318,12 +442,12 @@ export async function resolveBinary(
   const conn = vps || (await getActiveVps());
 
   // Try `which` first (works on most systems)
-  const which = await execOnVps(`which ${name} 2>/dev/null || echo ""`, conn);
+  const which = await execOnVps(`which ${shQuote(name)} 2>/dev/null || echo ""`, conn);
   const path = which.stdout.trim();
   if (path && !path.includes("not found")) return { type: "path", path };
 
   // Try `command -v` (more portable on BusyBox/Alpine)
-  const commandV = await execOnVps(`command -v ${name} 2>/dev/null || echo ""`, conn);
+  const commandV = await execOnVps(`command -v ${shQuote(name)} 2>/dev/null || echo ""`, conn);
   const commandPath = commandV.stdout.trim();
   if (commandPath && commandPath.startsWith("/")) return { type: "path", path: commandPath };
 
@@ -339,21 +463,24 @@ export async function resolveBinary(
     `/snap/bin/${name}`,
   ];
   for (const p of candidates) {
-    const test = await execOnVps(`test -x ${p} && echo ${p} || echo ""`, conn);
+    const test = await execOnVps(`test -x ${shQuote(p)} && echo ${shQuote(p)} || echo ""`, conn);
     if (test.stdout.trim()) return { type: "path", path: test.stdout.trim() };
   }
 
   // Alpine: check if installed via apk
   const apk = await execOnVps(
-    `apk info -L ${name} 2>/dev/null | grep -E "(sbin|bin)/${name}$" || echo ""`,
+    `apk info -L ${shQuote(name)} 2>/dev/null | grep -E ${shQuote(`(sbin|bin)/${name}$`)} || echo ""`,
     conn
   );
   if (apk.stdout.trim()) return { type: "path", path: apk.stdout.trim() };
 
   // Also try docker container name for caddy/nginx
   if (name === "caddy" || name === "nginx") {
-    const docker = await execOnVps(`docker ps --format "{{.Names}}" | grep -E "^${name}$" || echo ""`, conn);
-    if (docker.stdout.trim()) return { type: "docker", container: docker.stdout.trim() };
+    const docker = await execOnVps(
+      `docker ps --format "{{.Names}}\t{{.Image}}" | awk -F '\\t' 'tolower($1) ~ /(^|[-_])${name}($|[-_])/ || tolower($2) ~ /(^|\\/|:)${name}(:|$)/ {print $1; exit}' || true`,
+      conn
+    );
+    if (docker.stdout.trim()) return { type: "docker", container: docker.stdout.trim().split("\n")[0] };
   }
 
   return { type: "not_found" };
@@ -365,7 +492,8 @@ export async function controlContainer(
   vps?: VpsConnection | null
 ) {
   const conn = vps || (await getActiveVps());
-  const result = await execOnVps(`docker ${action} ${containerName}`, conn);
+  const dockerAction = action === "remove" ? "rm" : action;
+  const result = await execOnVps(`docker ${dockerAction} ${shQuote(containerName)}`, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -420,14 +548,14 @@ export async function scanProjects(vps?: VpsConnection | null) {
 
   // Scan project root directories
   const optResult = await execOnVps(
-    `ls -1 ${config.projectRoot}/ 2>/dev/null`,
+    `find ${shQuote(config.projectRoot)} -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null || ls -1 ${shQuote(config.projectRoot)} 2>/dev/null`,
     conn
   );
   const optDirs = optResult.stdout.trim().split("\n").filter(Boolean);
 
   // Scan Caddy sites — try all files in sites dir, not just .caddy extension
   const caddyResult = await execOnVps(
-    `for f in ${config.caddySitesDir}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`,
+    `for f in ${shQuote(config.caddySitesDir)}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`,
     conn
   );
 
@@ -435,7 +563,7 @@ export async function scanProjects(vps?: VpsConnection | null) {
   let mainCaddyfile = "";
   if (!caddyResult.stdout.trim()) {
     const mainResult = await execOnVps(
-      `cat ${config.caddyFile} 2>/dev/null || echo ""`,
+      `cat ${shQuote(config.caddyFile)} 2>/dev/null || echo ""`,
       conn
     );
     mainCaddyfile = mainResult.stdout;

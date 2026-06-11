@@ -18,6 +18,8 @@ export async function GET() {
       composeProject: labelsMap.get(c.name)?.project || "",
       composeService: labelsMap.get(c.name)?.service || "",
       composeWorkingDir: labelsMap.get(c.name)?.workingDir || "",
+      composeConfigFiles: labelsMap.get(c.name)?.configFiles || "",
+      projectSlug: labelsMap.get(c.name)?.projectSlug || labelsMap.get(c.name)?.project || "",
     }));
 
     return NextResponse.json(merged);

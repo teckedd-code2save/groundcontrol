@@ -35,8 +35,8 @@ LABEL org.opencontainers.image.source="https://github.com/teckedd-code2save/grou
 LABEL org.opencontainers.image.description="groundcontrol — Next.js app"
 LABEL org.opencontainers.image.licenses="UNLICENSED"
 
-# Install openssl + docker-cli + procps + wget for VPS management & healthchecks
-RUN apk add --no-cache openssl docker-cli procps wget
+# Install Docker CLI + Compose plugin for host Docker socket management.
+RUN apk add --no-cache openssl docker-cli docker-cli-compose procps wget
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./

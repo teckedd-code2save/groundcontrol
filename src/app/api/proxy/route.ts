@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps, resolveBinary, getSystemConfig, type BinaryResolution } from "@/lib/vps";
+import { execOnVps, resolveBinary, getSystemConfig, shQuote, type BinaryResolution } from "@/lib/vps";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
@@ -30,15 +30,15 @@ export async function GET(req: NextRequest) {
       caddyActive = !!proc.stdout.trim();
     }
     if (!caddyActive) {
-      const docker = await execOnVps("docker ps --format '{{.Names}}' | grep -E '^caddy$' || echo ''");
+      const docker = await execOnVps("docker ps --format '{{.Names}}\t{{.Image}}' | awk -F '\\t' 'tolower($1) ~ /(^|[-_])caddy($|[-_])/ || tolower($2) ~ /(^|\\/|:)caddy(:|$)/ {print $1; exit}' || true");
       caddyActive = !!docker.stdout.trim();
     }
 
     if (caddyResolution.type === "docker") {
-      const versionRes = await execOnVps(`docker exec ${caddyResolution.container} caddy version 2>/dev/null || echo 'not installed'`);
+      const versionRes = await execOnVps(`docker exec ${shQuote(caddyResolution.container)} caddy version 2>/dev/null || echo 'not installed'`);
       caddyVersion = versionRes.stdout.trim();
     } else if (caddyResolution.type === "path") {
-      const versionRes = await execOnVps(`${caddyResolution.path} version 2>/dev/null || echo 'not installed'`);
+      const versionRes = await execOnVps(`${shQuote(caddyResolution.path)} version 2>/dev/null || echo 'not installed'`);
       caddyVersion = versionRes.stdout.trim();
     }
     if (caddyVersion.includes("not installed") && caddyActive) {
@@ -60,15 +60,15 @@ export async function GET(req: NextRequest) {
       nginxActive = !!proc.stdout.trim();
     }
     if (!nginxActive) {
-      const docker = await execOnVps("docker ps --format '{{.Names}}' | grep -E '^nginx$' || echo ''");
+      const docker = await execOnVps("docker ps --format '{{.Names}}\t{{.Image}}' | awk -F '\\t' 'tolower($1) ~ /(^|[-_])nginx($|[-_])/ || tolower($2) ~ /(^|\\/|:)nginx(:|$)/ {print $1; exit}' || true");
       nginxActive = !!docker.stdout.trim();
     }
 
     if (nginxResolution.type === "docker") {
-      const nginxVerRes = await execOnVps(`docker exec ${nginxResolution.container} nginx -v 2>&1 || echo 'not installed'`);
+      const nginxVerRes = await execOnVps(`docker exec ${shQuote(nginxResolution.container)} nginx -v 2>&1 || echo 'not installed'`);
       nginxVersion = nginxVerRes.stdout.trim();
     } else if (nginxResolution.type === "path") {
-      const nginxVerRes = await execOnVps(`${nginxResolution.path} -v 2>&1 || echo 'not installed'`);
+      const nginxVerRes = await execOnVps(`${shQuote(nginxResolution.path)} -v 2>&1 || echo 'not installed'`);
       nginxVersion = nginxVerRes.stdout.trim();
     }
     if (nginxVersion.includes("not installed") && nginxActive) {
@@ -77,12 +77,12 @@ export async function GET(req: NextRequest) {
 
     // Caddy configs — scan all files, not just .caddy
     const caddyConfigs = await execOnVps(
-      `for f in "${config.caddySitesDir}"/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`
+      `for f in ${shQuote(config.caddySitesDir)}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`
     );
 
     // Nginx configs
     const nginxConfigs = await execOnVps(
-      `for f in "${config.nginxSitesDir}"/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`
+      `for f in ${shQuote(config.nginxSitesDir)}/*; do [ -f "$f" ] && echo "---FILE:$f---" && cat "$f"; done 2>/dev/null || echo ""`
     );
 
     // Parse configs
@@ -158,10 +158,10 @@ function buildReloadCommand(
 ): string {
   if (server === "caddy") {
     if (resolution.type === "docker") {
-      return `docker exec ${resolution.container} caddy reload --config /etc/caddy/Caddyfile`;
+      return `docker exec ${shQuote(resolution.container)} caddy reload --config /etc/caddy/Caddyfile`;
     }
-    const bin = resolution.type === "path" ? resolution.path : "caddy";
-    const reloadCmd = `${bin} reload --config ${config.caddyFile}`;
+    const bin = resolution.type === "path" ? shQuote(resolution.path) : "caddy";
+    const reloadCmd = `${bin} reload --config ${shQuote(config.caddyFile)}`;
     if (initSystem === "systemd") return `${reloadCmd} 2>/dev/null || systemctl reload caddy`;
     if (initSystem === "openrc") return `${reloadCmd} 2>/dev/null || rc-service caddy reload`;
     return reloadCmd;
@@ -169,9 +169,9 @@ function buildReloadCommand(
 
   // nginx
   if (resolution.type === "docker") {
-    return `docker exec ${resolution.container} nginx -t && docker exec ${resolution.container} nginx -s reload`;
+    return `docker exec ${shQuote(resolution.container)} nginx -t && docker exec ${shQuote(resolution.container)} nginx -s reload`;
   }
-  const bin = resolution.type === "path" ? resolution.path : "nginx";
+  const bin = resolution.type === "path" ? shQuote(resolution.path) : "nginx";
   const testCmd = `${bin} -t`;
   if (initSystem === "systemd") return `${testCmd} && systemctl reload nginx`;
   if (initSystem === "openrc") return `${testCmd} && rc-service nginx reload`;
@@ -185,17 +185,17 @@ function buildTestCommand(
 ): string {
   if (server === "caddy") {
     if (resolution.type === "docker") {
-      return `docker exec ${resolution.container} caddy validate --config /etc/caddy/Caddyfile`;
+      return `docker exec ${shQuote(resolution.container)} caddy validate --config /etc/caddy/Caddyfile`;
     }
-    const bin = resolution.type === "path" ? resolution.path : "caddy";
-    return `${bin} validate --config ${config.caddyFile} 2>/dev/null || echo 'caddy validate not available'`;
+    const bin = resolution.type === "path" ? shQuote(resolution.path) : "caddy";
+    return `${bin} validate --config ${shQuote(config.caddyFile)} 2>/dev/null || echo 'caddy validate not available'`;
   }
 
   // nginx
   if (resolution.type === "docker") {
-    return `docker exec ${resolution.container} nginx -t`;
+    return `docker exec ${shQuote(resolution.container)} nginx -t`;
   }
-  const bin = resolution.type === "path" ? resolution.path : "nginx";
+  const bin = resolution.type === "path" ? shQuote(resolution.path) : "nginx";
   return `${bin} -t`;
 }
 
@@ -206,16 +206,19 @@ function buildLogsCommand(
   config: { nginxLogPath: string }
 ): string {
   if (server === "caddy") {
-    return `journalctl -u caddy --no-pager -n 100 2>/dev/null || docker logs --tail 100 caddy 2>/dev/null || echo 'No caddy logs found'`;
+    const dockerLogs = resolution.type === "docker"
+      ? ` || docker logs --tail 100 ${shQuote(resolution.container)} 2>/dev/null`
+      : " || docker logs --tail 100 caddy 2>/dev/null";
+    return `journalctl -u caddy --no-pager -n 100 2>/dev/null${dockerLogs} || echo 'No caddy logs found'`;
   }
 
   // nginx
-  let chain = `tail -n 100 ${config.nginxLogPath} 2>/dev/null`;
+  let chain = `tail -n 100 ${shQuote(config.nginxLogPath)} 2>/dev/null`;
   if (initSystem === "systemd") {
     chain += ` || journalctl -u nginx --no-pager -n 100`;
   }
   if (resolution.type === "docker") {
-    chain += ` || docker logs --tail 100 ${resolution.container} 2>/dev/null`;
+    chain += ` || docker logs --tail 100 ${shQuote(resolution.container)} 2>/dev/null`;
   }
   chain += ` || echo 'No nginx logs found'`;
   return chain;

@@ -14,6 +14,9 @@ interface Container {
   state: string;
   composeProject?: string;
   composeService?: string;
+  composeWorkingDir?: string;
+  composeConfigFiles?: string;
+  projectSlug?: string;
   stats?: {
     cpu: string;
     mem: string;
@@ -295,7 +298,7 @@ export default function ContainersPage() {
       if (!map.has(c.image)) map.set(c.image, { containers: [] });
       map.get(c.image)!.containers.push(c);
       if (c.composeProject && c.composeService) {
-        map.get(c.image)!.projectSlug = c.composeProject;
+        map.get(c.image)!.projectSlug = c.projectSlug || c.composeProject;
         map.get(c.image)!.service = c.composeService;
       }
     }
@@ -506,6 +509,19 @@ export default function ContainersPage() {
                         <div className="text-xs text-muted font-mono mt-0.5">
                           {container.image} · {container.status}
                         </div>
+                        {(container.composeProject || container.composeWorkingDir) && (
+                          <div className="text-[10px] text-muted font-mono mt-1">
+                            {container.composeProject && (
+                              <span>compose {container.composeProject}</span>
+                            )}
+                            {container.composeService && (
+                              <span>/{container.composeService}</span>
+                            )}
+                            {container.composeWorkingDir && (
+                              <span> · {container.composeWorkingDir}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 

@@ -22,6 +22,7 @@ export type TopoNodeData = {
   status?: string;
   composeProject?: string;
   composeWorkingDir?: string;
+  projectSlug?: string;
   expanded?: boolean;
   onToggleExpand?: () => void;
 };

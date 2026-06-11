@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps, getDockerComposeCommand, getSystemConfig } from "@/lib/vps";
+import { resolveComposeProjectPath, runDockerCompose, shQuote } from "@/lib/vps";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,26 +11,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const config = await getSystemConfig();
-    const projectPath = `${config.projectRoot}/${projectSlug}`;
-
-    let composeCmd = await getDockerComposeCommand();
-    let result = await execOnVps(
-      `cd ${projectPath} && ${composeCmd} up -d ${service}`
+    const target = await resolveComposeProjectPath(projectSlug, service);
+    const result = await runDockerCompose(
+      target.projectPath,
+      `up -d ${shQuote(target.service || service)}`
     );
-
-    // Fallback: if plugin syntax fails for any reason, try standalone
-    if (result.code !== 0) {
-      composeCmd = "docker-compose";
-      result = await execOnVps(
-        `cd ${projectPath} && ${composeCmd} up -d ${service}`
-      );
-    }
 
     return NextResponse.json({
       success: result.code === 0,
       output: result.stdout,
       error: result.stderr || undefined,
+      projectPath: target.projectPath,
+      source: target.source,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

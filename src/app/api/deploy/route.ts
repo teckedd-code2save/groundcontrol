@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { execOnVps, getDockerComposeCommand, getSystemConfig } from "@/lib/vps";
+import { resolveComposeProjectPath, runDockerComposePipeline } from "@/lib/vps";
 import { createAlert } from "@/lib/alerts";
 
 export async function GET() {
@@ -28,21 +28,11 @@ export async function POST(req: NextRequest) {
 
   (async () => {
     try {
-      const config = await getSystemConfig();
-      const projectPath = `${config.projectRoot}/${projectSlug}`;
-      let composeCmd = await getDockerComposeCommand();
-
-      let result = await execOnVps(
-        `cd ${projectPath} && ${composeCmd} pull && ${composeCmd} up -d --remove-orphans`
-      );
-
-      // Fallback: if plugin syntax fails for any reason, try standalone
-      if (result.code !== 0) {
-        composeCmd = "docker-compose";
-        result = await execOnVps(
-          `cd ${projectPath} && ${composeCmd} pull && ${composeCmd} up -d --remove-orphans`
-        );
-      }
+      const target = await resolveComposeProjectPath(projectSlug);
+      const result = await runDockerComposePipeline(target.projectPath, [
+        "pull",
+        "up -d --remove-orphans",
+      ]);
 
       const duration = Date.now() - startTime;
       const status = result.code === 0 ? "success" : "failed";

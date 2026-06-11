@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps, resolveBinary } from "@/lib/vps";
+import { execOnVps, getDockerComposeCommand, resolveBinary, shQuote } from "@/lib/vps";
 import { requireAuth } from "@/lib/auth";
 
 const PATH_EXPORT = 'export PATH="/usr/local/bin:/usr/bin:/bin:/snap/bin:$PATH"';
@@ -25,13 +25,31 @@ export async function POST(req: NextRequest) {
     }
 
     let cmd = command;
-    const firstWord = command.trim().split(/\s+/)[0];
+    const words = command.trim().split(/\s+/);
+    const firstWord = words[0];
+    const isDockerCompose = firstWord === "docker" && words[1] === "compose";
 
-    // Auto-prefix PATH for known binaries that often live outside default non-interactive PATH
+    if (isDockerCompose) {
+      try {
+        const composeCmd = await getDockerComposeCommand();
+        if (composeCmd !== "docker compose") {
+          cmd = command.replace(/^\s*docker\s+compose\b/, composeCmd);
+        }
+      } catch {
+        cmd = `${PATH_EXPORT} && ${cmd}`;
+      }
+    }
+
+    // Auto-resolve common host/container binaries for non-interactive shells.
     if (["caddy", "nginx", "docker-compose"].includes(firstWord)) {
       try {
         const resolution = await resolveBinary(firstWord);
-        if (resolution.type === "path") {
+        if (resolution.type === "docker" && (firstWord === "caddy" || firstWord === "nginx")) {
+          cmd = command.replace(
+            new RegExp(`^\\s*${firstWord}\\b`),
+            `docker exec ${shQuote(resolution.container)} ${firstWord}`
+          );
+        } else if (resolution.type === "path") {
           const binPath = resolution.path;
           // If binary is in a non-standard path, prepend PATH export
           if (!binPath.startsWith("/usr/bin") && !binPath.startsWith("/bin")) {

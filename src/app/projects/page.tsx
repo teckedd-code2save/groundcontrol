@@ -21,6 +21,8 @@ interface Container {
   composeProject?: string;
   composeService?: string;
   composeWorkingDir?: string;
+  composeConfigFiles?: string;
+  projectSlug?: string;
 }
 
 interface DockerImage {
@@ -70,6 +72,10 @@ function deriveProjectName(slug: string): string {
     infisical: "Infisical",
   };
   return map[slug] || slug.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+}
+
+function normalizeToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 export default function ProjectsPage() {
@@ -175,12 +181,15 @@ export default function ProjectsPage() {
 
       for (const c of containers) {
         const composeProj = (c.composeProject || "").toLowerCase();
+        const labelProjectSlug = (c.projectSlug || "").toLowerCase();
         const cName = c.name.toLowerCase();
         const workingDir = (c.composeWorkingDir || "").toLowerCase().replace(/\/$/, "");
         const nameBase = cName.replace(/[-_]\d+$/, "");
+        const normalizedSlug = normalizeToken(projSlugLower);
 
         const matches =
-          (composeProj && (composeProj === projSlugLower || composeProj.includes(projSlugLower) || projSlugLower.includes(composeProj))) ||
+          (composeProj && normalizeToken(composeProj) === normalizedSlug) ||
+          (labelProjectSlug && normalizeToken(labelProjectSlug) === normalizedSlug) ||
           (workingDir && (workingDir === projPath || workingDir.startsWith(projPath + "/"))) ||
           (projSlugLower.length > 2 &&
             (cName.startsWith(projSlugLower + "-") ||
@@ -269,7 +278,7 @@ export default function ProjectsPage() {
                       <p className="text-xs text-muted font-mono mt-1">No domain mapped</p>
                     )}
                     <p className="text-xs text-muted font-mono mt-0.5">
-                      {projectRoot}/{slug}
+                      {meta.containers[0]?.composeWorkingDir || `${projectRoot}/${slug}`}
                     </p>
                   </div>
                   <button
@@ -329,7 +338,7 @@ export default function ProjectsPage() {
                       })}
                     </div>
                     <div className="text-[10px] text-muted font-mono">
-                      cd {projectRoot}/{slug} && docker compose pull && docker compose up -d --remove-orphans
+                      cd {meta.containers[0]?.composeWorkingDir || `${projectRoot}/${slug}`} && docker compose pull && docker compose up -d --remove-orphans
                     </div>
                   </div>
                 ) : (
