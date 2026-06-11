@@ -2,6 +2,7 @@ import { NodeSSH } from "node-ssh";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { prisma } from "./prisma";
+import { decryptMaybe } from "./crypto";
 
 const execAsync = promisify(exec);
 const OS_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
@@ -30,9 +31,16 @@ export interface VpsConnection {
 const sshCache: Map<number, NodeSSH> = new Map();
 
 export async function getActiveVps(): Promise<VpsConnection | null> {
-  const config = await prisma.vpsConfig.findFirst({
-    orderBy: { updatedAt: "desc" },
+  // Prefer the explicitly-activated VPS. Fall back to most-recently-updated
+  // for back-compat with configs created before isActive existed.
+  let config = await prisma.vpsConfig.findFirst({
+    where: { isActive: true },
   });
+  if (!config) {
+    config = await prisma.vpsConfig.findFirst({
+      orderBy: { updatedAt: "desc" },
+    });
+  }
   if (!config) return null;
   return {
     id: config.id,
@@ -82,10 +90,13 @@ export async function execOnVps(
       readyTimeout: 20000,
     };
 
-    if (config.authType === "key" && config.privateKey) {
-      sshConfig.privateKey = config.privateKey;
-    } else if (config.password) {
-      sshConfig.password = config.password;
+    // Secrets are stored encrypted at rest — decrypt only here, at connect time.
+    const privateKey = decryptMaybe(config.privateKey);
+    const password = decryptMaybe(config.password);
+    if (config.authType === "key" && privateKey) {
+      sshConfig.privateKey = privateKey;
+    } else if (password) {
+      sshConfig.password = password;
     }
 
     await ssh.connect(sshConfig);
@@ -287,20 +298,77 @@ const DEFAULT_SYSTEM_CONFIG = {
   updatedAt: new Date(),
 };
 
-let systemConfigCache: any = null;
-let systemConfigCacheTime = 0;
+// Cache keyed by the resolved VPS id (or "global" when no active VPS).
+const systemConfigCache: Map<string, { value: any; time: number }> = new Map();
 
+/**
+ * Resolve the filesystem/path config for the *active* VPS.
+ *
+ * Resolution order:
+ *   1. SystemConfig row linked to the active VPS (per-VPS layout).
+ *   2. The legacy/global SystemConfig row (vpsConfigId = null) — adopted by
+ *      linking it to the active VPS so existing single-VPS setups keep working.
+ *   3. A freshly-created row linked to the active VPS (defaults).
+ *   4. If there is no active VPS at all: the global row, else defaults.
+ *
+ * Signature is unchanged (no-arg, returns a SystemConfig-shaped object) so
+ * existing read-only call sites keep working.
+ */
 export async function getSystemConfig() {
-  if (systemConfigCache && Date.now() - systemConfigCacheTime < 30000) {
-    return systemConfigCache;
-  }
+  let activeVpsId: number | null = null;
   try {
-    let config = await prisma.systemConfig.findFirst();
-    if (!config) {
-      config = await prisma.systemConfig.create({ data: {} });
+    const active = await getActiveVps();
+    activeVpsId = active?.id ?? null;
+  } catch {
+    activeVpsId = null;
+  }
+
+  const cacheKey = activeVpsId === null ? "global" : String(activeVpsId);
+  const cached = systemConfigCache.get(cacheKey);
+  if (cached && Date.now() - cached.time < 30000) {
+    return cached.value;
+  }
+
+  try {
+    let config: any = null;
+
+    if (activeVpsId !== null) {
+      // 1. Per-VPS config row.
+      config = await prisma.systemConfig.findUnique({
+        where: { vpsConfigId: activeVpsId },
+      });
+
+      // 2. Adopt the legacy/global row for this VPS if no per-VPS row exists.
+      if (!config) {
+        const globalRow = await prisma.systemConfig.findFirst({
+          where: { vpsConfigId: null },
+        });
+        if (globalRow) {
+          config = await prisma.systemConfig.update({
+            where: { id: globalRow.id },
+            data: { vpsConfigId: activeVpsId },
+          });
+        }
+      }
+
+      // 3. Create a defaults row linked to the active VPS.
+      if (!config) {
+        config = await prisma.systemConfig.create({
+          data: { vpsConfigId: activeVpsId },
+        });
+      }
+    } else {
+      // 4. No active VPS — use the global row (or create one).
+      config = await prisma.systemConfig.findFirst({ where: { vpsConfigId: null } });
+      if (!config) {
+        config = await prisma.systemConfig.findFirst();
+      }
+      if (!config) {
+        config = await prisma.systemConfig.create({ data: {} });
+      }
     }
-    systemConfigCache = config;
-    systemConfigCacheTime = Date.now();
+
+    systemConfigCache.set(cacheKey, { value: config, time: Date.now() });
     return config;
   } catch (err: any) {
     // Table may not exist (migration not run). Return defaults so the app doesn't crash.
@@ -310,7 +378,7 @@ export async function getSystemConfig() {
 }
 
 export function invalidateSystemConfigCache() {
-  systemConfigCache = null;
+  systemConfigCache.clear();
 }
 
 export async function getDockerComposeCommand(vps?: VpsConnection | null): Promise<string> {
