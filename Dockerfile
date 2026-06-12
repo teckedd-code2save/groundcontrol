@@ -44,9 +44,17 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules ./node_modules
 
+# Schema + migrations at an UNMASKED path: the groundcontrol-db volume mounts
+# over /app/prisma at runtime, hiding the image copy. The entrypoint migrates
+# the volume-resident DB using /app/db/schema.prisma.
+COPY --from=builder /app/prisma /app/db
+
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 # Ensure db directory exists for SQLite
 RUN mkdir -p /app/prisma
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
