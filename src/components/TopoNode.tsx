@@ -40,10 +40,6 @@ export type TopoNodeData = {
   childCount?: number;
   /** Secondary line shown under the label (image / path / etc.). */
   sub?: string;
-  expanded?: boolean;
-  onToggleExpand?: () => void;
-  /** Opens the XRay/details panel (used by group nodes). */
-  onNodeClick?: () => void;
 };
 
 const healthColor = {
@@ -125,7 +121,6 @@ function GroupNode(props: Node<TopoNodeData>) {
   const data = props.data;
   const isUnhealthy = data.health === "warning" || data.health === "critical";
   const childCount = data.childCount ?? 0;
-  const showExpand = !!data.onToggleExpand;
 
   return (
     <div className="w-full h-full">
@@ -157,18 +152,6 @@ function GroupNode(props: Node<TopoNodeData>) {
               {data.label.length > 24 ? data.label.slice(0, 22) + "..." : data.label}
             </div>
           </div>
-          {showExpand && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                data.onToggleExpand?.();
-              }}
-              className="text-muted hover:text-foreground text-[10px] px-1 transition-colors"
-              title={data.expanded ? "Collapse" : "Expand"}
-            >
-              {data.expanded ? "▼" : "▶"}
-            </button>
-          )}
           <div
             className="w-2 h-2 rounded-full shrink-0"
             style={{ background: healthColor[data.health] }}
@@ -191,7 +174,6 @@ function LeafNode(props: Node<TopoNodeData>) {
   const isUnhealthy = data.health === "warning" || data.health === "critical";
   const dims = LEAF_DIMS[data.type] || { w: 180, h: 44 };
   const sub = secondaryLine(data);
-  const showExpand = !!data.onToggleExpand;
 
   return (
     <div
@@ -225,19 +207,6 @@ function LeafNode(props: Node<TopoNodeData>) {
             </div>
           )}
         </div>
-
-        {showExpand && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              data.onToggleExpand?.();
-            }}
-            className="text-muted hover:text-foreground text-[10px] px-1 transition-colors"
-            title={data.expanded ? "Collapse" : "Expand"}
-          >
-            {data.expanded ? "▼" : "▶"}
-          </button>
-        )}
 
         <div
           className="w-2 h-2 rounded-full shrink-0"

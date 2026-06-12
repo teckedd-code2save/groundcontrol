@@ -42,15 +42,14 @@ const TopoGroupNode = memo(function TopoGroupNode(props: Node<TopoNodeData>) {
   const width = (props.width as number) || (props.style?.width as number) || 260;
   const height = (props.height as number) || (props.style?.height as number) || 120;
   const dotColor = healthColor[data.health] || healthColor.unknown;
-  const expanded = data.expanded ?? true;
 
   return (
     <div
-      className="rounded-xl border border-border/60 bg-card/80 overflow-hidden shadow-sm cursor-pointer"
+      className="rounded-xl border border-border/60 bg-card/80 overflow-hidden shadow-sm"
       style={{ width, height }}
-      title={data.onToggleExpand ? (expanded ? "Click to collapse" : "Click to expand") : data.label}
+      title={data.label}
     >
-      <div className="h-11 px-3 flex items-center gap-2 bg-border/30 border-b border-border/60 hover:bg-border/40">
+      <div className="h-11 px-3 flex items-center gap-2 bg-border/30 border-b border-border/60">
         <div className="text-muted shrink-0">
           <GroupIcon data={data} />
         </div>
@@ -64,27 +63,6 @@ const TopoGroupNode = memo(function TopoGroupNode(props: Node<TopoNodeData>) {
             </span>
           )}
         </div>
-        {data.onToggleExpand && (
-          <span
-            className="text-muted hover:text-foreground text-xs px-1 select-none pointer-events-none"
-            aria-label={expanded ? "Collapse" : "Expand"}
-          >
-            {expanded ? "▼" : "▶"}
-          </span>
-        )}
-        {data.onNodeClick && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              data.onNodeClick?.();
-            }}
-            className="text-muted hover:text-accent text-[10px] px-1 transition-colors"
-            title="Inspect"
-            aria-label="Inspect"
-          >
-            ⓘ
-          </button>
-        )}
         <div className="w-2 h-2 rounded-full shrink-0" style={{ background: dotColor }} />
       </div>
     </div>

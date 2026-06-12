@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -48,10 +48,6 @@ const GROUP_PADDING_X = 24;
 const GROUP_PADDING_Y = 24;
 const GROUP_HEADER_HEIGHT = 36;
 
-function isExpandableNode(node: Node<TopoNodeData>): boolean {
-  return node.type === "group" || ["site", "project", "service"].includes(node.data.type);
-}
-
 export interface TopologyFilters {
   status?: "running" | "stopped" | "unhealthy" | "unknown";
   projectSlug?: string;
@@ -95,38 +91,6 @@ function layoutFlatWithDagre(nodes: Node<TopoNodeData>[], edges: Edge[]) {
       style: { ...node.style, width: w, height: h },
     };
   });
-}
-
-function buildParentMap(edges: Edge[]): Map<string, string[]> {
-  const map = new Map<string, string[]>();
-  for (const edge of edges) {
-    const children = map.get(edge.source) || [];
-    children.push(edge.target);
-    map.set(edge.source, children);
-  }
-  return map;
-}
-
-function buildChildToParent(edges: Edge[]): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const edge of edges) {
-    if (!map.has(edge.target)) map.set(edge.target, edge.source);
-  }
-  return map;
-}
-
-function getDefaultExpanded(nodes: Node<TopoNodeData>[], edges: Edge[]): Set<string> {
-  const expanded = new Set<string>();
-  const parentMap = buildParentMap(edges);
-
-  for (const node of nodes) {
-    if (!isExpandableNode(node)) continue;
-    const hasChildren = (parentMap.get(node.id) || []).length > 0;
-    if (!hasChildren) continue;
-    // Expand everything with children by default so the full hierarchy is visible.
-    expanded.add(node.id);
-  }
-  return expanded;
 }
 
 function containerMatchesFilters(
@@ -258,7 +222,6 @@ interface TopologyFlowProps {
   initialEdges: Edge[];
   filters?: TopologyFilters;
   dbProjects?: DbProject[];
-  onNodeClick?: (node: Node<TopoNodeData>) => void;
 }
 
 export default function TopologyFlow({
@@ -266,61 +229,31 @@ export default function TopologyFlow({
   initialEdges,
   filters = {},
   dbProjects = [],
-  onNodeClick,
 }: TopologyFlowProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<TopoNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance<Node<TopoNodeData>, Edge> | null>(null);
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => getDefaultExpanded(initialNodes, initialEdges));
-
-  const parentMap = useMemo(() => buildParentMap(initialEdges), [initialEdges]);
-  const childToParent = useMemo(() => buildChildToParent(initialEdges), [initialEdges]);
 
   const computeVisibleNodes = useCallback(
-    (allNodes: Node<TopoNodeData>[], expanded: Set<string>, activeFilters: TopologyFilters, projects: DbProject[]) => {
-      const hidden = new Set<string>();
-
-      const ancestorCollapsed = (nodeId: string): boolean => {
-        let parent = childToParent.get(nodeId);
-        while (parent) {
-          if (!expanded.has(parent)) return true;
-          parent = childToParent.get(parent);
-        }
-        return false;
-      };
-
-      for (const node of allNodes) {
-        if (!containerMatchesFilters(node.data, activeFilters, projects)) {
-          hidden.add(node.id);
-          continue;
-        }
-        if (childToParent.has(node.id) && ancestorCollapsed(node.id)) {
-          hidden.add(node.id);
-        }
-      }
-
+    (allNodes: Node<TopoNodeData>[], activeFilters: TopologyFilters, projects: DbProject[]) => {
       return allNodes.map((node) => ({
         ...node,
-        hidden: hidden.has(node.id),
-        data: {
-          ...node.data,
-          expanded: isExpandableNode(node) ? expanded.has(node.id) : undefined,
-        },
+        hidden: !containerMatchesFilters(node.data, activeFilters, projects),
       }));
     },
-    [childToParent]
+    []
   );
 
   useEffect(() => {
-    const visible = computeVisibleNodes(initialNodes, expandedNodes, filters, dbProjects);
-    const visibleIds = new Set(visible.filter((n) => !n.hidden).map((n) => n.id));
+    const visible = computeVisibleNodes(initialNodes, filters, dbProjects);
     const nodesToLayout = visible.filter((n) => !n.hidden);
+    const visibleIds = new Set(nodesToLayout.map((n) => n.id));
     const edgesToLayout = initialEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
     const flatLaidOut = layoutFlatWithDagre(nodesToLayout, edgesToLayout);
     const grouped = wrapGroups(flatLaidOut);
     setNodes(grouped);
     setEdges(edgesToLayout);
-  }, [initialNodes, initialEdges, expandedNodes, filters, dbProjects, computeVisibleNodes, setNodes, setEdges]);
+  }, [initialNodes, initialEdges, filters, dbProjects, computeVisibleNodes, setNodes, setEdges]);
 
   useEffect(() => {
     if (rfInstance && nodes.length > 0) {
@@ -329,45 +262,6 @@ export default function TopologyFlow({
     }
   }, [rfInstance, nodes.length, nodes]);
 
-  const toggleExpand = useCallback((nodeId: string) => {
-    setExpandedNodes((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
-  }, []);
-
-  const nodesWithToggle = useMemo(() => {
-    return nodes.map((node) => {
-      const hasChildren = (parentMap.get(node.id) || []).length > 0;
-      const expandable = isExpandableNode(node) && hasChildren;
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          onToggleExpand: expandable ? () => toggleExpand(node.id) : undefined,
-          onNodeClick: expandable && onNodeClick ? () => onNodeClick(node) : undefined,
-        },
-      };
-    }) as Node<TopoNodeData>[];
-  }, [nodes, toggleExpand, parentMap, onNodeClick]);
-
-  const handleNodeClick = useCallback(
-    (_event: unknown, node: Node<TopoNodeData>) => {
-      const hasChildren = (parentMap.get(node.id) || []).length > 0;
-      if (isExpandableNode(node) && hasChildren) {
-        toggleExpand(node.id);
-      } else {
-        onNodeClick?.(node);
-      }
-    },
-    [onNodeClick, toggleExpand, parentMap]
-  );
-
   const handleInit = useCallback((instance: ReactFlowInstance<Node<TopoNodeData>, Edge>) => {
     setRfInstance(instance);
   }, []);
@@ -375,11 +269,10 @@ export default function TopologyFlow({
   return (
     <div className="w-full h-full">
       <ReactFlow
-        nodes={nodesWithToggle}
+        nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeClick={handleNodeClick}
         onInit={handleInit}
         nodeTypes={nodeTypes}
         fitView

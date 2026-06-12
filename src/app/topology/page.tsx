@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import { type Node, type Edge } from "@xyflow/react";
 import TopologyFlow from "@/components/TopologyFlow";
 import type { TopologyFilters } from "@/components/TopologyFlow";
-import XRayPanel from "@/components/XRayPanel";
 import { linkSitesToContainers, buildProjectTopology } from "@/lib/topology";
 import type { ScannedProjectLite, Site } from "@/lib/topology";
 import type { TopoNodeData } from "@/components/TopoNode";
@@ -60,12 +59,6 @@ export default function TopologyPage() {
   const [dbProjects, setDbProjects] = useState<{ slug: string; name: string; domain?: string | null; path?: string | null }[]>([]);
   const [scannedProjects, setScannedProjects] = useState<ScannedProjectLite[]>([]);
   const [filters, setFilters] = useState<TopologyFilters>({});
-  const [xrayTarget, setXrayTarget] = useState<{
-    type: "container" | "site" | "host" | "caddy" | "nginx" | "system";
-    id: string;
-    name: string;
-    data?: unknown;
-  } | null>(null);
 
   const fetchTopology = useCallback(
     async (mode: ViewMode) => {
@@ -121,28 +114,6 @@ export default function TopologyPage() {
     const interval = setInterval(() => fetchTopology(view), 10000);
     return () => clearInterval(interval);
   }, [fetchTopology, view]);
-
-  const handleNodeClick = useCallback((node: Node<TopoNodeData>) => {
-    const data = node.data;
-    if (node.id === "unmapped-group" || node.id === "unclaimed-group") {
-      setXrayTarget({ type: "system", id: "system", name: "Unmapped Containers" });
-      return;
-    }
-    if (node.type === "group") {
-      setXrayTarget({ type: "system", id: data.label, name: data.label, data: node.data });
-      return;
-    }
-    if (data.type === "container" || data.type === "service") {
-      const name = data.containerName || data.label;
-      setXrayTarget({ type: "container", id: name, name, data: node.data });
-    } else if (data.type === "site") {
-      setXrayTarget({ type: "site", id: data.label, name: data.label, data: node.data });
-    } else if (data.type === "proxy") {
-      setXrayTarget({ type: data.subType === "nginx" ? "nginx" : "caddy", id: node.id, name: data.label, data: {} });
-    } else if (data.type === "project" || data.type === "host" || data.type === "internet") {
-      setXrayTarget({ type: data.type === "host" || data.type === "internet" ? "host" : "system", id: data.label, name: data.label, data: node.data });
-    }
-  }, []);
 
   const filterProjects =
     view === "projects"
@@ -240,12 +211,9 @@ export default function TopologyPage() {
             initialEdges={edges}
             filters={filters}
             dbProjects={dbProjects}
-            onNodeClick={handleNodeClick}
           />
         )}
       </div>
-
-      <XRayPanel target={xrayTarget} onClose={() => setXrayTarget(null)} />
     </div>
   );
 }
