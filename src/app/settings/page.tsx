@@ -481,67 +481,131 @@ function SystemPathsSection() {
   );
 }
 
+interface ProviderState {
+  configured: boolean;
+  hasEnvKey: boolean;
+}
+interface AiConfigStatus {
+  provider: "openai" | "anthropic";
+  openai: ProviderState;
+  anthropic: ProviderState;
+}
+
 function AIConfigSection() {
-  const [status, setStatus] = useState<{ configured: boolean; hasEnvKey: boolean } | null>(null);
+  const [status, setStatus] = useState<AiConfigStatus | null>(null);
+  const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  function applyStatus(data: AiConfigStatus | null) {
+    if (!data) return;
+    setStatus(data);
+    if (data.provider) setProvider(data.provider);
+  }
+
   useEffect(() => {
     fetch("/api/ai/config")
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setStatus(data))
+      .then(applyStatus)
       .catch(() => {});
   }, []);
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
+  const isAnthropic = provider === "anthropic";
+  const active = isAnthropic ? status?.anthropic : status?.openai;
+  const envVar = isAnthropic ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  const placeholder = isAnthropic ? "sk-ant-..." : "sk-...";
+  const providerLabel = isAnthropic ? "Anthropic (Claude)" : "OpenAI";
+
+  async function persist(payload: Record<string, unknown>, successMsg: string) {
     setSaving(true);
     setResult(null);
     try {
       const res = await fetch("/api/ai/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ openaiApiKey: key || undefined }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok) {
-        setStatus(data);
-        setResult({ success: true, message: data.configured ? "API key saved" : "API key cleared" });
-        setKey("");
-      } else {
-        setResult({ success: false, message: data.error || "Failed to save" });
+        applyStatus(data);
+        setResult({ success: true, message: successMsg });
+        return true;
       }
+      setResult({ success: false, message: data.error || "Failed to save" });
     } catch {
       setResult({ success: false, message: "Network error" });
     } finally {
       setSaving(false);
     }
+    return false;
+  }
+
+  async function selectProvider(p: "openai" | "anthropic") {
+    setProvider(p);
+    setKey("");
+    await persist({ provider: p }, `Switched to ${p === "anthropic" ? "Anthropic" : "OpenAI"}`);
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    const field = isAnthropic ? "anthropicApiKey" : "openaiApiKey";
+    const ok = await persist(
+      { provider, [field]: key || undefined },
+      key ? "API key saved" : "API key cleared"
+    );
+    if (ok) setKey("");
   }
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 mt-8">
       <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">AI Configuration</h2>
       <p className="text-[10px] text-muted/60 mb-6 leading-relaxed">
-        Configure OpenAI API key for the GroundControl AI assistant. The key is stored server-side in a config file.
-        If an environment variable OPENAI_API_KEY is set, it takes priority.
+        Choose the model provider that powers the GroundControl AI assistant and configure its API key.
+        Keys are encrypted at rest server-side. A matching environment variable ({envVar}) takes priority.
       </p>
 
+      {/* Provider selector */}
+      <div className="mb-5">
+        <label className="block text-xs font-mono text-muted mb-1.5">Provider</label>
+        <div className="flex gap-3">
+          {(["openai", "anthropic"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => selectProvider(p)}
+              disabled={saving}
+              className={`px-4 py-2 text-xs font-mono border rounded-lg transition-colors disabled:opacity-50 ${
+                provider === p
+                  ? "border-accent bg-accent/10 text-accent"
+                  : "border-border hover:border-border-hover"
+              }`}
+            >
+              {p === "anthropic" ? "Anthropic (Claude)" : "OpenAI"}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="flex items-center gap-2 mb-4">
-        <div className={`w-2 h-2 rounded-full ${status?.configured || status?.hasEnvKey ? "bg-success" : "bg-error"}`} />
+        <div className={`w-2 h-2 rounded-full ${active?.configured || active?.hasEnvKey ? "bg-success" : "bg-error"}`} />
         <span className="text-xs font-mono">
-          {status?.hasEnvKey ? "Using env var OPENAI_API_KEY" : status?.configured ? "API key configured" : "No API key configured"}
+          {active?.hasEnvKey
+            ? `Using env var ${envVar}`
+            : active?.configured
+              ? `${providerLabel} key configured`
+              : `No ${providerLabel} key configured`}
         </span>
       </div>
 
       <form onSubmit={handleSave} className="space-y-3 max-w-md">
         <div>
-          <label className="block text-xs font-mono text-muted mb-1">OpenAI API Key</label>
+          <label className="block text-xs font-mono text-muted mb-1">{providerLabel} API Key</label>
           <input
             type="password"
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder="sk-..."
+            placeholder={placeholder}
             className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors font-mono"
           />
           <p className="text-[10px] text-muted/60 mt-1">Leave empty and save to clear the stored key.</p>

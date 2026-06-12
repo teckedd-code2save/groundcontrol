@@ -434,6 +434,15 @@ export function getOpenAIToolSchemas() {
   }));
 }
 
+/** Anthropic (Messages API) tool schema. */
+export function getAnthropicToolSchemas() {
+  return AGENT_TOOLS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters as { type: "object"; [k: string]: unknown },
+  }));
+}
+
 export function isReadOnlyTool(name: string): boolean {
   return TOOL_MAP.get(name)?.readOnly ?? false;
 }

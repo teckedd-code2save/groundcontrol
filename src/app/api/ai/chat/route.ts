@@ -1,24 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { getOpenAIKey } from "@/lib/ai-config";
-import { getTool, getOpenAIToolSchemas, isReadOnlyTool } from "@/lib/ai-agent";
+import { getActiveAi } from "@/lib/ai-config";
+import {
+  getTool,
+  getOpenAIToolSchemas,
+  getAnthropicToolSchemas,
+  isReadOnlyTool,
+} from "@/lib/ai-agent";
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
 // Always run at request time — this handler streams and hits the VPS.
 export const dynamic = "force-dynamic";
 
 /**
- * Default model. Configurable via the AI_MODEL env var so operators can pin a
- * different OpenAI model without code changes. gpt-4o is a strong, current,
- * tool-calling-capable default (a real upgrade over the old gpt-4o-mini).
+ * Per-provider default model, each overridable via env so operators can pin a
+ * model without code changes.
+ *  - OpenAI:    AI_MODEL            (default gpt-4o)
+ *  - Anthropic: AI_MODEL_ANTHROPIC  (default claude-opus-4-8 — current top Opus)
  */
-const DEFAULT_MODEL = process.env.AI_MODEL || "gpt-4o";
+const OPENAI_MODEL = process.env.AI_MODEL || "gpt-4o";
+const ANTHROPIC_MODEL = process.env.AI_MODEL_ANTHROPIC || "claude-opus-4-8";
 
 const MAX_TOOL_ITERATIONS = 6;
-
-function getOpenAI() {
-  return new OpenAI({ apiKey: getOpenAIKey() });
-}
+const ANTHROPIC_MAX_TOKENS = 4096;
 
 const SYSTEM_PROMPT =
   `You are GroundControl AI, an expert systems administrator and DevOps assistant embedded in the ` +
@@ -45,6 +50,7 @@ const SYSTEM_PROMPT =
   `answers in clean Markdown.`;
 
 type WireMessage = { role: string; content: string };
+type ConfirmedTool = { name: string; args: Record<string, any> };
 
 const encoder = new TextEncoder();
 function sse(obj: unknown): Uint8Array {
@@ -58,7 +64,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as {
       messages: WireMessage[];
       // When the user approves a mutating tool, the client re-calls with this set.
-      confirmedTool?: { name: string; args: Record<string, any> };
+      confirmedTool?: ConfirmedTool;
     };
     const { messages, confirmedTool } = body;
 
@@ -66,171 +72,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Messages array required" }, { status: 400 });
     }
 
-    const apiKey = getOpenAIKey();
+    const { provider, apiKey } = getActiveAi();
     if (!apiKey) {
+      const label = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
       return NextResponse.json(
-        { error: "OPENAI_API_KEY not configured. Add it in Settings → AI Configuration." },
+        { error: `${label} not configured. Add it in Settings → AI Configuration.` },
         { status: 503 }
       );
     }
 
-    const openai = getOpenAI();
-    const toolSchemas = getOpenAIToolSchemas();
-
-    // Map inbound history into OpenAI message params (keep only user/assistant turns).
-    const history: OpenAI.Chat.ChatCompletionMessageParam[] = messages
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
-
-    const convo: OpenAI.Chat.ChatCompletionMessageParam[] = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...history,
-    ];
+    const history = messages.filter((m) => m.role === "user" || m.role === "assistant");
 
     const readable = new ReadableStream({
       async start(controller) {
         const emit = (obj: unknown) => controller.enqueue(sse(obj));
         try {
-          // -------------------------------------------------------------
-          // 0. Confirmed mutating tool path: the user approved a mutation.
-          //    Execute it, append the observation, then let the model
-          //    continue the loop to report the outcome.
-          // -------------------------------------------------------------
-          if (confirmedTool?.name) {
-            const tool = getTool(confirmedTool.name);
-            if (!tool) {
-              emit({ type: "tool", name: confirmedTool.name, status: "error", output: "Unknown tool." });
-            } else {
-              const cArgs = confirmedTool.args || {};
-              emit({ type: "tool", name: tool.name, args: cArgs, status: "running" });
-              const output = await tool.execute(cArgs);
-              emit({ type: "tool", name: tool.name, args: cArgs, status: "done", output });
-              // Seed the conversation so the model knows the action was taken.
-              convo.push({
-                role: "assistant",
-                content: `I executed the confirmed action \`${tool.name}\` with arguments ${JSON.stringify(
-                  cArgs
-                )}.`,
-              });
-              convo.push({
-                role: "user",
-                content: `Result of ${tool.name}:\n\n${output}\n\nPlease summarize the outcome.`,
-              });
-            }
-          }
-
-          // -------------------------------------------------------------
-          // 1. Tool-calling loop.
-          // -------------------------------------------------------------
-          for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-            const completion = await openai.chat.completions.create({
-              model: DEFAULT_MODEL,
-              messages: convo,
-              tools: toolSchemas,
-              tool_choice: "auto",
-              temperature: 0.4,
-            });
-
-            const choice = completion.choices[0];
-            const msg = choice?.message;
-            const toolCalls = msg?.tool_calls || [];
-
-            // No tool calls -> the model is ready to answer.
-            if (!toolCalls.length) {
-              if (msg?.content) {
-                emit({ type: "text", delta: msg.content });
-                controller.close();
-                return;
-              }
-              break;
-            }
-
-            // Record the assistant turn that requested the tools.
-            convo.push(msg as OpenAI.Chat.ChatCompletionMessageParam);
-
-            let awaitingConfirmation = false;
-
-            for (const call of toolCalls) {
-              if (call.type !== "function") continue;
-              const name = call.function.name;
-              let args: Record<string, any> = {};
-              try {
-                args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-              } catch {
-                args = {};
-              }
-
-              const tool = getTool(name);
-
-              if (!tool) {
-                convo.push({
-                  role: "tool",
-                  tool_call_id: call.id,
-                  content: `ERROR: unknown tool "${name}".`,
-                });
-                continue;
-              }
-
-              // Mutating tool -> do NOT execute. Surface a confirmation request
-              // to the UI and stop; the user must approve via a fresh request.
-              if (!isReadOnlyTool(name)) {
-                emit({
-                  type: "confirm",
-                  name,
-                  args,
-                  description: tool.description,
-                });
-                // Satisfy the tool_call so the conversation stays valid.
-                convo.push({
-                  role: "tool",
-                  tool_call_id: call.id,
-                  content:
-                    `This is a mutating action and was NOT executed. It is pending explicit user ` +
-                    `confirmation in the UI.`,
-                });
-                awaitingConfirmation = true;
-                continue;
-              }
-
-              // Read-only tool -> auto-run.
-              emit({ type: "tool", name, args, status: "running" });
-              const output = await tool.execute(args);
-              emit({ type: "tool", name, args, status: "done", output });
-              convo.push({
-                role: "tool",
-                tool_call_id: call.id,
-                content: output,
-              });
-            }
-
-            if (awaitingConfirmation) {
-              // Stop here — wait for the user to approve. The UI re-calls with
-              // `confirmedTool` set once they click Approve.
-              emit({
-                type: "text",
-                delta:
-                  "\n\nThis action changes server state, so I need your confirmation before running it. " +
-                  "Approve it above to proceed.",
-              });
-              controller.close();
-              return;
-            }
-            // Otherwise loop again with the tool observations appended.
-          }
-
-          // -------------------------------------------------------------
-          // 2. Final streamed answer (after tool loop or iteration cap).
-          // -------------------------------------------------------------
-          const finalStream = await openai.chat.completions.create({
-            model: DEFAULT_MODEL,
-            messages: convo,
-            stream: true,
-            temperature: 0.4,
-          });
-
-          for await (const chunk of finalStream) {
-            const delta = chunk.choices[0]?.delta?.content || "";
-            if (delta) emit({ type: "text", delta });
+          if (provider === "anthropic") {
+            await runAnthropic(apiKey, history, confirmedTool, emit);
+          } else {
+            await runOpenAI(apiKey, history, confirmedTool, emit);
           }
           controller.close();
         } catch (err: any) {
@@ -259,5 +119,240 @@ export async function POST(req: NextRequest) {
     const msg = err?.message || "AI request failed";
     const status = msg === "Unauthorized" ? 401 : 500;
     return NextResponse.json({ error: msg }, { status });
+  }
+}
+
+type Emit = (obj: unknown) => void;
+
+// ---------------------------------------------------------------------------
+// OpenAI provider (chat completions + function calling)
+// ---------------------------------------------------------------------------
+async function runOpenAI(
+  apiKey: string,
+  history: WireMessage[],
+  confirmedTool: ConfirmedTool | undefined,
+  emit: Emit
+) {
+  const openai = new OpenAI({ apiKey });
+  const toolSchemas = getOpenAIToolSchemas();
+
+  const convo: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+  ];
+
+  if (confirmedTool?.name) {
+    const tool = getTool(confirmedTool.name);
+    if (!tool) {
+      emit({ type: "tool", name: confirmedTool.name, status: "error", output: "Unknown tool." });
+    } else {
+      const cArgs = confirmedTool.args || {};
+      emit({ type: "tool", name: tool.name, args: cArgs, status: "running" });
+      const output = await tool.execute(cArgs);
+      emit({ type: "tool", name: tool.name, args: cArgs, status: "done", output });
+      convo.push({
+        role: "assistant",
+        content: `I executed the confirmed action \`${tool.name}\` with arguments ${JSON.stringify(cArgs)}.`,
+      });
+      convo.push({
+        role: "user",
+        content: `Result of ${tool.name}:\n\n${output}\n\nPlease summarize the outcome.`,
+      });
+    }
+  }
+
+  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages: convo,
+      tools: toolSchemas,
+      tool_choice: "auto",
+      temperature: 0.4,
+    });
+
+    const msg = completion.choices[0]?.message;
+    const toolCalls = msg?.tool_calls || [];
+
+    if (!toolCalls.length) {
+      if (msg?.content) {
+        emit({ type: "text", delta: msg.content });
+        return;
+      }
+      break;
+    }
+
+    convo.push(msg as OpenAI.Chat.ChatCompletionMessageParam);
+    let awaitingConfirmation = false;
+
+    for (const call of toolCalls) {
+      if (call.type !== "function") continue;
+      const name = call.function.name;
+      let args: Record<string, any> = {};
+      try {
+        args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+      } catch {
+        args = {};
+      }
+
+      const tool = getTool(name);
+      if (!tool) {
+        convo.push({ role: "tool", tool_call_id: call.id, content: `ERROR: unknown tool "${name}".` });
+        continue;
+      }
+
+      if (!isReadOnlyTool(name)) {
+        emit({ type: "confirm", name, args, description: tool.description });
+        convo.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: `This is a mutating action and was NOT executed. It is pending explicit user confirmation in the UI.`,
+        });
+        awaitingConfirmation = true;
+        continue;
+      }
+
+      emit({ type: "tool", name, args, status: "running" });
+      const output = await tool.execute(args);
+      emit({ type: "tool", name, args, status: "done", output });
+      convo.push({ role: "tool", tool_call_id: call.id, content: output });
+    }
+
+    if (awaitingConfirmation) {
+      emit({
+        type: "text",
+        delta:
+          "\n\nThis action changes server state, so I need your confirmation before running it. " +
+          "Approve it above to proceed.",
+      });
+      return;
+    }
+  }
+
+  const finalStream = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    messages: convo,
+    stream: true,
+    temperature: 0.4,
+  });
+  for await (const chunk of finalStream) {
+    const delta = chunk.choices[0]?.delta?.content || "";
+    if (delta) emit({ type: "text", delta });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic provider (Messages API + tool use). claude-opus-4-8 uses adaptive
+// thinking only and rejects sampling params, so we pass neither temperature nor
+// budget_tokens.
+// ---------------------------------------------------------------------------
+async function runAnthropic(
+  apiKey: string,
+  history: WireMessage[],
+  confirmedTool: ConfirmedTool | undefined,
+  emit: Emit
+) {
+  const anthropic = new Anthropic({ apiKey });
+  const tools = getAnthropicToolSchemas();
+
+  const convo: Anthropic.MessageParam[] = history.map((m) => ({
+    role: m.role as "user" | "assistant",
+    content: m.content,
+  }));
+
+  if (confirmedTool?.name) {
+    const tool = getTool(confirmedTool.name);
+    if (!tool) {
+      emit({ type: "tool", name: confirmedTool.name, status: "error", output: "Unknown tool." });
+    } else {
+      const cArgs = confirmedTool.args || {};
+      emit({ type: "tool", name: tool.name, args: cArgs, status: "running" });
+      const output = await tool.execute(cArgs);
+      emit({ type: "tool", name: tool.name, args: cArgs, status: "done", output });
+      convo.push({
+        role: "assistant",
+        content: `I executed the confirmed action \`${tool.name}\` with arguments ${JSON.stringify(cArgs)}.`,
+      });
+      convo.push({
+        role: "user",
+        content: `Result of ${tool.name}:\n\n${output}\n\nPlease summarize the outcome.`,
+      });
+    }
+  }
+
+  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    const stream = anthropic.messages.stream({
+      model: ANTHROPIC_MODEL,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
+      system: SYSTEM_PROMPT,
+      tools,
+      messages: convo,
+    });
+
+    // Stream assistant text as it arrives (preambles + the final answer).
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        if (event.delta.text) emit({ type: "text", delta: event.delta.text });
+      }
+    }
+
+    const finalMsg = await stream.finalMessage();
+
+    // No tool use -> the streamed text above was the final answer.
+    if (finalMsg.stop_reason !== "tool_use") return;
+
+    const toolUses = finalMsg.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+    );
+
+    // Preserve the assistant turn (text + tool_use blocks) verbatim.
+    convo.push({ role: "assistant", content: finalMsg.content });
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    let awaitingConfirmation = false;
+
+    for (const use of toolUses) {
+      const name = use.name;
+      const args = (use.input as Record<string, any>) || {};
+      const tool = getTool(name);
+
+      if (!tool) {
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: `ERROR: unknown tool "${name}".`,
+          is_error: true,
+        });
+        continue;
+      }
+
+      if (!isReadOnlyTool(name)) {
+        emit({ type: "confirm", name, args, description: tool.description });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content:
+            "This is a mutating action and was NOT executed. It is pending explicit user confirmation in the UI.",
+        });
+        awaitingConfirmation = true;
+        continue;
+      }
+
+      emit({ type: "tool", name, args, status: "running" });
+      const output = await tool.execute(args);
+      emit({ type: "tool", name, args, status: "done", output });
+      toolResults.push({ type: "tool_result", tool_use_id: use.id, content: output });
+    }
+
+    convo.push({ role: "user", content: toolResults });
+
+    if (awaitingConfirmation) {
+      emit({
+        type: "text",
+        delta:
+          "\n\nThis action changes server state, so I need your confirmation before running it. " +
+          "Approve it above to proceed.",
+      });
+      return;
+    }
   }
 }
