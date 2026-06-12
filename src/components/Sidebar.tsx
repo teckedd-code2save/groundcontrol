@@ -89,8 +89,8 @@ export function Sidebar() {
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         } ${collapsed ? "w-16" : "w-64"}`}
       >
-        <div className={`p-4 border-b border-border flex items-center ${collapsed ? "justify-center" : "justify-between"}`}>
-          <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
+        <div className={`p-4 border-b border-border flex items-center ${collapsed ? "flex-col gap-2 justify-center" : "justify-between"}`}>
+          <Link href="/dashboard" className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
             <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-sm orb-pulse shrink-0">
               GC
             </div>
@@ -100,34 +100,26 @@ export function Sidebar() {
                 <p className="text-[10px] text-muted font-mono uppercase tracking-wider">VPS Cockpit</p>
               </div>
             )}
-          </div>
-          {!collapsed && (
-            <button
-              onClick={toggleCollapsed}
-              className="hidden md:flex items-center justify-center w-7 h-7 rounded-lg text-muted hover:text-foreground hover:bg-border/50 transition-colors"
-              title="Collapse sidebar"
-              aria-label="Collapse sidebar"
-            >
+          </Link>
+          <button
+            onClick={toggleCollapsed}
+            className="hidden md:flex items-center justify-center w-7 h-7 rounded-lg text-muted hover:text-foreground hover:bg-border/50 transition-colors"
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            ) : (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="15 18 9 12 15 6" />
               </svg>
-            </button>
-          )}
+            )}
+          </button>
         </div>
 
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
-          {collapsed && (
-            <button
-              onClick={toggleCollapsed}
-              className="hidden md:flex w-full items-center justify-center py-2 text-muted hover:text-foreground transition-colors"
-              title="Expand sidebar"
-              aria-label="Expand sidebar"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="9 18 15 12 9 6" />
-              </svg>
-            </button>
-          )}
           {navItems.map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href + "/");
             return (

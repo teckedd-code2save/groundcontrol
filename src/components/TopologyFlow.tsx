@@ -16,11 +16,12 @@ import {
 import dagre from "dagre";
 import "@xyflow/react/dist/style.css";
 import TopoNode, { type TopoNodeData } from "./TopoNode";
+import TopoGroupNode from "./TopoGroupNode";
 import type { DbProject } from "@/lib/topology";
 
 const nodeTypes: NodeTypes = {
   topoNode: TopoNode as unknown as NodeTypes[string],
-  group: TopoNode as unknown as NodeTypes[string],
+  group: TopoGroupNode as unknown as NodeTypes[string],
 };
 
 const LEAF_WIDTH: Record<string, number> = {
@@ -48,7 +49,7 @@ const GROUP_PADDING_Y = 24;
 const GROUP_HEADER_HEIGHT = 36;
 
 function isExpandableNode(node: Node<TopoNodeData>): boolean {
-  return node.data.type === "group" || ["site", "project", "service"].includes(node.data.type);
+  return node.type === "group" || ["site", "project", "service"].includes(node.data.type);
 }
 
 export interface TopologyFilters {
@@ -141,7 +142,11 @@ function getDefaultExpanded(nodes: Node<TopoNodeData>[], edges: Edge[]): Set<str
 
   for (const node of nodes) {
     if (!isExpandableNode(node)) continue;
-    if (node.data.groupType === "project" || node.data.type === "project" || subtreeHasIssues(node.id, parentMap, nodeMap)) {
+    const hasChildren = (parentMap.get(node.id) || []).length > 0;
+    if (!hasChildren) continue;
+    // Expand all groups and services by default so the hierarchy is visible.
+    // Also keep any expandable node expanded if its subtree has issues.
+    if (node.type === "group" || node.data.type === "project" || node.data.type === "service" || subtreeHasIssues(node.id, parentMap, nodeMap)) {
       expanded.add(node.id);
     }
   }
@@ -225,7 +230,14 @@ function wrapGroups(nodes: Node<TopoNodeData>[]): Node<TopoNodeData>[] {
 
   for (const group of groupNodes) {
     const children = childrenMap.get(group.id) || [];
-    if (children.length === 0) continue;
+
+    // Collapsed group: show only the header.
+    if (children.length === 0) {
+      group.width = 180;
+      group.height = GROUP_HEADER_HEIGHT;
+      group.style = { ...group.style, width: 180, height: GROUP_HEADER_HEIGHT, zIndex: -1 };
+      continue;
+    }
 
     const childRects = children.map((child) => {
       const w = (child.width as number) || leafDimensions(child.data).w;
@@ -252,7 +264,7 @@ function wrapGroups(nodes: Node<TopoNodeData>[]): Node<TopoNodeData>[] {
     };
     group.width = width;
     group.height = height;
-    group.style = { ...group.style, width, height };
+    group.style = { ...group.style, width, height, zIndex: -1 };
 
     for (const child of children) {
       child.position = {
@@ -325,10 +337,13 @@ export default function TopologyFlow({
 
   useEffect(() => {
     const visible = computeVisibleNodes(initialNodes, expandedNodes, filters, dbProjects);
-    const flatLaidOut = layoutFlatWithDagre(visible, initialEdges);
+    const visibleIds = new Set(visible.filter((n) => !n.hidden).map((n) => n.id));
+    const nodesToLayout = visible.filter((n) => !n.hidden);
+    const edgesToLayout = initialEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+    const flatLaidOut = layoutFlatWithDagre(nodesToLayout, edgesToLayout);
     const grouped = wrapGroups(flatLaidOut);
     setNodes(grouped);
-    setEdges(initialEdges);
+    setEdges(edgesToLayout);
   }, [initialNodes, initialEdges, expandedNodes, filters, dbProjects, computeVisibleNodes, setNodes, setEdges]);
 
   useEffect(() => {
