@@ -42,6 +42,8 @@ export type TopoNodeData = {
   sub?: string;
   expanded?: boolean;
   onToggleExpand?: () => void;
+  /** Opens the XRay/details panel (used by group nodes). */
+  onNodeClick?: () => void;
 };
 
 const healthColor = {

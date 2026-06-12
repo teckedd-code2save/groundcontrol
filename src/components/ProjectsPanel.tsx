@@ -182,12 +182,14 @@ export function ProjectsPanel() {
         body: JSON.stringify({ projectSlug: slug, services }),
       });
       const { ok, data } = await safeJson(res);
-      if (!ok || data.error) {
+      const failed = !ok || (data.success === false && data.error);
+      if (failed) {
         setError(`${type === "up" ? "Up" : "Down"} failed: ${data.error || "Unknown error"}`);
         setComposeOutput({ slug, output: data.output || "", error: data.error });
       } else {
         setError("");
-        setComposeOutput({ slug, output: data.output || `${type === "up" ? "Up" : "Down"} completed` });
+        const output = data.output || data.stderr || `${type === "up" ? "Up" : "Down"} completed`;
+        setComposeOutput({ slug, output, error: "" });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

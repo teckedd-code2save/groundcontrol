@@ -115,40 +115,16 @@ function buildChildToParent(edges: Edge[]): Map<string, string> {
   return map;
 }
 
-function subtreeHasIssues(
-  nodeId: string,
-  parentMap: Map<string, string[]>,
-  nodeMap: Map<string, Node<TopoNodeData>>
-): boolean {
-  const stack = [...(parentMap.get(nodeId) || [])];
-  const seen = new Set<string>();
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const child = nodeMap.get(id);
-    if (child && (child.data.health === "warning" || child.data.health === "critical")) {
-      return true;
-    }
-    stack.push(...(parentMap.get(id) || []));
-  }
-  return false;
-}
-
 function getDefaultExpanded(nodes: Node<TopoNodeData>[], edges: Edge[]): Set<string> {
   const expanded = new Set<string>();
   const parentMap = buildParentMap(edges);
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
   for (const node of nodes) {
     if (!isExpandableNode(node)) continue;
     const hasChildren = (parentMap.get(node.id) || []).length > 0;
     if (!hasChildren) continue;
-    // Expand all groups and services by default so the hierarchy is visible.
-    // Also keep any expandable node expanded if its subtree has issues.
-    if (node.type === "group" || node.data.type === "project" || node.data.type === "service" || subtreeHasIssues(node.id, parentMap, nodeMap)) {
-      expanded.add(node.id);
-    }
+    // Expand everything with children by default so the full hierarchy is visible.
+    expanded.add(node.id);
   }
   return expanded;
 }
@@ -297,14 +273,6 @@ export default function TopologyFlow({
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance<Node<TopoNodeData>, Edge> | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => getDefaultExpanded(initialNodes, initialEdges));
 
-  // Recompute default expansion whenever the underlying graph changes (e.g. refetch).
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setExpandedNodes(getDefaultExpanded(initialNodes, initialEdges));
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [initialNodes, initialEdges]);
-
   const parentMap = useMemo(() => buildParentMap(initialEdges), [initialEdges]);
   const childToParent = useMemo(() => buildChildToParent(initialEdges), [initialEdges]);
 
@@ -376,22 +344,28 @@ export default function TopologyFlow({
   const nodesWithToggle = useMemo(() => {
     return nodes.map((node) => {
       const hasChildren = (parentMap.get(node.id) || []).length > 0;
+      const expandable = isExpandableNode(node) && hasChildren;
       return {
         ...node,
         data: {
           ...node.data,
-          onToggleExpand:
-            isExpandableNode(node) && hasChildren ? () => toggleExpand(node.id) : undefined,
+          onToggleExpand: expandable ? () => toggleExpand(node.id) : undefined,
+          onNodeClick: expandable && onNodeClick ? () => onNodeClick(node) : undefined,
         },
       };
     }) as Node<TopoNodeData>[];
-  }, [nodes, toggleExpand, parentMap]);
+  }, [nodes, toggleExpand, parentMap, onNodeClick]);
 
   const handleNodeClick = useCallback(
     (_event: unknown, node: Node<TopoNodeData>) => {
-      onNodeClick?.(node);
+      const hasChildren = (parentMap.get(node.id) || []).length > 0;
+      if (isExpandableNode(node) && hasChildren) {
+        toggleExpand(node.id);
+      } else {
+        onNodeClick?.(node);
+      }
     },
-    [onNodeClick]
+    [onNodeClick, toggleExpand, parentMap]
   );
 
   const handleInit = useCallback((instance: ReactFlowInstance<Node<TopoNodeData>, Edge>) => {
