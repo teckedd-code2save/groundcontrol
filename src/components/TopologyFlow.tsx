@@ -18,33 +18,37 @@ import "@xyflow/react/dist/style.css";
 import TopoNode, { type TopoNodeData } from "./TopoNode";
 import type { DbProject } from "@/lib/topology";
 
-const nodeTypes = {
+const nodeTypes: NodeTypes = {
   topoNode: TopoNode as unknown as NodeTypes[string],
+  group: TopoNode as unknown as NodeTypes[string],
 };
 
-const NODE_WIDTH: Record<string, number> = {
+const LEAF_WIDTH: Record<string, number> = {
+  host: 160,
   internet: 140,
   proxy: 140,
   site: 180,
   project: 220,
   service: 210,
-  container: 200,
+  container: 210,
 };
 
-const NODE_HEIGHT: Record<string, number> = {
-  internet: 40,
-  proxy: 40,
-  site: 40,
+const LEAF_HEIGHT: Record<string, number> = {
+  host: 44,
+  internet: 44,
+  proxy: 44,
+  site: 48,
   project: 56,
   service: 56,
-  container: 56,
+  container: 60,
 };
 
-// Node types that can be collapsed to hide their descendants.
-const EXPANDABLE_TYPES = new Set(["site", "project", "service"]);
+const GROUP_PADDING_X = 24;
+const GROUP_PADDING_Y = 24;
+const GROUP_HEADER_HEIGHT = 36;
 
 function isExpandableNode(node: Node<TopoNodeData>): boolean {
-  return EXPANDABLE_TYPES.has(node.data.type) || node.id === "unmapped" || node.id === "unclaimed";
+  return node.data.type === "group" || ["site", "project", "service"].includes(node.data.type);
 }
 
 export interface TopologyFilters {
@@ -52,14 +56,21 @@ export interface TopologyFilters {
   projectSlug?: string;
 }
 
-function layoutWithDagre(nodes: Node<TopoNodeData>[], edges: Edge[]) {
+function leafDimensions(data: TopoNodeData): { w: number; h: number } {
+  if (data.type === "group") return { w: 180, h: 80 };
+  return {
+    w: LEAF_WIDTH[data.type] || 180,
+    h: LEAF_HEIGHT[data.type] || 44,
+  };
+}
+
+function layoutFlatWithDagre(nodes: Node<TopoNodeData>[], edges: Edge[]) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80, marginx: 20, marginy: 20 });
+  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 90, marginx: 20, marginy: 20 });
 
   nodes.forEach((node) => {
-    const w = NODE_WIDTH[node.data.type] || 180;
-    const h = NODE_HEIGHT[node.data.type] || 40;
+    const { w, h } = leafDimensions(node.data);
     g.setNode(node.id, { width: w, height: h });
   });
 
@@ -71,14 +82,16 @@ function layoutWithDagre(nodes: Node<TopoNodeData>[], edges: Edge[]) {
 
   return nodes.map((node) => {
     const pos = g.node(node.id);
-    const w = NODE_WIDTH[node.data.type] || 180;
-    const h = NODE_HEIGHT[node.data.type] || 40;
+    const { w, h } = leafDimensions(node.data);
     return {
       ...node,
       position: {
         x: pos.x - w / 2,
         y: pos.y - h / 2,
       },
+      width: w,
+      height: h,
+      style: { ...node.style, width: w, height: h },
     };
   });
 }
@@ -94,7 +107,6 @@ function buildParentMap(edges: Edge[]): Map<string, string[]> {
 }
 
 function buildChildToParent(edges: Edge[]): Map<string, string> {
-  // Last writer wins; the topology is a tree so each node has one parent.
   const map = new Map<string, string>();
   for (const edge of edges) {
     if (!map.has(edge.target)) map.set(edge.target, edge.source);
@@ -102,10 +114,6 @@ function buildChildToParent(edges: Edge[]): Map<string, string> {
   return map;
 }
 
-/**
- * Returns true if any descendant of `nodeId` is unhealthy. Walks the parent
- * map transitively so a project expands when a grand-child container is down.
- */
 function subtreeHasIssues(
   nodeId: string,
   parentMap: Map<string, string[]>,
@@ -132,12 +140,8 @@ function getDefaultExpanded(nodes: Node<TopoNodeData>[], edges: Edge[]): Set<str
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
   for (const node of nodes) {
-    const expandable = EXPANDABLE_TYPES.has(node.data.type) || node.id === "unmapped" || node.id === "unclaimed";
-    if (!expandable) continue;
-
-    // Always expand projects so their service/container layout is visible by
-    // default; expand other groupings only when something underneath is broken.
-    if (node.data.type === "project" || subtreeHasIssues(node.id, parentMap, nodeMap)) {
+    if (!isExpandableNode(node)) continue;
+    if (node.data.groupType === "project" || node.data.type === "project" || subtreeHasIssues(node.id, parentMap, nodeMap)) {
       expanded.add(node.id);
     }
   }
@@ -149,7 +153,6 @@ function containerMatchesFilters(
   filters: TopologyFilters,
   dbProjects: DbProject[]
 ): boolean {
-  // Status filter only applies to live container nodes.
   if (filters.status && data.type === "container") {
     if (filters.status === "running") {
       if (data.state !== "running" || data.status?.includes("unhealthy")) return false;
@@ -162,14 +165,11 @@ function containerMatchesFilters(
     }
   }
 
-  // Project filter: applies to project-tree nodes (project/service/container).
-  // Each carries `projectSlug` set to its owning scanned-project slug.
   if (filters.projectSlug) {
-    const treeNode = data.type === "project" || data.type === "service" || data.type === "container";
+    const treeNode = data.type === "group" || data.type === "service" || data.type === "container";
     if (treeNode && data.label !== "Unmapped") {
       const nodeProj = (data.projectSlug || "").toLowerCase();
       const filterSlug = filters.projectSlug.toLowerCase();
-      // Fall back to dbProject heuristics for legacy nodes lacking projectSlug.
       if (nodeProj) {
         if (nodeProj !== filterSlug) return false;
       } else if (dbProjects.length > 0) {
@@ -195,6 +195,76 @@ function containerMatchesFilters(
   return true;
 }
 
+/**
+ * After dagre lays out the flat node list (treating groups as opaque nodes),
+ * wrap each group around its children and shift children to be relative to
+ * the group origin.
+ */
+function wrapGroups(nodes: Node<TopoNodeData>[]): Node<TopoNodeData>[] {
+  const childrenMap = new Map<string, Node<TopoNodeData>[]>();
+
+  for (const node of nodes) {
+    if (!node.parentId) continue;
+    const siblings = childrenMap.get(node.parentId) || [];
+    siblings.push(node);
+    childrenMap.set(node.parentId, siblings);
+  }
+
+  const groupNodes = nodes.filter((n) => n.data.type === "group");
+  const depth = new Map<string, number>();
+  function computeDepth(id: string): number {
+    if (depth.has(id)) return depth.get(id)!;
+    const children = childrenMap.get(id) || [];
+    const childGroups = children.filter((c) => c.data.type === "group");
+    const d = childGroups.length === 0 ? 0 : 1 + Math.max(...childGroups.map((c) => computeDepth(c.id)));
+    depth.set(id, d);
+    return d;
+  }
+  groupNodes.forEach((g) => computeDepth(g.id));
+  groupNodes.sort((a, b) => depth.get(b.id)! - depth.get(a.id)!);
+
+  for (const group of groupNodes) {
+    const children = childrenMap.get(group.id) || [];
+    if (children.length === 0) continue;
+
+    const childRects = children.map((child) => {
+      const w = (child.width as number) || leafDimensions(child.data).w;
+      const h = (child.height as number) || leafDimensions(child.data).h;
+      return {
+        x: child.position.x,
+        y: child.position.y,
+        x2: child.position.x + w,
+        y2: child.position.y + h,
+      };
+    });
+
+    const minX = Math.min(...childRects.map((r) => r.x));
+    const minY = Math.min(...childRects.map((r) => r.y));
+    const maxX = Math.max(...childRects.map((r) => r.x2));
+    const maxY = Math.max(...childRects.map((r) => r.y2));
+
+    const width = Math.max(maxX - minX + GROUP_PADDING_X * 2, 180);
+    const height = maxY - minY + GROUP_PADDING_Y * 2 + GROUP_HEADER_HEIGHT;
+
+    group.position = {
+      x: minX - GROUP_PADDING_X,
+      y: minY - GROUP_PADDING_Y - GROUP_HEADER_HEIGHT,
+    };
+    group.width = width;
+    group.height = height;
+    group.style = { ...group.style, width, height };
+
+    for (const child of children) {
+      child.position = {
+        x: child.position.x - group.position.x,
+        y: child.position.y - group.position.y,
+      };
+    }
+  }
+
+  return nodes;
+}
+
 interface TopologyFlowProps {
   initialNodes: Node<TopoNodeData>[];
   initialEdges: Edge[];
@@ -218,17 +288,10 @@ export default function TopologyFlow({
   const parentMap = useMemo(() => buildParentMap(initialEdges), [initialEdges]);
   const childToParent = useMemo(() => buildChildToParent(initialEdges), [initialEdges]);
 
-  // Reset expanded when initial nodes change significantly
-  useEffect(() => {
-    setExpandedNodes(getDefaultExpanded(initialNodes, initialEdges));
-  }, [initialNodes, initialEdges]);
-
   const computeVisibleNodes = useCallback(
     (allNodes: Node<TopoNodeData>[], expanded: Set<string>, activeFilters: TopologyFilters, projects: DbProject[]) => {
       const hidden = new Set<string>();
 
-      // A node is hidden if any ancestor up the chain is collapsed. This walks
-      // the whole hierarchy (project → service → container) generically.
       const ancestorCollapsed = (nodeId: string): boolean => {
         let parent = childToParent.get(nodeId);
         while (parent) {
@@ -239,12 +302,10 @@ export default function TopologyFlow({
       };
 
       for (const node of allNodes) {
-        // Filter out containers that don't match filters.
         if (!containerMatchesFilters(node.data, activeFilters, projects)) {
           hidden.add(node.id);
           continue;
         }
-        // Hide any node whose ancestor is collapsed.
         if (childToParent.has(node.id) && ancestorCollapsed(node.id)) {
           hidden.add(node.id);
         }
@@ -264,16 +325,18 @@ export default function TopologyFlow({
 
   useEffect(() => {
     const visible = computeVisibleNodes(initialNodes, expandedNodes, filters, dbProjects);
-    const laidOut = layoutWithDagre(visible, initialEdges);
-    setNodes(laidOut);
+    const flatLaidOut = layoutFlatWithDagre(visible, initialEdges);
+    const grouped = wrapGroups(flatLaidOut);
+    setNodes(grouped);
     setEdges(initialEdges);
   }, [initialNodes, initialEdges, expandedNodes, filters, dbProjects, computeVisibleNodes, setNodes, setEdges]);
 
   useEffect(() => {
     if (rfInstance && nodes.length > 0) {
-      setTimeout(() => rfInstance.fitView({ padding: 0.2, duration: 300 }), 50);
+      const timer = setTimeout(() => rfInstance.fitView({ padding: 0.2, duration: 300 }), 50);
+      return () => clearTimeout(timer);
     }
-  }, [rfInstance, nodes.length]);
+  }, [rfInstance, nodes.length, nodes]);
 
   const toggleExpand = useCallback((nodeId: string) => {
     setExpandedNodes((prev) => {
@@ -287,8 +350,6 @@ export default function TopologyFlow({
     });
   }, []);
 
-  // Inject onToggleExpand into node data, but only for expandable nodes that
-  // actually have children to reveal.
   const nodesWithToggle = useMemo(() => {
     return nodes.map((node) => {
       const hasChildren = (parentMap.get(node.id) || []).length > 0;
@@ -304,14 +365,14 @@ export default function TopologyFlow({
   }, [nodes, toggleExpand, parentMap]);
 
   const handleNodeClick = useCallback(
-    (_event: any, node: Node<TopoNodeData>) => {
+    (_event: unknown, node: Node<TopoNodeData>) => {
       onNodeClick?.(node);
     },
     [onNodeClick]
   );
 
-  const handleInit = useCallback((instance: ReactFlowInstance<any, Edge>) => {
-    setRfInstance(instance as ReactFlowInstance<Node<TopoNodeData>, Edge>);
+  const handleInit = useCallback((instance: ReactFlowInstance<Node<TopoNodeData>, Edge>) => {
+    setRfInstance(instance);
   }, []);
 
   return (
@@ -330,8 +391,8 @@ export default function TopologyFlow({
         minZoom={0.2}
         maxZoom={2}
         defaultEdgeOptions={{
-          type: "smoothstep",
-          style: { stroke: "#333", strokeWidth: 1, strokeDasharray: "4 4" },
+          type: "bezier",
+          style: { stroke: "#333", strokeWidth: 1 },
           animated: true,
         }}
       >

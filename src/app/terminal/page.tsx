@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSidebar } from "@/components/SidebarContext";
+import {
+  type ServerCapabilities,
+  buildHelperChips,
+  hintForCommand,
+} from "@/lib/server-capabilities-types";
 
 interface HistoryEntry {
   type: "input" | "output" | "error" | "hint";
@@ -20,16 +26,6 @@ interface AiSuggestion {
 }
 
 const HISTORY_KEY = "gc-terminal-history";
-const HELPER_CHIPS = [
-  "docker ps",
-  "docker stats",
-  "df -h",
-  "free -m",
-  "systemctl status",
-  "docker logs <container>",
-  "caddy reload",
-  "nginx -t",
-];
 
 const BASHISM_PATTERNS: { pattern: RegExp; name: string }[] = [
   { pattern: /\[\[/, name: "[[ ]]" },
@@ -73,6 +69,17 @@ function detectBashisms(cmd: string): string[] {
   return Array.from(found);
 }
 
+function capabilitySummary(capabilities: ServerCapabilities | null): string {
+  if (!capabilities) return "";
+  const parts: string[] = [capabilities.osFamily];
+  if (capabilities.hasDocker) parts.push("Docker");
+  if (capabilities.hasCaddy) parts.push("Caddy");
+  if (capabilities.hasNginx) parts.push("Nginx");
+  if (capabilities.hasNode) parts.push("Node");
+  parts.push(capabilities.initSystem);
+  return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" · ");
+}
+
 export default function TerminalPage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [input, setInput] = useState("");
@@ -87,6 +94,9 @@ export default function TerminalPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [bashismWarnings, setBashismWarnings] = useState<string[]>([]);
+  const [capabilities, setCapabilities] = useState<ServerCapabilities | null>(null);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
+  const { setCollapsed } = useSidebar();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -101,6 +111,14 @@ export default function TerminalPage() {
   }, []);
 
   useEffect(() => {
+    fetch("/api/server-capabilities")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setCapabilities(data))
+      .catch(() => {})
+      .finally(() => setCapabilitiesLoading(false));
+  }, []);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history]);
 
@@ -112,6 +130,16 @@ export default function TerminalPage() {
     const warnings = detectBashisms(input);
     setBashismWarnings(warnings);
   }, [input]);
+
+  // Collapse sidebar while in fullscreen so content fills the viewport.
+  useEffect(() => {
+    if (fullscreen) {
+      setCollapsed(true);
+    }
+  }, [fullscreen, setCollapsed]);
+
+  const helperChips = buildHelperChips(capabilities);
+  const summary = capabilitySummary(capabilities);
 
   async function fetchSuggestions(value: string) {
     if (!value.trim()) {
@@ -246,6 +274,18 @@ export default function TerminalPage() {
       return;
     }
 
+    // Context-aware hint for commands known to be unavailable.
+    const capabilityHint = hintForCommand(cmd, capabilities);
+    if (capabilityHint) {
+      setHistory((h) => [
+        ...h,
+        { type: "input", text: cmd },
+        { type: "hint", text: `${capabilityHint} Running: ${cmd}` },
+      ]);
+      executeCommand(cmd, cwd, { skipInputEcho: true });
+      return;
+    }
+
     const { command: runCmd, hint } = rewriteBashCommand(cmd);
     if (hint) {
       setHistory((h) => [
@@ -365,7 +405,7 @@ export default function TerminalPage() {
   }
 
   const mainClasses = fullscreen
-    ? "fixed inset-0 z-50 bg-background p-4 flex flex-col"
+    ? "fixed inset-0 z-[70] bg-background p-4 flex flex-col"
     : "p-4 md:p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] flex flex-col";
 
   return (
@@ -394,21 +434,33 @@ export default function TerminalPage() {
         </div>
       </div>
 
-      {/* Helper chips */}
+      {/* Capability summary + helper chips */}
       {!fullscreen && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {HELPER_CHIPS.map((chip) => (
-            <button
-              key={chip}
-              onClick={() => {
-                setInput(chip);
-                inputRef.current?.focus();
-              }}
-              className="px-2.5 py-1 text-[10px] font-mono border border-border rounded-md hover:border-accent hover:text-accent transition-colors"
-            >
-              {chip}
-            </button>
-          ))}
+        <div className="mb-4 space-y-2">
+          <div className="flex items-center gap-2 text-[10px] font-mono text-muted">
+            <span className="uppercase tracking-wider">Capabilities</span>
+            {capabilitiesLoading ? (
+              <span className="animate-pulse">detecting…</span>
+            ) : summary ? (
+              <span className="text-foreground/70">{summary}</span>
+            ) : (
+              <span>unknown</span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {helperChips.map((chip) => (
+              <button
+                key={chip}
+                onClick={() => {
+                  setInput(chip);
+                  inputRef.current?.focus();
+                }}
+                className="px-2.5 py-1 text-[10px] font-mono border border-border rounded-md hover:border-accent hover:text-accent transition-colors"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

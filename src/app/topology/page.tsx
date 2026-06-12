@@ -45,6 +45,13 @@ function containerHealth(c: Container): TopoNodeData["health"] {
   return "healthy";
 }
 
+function projectGroupHealth(liveContainers: Container[]): TopoNodeData["health"] {
+  if (liveContainers.length === 0) return "warning";
+  if (liveContainers.some((c) => c.state !== "running")) return "warning";
+  if (liveContainers.some((c) => c.status.includes("unhealthy"))) return "warning";
+  return "healthy";
+}
+
 export default function TopologyPage() {
   const [nodes, setNodes] = useState<Node<TopoNodeData>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -57,7 +64,7 @@ export default function TopologyPage() {
     type: "container" | "site" | "host" | "caddy" | "nginx" | "system";
     id: string;
     name: string;
-    data?: any;
+    data?: unknown;
   } | null>(null);
 
   const fetchTopology = useCallback(
@@ -78,7 +85,7 @@ export default function TopologyPage() {
         const scanned: ScannedProjectLite[] = projects.scannedProjects || [];
         setDbProjects(dbProjectsData);
         setScannedProjects(scanned);
-        const services: any[] = projects.services || [];
+        const services: { name: string }[] = projects.services || [];
         const sites = allSites.filter((s) => !isRawDomain(s.domain));
         const hasNginx = services.some((s) => s.name.toLowerCase().includes("nginx"));
 
@@ -97,7 +104,6 @@ export default function TopologyPage() {
         }
       } catch (err) {
         console.error(err);
-        // Graceful empty state on any failure (e.g. no VPS / scan error).
         setNodes([]);
         setEdges([]);
       } finally {
@@ -108,15 +114,22 @@ export default function TopologyPage() {
   );
 
   useEffect(() => {
-    fetchTopology(view);
+    async function load() {
+      await fetchTopology(view);
+    }
+    load();
     const interval = setInterval(() => fetchTopology(view), 10000);
     return () => clearInterval(interval);
   }, [fetchTopology, view]);
 
   const handleNodeClick = useCallback((node: Node<TopoNodeData>) => {
     const data = node.data;
-    if (node.id === "unmapped" || node.id === "unclaimed") {
-      setXrayTarget({ type: "system", id: "system", name: "Unclaimed Containers" });
+    if (node.id === "unmapped-group" || node.id === "unclaimed-group") {
+      setXrayTarget({ type: "system", id: "system", name: "Unmapped Containers" });
+      return;
+    }
+    if (node.type === "group") {
+      setXrayTarget({ type: "system", id: data.label, name: data.label, data: node.data });
       return;
     }
     if (data.type === "container" || data.type === "service") {
@@ -126,12 +139,11 @@ export default function TopologyPage() {
       setXrayTarget({ type: "site", id: data.label, name: data.label, data: node.data });
     } else if (data.type === "proxy") {
       setXrayTarget({ type: data.subType === "nginx" ? "nginx" : "caddy", id: node.id, name: data.label, data: {} });
-    } else if (data.type === "project") {
-      setXrayTarget({ type: "system", id: data.label, name: data.label, data: node.data });
+    } else if (data.type === "project" || data.type === "host" || data.type === "internet") {
+      setXrayTarget({ type: data.type === "host" || data.type === "internet" ? "host" : "system", id: data.label, name: data.label, data: node.data });
     }
   }, []);
 
-  // Project filter options come from scanned projects in project view, DB in site view.
   const filterProjects =
     view === "projects"
       ? scannedProjects.map((p) => ({ slug: p.slug, name: p.name }))
@@ -144,8 +156,8 @@ export default function TopologyPage() {
           <h1 className="text-3xl font-bold tracking-tight">Topology</h1>
           <p className="text-muted mt-1">
             {view === "projects"
-              ? "Projects mapped from the filesystem → services → containers/images"
-              : "Caddy sites → traffic flow → containers"}
+              ? "Host → projects → services → containers"
+              : "Internet → proxy → sites → containers"}
           </p>
         </div>
         <div className="flex items-center gap-3 text-[10px] font-mono text-muted">
@@ -223,6 +235,7 @@ export default function TopologyPage() {
           </div>
         ) : (
           <TopologyFlow
+            key={view}
             initialNodes={nodes}
             initialEdges={edges}
             filters={filters}
@@ -238,8 +251,25 @@ export default function TopologyPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Graph builders
+// Graph builders (group-node based)
 // ---------------------------------------------------------------------------
+
+function containerNodeData(c: Container): TopoNodeData {
+  return {
+    label: c.name,
+    type: "container",
+    health: containerHealth(c),
+    stats: c.stats,
+    state: c.state,
+    status: c.status,
+    image: c.image,
+    containerName: c.name,
+    composeProject: c.composeProject,
+    composeWorkingDir: c.composeWorkingDir,
+    projectSlug: c.projectSlug,
+    sub: `${c.state === "running" ? "running" : c.state} · CPU ${c.stats?.cpu || "—"} · MEM ${c.stats?.mem || "—"}`,
+  };
+}
 
 function buildProjectGraph(
   scanned: ScannedProjectLite[],
@@ -254,36 +284,32 @@ function buildProjectGraph(
 
   const nodes: Node<TopoNodeData>[] = [];
   const edges: Edge[] = [];
+  const created = new Set<string>();
 
-  // Root: the host / project root.
   nodes.push({
     id: "host",
     type: "topoNode",
     position: { x: 0, y: 0 },
-    data: { label: "Project Root", type: "internet", health: "healthy", sub: `${scanned.length} projects` },
+    data: {
+      label: "Project Root",
+      type: "host",
+      health: "healthy",
+      sub: `${scanned.length} project${scanned.length === 1 ? "" : "s"}`,
+    },
   });
 
   for (const project of topo.projects) {
-    const projectId = `project-${project.slug}`;
-    // Project health rolls up from its services/containers.
+    const groupId = `project-group-${project.slug}`;
     const liveContainers = [
       ...project.services.map((s) => s.container).filter(Boolean),
       ...project.extraContainers,
     ] as Container[];
-    const anyCritical = project.services.some((s) => !s.container) || liveContainers.some((c) => c.state !== "running");
-    const anyWarn = liveContainers.some((c) => c.status.includes("unhealthy"));
-    const projectHealth: TopoNodeData["health"] =
-      liveContainers.length === 0 && project.services.length > 0
-        ? "warning"
-        : anyCritical
-        ? "warning"
-        : anyWarn
-        ? "warning"
-        : "healthy";
+    const projectHealth = projectGroupHealth(liveContainers);
+    const childCount = project.services.length + project.extraContainers.length + project.sites.length;
 
     nodes.push({
-      id: projectId,
-      type: "topoNode",
+      id: groupId,
+      type: "group",
       position: { x: 0, y: 0 },
       data: {
         label: project.slug,
@@ -294,38 +320,42 @@ function buildProjectGraph(
         projectParent: project.parent,
         serviceCount: project.services.length,
         hasGit: project.hasGit,
-        sub: project.parent ? `${project.parent}/ · ${project.services.length} svc` : undefined,
+        childCount,
       },
     });
-    edges.push({ id: `e-host-${projectId}`, source: "host", target: projectId });
+    created.add(groupId);
+    edges.push({ id: `e-host-${groupId}`, source: "host", target: groupId, type: "smoothstep" });
 
-    // Sites/domains attached to the project.
+    // Sites are linked inside the project group.
     project.sites.forEach((site) => {
       const siteId = `psite-${project.slug}-${site.domain}`;
+      if (created.has(siteId)) return;
+      created.add(siteId);
       nodes.push({
         id: siteId,
         type: "topoNode",
+        parentId: groupId,
         position: { x: 0, y: 0 },
         data: {
           label: site.domain,
           type: "site",
           health: site.root || site.proxy ? "healthy" : "warning",
-          sub: hasNginx && site.proxy ? "proxy" : undefined,
+          sub: site.proxy ? `proxy → ${site.proxy}` : site.root ? `root: ${site.root}` : "no target",
         },
       });
-      edges.push({ id: `e-${projectId}-${siteId}`, source: projectId, target: siteId });
+      edges.push({ id: `e-${groupId}-${siteId}`, source: groupId, target: siteId, type: "smoothstep" });
     });
 
     // Services declared by the compose file.
     project.services.forEach((svc, i) => {
       const serviceId = `service-${project.slug}-${svc.service}-${i}`;
       const container = svc.container;
-      const health: TopoNodeData["health"] = container
-        ? containerHealth(container)
-        : "warning"; // declared but not running
+      const health: TopoNodeData["health"] = container ? containerHealth(container) : "warning";
+
       nodes.push({
         id: serviceId,
         type: "topoNode",
+        parentId: groupId,
         position: { x: 0, y: 0 },
         data: {
           label: svc.service,
@@ -341,90 +371,69 @@ function buildProjectGraph(
           sub: svc.image || (svc.build ? "build" : "no image"),
         },
       });
-      edges.push({ id: `e-${projectId}-${serviceId}`, source: projectId, target: serviceId });
+      edges.push({ id: `e-${groupId}-${serviceId}`, source: groupId, target: serviceId, type: "smoothstep" });
 
-      // Container/image leaf under the service when one is live.
       if (container) {
         const containerId = `container-${container.name}`;
-        nodes.push({
-          id: containerId,
-          type: "topoNode",
-          position: { x: 0, y: 0 },
-          data: {
-            label: container.name,
-            type: "container",
-            health: containerHealth(container),
-            stats: container.stats,
-            state: container.state,
-            status: container.status,
-            projectSlug: project.slug,
-            image: container.image,
-            containerName: container.name,
-            composeProject: container.composeProject,
-            composeWorkingDir: container.composeWorkingDir,
-            sub: container.image,
-          },
-        });
-        edges.push({ id: `e-${serviceId}-${containerId}`, source: serviceId, target: containerId });
+        if (!created.has(containerId)) {
+          created.add(containerId);
+          nodes.push({
+            id: containerId,
+            type: "topoNode",
+            parentId: groupId,
+            position: { x: 0, y: 0 },
+            data: containerNodeData(container),
+          });
+        }
+        edges.push({ id: `e-${serviceId}-${containerId}`, source: serviceId, target: containerId, type: "smoothstep" });
       }
     });
 
     // Extra containers belonging to the project but not matched to a service.
     project.extraContainers.forEach((container) => {
       const containerId = `container-${container.name}`;
-      nodes.push({
-        id: containerId,
-        type: "topoNode",
-        position: { x: 0, y: 0 },
-        data: {
-          label: container.name,
-          type: "container",
-          health: containerHealth(container),
-          stats: container.stats,
-          state: container.state,
-          status: container.status,
-          projectSlug: project.slug,
-          image: container.image,
-          containerName: container.name,
-          composeProject: container.composeProject,
-          composeWorkingDir: container.composeWorkingDir,
-          sub: container.image,
-        },
-      });
-      edges.push({ id: `e-${projectId}-${containerId}`, source: projectId, target: containerId });
+      if (!created.has(containerId)) {
+        created.add(containerId);
+        nodes.push({
+          id: containerId,
+          type: "topoNode",
+          parentId: groupId,
+          position: { x: 0, y: 0 },
+          data: { ...containerNodeData(container), projectSlug: project.slug },
+        });
+      }
     });
   }
 
-  // Unclaimed containers (no scanned project owns them).
+  // Unclaimed containers grouped together.
   if (topo.unclaimedContainers.length > 0) {
+    const groupId = "unclaimed-group";
     nodes.push({
-      id: "unclaimed",
-      type: "topoNode",
+      id: groupId,
+      type: "group",
       position: { x: 0, y: 0 },
-      data: { label: "Unmapped", type: "container", health: "unknown" },
+      data: {
+        label: "Unmapped",
+        type: "container",
+        health: projectGroupHealth(topo.unclaimedContainers),
+        childCount: topo.unclaimedContainers.length,
+      },
     });
-    edges.push({ id: "e-host-unclaimed", source: "host", target: "unclaimed" });
+    edges.push({ id: `e-host-${groupId}`, source: "host", target: groupId, type: "smoothstep" });
+
     topo.unclaimedContainers.forEach((c) => {
       const id = `container-${c.name}`;
-      nodes.push({
-        id,
-        type: "topoNode",
-        position: { x: 0, y: 0 },
-        data: {
-          label: c.name,
-          type: "container",
-          health: containerHealth(c),
-          stats: c.stats,
-          state: c.state,
-          status: c.status,
-          image: c.image,
-          containerName: c.name,
-          composeProject: c.composeProject,
-          composeWorkingDir: c.composeWorkingDir,
-          sub: c.image,
-        },
-      });
-      edges.push({ id: `e-unclaimed-${id}`, source: "unclaimed", target: id });
+      if (!created.has(id)) {
+        created.add(id);
+        nodes.push({
+          id,
+          type: "topoNode",
+          parentId: groupId,
+          position: { x: 0, y: 0 },
+          data: containerNodeData(c),
+        });
+      }
+      edges.push({ id: `e-${groupId}-${id}`, source: groupId, target: id, type: "smoothstep" });
     });
   }
 
@@ -445,6 +454,7 @@ function buildSiteGraph(
 
   const nodes: Node<TopoNodeData>[] = [];
   const edges: Edge[] = [];
+  const created = new Set<string>();
 
   nodes.push({
     id: "internet",
@@ -452,96 +462,104 @@ function buildSiteGraph(
     position: { x: 0, y: 0 },
     data: { label: "Internet", type: "internet", health: "healthy" },
   });
+
+  const proxyGroupId = "proxy-group";
   nodes.push({
-    id: "caddy",
+    id: proxyGroupId,
+    type: "group",
+    position: { x: 0, y: 0 },
+    data: { label: "Reverse Proxy", type: "proxy", health: "healthy", childCount: hasNginx ? 2 : 1 },
+  });
+  created.add(proxyGroupId);
+  edges.push({ id: `e-internet-${proxyGroupId}`, source: "internet", target: proxyGroupId, type: "smoothstep" });
+
+  const caddyId = "caddy";
+  nodes.push({
+    id: caddyId,
     type: "topoNode",
+    parentId: proxyGroupId,
     position: { x: 0, y: 0 },
     data: { label: "Caddy", type: "proxy", subType: "caddy", health: "healthy" },
   });
-  edges.push({ id: "e-internet-caddy", source: "internet", target: "caddy" });
+  edges.push({ id: `e-${proxyGroupId}-${caddyId}`, source: proxyGroupId, target: caddyId, type: "smoothstep" });
 
   if (hasNginx) {
+    const nginxId = "nginx";
     nodes.push({
-      id: "nginx",
+      id: nginxId,
       type: "topoNode",
+      parentId: proxyGroupId,
       position: { x: 0, y: 0 },
       data: { label: "Nginx", type: "proxy", subType: "nginx", health: "healthy" },
     });
-    edges.push({ id: "e-internet-nginx", source: "internet", target: "nginx" });
+    edges.push({ id: `e-${proxyGroupId}-${nginxId}`, source: proxyGroupId, target: nginxId, type: "smoothstep" });
   }
 
-  sites.forEach((site) => {
-    const id = `site-${site.domain}`;
+  siteGroups.forEach((group) => {
+    const siteId = `site-group-${group.site.domain}`;
+    const groupHealth: TopoNodeData["health"] =
+      group.containers.length === 0 ? "unknown" : group.containers.some((c) => c.state !== "running") ? "warning" : "healthy";
+
     nodes.push({
-      id,
-      type: "topoNode",
+      id: siteId,
+      type: "group",
       position: { x: 0, y: 0 },
       data: {
-        label: site.domain,
+        label: group.site.domain,
         type: "site",
-        health: site.root || site.proxy ? "healthy" : "warning",
+        health: groupHealth,
+        childCount: group.containers.length,
+        sub: group.site.proxy ? (hasNginx ? "nginx proxy" : "caddy proxy") : group.site.root ? "static" : undefined,
       },
     });
-    edges.push({ id: `e-caddy-${id}`, source: "caddy", target: id });
-    if (hasNginx) edges.push({ id: `e-nginx-${id}`, source: "nginx", target: id });
-  });
+    created.add(siteId);
+    edges.push({ id: `e-${proxyGroupId}-${siteId}`, source: proxyGroupId, target: siteId, type: "smoothstep" });
 
-  siteGroups.forEach((group) => {
-    const siteId = `site-${group.site.domain}`;
     group.containers.forEach((c) => {
       const id = `container-${c.name}`;
-      nodes.push({
-        id,
-        type: "topoNode",
-        position: { x: 0, y: 0 },
-        data: {
-          label: c.name,
-          type: "container",
-          health: containerHealth(c),
-          stats: c.stats,
-          state: c.state,
-          status: c.status,
-          image: c.image,
-          containerName: c.name,
-          composeProject: c.composeProject,
-          composeWorkingDir: c.composeWorkingDir,
-          projectSlug: c.projectSlug,
-          sub: c.image,
-        },
-      });
-      edges.push({ id: `e-${siteId}-${id}`, source: siteId, target: id });
+      if (!created.has(id)) {
+        created.add(id);
+        nodes.push({
+          id,
+          type: "topoNode",
+          parentId: siteId,
+          position: { x: 0, y: 0 },
+          data: containerNodeData(c),
+        });
+      }
+      edges.push({ id: `e-${siteId}-${id}`, source: siteId, target: id, type: "smoothstep" });
     });
   });
 
   if (unmapped.length > 0) {
+    const groupId = "unmapped-group";
     nodes.push({
-      id: "unmapped",
-      type: "topoNode",
+      id: groupId,
+      type: "group",
       position: { x: 0, y: 0 },
-      data: { label: "Unmapped", type: "container", health: "unknown" },
+      data: {
+        label: "Unmapped",
+        type: "container",
+        health: unmapped.some((c) => c.state !== "running") ? "warning" : "healthy",
+        childCount: unmapped.length,
+      },
     });
+    created.add(groupId);
+    edges.push({ id: `e-internet-${groupId}`, source: "internet", target: groupId, type: "smoothstep" });
+
     unmapped.forEach((c) => {
       const id = `container-${c.name}`;
-      nodes.push({
-        id,
-        type: "topoNode",
-        position: { x: 0, y: 0 },
-        data: {
-          label: c.name,
-          type: "container",
-          health: containerHealth(c),
-          stats: c.stats,
-          state: c.state,
-          status: c.status,
-          image: c.image,
-          containerName: c.name,
-          composeProject: c.composeProject,
-          composeWorkingDir: c.composeWorkingDir,
-          projectSlug: c.projectSlug,
-          sub: c.image,
-        },
-      });
-      edges.push({ id: `e-unmapped-${id}`, source: "unmapped", target: id });
+      if (!created.has(id)) {
+        created.add(id);
+        nodes.push({
+          id,
+          type: "topoNode",
+          parentId: groupId,
+          position: { x: 0, y: 0 },
+          data: containerNodeData(c),
+        });
+      }
+      edges.push({ id: `e-${groupId}-${id}`, source: groupId, target: id, type: "smoothstep" });
     });
   }
 

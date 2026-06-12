@@ -31,7 +31,7 @@ No agents to install on managed hosts. No SaaS in the middle. No telemetry leavi
 
 | | Feature | What it does |
 |---|---|---|
-| 🗺️ | **Live Topology** | Top-down graph: Internet → VPS Host → Caddy/Nginx → Sites → Containers, rendered with React Flow + Dagre. Click any node to inspect or act on it. |
+| 🗺️ | **Live Topology** | Grouped React Flow graph: Host/Internet → Projects/Sites → Services → Containers. Expand/collapse groups, filter by status/project, click any node to inspect or act on it. |
 | 📦 | **Container Management** | List, start, stop, restart, remove, and tail logs for every Docker container. Destructive actions require a confirmation that explains the blast radius. |
 | 🗂️ | **Projects** | Folder-first view of everything under `/opt`, cross-referenced with Caddy sites and running compose stacks. |
 | 🚀 | **Smart Onboarding** | Step-by-step wizard that auto-detects OS, Docker, compose command, and server paths from a local or SSH connection. |

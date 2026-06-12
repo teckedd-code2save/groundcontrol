@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, startTransition, useState } from "react";
+import { useSidebar } from "./SidebarContext";
 
 interface AlertItem {
   read?: boolean;
@@ -19,6 +20,7 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { collapsed, toggleCollapsed } = useSidebar();
   const [user, setUser] = useState<{ username: string } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [unreadAlerts, setUnreadAlerts] = useState(0);
@@ -83,38 +85,67 @@ export function Sidebar() {
       )}
 
       <aside
-        className={`fixed left-0 top-0 h-screen w-64 bg-card border-r border-border flex flex-col z-[56] transition-transform duration-200 ${
+        className={`fixed left-0 top-0 h-screen bg-card border-r border-border flex flex-col z-[56] transition-all duration-200 ${
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        }`}
+        } ${collapsed ? "w-16" : "w-64"}`}
       >
-        <div className="p-6 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-sm orb-pulse">
+        <div className={`p-4 border-b border-border flex items-center ${collapsed ? "justify-center" : "justify-between"}`}>
+          <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
+            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-sm orb-pulse shrink-0">
               GC
             </div>
-            <div>
-              <h1 className="font-bold text-sm tracking-tight">GroundControl</h1>
-              <p className="text-[10px] text-muted font-mono uppercase tracking-wider">VPS Cockpit</p>
-            </div>
+            {!collapsed && (
+              <div>
+                <h1 className="font-bold text-sm tracking-tight">GroundControl</h1>
+                <p className="text-[10px] text-muted font-mono uppercase tracking-wider">VPS Cockpit</p>
+              </div>
+            )}
           </div>
+          {!collapsed && (
+            <button
+              onClick={toggleCollapsed}
+              className="hidden md:flex items-center justify-center w-7 h-7 rounded-lg text-muted hover:text-foreground hover:bg-border/50 transition-colors"
+              title="Collapse sidebar"
+              aria-label="Collapse sidebar"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+          )}
         </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+          {collapsed && (
+            <button
+              onClick={toggleCollapsed}
+              className="hidden md:flex w-full items-center justify-center py-2 text-muted hover:text-foreground transition-colors"
+              title="Expand sidebar"
+              aria-label="Expand sidebar"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          )}
           {navItems.map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href + "/");
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-200 ${
+                title={item.label}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 ${
+                  collapsed ? "justify-center" : ""
+                } ${
                   active
                     ? "bg-accent/10 text-accent border border-accent/30"
                     : "text-foreground/70 hover:text-foreground hover:bg-border/50 border border-transparent"
                 }`}
               >
-                <span className="font-mono text-xs w-5">{item.icon}</span>
-                <span className="flex-1">{item.label}</span>
-                {item.href === "/alerts" && unreadAlerts > 0 && (
+                <span className="font-mono text-xs w-5 text-center">{item.icon}</span>
+                {!collapsed && <span className="flex-1">{item.label}</span>}
+                {!collapsed && item.href === "/alerts" && unreadAlerts > 0 && (
                   <span className="ml-auto text-[10px] font-mono bg-accent text-white px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
                     {unreadAlerts}
                   </span>
@@ -124,32 +155,36 @@ export function Sidebar() {
           })}
         </nav>
 
-        <div className="p-4 border-t border-border space-y-3">
+        <div className="p-2 border-t border-border space-y-2">
           <Link
             href="/onboarding"
-            className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+            title="Add Server"
+            className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors ${
+              collapsed ? "" : ""
+            }`}
           >
             <span>＋</span>
-            <span>Add Server</span>
+            {!collapsed && <span>Add Server</span>}
           </Link>
 
           {user && (
-            <div className="flex items-center justify-between px-4 py-2">
-              <span className="text-xs font-mono text-muted">{user.username}</span>
+            <div className={`flex items-center justify-between px-3 py-2 ${collapsed ? "flex-col gap-2" : ""}`}>
+              {!collapsed && <span className="text-xs font-mono text-muted">{user.username}</span>}
               <button
                 onClick={async () => {
                   await fetch("/api/auth/logout", { method: "POST" });
                   window.location.href = "/login";
                 }}
+                title="Logout"
                 className="text-xs text-muted hover:text-error transition-colors"
               >
-                logout
+                {collapsed ? "⎋" : "logout"}
               </button>
             </div>
           )}
-          <div className="flex items-center gap-2 px-4 py-2">
-            <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-            <span className="text-xs text-muted font-mono">VPS Online</span>
+          <div className={`flex items-center gap-2 px-3 py-2 ${collapsed ? "justify-center" : ""}`}>
+            <div className="w-2 h-2 rounded-full bg-success animate-pulse shrink-0" />
+            {!collapsed && <span className="text-xs text-muted font-mono">VPS Online</span>}
           </div>
         </div>
       </aside>

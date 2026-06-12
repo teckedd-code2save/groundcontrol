@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-export type ActionType = "deploy" | "start" | "stop" | "restart" | "remove" | "prune" | "reload-caddy" | "reload-nginx";
+export type ActionType = "deploy" | "start" | "stop" | "restart" | "remove" | "prune" | "reload-caddy" | "reload-nginx" | "compose-up" | "compose-down";
 
 interface ActionConfirmProps {
   open: boolean;
@@ -53,6 +53,16 @@ const ACTION_META: Record<ActionType, { title: string; consequence: string; seve
     title: "Reload Nginx",
     consequence: "This will reload the Nginx configuration. A bad config may briefly interrupt proxying.",
     severity: "neutral",
+  },
+  "compose-up": {
+    title: "Compose Up",
+    consequence: "This will start the selected services and recreate their containers.",
+    severity: "neutral",
+  },
+  "compose-down": {
+    title: "Compose Down",
+    consequence: "This will stop and remove the selected service containers. Data in volumes is preserved.",
+    severity: "warning",
   },
 };
 
@@ -170,6 +180,20 @@ function ActionIcon({ action, className }: { action: ActionType; className?: str
       return (
         <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
+        </svg>
+      );
+    case "compose-up":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 18 13.5 8.5 8.5 13.5 1 6" />
+          <polyline points="17 18 23 18 23 12" />
+        </svg>
+      );
+    case "compose-down":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+          <polyline points="17 6 23 6 23 12" />
         </svg>
       );
   }

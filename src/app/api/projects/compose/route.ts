@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps, resolveComposeProjectPath, shQuote } from "@/lib/vps";
+import { execOnVps, resolveComposeProjectPath, runDockerCompose, shQuote } from "@/lib/vps";
 import { parseComposeServices } from "@/lib/project-scan";
+
+function errorResponse(err: unknown, status = 500) {
+  const message = err instanceof Error ? err.message : String(err);
+  return NextResponse.json({ error: message }, { status });
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -40,7 +45,42 @@ export async function GET(req: NextRequest) {
 
     const { services, domain } = parseComposeServices(result.stdout);
     return NextResponse.json({ services, domain, raw: result.stdout, projectPath, source });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    return errorResponse(err);
+  }
+}
+
+/**
+ * POST /api/projects/compose
+ *
+ * Body:
+ *   projectSlug: string
+ *   services?: string[]   // optional subset of services to start
+ *
+ * Runs `docker compose up -d` for the whole project or for the selected services.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const { projectSlug, services } = await req.json();
+    if (!projectSlug) {
+      return NextResponse.json({ error: "projectSlug required" }, { status: 400 });
+    }
+
+    const target = await resolveComposeProjectPath(projectSlug);
+    const args =
+      Array.isArray(services) && services.length > 0
+        ? `up -d ${services.map((s: string) => shQuote(s)).join(" ")}`
+        : "up -d";
+
+    const result = await runDockerCompose(target.projectPath, args);
+
+    return NextResponse.json({
+      success: result.code === 0,
+      output: result.stdout,
+      error: result.stderr || undefined,
+      projectPath: target.projectPath,
+    });
+  } catch (err: unknown) {
+    return errorResponse(err);
   }
 }

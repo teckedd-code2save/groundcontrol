@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useSidebar } from "./SidebarContext";
 
 interface ToolEvent {
   name: string;
@@ -104,13 +105,13 @@ export default function AIChatWidget() {
     {
       role: "assistant",
       content:
-        'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',
-    },
+        'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',    },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [unread, setUnread] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const { setCollapsed } = useSidebar();
 
   // Restore persisted state on mount.
   useEffect(() => {
@@ -134,6 +135,13 @@ export default function AIChatWidget() {
     }
   }, [open, expanded]);
 
+  // Collapse sidebar when expanded so chat fills the viewport.
+  useEffect(() => {
+    if (expanded) {
+      setCollapsed(true);
+    }
+  }, [expanded, setCollapsed]);
+
   useEffect(() => {
     if (open) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -153,6 +161,21 @@ export default function AIChatWidget() {
     }
     window.addEventListener("gc:ai-chat-query", handleExternalQuery);
     return () => window.removeEventListener("gc:ai-chat-query", handleExternalQuery);
+  }, []);
+
+  // Listen for the layout-level global shortcut event.
+  useEffect(() => {
+    function handleToggle() {
+      setOpen((prevOpen) => {
+        if (prevOpen) {
+          setExpanded((prevExpanded) => !prevExpanded);
+          return true;
+        }
+        return true;
+      });
+    }
+    window.addEventListener("gc:ai-chat-toggle", handleToggle);
+    return () => window.removeEventListener("gc:ai-chat-toggle", handleToggle);
   }, []);
 
   // Global keyboard shortcut: Ctrl/Cmd+Shift+G.
@@ -558,10 +581,10 @@ export default function AIChatWidget() {
       {/* Chat panel */}
       {open && (
         <div
-          className={`fixed z-50 flex flex-col bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 ${
+          className={`fixed flex flex-col bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 ${
             expanded
-              ? "inset-0 rounded-none"
-              : "bottom-24 right-2 sm:right-6 h-[500px] w-[calc(100vw-1rem)] sm:w-[360px] rounded-2xl border border-gray-200"
+              ? "inset-0 z-[70] rounded-none"
+              : "bottom-24 right-2 sm:right-6 z-50 h-[500px] w-[calc(100vw-1rem)] sm:w-[360px] rounded-2xl border border-gray-200"
           }`}
         >
           {header}

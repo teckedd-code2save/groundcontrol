@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import { SidebarProvider } from "@/components/SidebarContext";
+import { MainLayout } from "@/components/MainLayout";
 import { AuthGuard } from "@/components/AuthGuard";
 import CommandPalette from "@/components/CommandPalette";
 import AIChatWidget from "@/components/AIChatWidget";
@@ -35,14 +37,14 @@ export default function RootLayout({
     >
       <body className="min-h-full bg-background text-foreground">
         <AuthGuard>
-          <Sidebar />
-          <main className="min-h-screen md:ml-64 pt-16 md:pt-0">
-            {children}
-          </main>
-          <CommandPalette />
-          <AIChatGlobalShortcuts />
-          <AIChatWidget />
-          <AlertScheduler />
+          <SidebarProvider>
+            <Sidebar />
+            <MainLayout>{children}</MainLayout>
+            <CommandPalette />
+            <AIChatGlobalShortcuts />
+            <AIChatWidget />
+            <AlertScheduler />
+          </SidebarProvider>
         </AuthGuard>
       </body>
     </html>

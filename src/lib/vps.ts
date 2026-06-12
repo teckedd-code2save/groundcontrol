@@ -482,6 +482,43 @@ export async function runDockerComposePipeline(
   return last;
 }
 
+export async function runDockerComposeDown(
+  projectPath: string,
+  services?: string[],
+  vps?: VpsConnection | null
+) {
+  const conn = vps || (await getActiveVps());
+  const config = await getSystemConfig();
+  const configured = config.composeCommand?.trim();
+  const candidates = configured
+    ? [configured]
+    : ["docker compose", "docker-compose"];
+  let last = { stdout: "", stderr: "", code: 127 };
+
+  const svcArgs = Array.isArray(services) && services.length > 0
+    ? services.map(shQuote).join(" ")
+    : "";
+
+  for (const composeCmd of candidates) {
+    let result;
+    if (svcArgs) {
+      // Stopping specific services is more portable than `down <service>`.
+      result = await execOnVps(
+        `cd ${shQuote(projectPath)} && ${composeCmd} stop ${svcArgs} && ${composeCmd} rm -f ${svcArgs}`,
+        conn
+      );
+    } else {
+      result = await execOnVps(
+        `cd ${shQuote(projectPath)} && ${composeCmd} down`,
+        conn
+      );
+    }
+    if (result.code === 0) return result;
+    last = result;
+  }
+  return last;
+}
+
 export async function resolveComposeProjectPath(
   projectSlug: string,
   service?: string,

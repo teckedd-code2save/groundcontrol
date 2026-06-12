@@ -59,6 +59,16 @@ interface ProjectData {
   scanError?: string | null;
 }
 
+interface ComposeActionState {
+  slug: string;
+  type: "up" | "down" | "up-selected" | "down-selected";
+}
+
+interface ConfirmComposeState {
+  slug: string;
+  type: ComposeActionState["type"];
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function safeJson(res: Response): Promise<{ ok: boolean; data: any; text: string }> {
   const text = await res.text();
@@ -96,6 +106,10 @@ export function ProjectsPanel() {
   const [confirmDeploy, setConfirmDeploy] = useState<string | null>(null);
   const [projectRoot, setProjectRoot] = useState("/opt");
   const [error, setError] = useState("");
+  const [composeAction, setComposeAction] = useState<ComposeActionState | null>(null);
+  const [composeOutput, setComposeOutput] = useState<{ slug: string; output: string; error?: string } | null>(null);
+  const [selectedServices, setSelectedServices] = useState<Record<string, Set<string>>>({});
+  const [confirmCompose, setConfirmCompose] = useState<ConfirmComposeState | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -155,6 +169,53 @@ export function ProjectsPanel() {
     } catch (err) {
       setError(`Start service failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  async function runCompose(slug: string, type: "up" | "down", services?: string[]) {
+    setComposeAction({ slug, type: services?.length ? `${type}-selected` : type });
+    setComposeOutput(null);
+    try {
+      const endpoint = type === "up" ? "/api/projects/compose" : "/api/projects/compose-down";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectSlug: slug, services }),
+      });
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error) {
+        setError(`${type === "up" ? "Up" : "Down"} failed: ${data.error || "Unknown error"}`);
+        setComposeOutput({ slug, output: data.output || "", error: data.error });
+      } else {
+        setError("");
+        setComposeOutput({ slug, output: data.output || `${type === "up" ? "Up" : "Down"} completed` });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`${type === "up" ? "Up" : "Down"} failed: ${message}`);
+      setComposeOutput({ slug, output: "", error: message });
+    } finally {
+      setComposeAction(null);
+      setConfirmCompose(null);
+    }
+  }
+
+  function isServiceSelected(slug: string, service: string): boolean {
+    return selectedServices[slug]?.has(service) ?? false;
+  }
+
+  function toggleService(slug: string, service: string) {
+    setSelectedServices((prev) => {
+      const next = { ...prev };
+      const set = new Set(next[slug] || []);
+      if (set.has(service)) set.delete(service);
+      else set.add(service);
+      next[slug] = set;
+      return next;
+    });
+  }
+
+  function selectedServicesFor(slug: string): string[] {
+    return Array.from(selectedServices[slug] || []);
   }
 
   const projects = useMemo(
@@ -275,6 +336,8 @@ export function ProjectsPanel() {
                       project.dirName.replace(/[^a-z0-9]/gi, "").toLowerCase()
                     )
                   );
+                const selected = selectedServicesFor(project.slug);
+                const isActing = composeAction?.slug === project.slug;
 
                 return (
                   <div
@@ -308,21 +371,57 @@ export function ProjectsPanel() {
                         )}
                         <p className="text-xs text-muted font-mono mt-0.5 truncate">{project.path}</p>
                       </div>
-                      <button
-                        onClick={() => setConfirmDeploy(project.slug)}
-                        disabled={deploying === project.slug}
-                        className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
-                      >
-                        {deploying === project.slug ? "Deploying..." : "Redeploy"}
-                      </button>
+                      <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                        <button
+                          onClick={() => setConfirmCompose({ slug: project.slug, type: "up" })}
+                          disabled={!!composeAction}
+                          className="px-3 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded-lg hover:bg-success/20 transition-colors disabled:opacity-50"
+                        >
+                          {isActing && composeAction?.type === "up" ? "Starting…" : "Up"}
+                        </button>
+                        <button
+                          onClick={() => setConfirmCompose({ slug: project.slug, type: "down" })}
+                          disabled={!!composeAction}
+                          className="px-3 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded-lg hover:bg-warning/20 transition-colors disabled:opacity-50"
+                        >
+                          {isActing && composeAction?.type === "down" ? "Stopping…" : "Down"}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeploy(project.slug)}
+                          disabled={deploying === project.slug}
+                          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
+                        >
+                          {deploying === project.slug ? "Deploying…" : "Redeploy"}
+                        </button>
+                      </div>
                     </div>
 
                     {/* Compose Services */}
                     {project.services.length > 0 ? (
                       <div className="mb-4 space-y-2">
-                        <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">
-                          Compose Services ({project.services.length})
-                        </h4>
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">
+                            Compose Services ({project.services.length})
+                          </h4>
+                          {selected.length > 0 && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setConfirmCompose({ slug: project.slug, type: "up-selected" })}
+                                disabled={!!composeAction}
+                                className="px-2 py-1 text-[9px] font-mono bg-success/10 border border-success/30 text-success rounded hover:bg-success/20 transition-colors disabled:opacity-50"
+                              >
+                                Up selected
+                              </button>
+                              <button
+                                onClick={() => setConfirmCompose({ slug: project.slug, type: "down-selected" })}
+                                disabled={!!composeAction}
+                                className="px-2 py-1 text-[9px] font-mono bg-warning/10 border border-warning/30 text-warning rounded hover:bg-warning/20 transition-colors disabled:opacity-50"
+                              >
+                                Down selected
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                           {project.services.map((svc) => {
                             const existing = meta.containers.find(
@@ -331,6 +430,7 @@ export function ProjectsPanel() {
                                 c.name.toLowerCase().includes(svc.name.toLowerCase())
                             );
                             const isRunning = existing?.state === "running";
+                            const checked = isServiceSelected(project.slug, svc.name);
                             return (
                               <div
                                 key={svc.name}
@@ -338,11 +438,20 @@ export function ProjectsPanel() {
                                   isRunning ? "bg-background/50 border-border/50" : "bg-warning/5 border-warning/10"
                                 }`}
                               >
-                                <div className="min-w-0">
-                                  <div className="text-xs font-mono truncate">{svc.name}</div>
-                                  <div className="text-[10px] text-muted font-mono truncate">
-                                    {svc.image || (svc.build ? "build" : "no image")}
-                                    {svc.ports && svc.ports.length > 0 ? ` · :${svc.ports[0]}` : ""}
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleService(project.slug, svc.name)}
+                                    className="shrink-0 accent-accent"
+                                    title="Select service"
+                                  />
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-mono truncate">{svc.name}</div>
+                                    <div className="text-[10px] text-muted font-mono truncate">
+                                      {svc.image || (svc.build ? "build" : "no image")}
+                                      {svc.ports && svc.ports.length > 0 ? ` · :${svc.ports[0]}` : ""}
+                                    </div>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0 ml-2">
@@ -374,6 +483,22 @@ export function ProjectsPanel() {
                     ) : (
                       <div className="mb-4 text-[10px] text-warning font-mono bg-warning/5 p-2 rounded-lg">
                         Compose file at {project.composePath} declared no parseable services.
+                      </div>
+                    )}
+
+                    {/* Compose action output */}
+                    {composeOutput?.slug === project.slug && (
+                      <div className="mb-4 space-y-1">
+                        {composeOutput.error && (
+                          <div className="text-[10px] font-mono text-error bg-error/5 border border-error/20 rounded p-2 whitespace-pre-wrap">
+                            {composeOutput.error}
+                          </div>
+                        )}
+                        {composeOutput.output && (
+                          <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap">
+                            {composeOutput.output}
+                          </pre>
+                        )}
                       </div>
                     )}
 
@@ -482,6 +607,23 @@ export function ProjectsPanel() {
           targetType="Project"
           onConfirm={() => triggerDeploy(confirmDeploy)}
           onCancel={() => setConfirmDeploy(null)}
+        />
+      )}
+
+      {confirmCompose && (
+        <ActionConfirm
+          open={!!confirmCompose}
+          action={confirmCompose.type.startsWith("up") ? "compose-up" : "compose-down"}
+          targetName={`${confirmCompose.slug}${selectedServicesFor(confirmCompose.slug).length > 0 && confirmCompose.type.endsWith("selected") ? ` (${selectedServicesFor(confirmCompose.slug).join(", ")})` : ""}`}
+          targetType="Project"
+          onConfirm={() =>
+            runCompose(
+              confirmCompose.slug,
+              confirmCompose.type.startsWith("up") ? "up" : "down",
+              confirmCompose.type.endsWith("selected") ? selectedServicesFor(confirmCompose.slug) : undefined
+            )
+          }
+          onCancel={() => setConfirmCompose(null)}
         />
       )}
     </div>
