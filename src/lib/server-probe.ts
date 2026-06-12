@@ -5,6 +5,8 @@ export interface ServerLayout {
   osName: string;
   osVersion: string;
   dockerAvailable: boolean;
+  caddyAvailable: boolean;
+  nodeAvailable: boolean;
   composeCommand: string;
   projectRoot: string;
   caddySitesDir: string;
@@ -20,6 +22,8 @@ const DEFAULT_LAYOUT: ServerLayout = {
   osName: "unknown",
   osVersion: "",
   dockerAvailable: false,
+  caddyAvailable: false,
+  nodeAvailable: false,
   composeCommand: "docker compose",
   projectRoot: "/opt",
   caddySitesDir: "/etc/caddy/sites",
@@ -123,6 +127,16 @@ async function detectDockerAvailable(vps?: VpsConnection | null): Promise<boolea
   return result.stdout.trim() === "yes";
 }
 
+async function detectCaddyAvailable(vps?: VpsConnection | null): Promise<boolean> {
+  const result = await execOnVps(`caddy version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  return result.stdout.trim() === "yes";
+}
+
+async function detectNodeAvailable(vps?: VpsConnection | null): Promise<boolean> {
+  const result = await execOnVps(`node --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  return result.stdout.trim() === "yes";
+}
+
 /**
  * Probe a VPS (or the active VPS) for filesystem layout and available tooling.
  *
@@ -134,6 +148,8 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
     const os = await readOsRelease(vps);
     const [
       dockerAvailable,
+      caddyAvailable,
+      nodeAvailable,
       composeCommand,
       projectRoot,
       caddySitesDir,
@@ -142,6 +158,8 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       sshDefaultCwd,
     ] = await Promise.all([
       detectDockerAvailable(vps),
+      detectCaddyAvailable(vps),
+      detectNodeAvailable(vps),
       detectComposeCommand(vps),
       detectProjectRoot(vps),
       detectCaddySitesDir(vps),
@@ -155,6 +173,8 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       osName: os.name || os.id,
       osVersion: os.version,
       dockerAvailable,
+      caddyAvailable,
+      nodeAvailable,
       composeCommand,
       projectRoot,
       caddySitesDir,

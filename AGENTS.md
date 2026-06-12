@@ -4,6 +4,16 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
+## GroundControl conventions (maintain these)
+
+- **Remote exec**: use `execOnVps()` and `shQuote()` from `src/lib/vps.ts` for every command run on a managed host. Prefer POSIX sh / BusyBox syntax; avoid bashisms.
+- **Tabs**: the main surfaces use tabs now:
+  - `/settings` tabs: `connections`, `layout`, `ai`, `security`, `cloudflare`, `alerts`
+  - `/services` tabs: `containers`, `proxy`, `projects`, `cloudflare`, `bootstrap`
+- **Onboarding**: `/onboarding` is the first-run flow. Preserve its auto-detect and test-connection behavior.
+- **Cloudflare**: account tokens are encrypted at rest (`encryptCloudflareToken` / `decryptCloudflareToken`). Active account is the one with `isActive=true`.
+- **Alert rules**: evaluated by `/api/alert-rules/evaluate`. `AlertScheduler` in `layout.tsx` calls it every 60s. Keep evaluation idempotent and deduplicated.
+
 # GroundControl Agent Notes
 
 ## Product conventions

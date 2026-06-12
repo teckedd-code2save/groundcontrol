@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { SensitiveField, SensitiveInput } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import VpsFilePicker from "@/components/VpsFilePicker";
+import CloudflareSettingsTab from "@/components/CloudflareSettingsTab";
+import AlertSettingsTab from "@/components/AlertSettingsTab";
 
 interface VpsConfig {
   id: number;
@@ -19,16 +21,26 @@ interface VpsConfig {
   createdAt: string;
 }
 
-type TabKey = "connections" | "layout" | "ai" | "security";
+type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>("connections");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    if (typeof window === "undefined") return "connections";
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (
+      tab &&
+      ["connections", "layout", "ai", "security", "alerts", "cloudflare"].includes(tab)
+    ) {
+      return tab as TabKey;
+    }
+    return "connections";
+  });
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, and security</p>
+        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, security, Cloudflare, and alerts</p>
       </div>
 
       {/* Tabs */}
@@ -38,6 +50,8 @@ export default function SettingsPage() {
           { key: "layout", label: "Server Layout" },
           { key: "ai", label: "AI" },
           { key: "security", label: "Security" },
+          { key: "cloudflare", label: "Cloudflare" },
+          { key: "alerts", label: "Alerts" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -57,6 +71,8 @@ export default function SettingsPage() {
       {activeTab === "layout" && <ServerLayoutTab />}
       {activeTab === "ai" && <AIConfigTab />}
       {activeTab === "security" && <SecurityTab />}
+      {activeTab === "cloudflare" && <CloudflareSettingsTab />}
+      {activeTab === "alerts" && <AlertSettingsTab />}
     </div>
   );
 }

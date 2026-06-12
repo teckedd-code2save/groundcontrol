@@ -113,6 +113,9 @@ export function ContainersPanel() {
   const [activeTab, setActiveTab] = useState<"containers" | "images">("containers");
   const [error, setError] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [bulkRemoveConfirm, setBulkRemoveConfirm] = useState(false);
 
   const containersAbort = useRef<AbortController | null>(null);
   const imagesAbort = useRef<AbortController | null>(null);
@@ -184,6 +187,65 @@ export function ContainersPanel() {
       setImagesLoading(false);
     }
   }, []);
+
+  function toggleSelection(name: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelected(new Set(filtered.map((c) => c.name)));
+  }
+
+  function selectNone() {
+    setSelected(new Set());
+  }
+
+  async function runBulkAction(action: "start" | "stop" | "restart" | "remove") {
+    if (selected.size === 0) return;
+    setBulkActionLoading(true);
+    try {
+      const res = await fetch("/api/containers/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, names: Array.from(selected) }),
+      });
+      const { ok, data } = await safeJson(res);
+      if (!ok || !data.results) {
+        const detail = data?.error || "Unknown error";
+        const msg = `Bulk ${action} failed — ${detail}`;
+        setError(msg);
+        pushToast("error", msg);
+      } else {
+        const failures = data.results.filter((r: ActionResult & { name: string }) => !r.success);
+        const successes = data.results.filter((r: ActionResult & { name: string }) => r.success);
+        if (successes.length > 0) {
+          pushToast("success", `${action} succeeded for ${successes.length} container${successes.length === 1 ? "" : "s"}`);
+        }
+        if (failures.length > 0) {
+          const msg = failures.map((f: ActionResult & { name: string }) => `${f.name}: ${f.error}`).join("; ");
+          setError(`Bulk ${action} had ${failures.length} failure(s): ${msg}`);
+          pushToast("error", `${action} failed for ${failures.length} container${failures.length === 1 ? "" : "s"}`);
+        } else {
+          setError("");
+        }
+        setSelected(new Set());
+      }
+      await fetchContainers();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const msg = `Bulk ${action} failed — ${detail}`;
+      setError(msg);
+      pushToast("error", msg);
+    } finally {
+      setBulkActionLoading(false);
+      setBulkRemoveConfirm(false);
+    }
+  }
 
   const fetchCompose = useCallback(async () => {
     try {
@@ -619,6 +681,56 @@ export function ContainersPanel() {
             )}
           </div>
 
+          {selected.size > 0 && (
+            <div className="mb-4 flex flex-wrap items-center gap-3 p-3 bg-accent/5 border border-accent/20 rounded-xl">
+              <span className="text-xs font-mono text-accent">{selected.size} selected</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => runBulkAction("start")}
+                  disabled={bulkActionLoading}
+                  className="px-3 py-1.5 text-xs font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50"
+                >
+                  Start
+                </button>
+                <button
+                  onClick={() => runBulkAction("stop")}
+                  disabled={bulkActionLoading}
+                  className="px-3 py-1.5 text-xs font-mono border border-warning/30 text-warning rounded hover:bg-warning/10 transition-colors disabled:opacity-50"
+                >
+                  Stop
+                </button>
+                <button
+                  onClick={() => runBulkAction("restart")}
+                  disabled={bulkActionLoading}
+                  className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
+                >
+                  Restart
+                </button>
+                <button
+                  onClick={() => setBulkRemoveConfirm(true)}
+                  disabled={bulkActionLoading}
+                  className="px-3 py-1.5 text-xs font-mono border border-error/30 text-error rounded hover:bg-error/10 transition-colors disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={selectAll}
+                  className="text-xs text-muted hover:text-foreground transition-colors"
+                >
+                  all
+                </button>
+                <button
+                  onClick={selectNone}
+                  className="text-xs text-muted hover:text-foreground transition-colors"
+                >
+                  none
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <div className="space-y-3">
               {[...Array(5)].map((_, i) => (
@@ -636,6 +748,13 @@ export function ContainersPanel() {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(container.name)}
+                        onChange={() => toggleSelection(container.name)}
+                        className="w-4 h-4 accent-accent"
+                        aria-label={`Select ${container.name}`}
+                      />
                       <div
                         className={`w-3 h-3 rounded-full ${
                           container.state === "running"
@@ -870,6 +989,44 @@ export function ContainersPanel() {
           onConfirm={() => handleAction(pendingAction.action, pendingAction.name)}
           onCancel={() => setPendingAction(null)}
         />
+      )}
+
+      {bulkRemoveConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
+          <div className="bg-card border border-border rounded-xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center border border-error/30 text-error">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-medium">Remove Containers</h3>
+                <p className="text-xs text-muted mt-0.5 font-mono">{selected.size} selected</p>
+              </div>
+            </div>
+            <div className="border border-error/20 bg-error/5 rounded-lg p-3 mb-4 text-xs text-error/80">
+              <span className="font-semibold">Consequence: </span>
+              This will permanently delete the selected containers and their logs. Data in volumes will be preserved.
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setBulkRemoveConfirm(false)}
+                className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => runBulkAction("remove")}
+                disabled={bulkActionLoading}
+                className="px-4 py-2 text-xs font-mono border border-error/30 text-error bg-error/10 hover:bg-error/20 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {bulkActionLoading ? "Removing..." : "Confirm Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {runModal && (

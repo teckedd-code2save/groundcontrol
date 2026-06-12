@@ -29,6 +29,9 @@ type WireEvent =
   | { type: "text"; delta: string }
   | { type: "error"; error: string };
 
+const STORAGE_OPEN = "gc:ai-chat:open";
+const STORAGE_EXPANDED = "gc:ai-chat:expanded";
+
 /** Minimal, safe-ish markdown -> HTML for assistant answers. */
 function renderMarkdown(md: string): string {
   const esc = (s: string) =>
@@ -96,17 +99,40 @@ function ToolChip({ tool }: { tool: ToolEvent }) {
 
 export default function AIChatWidget() {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
       content:
-        "Hi! I'm GroundControl AI. I can inspect your server directly — ask me things like \"which service is using the most memory\", \"show me the caddy config\", or \"tail the logs for <container>\".",
+        'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [unread, setUnread] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Restore persisted state on mount.
+  useEffect(() => {
+    try {
+      const savedOpen = localStorage.getItem(STORAGE_OPEN);
+      const savedExpanded = localStorage.getItem(STORAGE_EXPANDED);
+      if (savedOpen === "true") setOpen(true);
+      if (savedExpanded === "true") setExpanded(true);
+    } catch {
+      // localStorage may be unavailable.
+    }
+  }, []);
+
+  // Persist open/expanded state.
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_OPEN, String(open));
+      localStorage.setItem(STORAGE_EXPANDED, String(expanded));
+    } catch {
+      // ignore
+    }
+  }, [open, expanded]);
 
   useEffect(() => {
     if (open) {
@@ -121,11 +147,30 @@ export default function AIChatWidget() {
       if (typeof detail === "string" && detail.trim()) {
         setInput(detail.trim());
         setOpen(true);
+        setExpanded(false);
         setUnread(0);
       }
     }
     window.addEventListener("gc:ai-chat-query", handleExternalQuery);
     return () => window.removeEventListener("gc:ai-chat-query", handleExternalQuery);
+  }, []);
+
+  // Global keyboard shortcut: Ctrl/Cmd+Shift+G.
+  useEffect(() => {
+    function handleGlobalKeydown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "g" || e.key === "G")) {
+        e.preventDefault();
+        setOpen((prevOpen) => {
+          if (prevOpen) {
+            setExpanded((prevExpanded) => !prevExpanded);
+            return true;
+          }
+          return true;
+        });
+      }
+    }
+    window.addEventListener("keydown", handleGlobalKeydown);
+    return () => window.removeEventListener("keydown", handleGlobalKeydown);
   }, []);
 
   /** Build the wire history (role + content) from local messages. */
@@ -309,14 +354,188 @@ export default function AIChatWidget() {
     }
   }
 
+  function toggleOpen() {
+    setOpen((v) => !v);
+    if (!open) setUnread(0);
+  }
+
+  function toggleExpand() {
+    setExpanded((v) => !v);
+  }
+
+  const header = (
+    <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <div className="flex items-center gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300">
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">GroundControl AI</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Your DevOps assistant</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        {open && (
+          <button
+            onClick={toggleExpand}
+            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            aria-label={expanded ? "Collapse" : "Expand"}
+            title={expanded ? "Collapse" : "Expand"}
+          >
+            {expanded ? (
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+            ) : (
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+            )}
+          </button>
+        )}
+        <button
+          onClick={toggleOpen}
+          className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+          aria-label={open ? "Close" : "Open"}
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+
+  const messageList = (
+    <div className={`flex-1 overflow-y-auto px-4 py-3 space-y-3 ${expanded ? "md:px-8" : ""}`}>
+      {messages.map((m, i) => (
+        <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div
+            className={`rounded-2xl px-3 py-2 ${
+              expanded ? "max-w-4xl text-base" : "max-w-[85%] text-sm"
+            } ${
+              m.role === "user"
+                ? "bg-blue-600 text-white rounded-br-md"
+                : m.role === "error"
+                ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 rounded-bl-md"
+                : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 rounded-bl-md"
+            }`}
+          >
+            {/* Tool activity chips */}
+            {m.tools && m.tools.length > 0 && (
+              <div className="mb-1">
+                {m.tools.map((t, ti) => (
+                  <ToolChip key={ti} tool={t} />
+                ))}
+              </div>
+            )}
+
+            {/* Answer text (markdown for assistant, plain otherwise) */}
+            {m.content ? (
+              m.role === "assistant" ? (
+                <div
+                  className="prose-sm leading-relaxed [&_code]:break-words"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
+                />
+              ) : (
+                <span className="whitespace-pre-wrap">{m.content}</span>
+              )
+            ) : (
+              m.role === "assistant" &&
+              loading &&
+              !(m.tools && m.tools.length) &&
+              !m.confirm ? (
+                <span className="inline-flex gap-1">
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0.15s]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0.3s]" />
+                </span>
+              ) : null
+            )}
+
+            {/* Confirmation prompt for mutating tools */}
+            {m.confirm && (
+              <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
+                <p className="font-semibold">Confirm action</p>
+                <p className="mt-0.5 font-mono">
+                  {m.confirm.name}({Object.entries(m.confirm.args || {})
+                    .map(([k, v]) => `${k}: ${String(v)}`)
+                    .join(", ")})
+                </p>
+                <p className="mt-1 text-amber-800 dark:text-amber-300">
+                  This changes server state and won&apos;t run until you approve.
+                </p>
+                {m.confirm.resolved ? (
+                  <p className="mt-2 italic text-amber-700 dark:text-amber-400">
+                    {m.confirm.resolved === "approved" ? "Approved." : "Cancelled."}
+                  </p>
+                ) : (
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => approveConfirm(i)}
+                      disabled={loading}
+                      className="rounded-md bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => cancelConfirm(i)}
+                      disabled={loading}
+                      className="rounded-md border border-amber-400 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-900/30"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+
+  const inputArea = (
+    <div className="border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+      <div className={`flex items-end gap-2 ${expanded ? "mx-auto max-w-4xl" : ""}`}>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask about Docker, Caddy, deployments..."
+          rows={expanded ? 2 : 1}
+          className={`flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500 ${
+            expanded ? "text-base" : "text-sm"
+          }`}
+          style={{ maxHeight: expanded ? "160px" : "100px" }}
+        />
+        <button
+          onClick={sendMessage}
+          disabled={loading || !input.trim()}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="Send"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
+      {expanded && (
+        <p className="mx-auto mt-2 max-w-4xl text-[11px] text-gray-500 dark:text-gray-400">
+          Tip: type <code className="rounded bg-gray-200 px-1 py-0.5 dark:bg-gray-700">/ai &lt;intent&gt;</code> in the Terminal to generate commands.
+        </p>
+      )}
+    </div>
+  );
+
   return (
     <>
       {/* Floating toggle */}
       <button
-        onClick={() => {
-          setOpen((v) => !v);
-          if (!open) setUnread(0);
-        }}
+        onClick={toggleOpen}
         className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors"
         aria-label="Toggle AI Chat"
       >
@@ -338,131 +557,16 @@ export default function AIChatWidget() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-24 right-2 sm:right-6 z-50 flex h-[500px] w-[calc(100vw-1rem)] sm:w-[360px] flex-col rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
-          {/* Header */}
-          <div className="flex items-center gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900 dark:text-white">GroundControl AI</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Your DevOps assistant</p>
-            </div>
-          </div>
-
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                    m.role === "user"
-                      ? "bg-blue-600 text-white rounded-br-md"
-                      : m.role === "error"
-                      ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 rounded-bl-md"
-                      : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 rounded-bl-md"
-                  }`}
-                >
-                  {/* Tool activity chips */}
-                  {m.tools && m.tools.length > 0 && (
-                    <div className="mb-1">
-                      {m.tools.map((t, ti) => (
-                        <ToolChip key={ti} tool={t} />
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Answer text (markdown for assistant, plain otherwise) */}
-                  {m.content ? (
-                    m.role === "assistant" ? (
-                      <div
-                        className="prose-sm leading-relaxed [&_code]:break-words"
-                        dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
-                      />
-                    ) : (
-                      <span className="whitespace-pre-wrap">{m.content}</span>
-                    )
-                  ) : (
-                    m.role === "assistant" &&
-                    loading &&
-                    !(m.tools && m.tools.length) &&
-                    !m.confirm ? (
-                      <span className="inline-flex gap-1">
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0.15s]" />
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0.3s]" />
-                      </span>
-                    ) : null
-                  )}
-
-                  {/* Confirmation prompt for mutating tools */}
-                  {m.confirm && (
-                    <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
-                      <p className="font-semibold">Confirm action</p>
-                      <p className="mt-0.5 font-mono">
-                        {m.confirm.name}({Object.entries(m.confirm.args || {})
-                          .map(([k, v]) => `${k}: ${String(v)}`)
-                          .join(", ")})
-                      </p>
-                      <p className="mt-1 text-amber-800 dark:text-amber-300">
-                        This changes server state and won&apos;t run until you approve.
-                      </p>
-                      {m.confirm.resolved ? (
-                        <p className="mt-2 italic text-amber-700 dark:text-amber-400">
-                          {m.confirm.resolved === "approved" ? "Approved." : "Cancelled."}
-                        </p>
-                      ) : (
-                        <div className="mt-2 flex gap-2">
-                          <button
-                            onClick={() => approveConfirm(i)}
-                            disabled={loading}
-                            className="rounded-md bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => cancelConfirm(i)}
-                            disabled={loading}
-                            className="rounded-md border border-amber-400 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-900/30"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-            <div ref={bottomRef} />
-          </div>
-
-          {/* Input */}
-          <div className="border-t border-gray-200 px-4 py-3 dark:border-gray-700">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask about Docker, Caddy, deployments..."
-                rows={1}
-                className="flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500"
-                style={{ maxHeight: "100px" }}
-              />
-              <button
-                onClick={sendMessage}
-                disabled={loading || !input.trim()}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label="Send"
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
-              </button>
-            </div>
-          </div>
+        <div
+          className={`fixed z-50 flex flex-col bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 ${
+            expanded
+              ? "inset-0 rounded-none"
+              : "bottom-24 right-2 sm:right-6 h-[500px] w-[calc(100vw-1rem)] sm:w-[360px] rounded-2xl border border-gray-200"
+          }`}
+        >
+          {header}
+          {messageList}
+          {inputArea}
         </div>
       )}
     </>

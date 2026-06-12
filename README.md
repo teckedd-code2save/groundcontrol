@@ -39,9 +39,14 @@ No agents to install on managed hosts. No SaaS in the middle. No telemetry leavi
 | 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, Tab autocomplete, helper chips, command history, and a full-screen mode. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures, with severity levels and an incident timeline. |
 | 🤖 | **AI Alert Synthesis** | Dashboard card that synthesizes recent alerts, metrics, and containers into a one-line summary and recommended actions. |
+| 💬 | **Full-Screen AI Chat** | Expand the AI assistant to full viewport. Global shortcut `Ctrl/Cmd+Shift+G`. |
 | 📊 | **Metrics** | CPU load, memory, disk, and container health sampled into `MetricSnapshot` history and charted with Recharts. |
-| 🔀 | **Services (Proxy / Containers / Projects)** | Unified services page with tabbed Containers, Reverse Proxy, and Projects sections. Original routes still work for bookmarks. |
-| ⚙️ | **Tabbed Settings** | Connections, Server Layout, AI, and Security grouped into tabs with auto-detect layout and model selection. |
+| 🔀 | **Services (Proxy / Containers / Projects / Cloudflare / Install)** | Unified services page with tabbed Containers, Reverse Proxy, Projects, Cloudflare tunnels/DNS, and one-click installs. Original routes still work for bookmarks. |
+| ⚙️ | **Tabbed Settings** | Connections, Server Layout, AI, Security, Cloudflare, and Alerts grouped into tabs with auto-detect layout and model selection. |
+| 🌩️ | **Cloudflare Integration** | Connect a Cloudflare account, list/create tunnels, manage DNS records, and point hostnames to a tunnel from the UI. |
+| 🔧 | **Bulk Container Ops** | Multi-select containers and start/stop/restart/remove them in one action. |
+| 🚀 | **One-Click Bootstrap** | Install Docker, Caddy, Cloudflared, and Node.js on the active VPS from the Services page. |
+| 🔔 | **Configurable Alert Rules** | Define metric thresholds (CPU, memory, disk, unhealthy containers) with severity and duration. Background evaluation + retention policy. |
 | 🛰️ | **Multi-VPS** | Register multiple hosts in `VpsConfig`; GroundControl talks to whichever is active. Manage a fleet, not just a box. |
 | 🔐 | **Auth built-in** | JWT cookie auth, bcrypt password hashing, login rate-limiting, and a guarded UI. |
 

@@ -219,9 +219,11 @@ export default function DashboardPage() {
     // Alerts
     const unreadAlerts = alerts.filter((a) => !a.read);
     if (unreadAlerts.length > 0) {
-      items.push({ label: "Alerts", status: "warn", detail: `${unreadAlerts.length} unread alert${unreadAlerts.length > 1 ? "s" : ""} require attention.`, href: "/alerts" });
+      items.push({ label: "Alerts", status: "warn", detail: `${unreadAlerts.length} unread alert${unreadAlerts.length > 1 ? "s" : ""} require attention.`, href: "/settings?tab=alerts" });
     } else if (alerts.length > 0) {
-      items.push({ label: "Alerts", status: "good", detail: "All alerts reviewed. Systems stable.", href: "/alerts" });
+      items.push({ label: "Alerts", status: "good", detail: "All alerts reviewed. Systems stable.", href: "/settings?tab=alerts" });
+    } else {
+      items.push({ label: "Alerts", status: "good", detail: "No alerts. Configure rules in Settings.", href: "/settings?tab=alerts" });
     }
 
     const criticalCount = items.filter((i) => i.status === "critical").length;
@@ -323,6 +325,12 @@ export default function DashboardPage() {
                 <path d="M12 12L2.5 8.5" />
               </svg>
               <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Intelligence Overview</h2>
+              <a
+                href="/settings?tab=alerts"
+                className="ml-auto text-[11px] font-mono text-accent hover:text-accent/80 transition-colors"
+              >
+                Manage alert rules →
+              </a>
             </div>
             <h3 className="text-lg font-medium mb-3">{intelligence.title}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

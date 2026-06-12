@@ -114,3 +114,51 @@ model SystemConfig {
 
   vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
 }
+
+model CloudflareAccount {
+  id          Int      @id @default(autoincrement())
+  name        String   @default("Cloudflare")
+  apiToken    String   // encrypted at rest
+  accountId   String?
+  email       String?
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tunnels CloudflareTunnel[]
+}
+
+model CloudflareTunnel {
+  id          Int      @id @default(autoincrement())
+  tunnelId    String   @unique // Cloudflare tunnel ID (UUID)
+  name        String
+  tunnelSecret String? // base64 secret for cloudflared
+  connectorId String?  // optional running container id
+  status      String   @default("inactive") // active | inactive | error
+  domains     String   @default("") // comma-separated list
+  configJson  String   @default("") // ingress JSON snapshot
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  account CloudflareAccount @relation(fields: [cloudflareAccountId], references: [id], onDelete: Cascade)
+  cloudflareAccountId Int
+}
+
+model AlertRule {
+  id          Int      @id @default(autoincrement())
+  name        String
+  metric      String   // cpu_load_1 | mem_percent | disk_percent | unhealthy_containers | container_down
+  operator    String   // > | < | == | >= | <=
+  threshold   Float
+  durationSec Int      @default(60) // must breach for this long
+  enabled     Boolean  @default(true)
+  severity    String   @default("warning") // info | warning | error | critical
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AlertSetting {
+  id            Int      @id @default(autoincrement())
+  retentionDays Int      @default(30)
+  updatedAt     DateTime @updatedAt
+}
