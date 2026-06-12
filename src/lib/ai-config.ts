@@ -8,6 +8,7 @@ export type AiProvider = "openai" | "anthropic";
 
 interface AiConfig {
   provider?: AiProvider;
+  model?: string;
   openaiApiKey?: string;
   anthropicApiKey?: string;
   updatedAt?: string;
@@ -64,11 +65,27 @@ export function getAiProvider(): AiProvider {
   return "openai";
 }
 
-/** Resolve the active provider plus its key, for the chat route. */
-export function getActiveAi(): { provider: AiProvider; apiKey: string | undefined } {
+/**
+ * Resolve the active model, allowing env var overrides.
+ * OpenAI: AI_MODEL (legacy) or AI_MODEL_OPENAI.
+ * Anthropic: AI_MODEL_ANTHROPIC.
+ * File-configured model is the fallback when no env var is set.
+ */
+export function getAiModel(): string {
+  const cfg = getAiConfig();
+  const provider = getAiProvider();
+  if (provider === "anthropic") {
+    return process.env.AI_MODEL_ANTHROPIC || cfg.model || "claude-3-5-sonnet-latest";
+  }
+  return process.env.AI_MODEL_OPENAI || process.env.AI_MODEL || cfg.model || "gpt-4o-mini";
+}
+
+/** Resolve the active provider, key, and model, for the chat route. */
+export function getActiveAi(): { provider: AiProvider; apiKey: string | undefined; model: string } {
   const provider = getAiProvider();
   return {
     provider,
     apiKey: provider === "anthropic" ? getAnthropicKey() : getOpenAIKey(),
+    model: getAiModel(),
   };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SensitiveField, SensitiveInput } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import VpsFilePicker from "@/components/VpsFilePicker";
@@ -19,7 +19,49 @@ interface VpsConfig {
   createdAt: string;
 }
 
+type TabKey = "connections" | "layout" | "ai" | "security";
+
 export default function SettingsPage() {
+  const [activeTab, setActiveTab] = useState<TabKey>("connections");
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, and security</p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-1 border-b border-border mb-8 overflow-x-auto">
+        {[
+          { key: "connections", label: "Connections" },
+          { key: "layout", label: "Server Layout" },
+          { key: "ai", label: "AI" },
+          { key: "security", label: "Security" },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key as TabKey)}
+            className={`px-5 py-2.5 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === tab.key
+                ? "border-accent text-accent"
+                : "border-transparent text-muted hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "connections" && <ConnectionsTab />}
+      {activeTab === "layout" && <ServerLayoutTab />}
+      {activeTab === "ai" && <AIConfigTab />}
+      {activeTab === "security" && <SecurityTab />}
+    </div>
+  );
+}
+
+function ConnectionsTab() {
   const [configs, setConfigs] = useState<VpsConfig[]>([]);
   const [form, setForm] = useState({
     name: "",
@@ -28,21 +70,18 @@ export default function SettingsPage() {
     username: "",
     privateKey: "",
     password: "",
-    authType: "key",
+    authType: "key" as "key" | "password",
     isLocal: false,
   });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [deleteConfigTarget, setDeleteConfigTarget] = useState<VpsConfig | null>(null);
 
-  async function fetchConfigs() {
-    const res = await fetch("/api/vps");
-    const data = await res.json();
-    setConfigs(data);
-  }
-
   useEffect(() => {
-    fetchConfigs();
+    fetch("/api/vps")
+      .then((res) => res.json())
+      .then((data) => setConfigs(data))
+      .catch(() => setConfigs([]));
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -62,7 +101,8 @@ export default function SettingsPage() {
       authType: "key",
       isLocal: false,
     });
-    await fetchConfigs();
+    const refreshed = await fetch("/api/vps").then((r) => (r.ok ? r.json() : []));
+    setConfigs(refreshed);
   }
 
   async function testConnection() {
@@ -81,11 +121,16 @@ export default function SettingsPage() {
     }
   }
 
+  async function refreshConfigs() {
+    const refreshed = await fetch("/api/vps").then((r) => (r.ok ? r.json() : []));
+    setConfigs(refreshed);
+  }
+
   async function doDeleteConfig() {
     if (!deleteConfigTarget) return;
     await fetch(`/api/vps?id=${deleteConfigTarget.id}`, { method: "DELETE" });
     setDeleteConfigTarget(null);
-    await fetchConfigs();
+    await refreshConfigs();
   }
 
   async function activateConfig(id: number) {
@@ -94,23 +139,14 @@ export default function SettingsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
-    await fetchConfigs();
-    // System paths are per-VPS — tell that section to reload for the new server.
+    await refreshConfigs();
     window.dispatchEvent(new CustomEvent("gc:active-vps-changed"));
   }
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted mt-1">Configure VPS connections and preferences</p>
-      </div>
-
-      <div className="bg-card border border-border rounded-xl p-6 mb-8">
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
-          Add VPS Connection
-        </h2>
-
+    <div className="space-y-8">
+      <div className="bg-card border border-border rounded-xl p-6">
+        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Add VPS Connection</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -127,14 +163,12 @@ export default function SettingsPage() {
               value={form.host}
               onChange={(v) => setForm({ ...form, host: v })}
               type="text"
-              className="md:col-span-1"
             />
             <SensitiveInput
               label="Port"
               value={form.port}
               onChange={(v) => setForm({ ...form, port: parseInt(v) || 0 })}
               type="number"
-              className="md:col-span-1"
             />
             <SensitiveInput
               label="Username"
@@ -152,7 +186,7 @@ export default function SettingsPage() {
                 <button
                   key={type}
                   type="button"
-                  onClick={() => setForm({ ...form, authType: type })}
+                  onClick={() => setForm({ ...form, authType: type as "key" | "password" })}
                   className={`px-4 py-2 text-xs font-mono border rounded-lg transition-colors ${
                     form.authType === type
                       ? "border-accent bg-accent/10 text-accent"
@@ -191,9 +225,7 @@ export default function SettingsPage() {
               onChange={(e) => setForm({ ...form, isLocal: e.target.checked })}
               className="w-4 h-4 accent-accent"
             />
-            <label htmlFor="isLocal" className="text-sm">
-              Running on VPS (local exec, no SSH)
-            </label>
+            <label htmlFor="isLocal" className="text-sm">Running on VPS (local exec, no SSH)</label>
           </div>
 
           <div className="flex gap-3 pt-2">
@@ -227,36 +259,30 @@ export default function SettingsPage() {
         </form>
       </div>
 
-      {/* Saved Configs */}
       {configs.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-6 mb-8">
-          <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">
-            Saved Connections
-          </h2>
+        <div className="bg-card border border-border rounded-xl p-6">
+          <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">Saved Connections</h2>
           <p className="text-[11px] text-muted/70 mb-4 leading-relaxed">
-            These are servers you <strong>switch between</strong> — not separate accounts. Exactly one
-            connection is <span className="text-accent font-mono">active</span> at a time, and every page
-            (dashboard, projects, containers, terminal) talks to whichever server is active. Switching
-            changes which server GroundControl controls; each server keeps its own filesystem paths below.
+            These are servers you <strong>switch between</strong> — not separate accounts. Exactly one connection is{" "}
+            <span className="text-accent font-mono">active</span> at a time, and every page targets whichever server is
+            active. Switching changes which server GroundControl controls.
           </p>
           <div className="space-y-3">
             {configs.map((config) => (
               <div
                 key={config.id}
                 className={`flex items-center justify-between py-3 px-4 rounded-lg border ${
-                  config.isActive
-                    ? "bg-accent/5 border-accent/40"
-                    : "bg-background/50 border-transparent"
+                  config.isActive ? "bg-accent/5 border-accent/40" : "bg-background/50 border-transparent"
                 }`}
               >
                 <div>
                   <div className="font-medium text-sm flex items-center gap-2">
                     {config.name}
-                    {config.isActive ? (
+                    {config.isActive && (
                       <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
                         active
                       </span>
-                    ) : null}
+                    )}
                   </div>
                   <div className="text-xs text-muted font-mono mt-0.5 flex items-center gap-1 flex-wrap">
                     <SensitiveField value={`${config.username}@${config.host}:${config.port}`} />
@@ -288,7 +314,6 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
-
           <ConfirmDelete
             open={!!deleteConfigTarget}
             resourceName={deleteConfigTarget?.name || ""}
@@ -298,58 +323,70 @@ export default function SettingsPage() {
           />
         </div>
       )}
-
-      {/* Change Password */}
-      <ChangePasswordSection />
-
-      {/* Database Backup / Restore */}
-      <BackupRestoreSection />
-
-      {/* System Paths */}
-      <SystemPathsSection />
-
-      {/* AI Configuration */}
-      <AIConfigSection />
-
-      {/* Admin: User Management */}
-      <UserManagementSection />
     </div>
   );
 }
 
-function SystemPathsSection() {
-  const [config, setConfig] = useState<any>(null);
+interface SystemConfig {
+  projectRoot: string;
+  caddySitesDir: string;
+  caddyFile: string;
+  nginxSitesDir: string;
+  nginxLogPath: string;
+  staticRoot: string;
+  sshDefaultCwd: string;
+  certDomain: string;
+  composeCommand: string | null;
+}
+
+function ServerLayoutTab() {
+  const [config, setConfig] = useState<SystemConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [detecting, setDetecting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<string>("");
   const [pickerPath, setPickerPath] = useState("/");
 
-  useEffect(() => {
-    function load() {
-      setLoading(true);
-      fetch("/api/system-config")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          setConfig(data);
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
-    }
-    load();
-    // Reload when the active VPS changes (paths are per-VPS).
-    window.addEventListener("gc:active-vps-changed", load);
-    return () => window.removeEventListener("gc:active-vps-changed", load);
+  const loadConfig = useCallback((showLoading = true) => {
+    if (showLoading) setLoading(true);
+    fetch("/api/system-config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        setConfig(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    fetch("/api/system-config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        setConfig(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    function onChange() {
+      loadConfig();
+    }
+    window.addEventListener("gc:active-vps-changed", onChange);
+    return () => window.removeEventListener("gc:active-vps-changed", onChange);
+  }, [loadConfig]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!config) return;
     setSaving(true);
     setResult(null);
+    setWarnings([]);
     try {
-      const res = await fetch("/api/system-config", {
+      const res = await fetch("/api/system-config?validate=1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -367,6 +404,7 @@ function SystemPathsSection() {
       const data = await res.json();
       if (res.ok) {
         setConfig(data);
+        setWarnings(data.warnings || []);
         setResult({ success: true, message: "System paths updated" });
       } else {
         setResult({ success: false, message: data.error || "Failed to update" });
@@ -375,6 +413,26 @@ function SystemPathsSection() {
       setResult({ success: false, message: "Network error" });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function autoDetect() {
+    setDetecting(true);
+    setResult(null);
+    setWarnings([]);
+    try {
+      const res = await fetch("/api/system-config/detect");
+      const data = await res.json();
+      if (res.ok) {
+        setConfig((prev) => ({ ...prev, ...data }));
+        setResult({ success: true, message: "Layout auto-detected from active VPS" });
+      } else {
+        setResult({ success: false, message: data.error || "Detection failed" });
+      }
+    } catch {
+      setResult({ success: false, message: "Network error" });
+    } finally {
+      setDetecting(false);
     }
   }
 
@@ -393,7 +451,7 @@ function SystemPathsSection() {
 
   if (loading) {
     return (
-      <div className="bg-card border border-border rounded-xl p-6 mt-8 animate-pulse">
+      <div className="bg-card border border-border rounded-xl p-6 animate-pulse">
         <div className="h-4 bg-border rounded w-1/3 mb-4" />
         <div className="h-8 bg-border rounded mb-2" />
         <div className="h-8 bg-border rounded" />
@@ -401,8 +459,8 @@ function SystemPathsSection() {
     );
   }
 
-  const fields = [
-    { key: "projectRoot", label: "Project Root", placeholder: "/opt", desc: "Base directory where your apps and projects are deployed (e.g. /opt, /var/www, /home/user/apps)" },
+  const fields: { key: keyof SystemConfig; label: string; placeholder: string; desc: string }[] = [
+    { key: "projectRoot", label: "Project Root", placeholder: "/opt", desc: "Base directory where your apps and projects are deployed" },
     { key: "caddySitesDir", label: "Caddy Sites Directory", placeholder: "/etc/caddy/sites", desc: "Directory containing individual Caddy site config files" },
     { key: "caddyFile", label: "Caddy Main Config", placeholder: "/etc/caddy/Caddyfile", desc: "Path to the main Caddyfile if sites are defined there instead of separate files" },
     { key: "nginxSitesDir", label: "Nginx Sites Directory", placeholder: "/etc/nginx/sites-available", desc: "Directory containing Nginx virtual host configs" },
@@ -410,23 +468,31 @@ function SystemPathsSection() {
     { key: "staticRoot", label: "Static Files Root", placeholder: "/var/www", desc: "Directory served for static websites and file hosting" },
     { key: "sshDefaultCwd", label: "SSH Default Working Directory", placeholder: "/root", desc: "Default directory when opening the terminal" },
     { key: "certDomain", label: "SSL Certificate Domain", placeholder: "yourdomain.com (optional)", desc: "Primary domain for SSL certificate generation and monitoring" },
-    { key: "composeCommand", label: "Docker Compose Command", placeholder: "auto", desc: "Override the docker compose command. Leave empty for auto-detect. Options: docker compose, docker-compose, podman-compose" },
+    { key: "composeCommand", label: "Docker Compose Command", placeholder: "auto", desc: "Override the docker compose command. Leave empty for auto-detect." },
   ];
 
   return (
-    <div className="bg-card border border-border rounded-xl p-6 mt-8">
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">
-        System Paths <span className="text-accent normal-case">(for the active VPS)</span>
-      </h2>
+    <div className="bg-card border border-border rounded-xl p-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
+          System Paths <span className="text-accent normal-case">(for the active VPS)</span>
+        </h2>
+        <button
+          onClick={autoDetect}
+          disabled={detecting}
+          className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded-lg hover:bg-accent/10 transition-colors disabled:opacity-50"
+        >
+          {detecting ? "Detecting..." : "Auto-detect from active VPS"}
+        </button>
+      </div>
       <p className="text-[11px] text-muted/70 mb-6 leading-relaxed max-w-2xl">
-        These paths describe the filesystem layout of the <strong>currently active</strong> server.
-        Each VPS keeps its own set, so a second server with a different layout (different project root,
-        Caddy/Nginx dirs, etc.) can be adapted independently — switch the active server above, then edit
-        its paths here.
+        These paths describe the filesystem layout of the <strong>currently active</strong> server. Each VPS keeps its
+        own set, so a second server with a different layout can be adapted independently.
       </p>
+
       <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {fields.map((f: any) => (
+          {fields.map((f) => (
             <div key={f.key}>
               <label className="block text-xs font-mono text-muted mb-1">{f.label}</label>
               <p className="text-[10px] text-muted/60 mb-1.5 leading-relaxed">{f.desc}</p>
@@ -434,7 +500,7 @@ function SystemPathsSection() {
                 <input
                   type="text"
                   value={config?.[f.key] || ""}
-                  onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                  onChange={(e) => setConfig((prev) => (prev ? { ...prev, [f.key]: e.target.value } : prev))}
                   placeholder={f.placeholder}
                   className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors font-mono"
                 />
@@ -452,6 +518,18 @@ function SystemPathsSection() {
             </div>
           ))}
         </div>
+
+        {warnings.length > 0 && (
+          <div className="p-3 rounded-lg text-sm bg-warning/10 border border-warning/30 text-warning">
+            <div className="font-medium mb-1">Warnings</div>
+            <ul className="list-disc pl-4 space-y-0.5">
+              {warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <button
           type="submit"
           disabled={saving}
@@ -487,13 +565,16 @@ interface ProviderState {
 }
 interface AiConfigStatus {
   provider: "openai" | "anthropic";
+  model: string;
+  envModel?: string;
   openai: ProviderState;
   anthropic: ProviderState;
 }
 
-function AIConfigSection() {
+function AIConfigTab() {
   const [status, setStatus] = useState<AiConfigStatus | null>(null);
   const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
+  const [model, setModel] = useState("");
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -502,6 +583,7 @@ function AIConfigSection() {
     if (!data) return;
     setStatus(data);
     if (data.provider) setProvider(data.provider);
+    if (data.model) setModel(data.model);
   }
 
   useEffect(() => {
@@ -510,12 +592,6 @@ function AIConfigSection() {
       .then(applyStatus)
       .catch(() => {});
   }, []);
-
-  const isAnthropic = provider === "anthropic";
-  const active = isAnthropic ? status?.anthropic : status?.openai;
-  const envVar = isAnthropic ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-  const placeholder = isAnthropic ? "sk-ant-..." : "sk-...";
-  const providerLabel = isAnthropic ? "Anthropic (Claude)" : "OpenAI";
 
   async function persist(payload: Record<string, unknown>, successMsg: string) {
     setSaving(true);
@@ -547,22 +623,29 @@ function AIConfigSection() {
     await persist({ provider: p }, `Switched to ${p === "anthropic" ? "Anthropic" : "OpenAI"}`);
   }
 
-  async function handleSave(e: React.FormEvent) {
+  async function saveModel() {
+    await persist({ model }, "Model saved");
+  }
+
+  async function handleSaveKey(e: React.FormEvent) {
     e.preventDefault();
-    const field = isAnthropic ? "anthropicApiKey" : "openaiApiKey";
-    const ok = await persist(
-      { provider, [field]: key || undefined },
-      key ? "API key saved" : "API key cleared"
-    );
+    const field = provider === "anthropic" ? "anthropicApiKey" : "openaiApiKey";
+    const ok = await persist({ provider, model, [field]: key || undefined }, key ? "API key saved" : "API key cleared");
     if (ok) setKey("");
   }
 
+  const isAnthropic = provider === "anthropic";
+  const active = isAnthropic ? status?.anthropic : status?.openai;
+  const envVar = isAnthropic ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  const placeholder = isAnthropic ? "sk-ant-..." : "sk-...";
+  const providerLabel = isAnthropic ? "Anthropic (Claude)" : "OpenAI";
+
   return (
-    <div className="bg-card border border-border rounded-xl p-6 mt-8">
+    <div className="bg-card border border-border rounded-xl p-6">
       <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">AI Configuration</h2>
-      <p className="text-[10px] text-muted/60 mb-6 leading-relaxed">
-        Choose the model provider that powers the GroundControl AI assistant and configure its API key.
-        Keys are encrypted at rest server-side. A matching environment variable ({envVar}) takes priority.
+      <p className="text-[11px] text-muted/60 mb-6 leading-relaxed">
+        Choose the model provider that powers the GroundControl AI assistant and configure its API key. Keys are
+        encrypted at rest server-side. A matching environment variable ({envVar}) takes priority.
       </p>
 
       {/* Provider selector */}
@@ -587,6 +670,32 @@ function AIConfigSection() {
         </div>
       </div>
 
+      {/* Model selector */}
+      <div className="mb-5">
+        <label className="block text-xs font-mono text-muted mb-1.5">Model</label>
+        <div className="flex gap-2 max-w-md">
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={isAnthropic ? "claude-3-5-sonnet-latest" : "gpt-4o-mini"}
+            className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors font-mono"
+          />
+          <button
+            onClick={saveModel}
+            disabled={saving || !model}
+            className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+          >
+            Save Model
+          </button>
+        </div>
+        {status?.envModel && (
+          <p className="text-[10px] text-muted/60 mt-1.5">
+            Env override active: {status.envModel} (clear env var to use file model)
+          </p>
+        )}
+      </div>
+
       <div className="flex items-center gap-2 mb-4">
         <div className={`w-2 h-2 rounded-full ${active?.configured || active?.hasEnvKey ? "bg-success" : "bg-error"}`} />
         <span className="text-xs font-mono">
@@ -598,7 +707,7 @@ function AIConfigSection() {
         </span>
       </div>
 
-      <form onSubmit={handleSave} className="space-y-3 max-w-md">
+      <form onSubmit={handleSaveKey} className="space-y-3 max-w-md">
         <div>
           <label className="block text-xs font-mono text-muted mb-1">{providerLabel} API Key</label>
           <input
@@ -633,6 +742,16 @@ function AIConfigSection() {
   );
 }
 
+function SecurityTab() {
+  return (
+    <div className="space-y-8">
+      <ChangePasswordSection />
+      <BackupRestoreSection />
+      <UserManagementSection />
+    </div>
+  );
+}
+
 function BackupRestoreSection() {
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -649,8 +768,8 @@ function BackupRestoreSection() {
       a.download = `groundcontrol-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setResult({ success: false, message: err.message });
+    } catch (err) {
+      setResult({ success: false, message: err instanceof Error ? err.message : "Backup failed" });
     }
   }
 
@@ -662,10 +781,7 @@ function BackupRestoreSection() {
     try {
       const formData = new FormData();
       formData.append("file", restoreFile);
-      const res = await fetch("/api/backup", {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch("/api/backup", { method: "POST", body: formData });
       const data = await res.json();
       if (res.ok) {
         setResult({ success: true, message: "Database restored. Refresh the page." });
@@ -681,20 +797,15 @@ function BackupRestoreSection() {
   }
 
   return (
-    <div className="bg-card border border-border rounded-xl p-6 mt-8">
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
-        Database Backup & Restore
-      </h2>
+    <div className="bg-card border border-border rounded-xl p-6">
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Database Backup & Restore</h2>
       <div className="space-y-4 max-w-md">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleBackup}
-            className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
-          >
-            Download Backup
-          </button>
-        </div>
-
+        <button
+          onClick={handleBackup}
+          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+        >
+          Download Backup
+        </button>
         <form onSubmit={handleRestore} className="space-y-3">
           <div>
             <label className="block text-xs font-mono text-muted mb-1.5">Restore from file</label>
@@ -745,6 +856,14 @@ function UserManagementSection() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    fetch("/api/auth/users")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setUsers(data))
+      .catch(() => setUsers([]));
+  }, [user]);
+
   async function fetchUsers() {
     try {
       const res = await fetch("/api/auth/users");
@@ -753,10 +872,6 @@ function UserManagementSection() {
       setUsers([]);
     }
   }
-
-  useEffect(() => {
-    if (user?.role === "admin") fetchUsers();
-  }, [user]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -806,11 +921,8 @@ function UserManagementSection() {
   if (!user || user.role !== "admin") return null;
 
   return (
-    <div className="bg-card border border-border rounded-xl p-6 mt-8">
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
-        User Management
-      </h2>
-
+    <div className="bg-card border border-border rounded-xl p-6">
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">User Management</h2>
       <form onSubmit={handleCreate} className="space-y-4 max-w-md mb-6">
         <div className="grid grid-cols-2 gap-4">
           <input
@@ -850,15 +962,10 @@ function UserManagementSection() {
 
       <div className="space-y-2">
         {users.map((u) => (
-          <div
-            key={u.id}
-            className="flex items-center justify-between py-2 px-3 bg-background/50 rounded-lg"
-          >
+          <div key={u.id} className="flex items-center justify-between py-2 px-3 bg-background/50 rounded-lg">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium">{u.username}</span>
-              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-border text-muted">
-                {u.role}
-              </span>
+              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-border text-muted">{u.role}</span>
             </div>
             {u.username !== user.username && (
               <button
@@ -926,9 +1033,7 @@ function ChangePasswordSection() {
 
   return (
     <div className="bg-card border border-border rounded-xl p-6">
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">
-        Change Password
-      </h2>
+      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Change Password</h2>
       <form onSubmit={handleChange} className="space-y-4 max-w-md">
         <SensitiveInput
           label="Current Password"
@@ -936,12 +1041,7 @@ function ChangePasswordSection() {
           onChange={setCurrentPassword}
           type="password"
         />
-        <SensitiveInput
-          label="New Password"
-          value={newPassword}
-          onChange={setNewPassword}
-          type="password"
-        />
+        <SensitiveInput label="New Password" value={newPassword} onChange={setNewPassword} type="password" />
         <SensitiveInput
           label="Confirm New Password"
           value={confirmPassword}

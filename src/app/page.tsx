@@ -9,10 +9,17 @@ export default function HomePage() {
   useEffect(() => {
     fetch("/api/auth/me")
       .then((res) => {
-        if (res.ok) {
-          router.push("/dashboard");
-        } else {
+        if (!res.ok) {
           router.push("/login");
+          return null;
+        }
+        return fetch("/api/vps").then((r) => (r.ok ? r.json() : []));
+      })
+      .then((configs) => {
+        if (configs && Array.isArray(configs) && configs.length === 0) {
+          router.push("/onboarding");
+        } else if (configs) {
+          router.push("/dashboard");
         }
       })
       .catch(() => router.push("/login"));

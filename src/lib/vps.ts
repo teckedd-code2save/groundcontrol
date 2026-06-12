@@ -7,6 +7,15 @@ import { decryptMaybe } from "./crypto";
 const execAsync = promisify(exec);
 const OS_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
 
+interface SshConfig {
+  host: string;
+  port: number;
+  username: string;
+  readyTimeout?: number;
+  privateKey?: string;
+  password?: string;
+}
+
 export function shQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -26,6 +35,10 @@ export interface VpsConnection {
   port: number;
   username: string;
   isLocal: boolean;
+  /** Optional inline credentials for transient connections (e.g. onboarding detect). */
+  privateKey?: string;
+  password?: string;
+  authType?: string;
 }
 
 const sshCache: Map<number, NodeSSH> = new Map();
@@ -75,32 +88,49 @@ export async function execOnVps(
   }
 
   // SSH mode
-  let ssh = sshCache.get(conn.id);
+  const isTransient = conn.id <= 0;
+  let ssh = isTransient ? undefined : sshCache.get(conn.id);
   if (!ssh) {
     ssh = new NodeSSH();
-    const config = await prisma.vpsConfig.findUnique({
-      where: { id: conn.id },
-    });
-    if (!config) throw new Error("VPS config not found");
 
-    const sshConfig: any = {
-      host: config.host,
-      port: config.port,
-      username: config.username,
+    let host = conn.host;
+    let port = conn.port;
+    let username = conn.username;
+    let authType = conn.authType || "key";
+    let privateKey = conn.privateKey;
+    let password = conn.password;
+
+    // For saved configs, load and decrypt stored credentials from the DB.
+    if (!isTransient) {
+      const config = await prisma.vpsConfig.findUnique({
+        where: { id: conn.id },
+      });
+      if (!config) throw new Error("VPS config not found");
+      host = config.host;
+      port = config.port;
+      username = config.username;
+      authType = config.authType;
+      privateKey = decryptMaybe(config.privateKey) || undefined;
+      password = decryptMaybe(config.password) || undefined;
+    }
+
+    const sshConfig: SshConfig = {
+      host,
+      port,
+      username,
       readyTimeout: 20000,
     };
 
-    // Secrets are stored encrypted at rest — decrypt only here, at connect time.
-    const privateKey = decryptMaybe(config.privateKey);
-    const password = decryptMaybe(config.password);
-    if (config.authType === "key" && privateKey) {
+    if (authType === "key" && privateKey) {
       sshConfig.privateKey = privateKey;
     } else if (password) {
       sshConfig.password = password;
     }
 
-    await ssh.connect(sshConfig);
-    sshCache.set(conn.id, ssh);
+    await ssh.connect(sshConfig as never);
+    if (!isTransient) {
+      sshCache.set(conn.id, ssh);
+    }
   }
 
   const result = await ssh.execCommand(withOsPath(command), { cwd: cwd || "/root" });
@@ -131,7 +161,7 @@ export async function testConnection(config: {
 
   const ssh = new NodeSSH();
   try {
-    const sshConfig: any = {
+    const sshConfig: SshConfig = {
       host: config.host,
       port: config.port,
       username: config.username,
@@ -142,7 +172,7 @@ export async function testConnection(config: {
     } else if (config.password) {
       sshConfig.password = config.password;
     }
-    await ssh.connect(sshConfig);
+    await ssh.connect(sshConfig as never);
     const result = await ssh.execCommand("hostname && whoami");
     await ssh.dispose();
     if (result.code === 0) {

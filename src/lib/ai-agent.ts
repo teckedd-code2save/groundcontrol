@@ -7,6 +7,7 @@ import {
   getSystemConfig,
   shQuote,
 } from "@/lib/vps";
+import { prisma } from "@/lib/prisma";
 
 /**
  * GroundControl AI agent tool set.
@@ -40,8 +41,8 @@ async function safeExec(command: string): Promise<string> {
     }
     if (err) return `[exit ${code}] ${err}`;
     return code === 0 ? "(no output)" : `[exit ${code}] (no output)`;
-  } catch (err: any) {
-    return `ERROR: could not reach the VPS or run the command: ${err?.message || String(err)}`;
+  } catch (err: unknown) {
+    return `ERROR: could not reach the VPS or run the command: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -49,8 +50,8 @@ async function safeExec(command: string): Promise<string> {
 async function guard(fn: () => Promise<string>): Promise<string> {
   try {
     return await fn();
-  } catch (err: any) {
-    return `ERROR: ${err?.message || String(err)}`;
+  } catch (err: unknown) {
+    return `ERROR: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -357,6 +358,64 @@ export const AGENT_TOOLS: AgentTool[] = [
         const refusal = checkDiagnosticCommand(command);
         if (refusal) return refusal;
         return safeExec(command);
+      }),
+  },
+  {
+    name: "synthesize_alerts",
+    description:
+      "Synthesize recent alerts, metrics, container state, and top processes into a concise operational summary with root-cause hypotheses and recommended actions. Read-only.",
+    parameters: {
+      type: "object",
+      properties: {
+        alertLimit: { type: "integer", description: "How many recent alerts to consider (default 10).", default: 10 },
+        metricLimit: { type: "integer", description: "How many recent metric snapshots to consider (default 20).", default: 20 },
+      },
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const alertLimit = Math.max(1, Math.min(50, Number(args?.alertLimit) || 10));
+        const metricLimit = Math.max(1, Math.min(100, Number(args?.metricLimit) || 20));
+
+        const [alerts, metrics, containers] = await Promise.all([
+          prisma.alert.findMany({ orderBy: { createdAt: "desc" }, take: alertLimit }),
+          prisma.metricSnapshot.findMany({ orderBy: { createdAt: "desc" }, take: metricLimit }),
+          getDockerContainers(),
+        ]);
+
+        const topMemCmd =
+          `ps -eo pid,comm,%mem,%cpu,rss --sort=-%mem 2>/dev/null | head -n 11 ` +
+          `|| ps -eo pid,comm,%mem,%cpu,rss 2>/dev/null | sort -k3 -nr | head -n 10 ` +
+          `|| ps aux 2>/dev/null | sort -k4 -nr | head -n 10`;
+        const topCpuCmd =
+          `ps -eo pid,comm,%cpu,%mem --sort=-%cpu 2>/dev/null | head -n 11 ` +
+          `|| ps -eo pid,comm,%cpu,%mem 2>/dev/null | sort -k3 -nr | head -n 10 ` +
+          `|| ps aux 2>/dev/null | sort -k3 -nr | head -n 10`;
+        const [topMem, topCpu] = await Promise.all([safeExec(topMemCmd), safeExec(topCpuCmd)]);
+
+        const unhealthy = containers.filter((c) => c.status.includes("unhealthy"));
+        const stopped = containers.filter((c) => c.state !== "running");
+
+        return JSON.stringify(
+          {
+            alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, message: a.message, read: a.read, createdAt: a.createdAt })),
+            metricsSummary: metrics.length
+              ? {
+                  latest: metrics[0],
+                  avgMemPercent: metrics.reduce((s, m) => s + m.memPercent, 0) / metrics.length,
+                  avgDiskPercent: metrics.reduce((s, m) => s + m.diskPercent, 0) / metrics.length,
+                  avgCpuLoad1: metrics.reduce((s, m) => s + m.cpuLoad1, 0) / metrics.length,
+                  maxUnhealthyContainers: Math.max(...metrics.map((m) => m.unhealthyContainers)),
+                }
+              : null,
+            containers: { total: containers.length, running: containers.filter((c) => c.state === "running").length, unhealthy: unhealthy.length, stopped: stopped.length, names: containers.map((c) => c.name) },
+            topMemoryProcesses: topMem,
+            topCpuProcesses: topCpu,
+          },
+          null,
+          2
+        );
       }),
   },
   // --- Mutating tools: never auto-execute. Require explicit confirmation. ----

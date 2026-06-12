@@ -34,11 +34,14 @@ No agents to install on managed hosts. No SaaS in the middle. No telemetry leavi
 | 🗺️ | **Live Topology** | Top-down graph: Internet → VPS Host → Caddy/Nginx → Sites → Containers, rendered with React Flow + Dagre. Click any node to inspect or act on it. |
 | 📦 | **Container Management** | List, start, stop, restart, remove, and tail logs for every Docker container. Destructive actions require a confirmation that explains the blast radius. |
 | 🗂️ | **Projects** | Folder-first view of everything under `/opt`, cross-referenced with Caddy sites and running compose stacks. |
+| 🚀 | **Smart Onboarding** | Step-by-step wizard that auto-detects OS, Docker, compose command, and server paths from a local or SSH connection. |
 | 🤖 | **AI Ops Assistant** | An embedded GPT-powered assistant that knows it's inside a VPS cockpit — ask it to interpret logs, debug a failing deploy, or explain a metric, in plain English. Streamed responses. |
-| 💻 | **Browser Terminal** | An xterm.js terminal wired to a real SSH session on the active host, with a blocked-command guard for the obviously dangerous stuff. |
+| 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, Tab autocomplete, helper chips, command history, and a full-screen mode. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures, with severity levels and an incident timeline. |
+| 🤖 | **AI Alert Synthesis** | Dashboard card that synthesizes recent alerts, metrics, and containers into a one-line summary and recommended actions. |
 | 📊 | **Metrics** | CPU load, memory, disk, and container health sampled into `MetricSnapshot` history and charted with Recharts. |
-| 🔀 | **Proxy / Caddy & Nginx** | Reads and validates reverse-proxy configs, maps sites to the containers that serve them, and can reload the proxy. |
+| 🔀 | **Services (Proxy / Containers / Projects)** | Unified services page with tabbed Containers, Reverse Proxy, and Projects sections. Original routes still work for bookmarks. |
+| ⚙️ | **Tabbed Settings** | Connections, Server Layout, AI, and Security grouped into tabs with auto-detect layout and model selection. |
 | 🛰️ | **Multi-VPS** | Register multiple hosts in `VpsConfig`; GroundControl talks to whichever is active. Manage a fleet, not just a box. |
 | 🔐 | **Auth built-in** | JWT cookie auth, bcrypt password hashing, login rate-limiting, and a guarded UI. |
 
@@ -162,7 +165,7 @@ groundcontrol.yourdomain.com {
 }
 ```
 
-Finally, open the dashboard, go to **Settings → VPS Connection**, and register the host (host, port, username, key/password). If GroundControl is running directly on the box, enable **Local Mode** so it skips SSH and execs commands directly.
+Finally, open the dashboard and follow the **onboarding wizard** to register the host (host, port, username, key/password). If GroundControl is running directly on the box, choose **This server** so it skips SSH and execs commands directly. You can add more servers anytime from the sidebar.
 
 ### What the compose file mounts (and why)
 
@@ -216,9 +219,9 @@ GroundControl is a from-scratch, full-stack DevOps product, not a tutorial clone
 ### 🛣️ Roadmap
 
 - [ ] Encrypted secrets at rest (`GROUNDCONTROL_SECRET`)
-- [ ] Configurable model selection for the AI assistant (`AI_MODEL`)
-- [ ] Runtime-configurable filesystem paths (drop the hardcoded `/opt`, `/etc/caddy/...`)
-- [ ] First-class multi-VPS switcher in the top nav
+- [x] Configurable model selection for the AI assistant (`AI_MODEL`)
+- [x] Runtime-configurable filesystem paths (per-VPS SystemConfig)
+- [x] First-class multi-VPS switcher in Settings + sidebar onboarding
 - [ ] Role-based access control beyond single-admin
 - [ ] One-click container/stack rollback from the topology view
 - [ ] Exportable metrics (Prometheus endpoint)

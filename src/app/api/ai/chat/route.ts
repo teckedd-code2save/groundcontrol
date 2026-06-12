@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { getActiveAi } from "@/lib/ai-config";
+import { getActiveAi, getAiModel } from "@/lib/ai-config";
 import {
   getTool,
   getOpenAIToolSchemas,
@@ -14,13 +14,12 @@ import Anthropic from "@anthropic-ai/sdk";
 export const dynamic = "force-dynamic";
 
 /**
- * Per-provider default model, each overridable via env so operators can pin a
- * model without code changes.
- *  - OpenAI:    AI_MODEL            (default gpt-4o)
- *  - Anthropic: AI_MODEL_ANTHROPIC  (default claude-opus-4-8 — current top Opus)
+ * Active model resolved from env vars > ai-config.json. The provider-specific
+ * value is chosen at request time so model overrides take effect immediately.
  */
-const OPENAI_MODEL = process.env.AI_MODEL || "gpt-4o";
-const ANTHROPIC_MODEL = process.env.AI_MODEL_ANTHROPIC || "claude-opus-4-8";
+function resolveModel() {
+  return getAiModel();
+}
 
 const MAX_TOOL_ITERATIONS = 6;
 const ANTHROPIC_MAX_TOKENS = 4096;
@@ -50,7 +49,7 @@ const SYSTEM_PROMPT =
   `answers in clean Markdown.`;
 
 type WireMessage = { role: string; content: string };
-type ConfirmedTool = { name: string; args: Record<string, any> };
+type ConfirmedTool = { name: string; args: Record<string, unknown> };
 
 const encoder = new TextEncoder();
 function sse(obj: unknown): Uint8Array {
@@ -93,9 +92,9 @@ export async function POST(req: NextRequest) {
             await runOpenAI(apiKey, history, confirmedTool, emit);
           }
           controller.close();
-        } catch (err: any) {
+        } catch (err: unknown) {
           try {
-            emit({ type: "error", error: err?.message || "AI request failed" });
+            emit({ type: "error", error: err instanceof Error ? err.message : "AI request failed" });
           } catch {
             // controller may already be closed
           }
@@ -115,8 +114,8 @@ export async function POST(req: NextRequest) {
         Connection: "keep-alive",
       },
     });
-  } catch (err: any) {
-    const msg = err?.message || "AI request failed";
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "AI request failed";
     const status = msg === "Unauthorized" ? 401 : 500;
     return NextResponse.json({ error: msg }, { status });
   }
@@ -163,7 +162,7 @@ async function runOpenAI(
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
+      model: resolveModel(),
       messages: convo,
       tools: toolSchemas,
       tool_choice: "auto",
@@ -187,7 +186,7 @@ async function runOpenAI(
     for (const call of toolCalls) {
       if (call.type !== "function") continue;
       const name = call.function.name;
-      let args: Record<string, any> = {};
+      let args: Record<string, unknown> = {};
       try {
         args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
       } catch {
@@ -229,7 +228,7 @@ async function runOpenAI(
   }
 
   const finalStream = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
+    model: resolveModel(),
     messages: convo,
     stream: true,
     temperature: 0.4,
@@ -281,7 +280,7 @@ async function runAnthropic(
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     const stream = anthropic.messages.stream({
-      model: ANTHROPIC_MODEL,
+      model: resolveModel(),
       max_tokens: ANTHROPIC_MAX_TOKENS,
       system: SYSTEM_PROMPT,
       tools,
@@ -312,7 +311,7 @@ async function runAnthropic(
 
     for (const use of toolUses) {
       const name = use.name;
-      const args = (use.input as Record<string, any>) || {};
+      const args = (use.input as Record<string, unknown>) || {};
       const tool = getTool(name);
 
       if (!tool) {

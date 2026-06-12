@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getActiveVps, getSystemConfig, invalidateSystemConfigCache } from "@/lib/vps";
+import { getActiveVps, getSystemConfig, invalidateSystemConfigCache, execOnVps } from "@/lib/vps";
 
 // Whitelist of editable path fields so a request can't set vpsConfigId/id directly.
 const PATH_FIELDS = [
@@ -15,12 +15,72 @@ const PATH_FIELDS = [
   "composeCommand",
 ] as const;
 
-function pickPathFields(data: any) {
-  const out: any = {};
-  for (const key of PATH_FIELDS) {
-    if (data[key] !== undefined) out[key] = data[key];
+type PathData = Partial<Record<(typeof PATH_FIELDS)[number], string | null>>;
+
+type SystemConfigInput = {
+  [K in (typeof PATH_FIELDS)[number]]: K extends "composeCommand" ? string | null : string | undefined;
+};
+
+function pickPathFields(data: unknown): PathData {
+  const out: PathData = {};
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    for (const key of PATH_FIELDS) {
+      if (record[key] !== undefined) out[key] = record[key] as string | null;
+    }
   }
   return out;
+}
+
+/** Convert nullable path data into Prisma-compatible input (null -> undefined for required fields). */
+function toPrismaData(data: PathData): SystemConfigInput {
+  const out: SystemConfigInput = {} as SystemConfigInput;
+  for (const key of PATH_FIELDS) {
+    const value = data[key];
+    if (key === "composeCommand") {
+      (out as Record<string, string | null>)[key] = value ?? null;
+    } else {
+      (out as Record<string, string | undefined>)[key] = value || undefined;
+    }
+  }
+  return out;
+}
+
+// Directories that should exist on the active VPS for the layout to be valid.
+const DIR_FIELDS = [
+  "projectRoot",
+  "caddySitesDir",
+  "nginxSitesDir",
+  "staticRoot",
+  "sshDefaultCwd",
+] as const;
+
+async function validateDirectories(data: PathData): Promise<string[]> {
+  const warnings: string[] = [];
+  let conn;
+  try {
+    conn = await getActiveVps();
+  } catch {
+    return ["No active VPS to validate paths against"];
+  }
+  if (!conn) return ["No active VPS to validate paths against"];
+
+  for (const key of DIR_FIELDS) {
+    const path = data[key];
+    if (!path || typeof path !== "string") continue;
+    try {
+      const result = await execOnVps(
+        `test -d '${path.replace(/'/g, `'\\''`)}' && echo yes || echo no`,
+        conn
+      );
+      if (result.stdout.trim() !== "yes") {
+        warnings.push(`${key}: ${path} does not exist on the active VPS`);
+      }
+    } catch {
+      warnings.push(`${key}: could not verify ${path}`);
+    }
+  }
+  return warnings;
 }
 
 export async function GET() {
@@ -28,14 +88,17 @@ export async function GET() {
     // Resolves the config for the active VPS (per-VPS filesystem layout).
     const config = await getSystemConfig();
     return NextResponse.json(config);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Server error" }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
     const data = pickPathFields(await req.json());
+    const prismaData = toPrismaData(data);
+    const { searchParams } = new URL(req.url);
+    const shouldValidate = searchParams.get("validate") === "1" || searchParams.get("validate") === "true";
 
     // Determine which VPS these paths belong to.
     let activeVpsId: number | null = null;
@@ -44,6 +107,11 @@ export async function POST(req: NextRequest) {
       activeVpsId = active?.id ?? null;
     } catch {
       activeVpsId = null;
+    }
+
+    let warnings: string[] = [];
+    if (shouldValidate) {
+      warnings = await validateDirectories(data);
     }
 
     let config;
@@ -56,7 +124,7 @@ export async function POST(req: NextRequest) {
         if (existing) {
           config = await prisma.systemConfig.update({
             where: { id: existing.id },
-            data: { ...data, updatedAt: new Date() },
+            data: { ...prismaData, updatedAt: new Date() },
           });
         } else {
           // Adopt a legacy global row for this VPS if present, else create new.
@@ -66,11 +134,11 @@ export async function POST(req: NextRequest) {
           if (globalRow) {
             config = await prisma.systemConfig.update({
               where: { id: globalRow.id },
-              data: { ...data, vpsConfigId: activeVpsId, updatedAt: new Date() },
+              data: { ...prismaData, vpsConfigId: activeVpsId, updatedAt: new Date() },
             });
           } else {
             config = await prisma.systemConfig.create({
-              data: { ...data, vpsConfigId: activeVpsId },
+              data: { ...prismaData, vpsConfigId: activeVpsId },
             });
           }
         }
@@ -80,19 +148,19 @@ export async function POST(req: NextRequest) {
         if (existing) {
           config = await prisma.systemConfig.update({
             where: { id: existing.id },
-            data: { ...data, updatedAt: new Date() },
+            data: { ...prismaData, updatedAt: new Date() },
           });
         } else {
-          config = await prisma.systemConfig.create({ data });
+          config = await prisma.systemConfig.create({ data: prismaData });
         }
       }
-    } catch (dbErr: any) {
+    } catch {
       // Table may not exist — return the submitted data as the effective config
-      config = { ...data, id: 0, updatedAt: new Date() };
+      config = { ...prismaData, id: 0, updatedAt: new Date() };
     }
     invalidateSystemConfigCache();
-    return NextResponse.json(config);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ ...config, warnings });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Server error" }, { status: 500 });
   }
 }

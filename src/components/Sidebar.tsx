@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, startTransition, useState } from "react";
+
+interface AlertItem {
+  read?: boolean;
+}
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: "◈" },
   { href: "/topology", label: "Topology", icon: "◐" },
-  { href: "/containers", label: "Containers", icon: "◉" },
-  { href: "/proxy", label: "Reverse Proxy", icon: "◫" },
-  { href: "/projects", label: "Projects", icon: "◆" },
-  { href: "/processes", label: "Processes", icon: "◍" },
-  { href: "/files", label: "Files", icon: "▤" },
+  { href: "/services", label: "Services", icon: "◉" },
   { href: "/terminal", label: "Terminal", icon: "⌘" },
   { href: "/alerts", label: "Alerts", icon: "◑" },
   { href: "/settings", label: "Settings", icon: "⚙" },
@@ -34,12 +34,12 @@ export function Sidebar() {
     if (!user) return;
     fetch("/api/alerts")
       .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setUnreadAlerts(data.filter((a: any) => !a.read).length))
+      .then((data) => setUnreadAlerts((data as AlertItem[]).filter((a) => !a.read).length))
       .catch(() => {});
     const interval = setInterval(() => {
       fetch("/api/alerts")
         .then((res) => (res.ok ? res.json() : []))
-        .then((data) => setUnreadAlerts(data.filter((a: any) => !a.read).length))
+        .then((data) => setUnreadAlerts((data as AlertItem[]).filter((a) => !a.read).length))
         .catch(() => {});
     }, 30000);
     return () => clearInterval(interval);
@@ -47,7 +47,7 @@ export function Sidebar() {
 
   // Close mobile menu on route change
   useEffect(() => {
-    setMobileOpen(false);
+    startTransition(() => setMobileOpen(false));
   }, [pathname]);
 
   if (!user) return null;
@@ -125,6 +125,14 @@ export function Sidebar() {
         </nav>
 
         <div className="p-4 border-t border-border space-y-3">
+          <Link
+            href="/onboarding"
+            className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+          >
+            <span>＋</span>
+            <span>Add Server</span>
+          </Link>
+
           {user && (
             <div className="flex items-center justify-between px-4 py-2">
               <span className="text-xs font-mono text-muted">{user.username}</span>

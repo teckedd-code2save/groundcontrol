@@ -52,6 +52,12 @@ interface Alert {
   createdAt: string;
 }
 
+interface SynthesisResult {
+  summary: string;
+  rootCauses: string[];
+  actions: string[];
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
@@ -60,6 +66,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
+  const [synthesis, setSynthesis] = useState<SynthesisResult | null>(null);
+  const [synthesisLoading, setSynthesisLoading] = useState(false);
+  const [synthesisError, setSynthesisError] = useState("");
 
   async function collectMetrics() {
     try {
@@ -87,21 +96,58 @@ export default function DashboardPage() {
       setContainers(containersData);
       setMetrics(metricsData.reverse());
       setAlerts(alertsData);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
   }
 
+  async function fetchSynthesis() {
+    setSynthesisLoading(true);
+    setSynthesisError("");
+    try {
+      const res = await fetch("/api/alerts/synthesize");
+      const data = await res.json();
+      if (res.ok) {
+        setSynthesis(data);
+      } else {
+        setSynthesisError(data.summary || "AI synthesis unavailable");
+      }
+    } catch (err: unknown) {
+      setSynthesisError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSynthesisLoading(false);
+    }
+  }
+
+  function investigateWithAi() {
+    const unread = alerts.filter((a) => !a.read);
+    const query =
+      unread.length > 0
+        ? `Investigate alerts: ${unread.map((a) => a.title).join(", ")}`
+        : synthesis?.summary
+          ? `Investigate: ${synthesis.summary}`
+          : "Investigate current system status";
+    window.dispatchEvent(new CustomEvent("gc:ai-chat-query", { detail: query }));
+  }
+
   useEffect(() => {
-    fetchData();
-    collectMetrics();
+    async function load() {
+      await fetchData();
+      await collectMetrics();
+      await fetchSynthesis();
+    }
+    load();
     const interval = setInterval(() => {
       fetchData();
       collectMetrics();
     }, 30000);
-    return () => clearInterval(interval);
+    const synthesisInterval = setInterval(fetchSynthesis, 60000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(synthesisInterval);
+    };
   }, []);
 
   const formatUptime = (seconds: number) => {
@@ -211,6 +257,63 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          {/* AI Summary */}
+          <div className="bg-card border border-border rounded-xl p-5 mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a10 10 0 1 0 10 10H12V2z" />
+                  <path d="M12 2a10 10 0 0 1 10 10" />
+                  <path d="M12 12L2.5 8.5" />
+                </svg>
+                <h2 className="text-sm font-mono uppercase tracking-wider text-muted">AI Summary</h2>
+              </div>
+              <button
+                onClick={investigateWithAi}
+                disabled={synthesisLoading && !synthesis}
+                className="text-xs font-mono px-3 py-1.5 border border-accent/30 text-accent rounded-lg hover:bg-accent/10 transition-colors disabled:opacity-50"
+              >
+                Investigate
+              </button>
+            </div>
+            {synthesisLoading && !synthesis ? (
+              <div className="space-y-2">
+                <div className="h-4 bg-border rounded w-3/4 animate-pulse" />
+                <div className="h-3 bg-border rounded w-1/2 animate-pulse" />
+              </div>
+            ) : synthesisError ? (
+              <p className="text-sm text-muted">{synthesisError}</p>
+            ) : synthesis ? (
+              <div>
+                <p className="text-sm font-medium leading-relaxed">{synthesis.summary}</p>
+                {(synthesis.rootCauses.length > 0 || synthesis.actions.length > 0) && (
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    {synthesis.rootCauses.length > 0 && (
+                      <div>
+                        <p className="font-mono text-muted mb-1 uppercase tracking-wider">Root Causes</p>
+                        <ul className="space-y-1 list-disc list-inside text-muted">
+                          {synthesis.rootCauses.map((c, i) => (
+                            <li key={i}>{c}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {synthesis.actions.length > 0 && (
+                      <div>
+                        <p className="font-mono text-muted mb-1 uppercase tracking-wider">Recommended Actions</p>
+                        <ul className="space-y-1 list-disc list-inside text-muted">
+                          {synthesis.actions.map((a, i) => (
+                            <li key={i}>{a}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
           {/* Intelligence Overview */}
           <div className="bg-card border border-border rounded-xl p-5 mb-8">
             <div className="flex items-center gap-2 mb-4">
