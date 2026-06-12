@@ -297,6 +297,14 @@ export default function TopologyFlow({
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance<Node<TopoNodeData>, Edge> | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => getDefaultExpanded(initialNodes, initialEdges));
 
+  // Recompute default expansion whenever the underlying graph changes (e.g. refetch).
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setExpandedNodes(getDefaultExpanded(initialNodes, initialEdges));
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [initialNodes, initialEdges]);
+
   const parentMap = useMemo(() => buildParentMap(initialEdges), [initialEdges]);
   const childToParent = useMemo(() => buildChildToParent(initialEdges), [initialEdges]);
 
