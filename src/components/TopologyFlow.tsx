@@ -235,7 +235,7 @@ function wrapGroups(nodes: Node<TopoNodeData>[]): Node<TopoNodeData>[] {
     if (children.length === 0) {
       group.width = 180;
       group.height = GROUP_HEADER_HEIGHT;
-      group.style = { ...group.style, width: 180, height: GROUP_HEADER_HEIGHT, zIndex: -1 };
+      group.style = { ...group.style, width: 180, height: GROUP_HEADER_HEIGHT };
       continue;
     }
 
@@ -264,7 +264,7 @@ function wrapGroups(nodes: Node<TopoNodeData>[]): Node<TopoNodeData>[] {
     };
     group.width = width;
     group.height = height;
-    group.style = { ...group.style, width, height, zIndex: -1 };
+    group.style = { ...group.style, width, height };
 
     for (const child of children) {
       child.position = {
