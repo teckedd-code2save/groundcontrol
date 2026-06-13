@@ -6,6 +6,10 @@ import {
   getContainerLogs,
   getSystemConfig,
   shQuote,
+  runDockerCompose,
+  runDockerComposeDown,
+  resolveComposeProjectPath,
+  getDockerContainerLabels,
 } from "@/lib/vps";
 import { prisma } from "@/lib/prisma";
 
@@ -418,7 +422,150 @@ export const AGENT_TOOLS: AgentTool[] = [
         );
       }),
   },
+  {
+    name: "read_compose_config",
+    description:
+      "Read the docker-compose.yml (and any compose override files) for a project. Use this BEFORE assuming which services a compose project declares or whether they are running.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Project directory name under the project root (e.g. 'perfume-emporio')." },
+      },
+      required: ["projectSlug"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim();
+        if (!slug) return "ERROR: projectSlug is required.";
+        const resolved = await resolveComposeProjectPath(slug);
+        const config = await getSystemConfig();
+        const root = config.projectRoot || "/opt";
+        const projectPath = resolved.projectPath || `${root}/${slug}`;
+        const files = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
+        for (const f of files) {
+          const path = `${projectPath}/${f}`;
+          const result = await safeExec(`cat ${shQuote(path)} 2>/dev/null`);
+          if (!result.startsWith("[exit") && !result.startsWith("ERROR:")) {
+            return `===== ${path} =====\n${result}`;
+          }
+        }
+        return `No docker-compose/compose file found in ${projectPath}.`;
+      }),
+  },
+  {
+    name: "list_project_containers",
+    description:
+      "List Docker containers that belong to a specific compose project or project directory. Use this to avoid hallucinating which containers belong to a project.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Project directory name or compose project name." },
+      },
+      required: ["projectSlug"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim().toLowerCase();
+        if (!slug) return "ERROR: projectSlug is required.";
+        const [containers, labels] = await Promise.all([getDockerContainers(), getDockerContainerLabels()]);
+        const labelMap = new Map(labels.map((l) => [l.name, l]));
+        const matches = containers.filter((c) => {
+          const info = labelMap.get(c.name);
+          const nameMatch = c.name.toLowerCase().startsWith(`${slug}-`) || c.name.toLowerCase().includes(slug);
+          const labelMatch =
+            (info?.project || "").toLowerCase() === slug ||
+            (info?.projectSlug || "").toLowerCase() === slug;
+          return nameMatch || labelMatch;
+        });
+        if (!matches.length) return `No containers found for project "${slug}".`;
+        return JSON.stringify(matches, null, 2);
+      }),
+  },
+  {
+    name: "compose_ps",
+    description:
+      "Show running/declared services for a compose project (equivalent to docker compose ps). Use to check which compose services are actually up.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Project directory name under the project root." },
+      },
+      required: ["projectSlug"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim();
+        if (!slug) return "ERROR: projectSlug is required.";
+        const resolved = await resolveComposeProjectPath(slug);
+        const result = await runDockerCompose(resolved.projectPath, "ps --all");
+        const out = result.stdout || "";
+        const err = result.stderr || "";
+        if (result.code !== 0) return `ERROR: docker compose ps failed (exit ${result.code}).\n${err || out}`;
+        return out || "(no services)";
+      }),
+  },
   // --- Mutating tools: never auto-execute. Require explicit confirmation. ----
+  {
+    name: "compose_up",
+    description:
+      "Create and start services declared in a docker-compose.yml (equivalent to docker compose up -d). MUTATING — requires explicit user confirmation before it runs. Use this when the user wants to start a project's compose services, NOT start_container.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Project directory name under the project root (e.g. 'perfume-emporio')." },
+        services: { type: "array", items: { type: "string" }, description: "Optional service names to start. If omitted, all services are started." },
+      },
+      required: ["projectSlug"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim();
+        if (!slug) return "ERROR: projectSlug is required.";
+        const resolved = await resolveComposeProjectPath(slug);
+        const services = Array.isArray(args?.services) ? args.services.map(String).filter(Boolean) : [];
+        const svcArg = services.length ? services.map(shQuote).join(" ") : "";
+        const result = await runDockerCompose(resolved.projectPath, `up -d ${svcArg}`.trim());
+        const out = result.stdout || "";
+        const err = result.stderr || "";
+        if (result.code !== 0) return `ERROR: docker compose up failed (exit ${result.code}).\n${err || out}`;
+        return out || `Compose services for ${slug} started.`;
+      }),
+  },
+  {
+    name: "compose_down",
+    description:
+      "Stop and remove services declared in a docker-compose.yml (equivalent to docker compose down). MUTATING — requires explicit user confirmation before it runs.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Project directory name under the project root." },
+        services: { type: "array", items: { type: "string" }, description: "Optional service names to stop/remove. If omitted, all services are stopped/removed." },
+      },
+      required: ["projectSlug"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim();
+        if (!slug) return "ERROR: projectSlug is required.";
+        const resolved = await resolveComposeProjectPath(slug);
+        const services = Array.isArray(args?.services) ? args.services.map(String).filter(Boolean) : [];
+        const result = await runDockerComposeDown(resolved.projectPath, services);
+        const out = result.stdout || "";
+        const err = result.stderr || "";
+        if (result.code !== 0) return `ERROR: docker compose down failed (exit ${result.code}).\n${err || out}`;
+        return out || `Compose services for ${slug} stopped.`;
+      }),
+  },
   {
     name: "restart_container",
     description:

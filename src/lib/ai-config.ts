@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { encryptIfNeeded, decryptMaybe } from "./crypto";
 
-const CONFIG_PATH = join(process.cwd(), "ai-config.json");
+// Persist AI config on the same volume as the SQLite DB so it survives redeploys.
+const CONFIG_PATH = join(process.cwd(), "prisma", "ai-config.json");
 
 export type AiProvider = "openai" | "anthropic";
 
