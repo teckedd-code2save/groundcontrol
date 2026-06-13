@@ -780,6 +780,7 @@ function SecurityTab() {
   return (
     <div className="space-y-8">
       <ChangePasswordSection />
+      <AuditLogSection />
       <BackupRestoreSection />
       <UserManagementSection />
     </div>
@@ -1031,6 +1032,112 @@ function UserManagementSection() {
         onConfirm={doDeleteUser}
         onCancel={() => setDeleteUserTarget(null)}
       />
+    </div>
+  );
+}
+
+interface AuditLog {
+  id: number;
+  userId: number;
+  action: string;
+  ip: string;
+  userAgent: string;
+  metadata: string;
+  createdAt: string;
+  user: { username: string };
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  login: "Signed in",
+  logout: "Signed out",
+  password_change: "Changed password",
+  login_failed: "Failed sign-in",
+  account_created: "Account created",
+};
+
+const ACTION_COLORS: Record<string, string> = {
+  login: "bg-success/15 text-success border-success/30",
+  logout: "bg-muted/40 text-muted border-border",
+  password_change: "bg-accent/15 text-accent border-accent/30",
+  login_failed: "bg-error/15 text-error border-error/30",
+  account_created: "bg-info/15 text-info border-info/30",
+};
+
+function AuditLogSection() {
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<string>("all");
+
+  useEffect(() => {
+    const url = filter === "all" ? "/api/audit-logs" : `/api/audit-logs?action=${filter}`;
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : { logs: [] }))
+      .then((data) => setLogs(data.logs || []))
+      .catch(() => setLogs([]))
+      .finally(() => setLoading(false));
+  }, [filter]);
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6">
+      <LoaderOverlay3D open={loading} variant="generic" title="Loading audit log..." />
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Authentication Audit Log</h2>
+        <select
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs font-mono outline-none focus:border-accent"
+        >
+          <option value="all">All events</option>
+          <option value="login">Sign-ins</option>
+          <option value="logout">Sign-outs</option>
+          <option value="password_change">Password changes</option>
+          <option value="login_failed">Failed sign-ins</option>
+        </select>
+      </div>
+      <p className="text-[11px] text-muted/70 mb-4 leading-relaxed">
+        Recent login, logout, and password-change events for this GroundControl instance.
+      </p>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left">
+              <th className="py-2 pr-4 text-[11px] font-mono uppercase text-muted">Time</th>
+              <th className="py-2 pr-4 text-[11px] font-mono uppercase text-muted">User</th>
+              <th className="py-2 pr-4 text-[11px] font-mono uppercase text-muted">Event</th>
+              <th className="py-2 pr-4 text-[11px] font-mono uppercase text-muted">IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="py-8 text-center text-xs text-muted">
+                  No audit events found.
+                </td>
+              </tr>
+            ) : (
+              logs.map((log) => (
+                <tr key={log.id} className="border-b border-border/50 last:border-0">
+                  <td className="py-3 pr-4 text-xs font-mono text-muted whitespace-nowrap">
+                    {new Date(log.createdAt).toLocaleString()}
+                  </td>
+                  <td className="py-3 pr-4 text-xs font-medium">{log.user?.username || "unknown"}</td>
+                  <td className="py-3 pr-4">
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[10px] font-mono uppercase ${
+                        ACTION_COLORS[log.action] || ACTION_COLORS.login
+                      }`}
+                    >
+                      {ACTION_LABELS[log.action] || log.action}
+                    </span>
+                  </td>
+                  <td className="py-3 pr-4 text-xs font-mono text-muted">{log.ip || "—"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

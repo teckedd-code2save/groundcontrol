@@ -14,18 +14,14 @@ interface OrbiterConfig {
   speed: number;
   size: number;
   color: THREE.Color;
-  shape: "box" | "icosahedron" | "octahedron";
   offset: number;
-  yPhase: number;
 }
 
 const ORBITERS: OrbiterConfig[] = [
-  { radius: 4.2, speed: 0.25, size: 0.35, color: ACCENT_SECONDARY, shape: "box", offset: 0, yPhase: 0.3 },
-  { radius: 5.5, speed: 0.18, size: 0.45, color: ACCENT, shape: "icosahedron", offset: 2.1, yPhase: 0.7 },
-  { radius: 6.8, speed: 0.12, size: 0.3, color: ACCENT_SECONDARY, shape: "octahedron", offset: 4.2, yPhase: 1.1 },
-  { radius: 5.0, speed: 0.22, size: 0.25, color: ACCENT, shape: "octahedron", offset: 5.0, yPhase: 0.5 },
-  { radius: 7.5, speed: 0.09, size: 0.4, color: ACCENT_SECONDARY, shape: "box", offset: 1.4, yPhase: 0.9 },
-  { radius: 3.5, speed: 0.35, size: 0.2, color: ACCENT, shape: "icosahedron", offset: 3.6, yPhase: 0.2 },
+  { radius: 3.8, speed: 0.12, size: 0.22, color: ACCENT_SECONDARY, offset: 0 },
+  { radius: 5.2, speed: 0.08, size: 0.32, color: ACCENT, offset: 1.8 },
+  { radius: 6.5, speed: 0.05, size: 0.18, color: ACCENT_SECONDARY, offset: 3.6 },
+  { radius: 4.6, speed: 0.09, size: 0.14, color: ACCENT, offset: 5.2 },
 ];
 
 function mulberry32(seed: number) {
@@ -44,12 +40,11 @@ function ControlNode() {
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
     if (meshRef.current) {
-      meshRef.current.rotation.y = t * 0.15;
-      meshRef.current.rotation.x = Math.sin(t * 0.4) * 0.08;
+      meshRef.current.rotation.y = t * 0.08;
+      meshRef.current.rotation.x = Math.sin(t * 0.25) * 0.05;
     }
     if (ringRef.current) {
-      ringRef.current.rotation.z = t * 0.08;
-      ringRef.current.rotation.x = Math.sin(t * 0.2) * 0.15;
+      ringRef.current.rotation.z = t * 0.04;
     }
   });
 
@@ -60,18 +55,18 @@ function ControlNode() {
         <meshStandardMaterial
           color={ACCENT}
           emissive={ACCENT}
-          emissiveIntensity={1.2}
+          emissiveIntensity={0.9}
           roughness={0.2}
           metalness={0.9}
         />
       </mesh>
       <mesh ref={ringRef}>
-        <torusGeometry args={[1.6, 0.015, 16, 128]} />
-        <meshBasicMaterial color={ACCENT} transparent opacity={0.35} />
+        <torusGeometry args={[1.55, 0.012, 16, 128]} />
+        <meshBasicMaterial color={ACCENT} transparent opacity={0.25} />
       </mesh>
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[2.2, 0.01, 16, 128]} />
-        <meshBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.2} />
+        <torusGeometry args={[2.1, 0.008, 16, 128]} />
+        <meshBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.12} />
       </mesh>
     </group>
   );
@@ -82,32 +77,21 @@ function OrbiterNode({ config }: { config: OrbiterConfig }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
 
-  const geometry = useMemo(() => {
-    switch (config.shape) {
-      case "box":
-        return new THREE.BoxGeometry(config.size, config.size, config.size);
-      case "icosahedron":
-        return new THREE.IcosahedronGeometry(config.size, 0);
-      case "octahedron":
-        return new THREE.OctahedronGeometry(config.size, 0);
-    }
-  }, [config.shape, config.size]);
-
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
     if (groupRef.current) {
       const angle = t * config.speed + config.offset;
       const x = Math.cos(angle) * config.radius;
       const z = Math.sin(angle) * config.radius;
-      const y = Math.sin(t * config.yPhase) * 0.6;
+      const y = Math.sin(t * 0.15 + config.offset) * 0.35;
       groupRef.current.position.set(x, y, z);
       groupRef.current.lookAt(0, 0, 0);
     }
     if (meshRef.current) {
-      meshRef.current.rotation.x += 0.01;
-      meshRef.current.rotation.y += 0.015;
-      const targetScale = hovered ? 1.6 : 1;
-      meshRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+      meshRef.current.rotation.x += 0.005;
+      meshRef.current.rotation.y += 0.008;
+      const targetScale = hovered ? 1.5 : 1;
+      meshRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.08);
     }
   });
 
@@ -115,27 +99,18 @@ function OrbiterNode({ config }: { config: OrbiterConfig }) {
     <group ref={groupRef}>
       <mesh
         ref={meshRef}
-        geometry={geometry}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
+        <icosahedronGeometry args={[config.size, 0]} />
         <meshStandardMaterial
           color={config.color}
           emissive={config.color}
-          emissiveIntensity={hovered ? 1.2 : 0.4}
+          emissiveIntensity={hovered ? 0.9 : 0.35}
           roughness={0.3}
           metalness={0.7}
         />
       </mesh>
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            args={[new Float32Array([0, 0, 0, -config.radius, 0, 0]), 3]}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color={config.color} transparent opacity={0.15} />
-      </line>
     </group>
   );
 }
@@ -160,12 +135,12 @@ function ConnectionLines() {
 
   return (
     <lineSegments geometry={geometry}>
-      <lineBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.08} />
+      <lineBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.06} />
     </lineSegments>
   );
 }
 
-function ParticleField({ count = 250 }: { count?: number }) {
+function ParticleField({ count = 120 }: { count?: number }) {
   const geometry = useMemo(() => {
     const positions = new Float32Array(count * 3);
     const rand = mulberry32(42);
@@ -186,18 +161,17 @@ function ParticleField({ count = 250 }: { count?: number }) {
 
   useFrame(({ clock }) => {
     if (ref.current) {
-      ref.current.rotation.y = clock.getElapsedTime() * 0.02;
-      ref.current.rotation.x = Math.sin(clock.getElapsedTime() * 0.05) * 0.05;
+      ref.current.rotation.y = clock.getElapsedTime() * 0.01;
     }
   });
 
   return (
     <points ref={ref} geometry={geometry}>
       <pointsMaterial
-        size={0.05}
+        size={0.04}
         color={ACCENT_SECONDARY}
         transparent
-        opacity={0.5}
+        opacity={0.35}
         sizeAttenuation
       />
     </points>
@@ -210,26 +184,26 @@ function Scene({ mouseRef }: { mouseRef: React.RefObject<{ x: number; y: number 
 
   useFrame((state) => {
     if (groupRef.current && mouseRef.current) {
-      target.current.x += (mouseRef.current.x * 1.2 - target.current.x) * 0.04;
-      target.current.y += (mouseRef.current.y * 0.8 - target.current.y) * 0.04;
+      target.current.x += (mouseRef.current.x * 0.8 - target.current.x) * 0.03;
+      target.current.y += (mouseRef.current.y * 0.5 - target.current.y) * 0.03;
       groupRef.current.position.x = target.current.x;
       groupRef.current.position.y = target.current.y;
-      groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.015;
+      groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.008;
     }
   });
 
   return (
     <group ref={groupRef}>
-      <PerspectiveCamera makeDefault position={[0, 0, 14]} fov={45} />
-      <ambientLight intensity={0.3} />
-      <pointLight position={[10, 10, 10]} intensity={1.5} color={ACCENT} />
-      <pointLight position={[-10, -10, -5]} intensity={1} color={ACCENT_SECONDARY} />
+      <PerspectiveCamera makeDefault position={[0, 0, 13]} fov={48} />
+      <ambientLight intensity={0.25} />
+      <pointLight position={[6, 6, 8]} intensity={1.2} color={ACCENT} />
+      <pointLight position={[-6, -4, -4]} intensity={0.8} color={ACCENT_SECONDARY} />
       <ControlNode />
       {ORBITERS.map((config, i) => (
         <OrbiterNode key={i} config={config} />
       ))}
       <ConnectionLines />
-      <ParticleField count={250} />
+      <ParticleField count={120} />
     </group>
   );
 }
@@ -257,7 +231,7 @@ export default function LoginHero3D() {
         }}
       >
         <color attach="background" args={[BG]} />
-        <fog attach="fog" args={[BG, 15, 40]} />
+        <fog attach="fog" args={[BG, 16, 42]} />
         <Scene mouseRef={mouseRef} />
       </Canvas>
     </div>

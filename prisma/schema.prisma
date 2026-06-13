@@ -15,6 +15,23 @@ model User {
   forcePasswordChange Boolean @default(false)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+
+  auditLogs AuditLog[]
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  action      String   // login | logout | password_change | login_failed
+  ip          String   @default("")
+  userAgent   String   @default("")
+  metadata    String   @default("") // JSON string for extra context
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
 }
 
 model VpsConfig {

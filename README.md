@@ -167,29 +167,7 @@ printf 'JWT_SECRET="%s"\n' "$(openssl rand -hex 32)" > .env
 docker compose up -d
 ```
 
-Then put it behind your reverse proxy. Example Caddy site:
-
-```caddy
-groundcontrol.yourdomain.com {
-    reverse_proxy localhost:3003
-}
-```
-
-Open the dashboard and follow the onboarding wizard to register the host. If GroundControl is running directly on the box, choose **This server** so it skips SSH and execs commands directly. You can add more servers anytime from Settings.
-
-### Compose mounts
-
-```yaml
-volumes:
-  - groundcontrol-db:/app/prisma            # SQLite DB (persists)
-  - /var/run/docker.sock:/var/run/docker.sock  # Run docker on the host
-  - /opt:/opt                               # Your projects
-  - /etc:/etc                               # Caddy/Nginx configs
-  - /var/www:/var/www                       # Static site roots (optional)
-  - /root/.ssh:/root/.ssh:ro                # SSH key auth scanning (optional)
-```
-
-> ⚠️ Some paths (`/opt`, `/etc/caddy/sites/*.caddy`, SSL cert domains in the health-score route) are still **hardcoded in source**. If your layout differs, see the [adaptation guide in CONTRIBUTING.md](./CONTRIBUTING.md).
+Then put it behind Caddy or Nginx with SSL. For the full walkthrough — domain, DNS, Caddy, Cloudflare, first-run setup, and updates — see **[DEPLOY.md](./DEPLOY.md)**.
 
 ### Deploy via CI/CD
 
@@ -207,9 +185,11 @@ The repo ships a GitHub Actions workflow that builds the image, pushes it to GHC
 GroundControl runs commands on your servers. Treat it like the powerful tool it is.
 
 - **Authentication** — every API route is guarded by a JWT cookie (`gc_token`, httpOnly, `secure` in production, 7-day expiry). Passwords are bcrypt-hashed (cost 12). Login is rate-limited (5 attempts / 15 min per IP).
+- **Strong passwords** — first-run setup and password changes enforce a 12-character minimum with uppercase, lowercase, number, and symbol.
+- **Audit log** — login, logout, password-change, and failed sign-in events are recorded with IP and timestamp. Admins can review them in **Settings → Security → Authentication Audit Log**.
 - **Secrets at rest** — VPS keys and passwords are stored in SQLite. **Protect the database file** and run GroundControl only on a host you control. Cloudflare account tokens are encrypted at rest using `encryptCloudflareToken`.
 - **Blast radius** — the container mounts `/etc` read-write, so it can read and potentially modify host system configs. The browser terminal has a blocked-command guard, but you are effectively root on the managed host.
-- **Never expose it publicly without a reverse proxy + strong credentials.** Run behind HTTPS, change the seeded admin password on first login, and prefer key-based SSH auth over passwords.
+- **Never expose it publicly without a reverse proxy + strong credentials.** Run behind HTTPS, prefer key-based SSH auth over passwords, and review the audit log regularly.
 
 Full responsible-disclosure policy and threat model: [SECURITY.md](./SECURITY.md).
 
@@ -246,6 +226,7 @@ Dev setup, project structure map, code conventions, and how to add a page or API
 
 ## 📚 Docs
 
+- [DEPLOY.md](./DEPLOY.md) — full self-deployment guide (VPS, domain, Caddy, SSL, Cloudflare)
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup & project map
 - [SECURITY.md](./SECURITY.md) — disclosure policy & threat model
 - [docs/DEMO.md](./docs/DEMO.md) — click-by-click demo recording script

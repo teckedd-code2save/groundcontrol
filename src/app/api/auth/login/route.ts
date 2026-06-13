@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { setAuthCookie } from "@/lib/auth";
+import { createAuditLog, getClientInfo } from "@/lib/audit";
 
 // Simple in-memory rate limiter: ip -> { attempts, resetAt }
 const loginAttempts = new Map<string, { attempts: number; resetAt: number }>();
@@ -42,16 +43,23 @@ export async function POST(req: NextRequest) {
 
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user) {
+      const { ip: clientIp, userAgent } = getClientInfo(req);
+      await prisma.auditLog.create({
+        data: { userId: 0, action: "login_failed", ip: clientIp, userAgent, metadata: JSON.stringify({ username }) },
+      }).catch(() => {});
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
+      await createAuditLog(user.id, "login_failed", req, { username });
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
     // Reset attempts on successful login
     loginAttempts.delete(ip);
+
+    await createAuditLog(user.id, "login", req, { username, forcePasswordChange: user.forcePasswordChange });
 
     const response = NextResponse.json({
       success: true,
@@ -59,7 +67,8 @@ export async function POST(req: NextRequest) {
       forcePasswordChange: user.forcePasswordChange,
     });
     return setAuthCookie(response, { id: user.id, username: user.username, role: user.role });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

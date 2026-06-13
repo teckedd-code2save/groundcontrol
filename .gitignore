@@ -43,6 +43,7 @@ next-env.d.ts
 /src/generated/prisma
 dev.db
 *.db
+*.db-journal
 
 # Claude Code agent worktrees
 .claude/worktrees/

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { requireAuth, validatePassword } from "@/lib/auth";
+import { createAuditLog } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,11 +34,14 @@ export async function POST(req: NextRequest) {
       data: { password: hash, forcePasswordChange: false },
     });
 
+    await createAuditLog(user.id, "password_change", req);
+
     return NextResponse.json({ success: true });
-  } catch (err: any) {
-    if (err.message === "Unauthorized") {
+  } catch (err) {
+    if (err instanceof Error && err.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
