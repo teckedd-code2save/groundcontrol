@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { ContainerIcon, getContainerType, getContainerTypeLabel } from "@/components/TopoIcons";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ActionConfirm } from "@/components/ActionConfirm";
 
 interface CaddySite {
@@ -282,17 +283,21 @@ export function ProjectsPanel() {
   }, [projects]);
 
   if (loading) {
-    return (
-      <div className="animate-pulse space-y-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-48 bg-card border border-border rounded-xl" />
-        ))}
-      </div>
-    );
+    return <LoaderOverlay3D open={loading} variant="project" title="Loading projects..." />;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      <LoaderOverlay3D
+        open={!!composeAction}
+        variant="compose"
+        title={composeAction ? `Running compose ${composeAction.type}...` : "Running compose..."}
+      />
+      <LoaderOverlay3D
+        open={!!deploying}
+        variant="deploy"
+        title={deploying ? `Deploying ${deploying}...` : "Deploying..."}
+      />
       {error && (
         <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono flex items-start justify-between">
           <span>{error}</span>
@@ -339,7 +344,6 @@ export function ProjectsPanel() {
                     )
                   );
                 const selected = selectedServicesFor(project.slug);
-                const isActing = composeAction?.slug === project.slug;
 
                 return (
                   <div
@@ -379,21 +383,21 @@ export function ProjectsPanel() {
                           disabled={!!composeAction}
                           className="px-3 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded-lg hover:bg-success/20 transition-colors disabled:opacity-50"
                         >
-                          {isActing && composeAction?.type === "up" ? "Starting…" : "Up"}
+                          Up
                         </button>
                         <button
                           onClick={() => setConfirmCompose({ slug: project.slug, type: "down" })}
                           disabled={!!composeAction}
                           className="px-3 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded-lg hover:bg-warning/20 transition-colors disabled:opacity-50"
                         >
-                          {isActing && composeAction?.type === "down" ? "Stopping…" : "Down"}
+                          Down
                         </button>
                         <button
                           onClick={() => setConfirmDeploy(project.slug)}
                           disabled={deploying === project.slug}
                           className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
                         >
-                          {deploying === project.slug ? "Deploying…" : "Redeploy"}
+                          Redeploy
                         </button>
                       </div>
                     </div>
@@ -449,7 +453,13 @@ export function ProjectsPanel() {
                                     title="Select service"
                                   />
                                   <div className="min-w-0">
-                                    <div className="text-xs font-mono truncate">{svc.name}</div>
+                                    <div className="flex items-center gap-1.5">
+                                      <ContainerIcon
+                                        className="w-3.5 h-3.5"
+                                        type={getContainerType(svc.name, svc.image || "")}
+                                      />
+                                      <div className="text-xs font-mono truncate">{svc.name}</div>
+                                    </div>
                                     <div className="text-[10px] text-muted font-mono truncate">
                                       {svc.image || (svc.build ? "build" : "no image")}
                                       {svc.ports && svc.ports.length > 0 ? ` · :${svc.ports[0]}` : ""}

@@ -7,6 +7,7 @@ import type { TopologyFilters } from "@/components/TopologyFlow";
 import { linkSitesToContainers, buildProjectTopology } from "@/lib/topology";
 import type { ScannedProjectLite, Site } from "@/lib/topology";
 import type { TopoNodeData } from "@/components/TopoNode";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 
 interface CaddySite {
   domain: string;
@@ -191,12 +192,10 @@ export default function TopologyPage() {
         )}
       </div>
 
+      <LoaderOverlay3D open={loading && nodes.length === 0} variant="project" title="Mapping infrastructure..." />
+
       <div className="flex-1 bg-card border border-border rounded-xl relative overflow-hidden">
-        {loading && nodes.length === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="animate-pulse text-muted text-sm font-mono">Mapping infrastructure...</div>
-          </div>
-        ) : nodes.length === 0 ? (
+        {loading && nodes.length === 0 ? null : nodes.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center text-center px-6">
             <div className="text-muted text-sm font-mono">
               {view === "projects"

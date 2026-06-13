@@ -6,6 +6,7 @@ import { ConfirmDelete } from "@/components/ConfirmDelete";
 import VpsFilePicker from "@/components/VpsFilePicker";
 import CloudflareSettingsTab from "@/components/CloudflareSettingsTab";
 import AlertSettingsTab from "@/components/AlertSettingsTab";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 
 interface VpsConfig {
   id: number;
@@ -92,6 +93,8 @@ function ConnectionsTab() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [deleteConfigTarget, setDeleteConfigTarget] = useState<VpsConfig | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/vps")
@@ -102,23 +105,28 @@ function ConnectionsTab() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await fetch("/api/vps", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    setForm({
-      name: "",
-      host: "",
-      port: 22,
-      username: "",
-      privateKey: "",
-      password: "",
-      authType: "key",
-      isLocal: false,
-    });
-    const refreshed = await fetch("/api/vps").then((r) => (r.ok ? r.json() : []));
-    setConfigs(refreshed);
+    setSubmitting(true);
+    try {
+      await fetch("/api/vps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      setForm({
+        name: "",
+        host: "",
+        port: 22,
+        username: "",
+        privateKey: "",
+        password: "",
+        authType: "key",
+        isLocal: false,
+      });
+      const refreshed = await fetch("/api/vps").then((r) => (r.ok ? r.json() : []));
+      setConfigs(refreshed);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function testConnection() {
@@ -144,23 +152,34 @@ function ConnectionsTab() {
 
   async function doDeleteConfig() {
     if (!deleteConfigTarget) return;
-    await fetch(`/api/vps?id=${deleteConfigTarget.id}`, { method: "DELETE" });
-    setDeleteConfigTarget(null);
-    await refreshConfigs();
+    setActionLoading(true);
+    try {
+      await fetch(`/api/vps?id=${deleteConfigTarget.id}`, { method: "DELETE" });
+      setDeleteConfigTarget(null);
+      await refreshConfigs();
+    } finally {
+      setActionLoading(false);
+    }
   }
 
   async function activateConfig(id: number) {
-    await fetch("/api/vps/activate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    await refreshConfigs();
-    window.dispatchEvent(new CustomEvent("gc:active-vps-changed"));
+    setActionLoading(true);
+    try {
+      await fetch("/api/vps/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      await refreshConfigs();
+      window.dispatchEvent(new CustomEvent("gc:active-vps-changed"));
+    } finally {
+      setActionLoading(false);
+    }
   }
 
   return (
     <div className="space-y-8">
+      <LoaderOverlay3D open={testing || submitting || actionLoading} variant="generic" title={testing ? "Testing connection..." : submitting ? "Saving connection..." : "Updating connections..."} />
       <div className="bg-card border border-border rounded-xl p-6">
         <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Add VPS Connection</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -251,11 +270,12 @@ function ConnectionsTab() {
               disabled={testing}
               className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
             >
-              {testing ? "Testing..." : "Test Connection"}
+              Test Connection
             </button>
             <button
               type="submit"
-              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+              disabled={submitting}
+              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
             >
               Save Connection
             </button>
@@ -467,11 +487,7 @@ function ServerLayoutTab() {
 
   if (loading) {
     return (
-      <div className="bg-card border border-border rounded-xl p-6 animate-pulse">
-        <div className="h-4 bg-border rounded w-1/3 mb-4" />
-        <div className="h-8 bg-border rounded mb-2" />
-        <div className="h-8 bg-border rounded" />
-      </div>
+      <LoaderOverlay3D open={loading} variant="generic" title="Loading server layout..." />
     );
   }
 
@@ -489,6 +505,7 @@ function ServerLayoutTab() {
 
   return (
     <div className="bg-card border border-border rounded-xl p-6">
+      <LoaderOverlay3D open={detecting || saving} variant="generic" title={detecting ? "Detecting server layout..." : "Saving paths..."} />
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
           System Paths <span className="text-accent normal-case">(for the active VPS)</span>
@@ -498,7 +515,7 @@ function ServerLayoutTab() {
           disabled={detecting}
           className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded-lg hover:bg-accent/10 transition-colors disabled:opacity-50"
         >
-          {detecting ? "Detecting..." : "Auto-detect from active VPS"}
+          Auto-detect from active VPS
         </button>
       </div>
       <p className="text-[11px] text-muted/70 mb-6 leading-relaxed max-w-2xl">
@@ -551,7 +568,7 @@ function ServerLayoutTab() {
           disabled={saving}
           className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
         >
-          {saving ? "Saving..." : "Save Paths"}
+          Save Paths
         </button>
         {result && (
           <div
@@ -658,6 +675,7 @@ function AIConfigTab() {
 
   return (
     <div className="bg-card border border-border rounded-xl p-6">
+      <LoaderOverlay3D open={saving} variant="generic" title="Saving AI configuration..." />
       <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">AI Configuration</h2>
       <p className="text-[11px] text-muted/60 mb-6 leading-relaxed">
         Choose the model provider that powers the GroundControl AI assistant and configure its API key. Keys are
@@ -740,7 +758,7 @@ function AIConfigTab() {
           disabled={saving}
           className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
         >
-          {saving ? "Saving..." : "Save API Key"}
+          Save API Key
         </button>
         {result && (
           <div
@@ -772,8 +790,10 @@ function BackupRestoreSection() {
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
 
   async function handleBackup() {
+    setBackingUp(true);
     try {
       const res = await fetch("/api/backup");
       if (!res.ok) throw new Error("Backup failed");
@@ -786,6 +806,8 @@ function BackupRestoreSection() {
       window.URL.revokeObjectURL(url);
     } catch (err) {
       setResult({ success: false, message: err instanceof Error ? err.message : "Backup failed" });
+    } finally {
+      setBackingUp(false);
     }
   }
 
@@ -814,11 +836,13 @@ function BackupRestoreSection() {
 
   return (
     <div className="bg-card border border-border rounded-xl p-6">
+      <LoaderOverlay3D open={loading || backingUp} variant="generic" title={backingUp ? "Creating backup..." : "Restoring database..."} />
       <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Database Backup & Restore</h2>
       <div className="space-y-4 max-w-md">
         <button
           onClick={handleBackup}
-          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+          disabled={backingUp}
+          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
         >
           Download Backup
         </button>
@@ -837,7 +861,7 @@ function BackupRestoreSection() {
             disabled={!restoreFile || loading}
             className="px-4 py-2 text-xs font-mono bg-error/10 border border-error/30 text-error rounded-lg hover:bg-error/20 transition-colors disabled:opacity-50"
           >
-            {loading ? "Restoring..." : "Restore Database"}
+            Restore Database
           </button>
           {result && (
             <div
@@ -864,6 +888,7 @@ function UserManagementSection() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const [deleteUserTarget, setDeleteUserTarget] = useState<{ id: number; username: string } | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -925,11 +950,14 @@ function UserManagementSection() {
 
   async function doDeleteUser() {
     if (!deleteUserTarget) return;
+    setDeleteLoading(true);
     try {
       const res = await fetch(`/api/auth/users?id=${deleteUserTarget.id}`, { method: "DELETE" });
       if (res.ok) fetchUsers();
     } catch {
       // ignore
+    } finally {
+      setDeleteLoading(false);
     }
     setDeleteUserTarget(null);
   }
@@ -938,6 +966,7 @@ function UserManagementSection() {
 
   return (
     <div className="bg-card border border-border rounded-xl p-6">
+      <LoaderOverlay3D open={loading || deleteLoading} variant="generic" title={deleteLoading ? "Deleting user..." : "Creating user..."} />
       <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">User Management</h2>
       <form onSubmit={handleCreate} className="space-y-4 max-w-md mb-6">
         <div className="grid grid-cols-2 gap-4">
@@ -961,7 +990,7 @@ function UserManagementSection() {
           disabled={loading}
           className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
         >
-          {loading ? "Creating..." : "Create User"}
+          Create User
         </button>
         {result && (
           <div
@@ -1049,6 +1078,7 @@ function ChangePasswordSection() {
 
   return (
     <div className="bg-card border border-border rounded-xl p-6">
+      <LoaderOverlay3D open={loading} variant="generic" title="Updating password..." />
       <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Change Password</h2>
       <form onSubmit={handleChange} className="space-y-4 max-w-md">
         <SensitiveInput
@@ -1069,7 +1099,7 @@ function ChangePasswordSection() {
           disabled={loading}
           className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
         >
-          {loading ? "Updating..." : "Update Password"}
+          Update Password
         </button>
         {result && (
           <div

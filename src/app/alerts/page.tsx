@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 
 interface Alert {
   id: number;
@@ -35,6 +36,7 @@ export default function AlertsPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<Alert | null>(null);
   const [traceAlert, setTraceAlert] = useState<Alert | null>(null);
+  const [processing, setProcessing] = useState(false);
 
   async function fetchAlerts() {
     try {
@@ -65,32 +67,47 @@ export default function AlertsPage() {
   }, []);
 
   async function markRead(id: number) {
-    await fetch("/api/alerts", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    fetchAlerts();
+    setProcessing(true);
+    try {
+      await fetch("/api/alerts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      await fetchAlerts();
+    } finally {
+      setProcessing(false);
+    }
   }
 
   async function doDelete() {
     if (!deleteTarget) return;
-    await fetch(`/api/alerts?id=${deleteTarget.id}`, { method: "DELETE" });
-    setDeleteTarget(null);
-    fetchAlerts();
+    setProcessing(true);
+    try {
+      await fetch(`/api/alerts?id=${deleteTarget.id}`, { method: "DELETE" });
+      setDeleteTarget(null);
+      await fetchAlerts();
+    } finally {
+      setProcessing(false);
+    }
   }
 
   async function markAllRead() {
-    await Promise.all(
-      alerts.filter((a) => !a.read).map((a) =>
-        fetch("/api/alerts", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: a.id }),
-        })
-      )
-    );
-    fetchAlerts();
+    setProcessing(true);
+    try {
+      await Promise.all(
+        alerts.filter((a) => !a.read).map((a) =>
+          fetch("/api/alerts", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: a.id }),
+          })
+        )
+      );
+      await fetchAlerts();
+    } finally {
+      setProcessing(false);
+    }
   }
 
   function toggleExpand(id: number) {
@@ -166,13 +183,9 @@ export default function AlertsPage() {
         )}
       </div>
 
-      {loading ? (
-        <div className="space-y-3">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="bg-card border border-border rounded-xl p-4 h-20 animate-pulse" />
-          ))}
-        </div>
-      ) : alerts.length === 0 ? (
+      <LoaderOverlay3D open={loading || processing} variant="generic" title={loading ? "Loading alerts..." : "Updating alerts..."} />
+
+      {loading ? null : alerts.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-12 text-center">
           <div className="text-4xl mb-3">🔕</div>
           <h3 className="text-lg font-medium mb-1">No alerts</h3>

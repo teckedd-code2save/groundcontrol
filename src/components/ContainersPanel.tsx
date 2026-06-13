@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ActionConfirm } from "@/components/ActionConfirm";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
 
 const CONTAINERS_POLL_MS = 8000;
 const IMAGES_POLL_MS = 30000;
@@ -525,6 +527,14 @@ export function ContainersPanel() {
     !imageRepoFilter || g.repository.toLowerCase().includes(imageRepoFilter.toLowerCase())
   );
 
+  const actionLoader = useMemo(() => {
+    if (!actionLoading) return null;
+    if (actionLoading === "run") return { variant: "image" as const, title: "Running image..." };
+    if (actionLoading === "prune-repo") return { variant: "image" as const, title: "Pruning images..." };
+    if (actionLoading.startsWith("svc:")) return { variant: "compose" as const, title: "Starting compose service..." };
+    return { variant: "container" as const, title: "Updating container..." };
+  }, [actionLoading]);
+
   function parseSize(sizeStr: string): number {
     const match = sizeStr.match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i);
     if (!match) return 0;
@@ -557,7 +567,7 @@ export function ContainersPanel() {
           disabled={actionLoading === loadingKey}
           className="px-2 py-1 text-[10px] font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50 shrink-0"
         >
-          {actionLoading === loadingKey ? "..." : "start service"}
+          start service
         </button>
       );
     }
@@ -572,7 +582,7 @@ export function ContainersPanel() {
             disabled={actionLoading === stopped.name}
             className="px-2 py-1 text-[10px] font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50 shrink-0"
           >
-            {actionLoading === stopped.name ? "..." : "start container"}
+            start container
           </button>
         );
       }
@@ -626,6 +636,13 @@ export function ContainersPanel() {
             </div>
           ))}
         </div>
+      )}
+
+      {actionLoading && actionLoader && (
+        <LoaderOverlay3D open variant={actionLoader.variant} title={actionLoader.title} />
+      )}
+      {bulkActionLoading && (
+        <LoaderOverlay3D open variant="container" title="Running bulk action..." />
       )}
 
       <div className="mb-6 flex items-center gap-1 border-b border-border">
@@ -732,11 +749,7 @@ export function ContainersPanel() {
           )}
 
           {loading ? (
-            <div className="space-y-3">
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="bg-card border border-border rounded-xl p-4 h-20 animate-pulse" />
-              ))}
-            </div>
+            <LoaderOverlay3D open variant="container" title="Loading containers..." />
           ) : (
             <div className="space-y-3">
               {filtered.map((container) => (
@@ -765,7 +778,10 @@ export function ContainersPanel() {
                         }`}
                       />
                       <div>
-                        <div className="font-medium">{container.name}</div>
+                        <div className="font-medium flex items-center gap-2">
+                          <ContainerIcon type={getContainerType(container.name, container.image)} className="w-4 h-4 text-muted" />
+                          {container.name}
+                        </div>
                         <div className="text-xs text-muted font-mono mt-0.5">
                           {container.image} · {container.status}
                         </div>
@@ -808,14 +824,14 @@ export function ContainersPanel() {
                               disabled={actionLoading === container.name}
                               className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
                             >
-                              {actionLoading === container.name ? "..." : "restart"}
+                              restart
                             </button>
                             <button
                               onClick={() => setPendingAction({ action: "stop", name: container.name })}
                               disabled={actionLoading === container.name}
                               className="px-3 py-1.5 text-xs font-mono border border-error/30 text-error rounded hover:bg-error/10 transition-colors disabled:opacity-50"
                             >
-                              {actionLoading === container.name ? "..." : "stop"}
+                              stop
                             </button>
                           </>
                         ) : (
@@ -824,7 +840,7 @@ export function ContainersPanel() {
                             disabled={actionLoading === container.name}
                             className="px-3 py-1.5 text-xs font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50"
                           >
-                            {actionLoading === container.name ? "..." : "start"}
+                            start
                           </button>
                         )}
                         <button
@@ -879,11 +895,7 @@ export function ContainersPanel() {
           </div>
 
           {imagesLoading ? (
-            <div className="space-y-4">
-              {[...Array(4)].map((_, i) => (
-                <div key={i} className="bg-card border border-border rounded-xl p-4 h-24 animate-pulse" />
-              ))}
-            </div>
+            <LoaderOverlay3D open variant="image" title="Loading images..." />
           ) : (
             <div className="space-y-4">
               {filteredGroups.map((group) => {
@@ -897,7 +909,10 @@ export function ContainersPanel() {
                   <div key={group.repository} className="bg-card border border-border rounded-xl p-4">
                     <div className="flex items-center justify-between mb-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-mono font-medium truncate">{group.repository}</div>
+                        <div className="text-sm font-mono font-medium truncate flex items-center gap-2">
+                          <ContainerIcon type={getContainerType(group.repository, "")} className="w-4 h-4 text-muted" />
+                          {group.repository}
+                        </div>
                         <div className="text-[10px] text-muted font-mono mt-0.5">
                           {group.images.length} tag{group.images.length > 1 ? "s" : ""} · {totalSizeStr} total
                         </div>
@@ -1022,7 +1037,7 @@ export function ContainersPanel() {
                 disabled={bulkActionLoading}
                 className="px-4 py-2 text-xs font-mono border border-error/30 text-error bg-error/10 hover:bg-error/20 rounded-lg transition-colors disabled:opacity-50"
               >
-                {bulkActionLoading ? "Removing..." : "Confirm Remove"}
+                Confirm Remove
               </button>
             </div>
           </div>
@@ -1095,7 +1110,7 @@ export function ContainersPanel() {
                 disabled={actionLoading === "run"}
                 className="px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded hover:bg-success/20 transition-colors disabled:opacity-50"
               >
-                {actionLoading === "run" ? "Starting..." : "Run Standalone"}
+                Run Standalone
               </button>
             </div>
           </div>
@@ -1123,7 +1138,7 @@ export function ContainersPanel() {
                 disabled={actionLoading === "prune-repo"}
                 className="px-4 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded hover:bg-warning/20 transition-colors disabled:opacity-50"
               >
-                {actionLoading === "prune-repo" ? "Pruning..." : "Prune Old Tags"}
+                Prune Old Tags
               </button>
             </div>
           </div>

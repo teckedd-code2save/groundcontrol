@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 
 interface FileEntry {
   name: string;
@@ -71,13 +72,9 @@ export default function FilesPage() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="animate-pulse space-y-2">
-          {[...Array(8)].map((_, i) => (
-            <div key={i} className="h-10 bg-card border border-border rounded-lg" />
-          ))}
-        </div>
-      ) : (
+      <LoaderOverlay3D open={loading} variant="generic" title="Loading files..." />
+
+      {loading ? null : (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>

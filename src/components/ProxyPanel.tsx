@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { SensitiveField } from "@/components/SensitiveField";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+import { CaddyIcon, NginxIcon } from "@/components/TopoIcons";
 
 interface ProxySite {
   file: string;
@@ -76,21 +78,25 @@ export function ProxyPanel() {
   }
 
   if (loading) {
-    return (
-      <div className="space-y-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="bg-card border border-border rounded-xl p-5 h-32 animate-pulse" />
-        ))}
-      </div>
-    );
+    return <LoaderOverlay3D open variant="proxy" title="Loading proxy status..." />;
   }
+
+  const actionServer = actionLoading ? actionLoading.split("-")[0] : "";
+  const actionName = actionLoading ? actionLoading.slice(actionServer.length + 1) : "";
 
   return (
     <div className="space-y-10">
+      <LoaderOverlay3D
+        open={!!actionLoading}
+        variant="proxy"
+        title={actionLoading ? `${actionName} ${actionServer}...` : undefined}
+      />
+
       {/* Caddy Section */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
+            <CaddyIcon className="w-5 h-5 text-muted" />
             <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Caddy</h2>
             <span
               className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
@@ -108,21 +114,21 @@ export function ProxyPanel() {
               disabled={actionLoading === "caddy-test"}
               className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
             >
-              {actionLoading === "caddy-test" ? "..." : "test config"}
+              test config
             </button>
             <button
               onClick={() => handleAction("reload", "caddy")}
               disabled={actionLoading === "caddy-reload"}
               className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded hover:bg-accent/10 transition-colors disabled:opacity-50"
             >
-              {actionLoading === "caddy-reload" ? "..." : "reload"}
+              reload
             </button>
             <button
               onClick={() => handleAction("logs", "caddy")}
               disabled={actionLoading === "caddy-logs"}
               className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
             >
-              {actionLoading === "caddy-logs" ? "..." : "logs"}
+              logs
             </button>
           </div>
         </div>
@@ -142,7 +148,8 @@ export function ProxyPanel() {
                     onClick={() => toggleExpand(key)}
                     className="w-full flex items-center justify-between p-4 text-left hover:bg-background/30 transition-colors"
                   >
-                    <span className="text-xs font-mono text-muted">
+                    <span className="flex items-center gap-2 text-xs font-mono text-muted">
+                      <CaddyIcon className="w-4 h-4" />
                       <SensitiveField value={site.file} />
                     </span>
                     <span className="text-xs text-muted">{isExpanded ? "▲" : "▼"}</span>
@@ -163,6 +170,7 @@ export function ProxyPanel() {
       <section>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
+            <NginxIcon className="w-5 h-5 text-muted" />
             <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Nginx</h2>
             <span
               className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
@@ -180,21 +188,21 @@ export function ProxyPanel() {
               disabled={actionLoading === "nginx-test"}
               className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
             >
-              {actionLoading === "nginx-test" ? "..." : "test config"}
+              test config
             </button>
             <button
               onClick={() => handleAction("reload", "nginx")}
               disabled={actionLoading === "nginx-reload"}
               className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded hover:bg-accent/10 transition-colors disabled:opacity-50"
             >
-              {actionLoading === "nginx-reload" ? "..." : "reload"}
+              reload
             </button>
             <button
               onClick={() => handleAction("logs", "nginx")}
               disabled={actionLoading === "nginx-logs"}
               className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
             >
-              {actionLoading === "nginx-logs" ? "..." : "logs"}
+              logs
             </button>
           </div>
         </div>
@@ -214,7 +222,8 @@ export function ProxyPanel() {
                     onClick={() => toggleExpand(key)}
                     className="w-full flex items-center justify-between p-4 text-left hover:bg-background/30 transition-colors"
                   >
-                    <span className="text-xs font-mono text-muted">
+                    <span className="flex items-center gap-2 text-xs font-mono text-muted">
+                      <NginxIcon className="w-4 h-4" />
                       <SensitiveField value={site.file} />
                     </span>
                     <span className="text-xs text-muted">{isExpanded ? "▲" : "▼"}</span>

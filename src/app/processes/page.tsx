@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 
 interface Process {
   pid: string;
@@ -35,13 +36,9 @@ export default function ProcessesPage() {
         <p className="text-muted mt-1">Processes running on your VPS</p>
       </div>
 
-      {loading ? (
-        <div className="animate-pulse space-y-2">
-          {[...Array(10)].map((_, i) => (
-            <div key={i} className="h-10 bg-card border border-border rounded-lg" />
-          ))}
-        </div>
-      ) : (
+      <LoaderOverlay3D open={loading} variant="generic" title="Loading processes..." />
+
+      {loading ? null : (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <table className="w-full text-xs">
             <thead>

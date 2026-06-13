@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+import { CaddyIcon, ContainerIcon, ServiceIcon, getContainerType } from "@/components/TopoIcons";
 
 interface Job {
   name: string;
@@ -52,8 +54,17 @@ export function BootstrapPanel() {
     }
   }
 
+  const runningKey = Object.keys(jobs).find((k) => jobs[k].running);
+  const runningTool = runningKey ? TOOLS.find((t) => t.key === runningKey) : undefined;
+
   return (
     <div className="space-y-8">
+      <LoaderOverlay3D
+        open={!!runningKey}
+        variant={runningKey === "docker" ? "container" : runningKey === "caddy" ? "proxy" : "generic"}
+        title={runningTool ? `Installing ${runningTool.label}...` : undefined}
+      />
+
       <div className="bg-card border border-border rounded-xl p-6">
         <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">One-Click Install</h2>
         <p className="text-[11px] text-muted/70 mb-6 leading-relaxed">
@@ -68,7 +79,12 @@ export function BootstrapPanel() {
               <div key={tool.key} className="border border-border rounded-xl p-4 bg-background/30">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="font-medium text-sm">{tool.label}</div>
+                    <div className="flex items-center gap-2">
+                      {tool.key === "docker" && <ContainerIcon type={getContainerType(tool.label, "")} className="w-4 h-4 text-muted" />}
+                      {tool.key === "caddy" && <CaddyIcon className="w-4 h-4 text-muted" />}
+                      {(tool.key === "cloudflared" || tool.key === "node") && <ServiceIcon className="w-4 h-4 text-muted" />}
+                      <div className="font-medium text-sm">{tool.label}</div>
+                    </div>
                     <div className="text-[11px] text-muted mt-0.5">{tool.desc}</div>
                   </div>
                   <button
@@ -76,7 +92,7 @@ export function BootstrapPanel() {
                     disabled={job?.running}
                     className="px-3 py-1.5 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
                   >
-                    {job?.running ? "Installing..." : "Install"}
+                    Install
                   </button>
                 </div>
                 {job && !job.running && (

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { StatCard } from "@/components/StatCard";
 import HealthScore from "@/components/HealthScore";
 import MemoryPanel from "@/components/MemoryPanel";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
 import {
   AreaChart,
   Area,
@@ -251,13 +253,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {loading && !stats ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="bg-card border border-border rounded-xl p-5 h-28 animate-pulse" />
-          ))}
-        </div>
-      ) : (
+      <LoaderOverlay3D open={loading && !stats} variant="container" title="Loading dashboard..." />
+
+      {loading && !stats ? null : (
         <>
           {/* AI Summary */}
           <div className="bg-card border border-border rounded-xl p-5 mb-6">
@@ -279,10 +277,7 @@ export default function DashboardPage() {
               </button>
             </div>
             {synthesisLoading && !synthesis ? (
-              <div className="space-y-2">
-                <div className="h-4 bg-border rounded w-3/4 animate-pulse" />
-                <div className="h-3 bg-border rounded w-1/2 animate-pulse" />
-              </div>
+              <LoaderOverlay3D open={synthesisLoading && !synthesis} variant="generic" title="Analyzing alerts..." />
             ) : synthesisError ? (
               <p className="text-sm text-muted">{synthesisError}</p>
             ) : synthesis ? (
@@ -522,7 +517,8 @@ export default function DashboardPage() {
                               : "bg-error"
                           }`}
                         />
-                        <div>
+                        <div className="flex items-center gap-2">
+                          <ContainerIcon type={getContainerType(container.name, container.image)} className="w-4 h-4 text-muted" />
                           <span className={`text-sm font-medium ${isStopped ? "text-error/80" : ""}`}>{container.name}</span>
                           {isStopped && (
                             <span className="ml-2 text-[10px] font-mono text-error">stopped</span>

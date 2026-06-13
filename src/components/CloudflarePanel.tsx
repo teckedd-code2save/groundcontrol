@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+import { ContainerIcon } from "@/components/TopoIcons";
 
 interface Tunnel {
   id: string;
@@ -64,6 +66,7 @@ export default function CloudflarePanel() {
   const [loading, setLoading] = useState({ tunnels: true, dns: false });
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
+  const [actionLoading, setActionLoading] = useState<{ action: "create" | "delete" | "point"; name: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +113,7 @@ export default function CloudflarePanel() {
     if (!newTunnelName.trim()) return;
     setResult("");
     setError("");
+    setActionLoading({ action: "create", name: newTunnelName.trim() });
     try {
       const res = await fetch("/api/cloudflare/tunnels", {
         method: "POST",
@@ -126,6 +130,8 @@ export default function CloudflarePanel() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create tunnel");
+    } finally {
+      setActionLoading(null);
     }
   }
 
@@ -133,6 +139,8 @@ export default function CloudflarePanel() {
     if (!confirm("Stop the connector and delete this tunnel from Cloudflare?")) return;
     setResult("");
     setError("");
+    const tunnel = tunnels.find((t) => t.id === tunnelId);
+    setActionLoading({ action: "delete", name: tunnel?.name || tunnelId });
     try {
       const res = await fetch(`/api/cloudflare/tunnels?tunnelId=${tunnelId}`, { method: "DELETE" });
       const data = await res.json();
@@ -144,6 +152,8 @@ export default function CloudflarePanel() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete tunnel");
+    } finally {
+      setActionLoading(null);
     }
   }
 
@@ -152,6 +162,7 @@ export default function CloudflarePanel() {
     const content = tunnel ? `${tunnel.id}.cfargotunnel.com` : record.content;
     setResult("");
     setError("");
+    setActionLoading({ action: "point", name: record.name });
     try {
       const res = await fetch("/api/cloudflare/dns", {
         method: "POST",
@@ -168,11 +179,25 @@ export default function CloudflarePanel() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "DNS operation failed");
+    } finally {
+      setActionLoading(null);
     }
   }
 
+  const overlayOpen = loading.tunnels || loading.dns || !!actionLoading;
+  const overlayTitle = actionLoading
+    ? `${actionLoading.action === "create" ? "Creating" : actionLoading.action === "delete" ? "Deleting" : "Pointing"} ${actionLoading.name}...`
+    : loading.dns
+    ? "Loading DNS records..."
+    : "Loading tunnels...";
+
   return (
     <div className="space-y-8">
+      <LoaderOverlay3D
+        open={overlayOpen}
+        variant={loading.dns ? "generic" : "proxy"}
+        title={overlayTitle}
+      />
       {error && (
         <div className="p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono">
           {error}
@@ -206,7 +231,7 @@ export default function CloudflarePanel() {
             disabled={loading.tunnels}
             className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
           >
-            {loading.tunnels ? "Loading..." : "Refresh"}
+            Refresh
           </button>
         </div>
 
@@ -218,7 +243,10 @@ export default function CloudflarePanel() {
                 className="flex items-center justify-between py-3 px-4 rounded-lg border border-border bg-background/50"
               >
                 <div>
-                  <div className="font-medium text-sm">{tunnel.name}</div>
+                  <div className="flex items-center gap-2">
+                    <ContainerIcon type="proxy" className="w-4 h-4 text-muted" />
+                    <div className="font-medium text-sm">{tunnel.name}</div>
+                  </div>
                   <div className="text-xs text-muted font-mono mt-0.5">
                     {tunnel.id} · connector {tunnel.connectorStatus || "unknown"}
                   </div>
@@ -255,9 +283,7 @@ export default function CloudflarePanel() {
 
         {selectedZone && (
           <div className="space-y-3">
-            {loading.dns ? (
-              <p className="text-sm text-muted">Loading records...</p>
-            ) : dnsRecords.length > 0 ? (
+            {dnsRecords.length > 0 ? (
               dnsRecords.map((record) => (
                 <div
                   key={record.id}
