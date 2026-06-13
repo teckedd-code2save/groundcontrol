@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import LoginHero3D from "@/components/LoginHero3D";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -42,54 +43,90 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="w-full max-w-md p-8 bg-card border border-border rounded-2xl">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-lg bg-accent flex items-center justify-center text-white font-bold orb-pulse">
-            GC
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">GroundControl</h1>
-            <p className="text-xs text-muted font-mono uppercase">VPS Cockpit</p>
+    <main className="relative min-h-screen flex items-center justify-center overflow-hidden">
+      <LoginHero3D />
+
+      <div className="relative z-10 w-full max-w-md px-4 sm:px-0">
+        <div className="login-card-glow rounded-2xl p-[1px]">
+          <div className="bg-card/80 backdrop-blur-xl border border-border/50 rounded-2xl p-8 shadow-2xl">
+            <div className="flex items-center gap-4 mb-8">
+              <div className="relative w-12 h-12 rounded-xl bg-accent flex items-center justify-center text-white font-bold text-lg orb-pulse">
+                <span className="relative z-10">GC</span>
+                <div className="absolute inset-0 rounded-xl bg-accent opacity-40 blur-lg" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">GroundControl</h1>
+                <p className="text-xs text-muted font-mono uppercase tracking-wider">
+                  Self-hosted VPS Cockpit
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-muted mb-6 leading-relaxed">
+              Sign in to your fleet dashboard. Manage containers, proxies, deployments, and alerts
+              across all your servers.
+            </p>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono text-muted mb-1.5">Username</label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full bg-background/60 border border-border rounded-lg px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all placeholder:text-muted/50"
+                  placeholder="admin"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-mono text-muted mb-1.5">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-background/60 border border-border rounded-lg px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all placeholder:text-muted/50"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {error && (
+                <div className="p-3 bg-error/10 border border-error/30 rounded-lg text-error text-sm animate-shake">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="group relative w-full py-2.5 bg-accent text-white rounded-lg hover:bg-accent/90 transition-all text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
+              >
+                <span className="relative z-10 flex items-center justify-center gap-2">
+                  {loading ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Authenticating...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
+                </span>
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:animate-shimmer" />
+              </button>
+            </form>
+
+            <div className="mt-6 pt-6 border-t border-border/50 text-center">
+              <p className="text-[11px] text-muted font-mono">
+                Default: <span className="text-foreground">admin</span> /{" "}
+                <span className="text-foreground">groundcontrol2024</span>
+              </p>
+              <p className="text-[10px] text-muted/60 mt-1">
+                Change this immediately after your first login.
+              </p>
+            </div>
           </div>
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-mono text-muted mb-1.5">Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-mono text-muted mb-1.5">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
-            />
-          </div>
-
-          {error && (
-            <div className="p-3 bg-error/10 border border-error/30 rounded-lg text-error text-sm">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors text-sm font-mono disabled:opacity-50"
-          >
-            {loading ? "Authenticating..." : "Sign In"}
-          </button>
-        </form>
       </div>
-    </div>
+    </main>
   );
 }

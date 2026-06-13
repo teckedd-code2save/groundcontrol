@@ -57,6 +57,51 @@ body {
   50% { box-shadow: 0 0 16px var(--accent-glow); }
 }
 
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes border-glow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+@keyframes shimmer {
+  to { transform: translateX(100%); }
+}
+
 .orb-pulse {
   animation: pulse-glow 3s ease-in-out infinite;
+}
+
+.login-card-glow {
+  background: conic-gradient(
+    from 0deg,
+    var(--accent),
+    var(--accent-secondary),
+    var(--accent),
+    var(--accent-secondary),
+    var(--accent)
+  );
+  background-size: 200% 200%;
+  animation: border-glow 6s ease infinite;
+  box-shadow:
+    0 0 40px rgba(255, 85, 0, 0.12),
+    0 0 80px rgba(199, 125, 255, 0.06);
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+.animate-shimmer {
+  animation: shimmer 1s infinite;
 }

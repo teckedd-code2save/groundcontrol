@@ -19,7 +19,7 @@
 
 ---
 
-GroundControl is a self-hosted infrastructure dashboard that gives you a single, opinionated control plane for the servers you actually run. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and the filesystem, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
+GroundControl is a self-hosted infrastructure dashboard: a single control plane for the servers you actually run. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and the filesystem, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
 
 No agents to install on managed hosts. No SaaS in the middle. No telemetry leaving your network. Just a Next.js app, a SQLite file, and an SSH connection.
 
@@ -27,36 +27,84 @@ No agents to install on managed hosts. No SaaS in the middle. No telemetry leavi
 
 ---
 
-## ✨ Features
+## ✨ What it does
 
-| | Feature | What it does |
+| | Feature | Why it matters |
 |---|---|---|
-| 🗺️ | **Live Topology** | Grouped React Flow graph: Host/Internet → Projects/Sites → Services → Containers. Expand/collapse groups, filter by status/project, click any node to inspect or act on it. |
-| 📦 | **Container Management** | List, start, stop, restart, remove, and tail logs for every Docker container. Destructive actions require a confirmation that explains the blast radius. |
-| 🗂️ | **Projects** | Folder-first view of everything under `/opt`, cross-referenced with Caddy sites and running compose stacks. |
-| 🚀 | **Smart Onboarding** | Step-by-step wizard that auto-detects OS, Docker, compose command, and server paths from a local or SSH connection. |
-| 🤖 | **AI Ops Assistant** | An embedded GPT-powered assistant that knows it's inside a VPS cockpit — ask it to interpret logs, debug a failing deploy, or explain a metric, in plain English. Streamed responses. |
-| 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, Tab autocomplete, helper chips, command history, and a full-screen mode. |
-| 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures, with severity levels and an incident timeline. |
-| 🤖 | **AI Alert Synthesis** | Dashboard card that synthesizes recent alerts, metrics, and containers into a one-line summary and recommended actions. |
-| 💬 | **Full-Screen AI Chat** | Expand the AI assistant to full viewport. Global shortcut `Ctrl/Cmd+Shift+G`. |
-| 📊 | **Metrics** | CPU load, memory, disk, and container health sampled into `MetricSnapshot` history and charted with Recharts. |
-| 🔀 | **Services (Proxy / Containers / Projects / Cloudflare / Install)** | Unified services page with tabbed Containers, Reverse Proxy, Projects, Cloudflare tunnels/DNS, and one-click installs. Original routes still work for bookmarks. |
-| ⚙️ | **Tabbed Settings** | Connections, Server Layout, AI, Security, Cloudflare, and Alerts grouped into tabs with auto-detect layout and model selection. |
-| 🌩️ | **Cloudflare Integration** | Connect a Cloudflare account, list/create tunnels, manage DNS records, and point hostnames to a tunnel from the UI. |
-| 🔧 | **Bulk Container Ops** | Multi-select containers and start/stop/restart/remove them in one action. |
-| 🚀 | **One-Click Bootstrap** | Install Docker, Caddy, Cloudflared, and Node.js on the active VPS from the Services page. |
-| 🔔 | **Configurable Alert Rules** | Define metric thresholds (CPU, memory, disk, unhealthy containers) with severity and duration. Background evaluation + retention policy. |
-| 🛰️ | **Multi-VPS** | Register multiple hosts in `VpsConfig`; GroundControl talks to whichever is active. Manage a fleet, not just a box. |
-| 🔐 | **Auth built-in** | JWT cookie auth, bcrypt password hashing, login rate-limiting, and a guarded UI. |
+| 🗺️ | **Live Topology** | Visual React Flow graph of hosts → projects → sites → services → containers. Click any node to inspect or act. |
+| 📦 | **Container Ops** | Start, stop, restart, remove, and tail logs. Bulk actions with blast-radius confirmation. |
+| 🗂️ | **Projects** | Folder-first view of `/opt`, cross-referenced with Caddy sites and running compose stacks. |
+| 🚀 | **Smart Onboarding** | Auto-detects OS, Docker, compose command, and server paths from a local or SSH connection. |
+| 🤖 | **AI Ops Assistant** | GPT-powered assistant that reasons about logs, metrics, and deploys with streamed responses. |
+| 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
+| 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
+| 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
+| 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
+| 🔀 | **Services** | Containers, reverse proxy, projects, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
+| ⚙️ | **Tabbed Settings** | Connections, server layout, AI provider/model, security, Cloudflare, and alert rules. |
+| 🌩️ | **Cloudflare Integration** | List/create tunnels and manage DNS records from the UI. |
+| 🛰️ | **Multi-VPS** | Register many hosts; GroundControl talks to whichever VPS is active. |
+| 🔐 | **Built-in Auth** | JWT cookie auth, bcrypt passwords, login rate-limiting, and a guarded UI. |
 
-> Screenshots live in [`docs/screenshots/`](./docs/screenshots/) — see the [capture guide](./docs/screenshots/README.md) for what to shoot. Drop them in and they'll render here.
+---
+
+## 📸 What it looks like
+
+> Screenshots live in [`docs/screenshots/`](./docs/screenshots/). Drop captures there and they will render below.
+
+<!-- Add screenshots here, e.g.:
+![Dashboard](./docs/screenshots/dashboard.png)
+![Topology](./docs/screenshots/topology.png)
+![Terminal](./docs/screenshots/terminal.png)
+-->
+
+---
+
+## 🚀 Quick Start
+
+Run GroundControl locally in minutes. No VPS is required to explore the UI — seed the default user and click around.
+
+```bash
+# 1. Clone
+git clone https://github.com/teckedd-code2save/groundcontrol.git
+cd groundcontrol
+
+# 2. Install dependencies
+npm install
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env and set JWT_SECRET (generate with: openssl rand -hex 32)
+
+# 4. Set up the database
+npx prisma migrate dev
+
+# 5. Seed the default admin user
+npm run db:seed
+
+# 6. Start the dev server
+npm run dev
+```
+
+Open **http://localhost:3000**, sign in with `admin` / `groundcontrol2024`, then **change the password immediately** via Settings.
+
+### Available scripts
+
+| Script | Purpose |
+|---|---|
+| `npm run dev` | Start the dev server (http://localhost:3000) |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | Lint the codebase |
+| `npm run db:seed` | Seed the default admin user (idempotent) |
+
+> **Note:** this repo pins **Next.js 16**, which has breaking changes versus older majors. When in doubt, trust `package.json` scripts and the bundled docs over memory.
 
 ---
 
 ## 🏗️ Architecture
 
-GroundControl is a single Next.js 16 (App Router) application. It does **not** run Caddy, Nginx, or Docker inside its own container — it expects those on the host and reaches them through SSH or mounted host volumes.
+GroundControl is a single Next.js 16 (App Router) app. It does **not** run Caddy, Nginx, or Docker inside its own container — it expects those on the host and reaches them through SSH or mounted host volumes.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -69,11 +117,11 @@ GroundControl is a single Next.js 16 (App Router) application. It does **not** r
 │  │   • JWT cookie auth                (src/lib/auth) │  │
 │  └───────────────────────────────────────────────────┘  │
 │      │ mounts from host                                  │
-│      ├─ /var/run/docker.sock   (run docker on the host)  │
-│      ├─ /opt                   (your projects)           │
-│      ├─ /etc                   (Caddy/Nginx configs)     │
-│      ├─ /var/www               (static site roots)       │
-│      └─ /root/.ssh  (ro)       (key auth scanning)       │
+│      ├─ /var/run/docker.sock   (run docker on the host) │
+│      ├─ /opt                   (your projects)          │
+│      ├─ /etc                   (Caddy/Nginx configs)    │
+│      ├─ /var/www               (static site roots)      │
+│      └─ /root/.ssh  (ro)       (key auth scanning)      │
 │                                                         │
 │  Caddy / Nginx + Docker daemon  (on the host)           │
 └─────────────────────────────────────────────────────────┘
@@ -81,73 +129,28 @@ GroundControl is a single Next.js 16 (App Router) application. It does **not** r
         └──────────  ... or other remote VPS hosts in the fleet
 ```
 
-**The remote-exec model** (`src/lib/vps.ts`) is the heart of the app. Every operation — `docker ps`, reading a Caddyfile, sampling `/proc/loadavg` — is a shell command run either:
-- **locally** (`isLocal` mode) when GroundControl runs directly on the host it manages, or
-- **over SSH** via a cached `node-ssh` connection to the active `VpsConfig`.
-
-This is why there's no agent to install on managed hosts: GroundControl *is* the agent, and it speaks SSH.
+Every host operation — `docker ps`, reading a Caddyfile, sampling `/proc/loadavg` — runs either **locally** (when GroundControl sits on the managed host) or **over SSH** via a cached `node-ssh` connection to the active `VpsConfig`. No agent to install: GroundControl *is* the agent.
 
 | Layer | Technology |
-|-------|------------|
+|---|---|
 | Framework | Next.js 16 (App Router), React 19 |
 | Language | TypeScript 5 |
 | Styling | Tailwind CSS v4 |
-| Graph | React Flow (`@xyflow/react`) + Dagre |
+| Graph | React Flow + Dagre |
 | Charts | Recharts |
 | Terminal | xterm.js + socket.io |
 | Database | SQLite via Prisma ORM |
 | Remote exec | node-ssh / ssh2 |
 | AI | OpenAI SDK (streamed chat) |
-| Auth | JWT (`jsonwebtoken`) + bcrypt |
-| Packaging | Docker, GitHub Container Registry, GitHub Actions |
-
----
-
-## 🚀 Quick Start
-
-Get it running locally in a couple of minutes. You don't need a VPS to explore the UI — seed demo data (see below) and click around.
-
-```bash
-# 1. Clone
-git clone https://github.com/teckedd-code2save/groundcontrol.git
-cd groundcontrol
-
-# 2. Install
-npm install
-
-# 3. Configure env
-cp .env.example .env
-#    then edit .env and set JWT_SECRET (openssl rand -hex 32)
-
-# 4. Create the database + Prisma client
-npx prisma migrate dev      # applies migrations and generates the client
-
-# 5. Seed the default admin user (admin / groundcontrol2024)
-npm run db:seed
-
-# 6. Run
-npm run dev
-```
-
-Open **http://localhost:3000**, log in with `admin` / `groundcontrol2024`, and **change the password immediately** (Settings → change password).
-
-### Available scripts
-
-| Script | Command | Purpose |
-|--------|---------|---------|
-| `npm run dev` | `next dev` | Start the dev server (http://localhost:3000) |
-| `npm run build` | `next build` | Production build |
-| `npm run start` | `next start` | Serve the production build |
-| `npm run lint` | `eslint` | Lint the codebase |
-| `npm run db:seed` | `tsx prisma/seed.ts` | Seed the default admin user (idempotent) |
-
-> ℹ️ **Note for contributors / AI agents:** this repo pins **Next.js 16**, which has breaking changes vs. older majors. When in doubt about build/run conventions, trust `package.json` scripts and the bundled docs over memory.
+| Auth | JWT + bcrypt |
+| 3D Hero | React Three Fiber + Three.js |
+| Packaging | Docker, GHCR, GitHub Actions |
 
 ---
 
 ## 🖥️ Self-host in 5 minutes
 
-GroundControl is designed to run *inside Docker on the VPS it manages*. The published image already exists at `ghcr.io/teckedd-code2save/groundcontrol:latest`.
+GroundControl is designed to run *inside Docker on the VPS it manages*.
 
 ```bash
 # On your VPS
@@ -162,7 +165,7 @@ printf 'JWT_SECRET="%s"\n' "$(openssl rand -hex 32)" > .env
 docker compose up -d
 ```
 
-Then put it behind your reverse proxy. Example Caddy site (`/etc/caddy/sites/groundcontrol.caddy`):
+Then put it behind your reverse proxy. Example Caddy site:
 
 ```caddy
 groundcontrol.yourdomain.com {
@@ -170,28 +173,28 @@ groundcontrol.yourdomain.com {
 }
 ```
 
-Finally, open the dashboard and follow the **onboarding wizard** to register the host (host, port, username, key/password). If GroundControl is running directly on the box, choose **This server** so it skips SSH and execs commands directly. You can add more servers anytime from the sidebar.
+Open the dashboard and follow the onboarding wizard to register the host. If GroundControl is running directly on the box, choose **This server** so it skips SSH and execs commands directly. You can add more servers anytime from Settings.
 
-### What the compose file mounts (and why)
+### Compose mounts
 
 ```yaml
 volumes:
-  - groundcontrol-db:/app/prisma            # SQLite DB on a named volume (persists)
-  - /var/run/docker.sock:/var/run/docker.sock  # Required: run docker on the host
-  - /opt:/opt                               # Required: your projects live here
-  - /etc:/etc                               # Required: read Caddy/Nginx configs
-  - /var/www:/var/www                       # Optional: static site roots
-  - /root/.ssh:/root/.ssh:ro                # Optional: SSH key auth scanning
+  - groundcontrol-db:/app/prisma            # SQLite DB (persists)
+  - /var/run/docker.sock:/var/run/docker.sock  # Run docker on the host
+  - /opt:/opt                               # Your projects
+  - /etc:/etc                               # Caddy/Nginx configs
+  - /var/www:/var/www                       # Static site roots (optional)
+  - /root/.ssh:/root/.ssh:ro                # SSH key auth scanning (optional)
 ```
 
-> ⚠️ Several paths (`/opt`, `/etc/caddy/sites/*.caddy`, the SSL cert domain in the health-score route) are still **hardcoded in source**. If your server layout differs, see the [adaptation guide in CONTRIBUTING.md](./CONTRIBUTING.md) for exactly which files to edit.
+> ⚠️ Some paths (`/opt`, `/etc/caddy/sites/*.caddy`, SSL cert domains in the health-score route) are still **hardcoded in source**. If your layout differs, see the [adaptation guide in CONTRIBUTING.md](./CONTRIBUTING.md).
 
-### Deploy to your own VPS via CI/CD
+### Deploy via CI/CD
 
-The repo ships a GitHub Actions workflow that builds the image, pushes it to GHCR, and deploys over SSH on push to `main`. To make it yours:
+The repo ships a GitHub Actions workflow that builds the image, pushes it to GHCR, and deploys over SSH on push to `main`:
 
 1. Fork the repo.
-2. Change the image reference in `docker-compose.yml` and `.github/workflows/` to `ghcr.io/YOUR_USERNAME/groundcontrol:latest`.
+2. Change image references in `docker-compose.yml` and `.github/workflows/` to `ghcr.io/YOUR_USERNAME/groundcontrol:latest`.
 3. Add repo secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`.
 4. Push to `main`.
 
@@ -202,7 +205,7 @@ The repo ships a GitHub Actions workflow that builds the image, pushes it to GHC
 GroundControl runs commands on your servers. Treat it like the powerful tool it is.
 
 - **Authentication** — every API route is guarded by a JWT cookie (`gc_token`, httpOnly, `secure` in production, 7-day expiry). Passwords are bcrypt-hashed (cost 12). Login is rate-limited (5 attempts / 15 min per IP).
-- **SSH credentials at rest** — VPS keys and passwords are stored in the SQLite `VpsConfig` table. **Protect the database file** and run on a host only you control. (Encryption-at-rest for stored secrets is on the roadmap via `GROUNDCONTROL_SECRET`.)
+- **Secrets at rest** — VPS keys and passwords are stored in SQLite. **Protect the database file** and run GroundControl only on a host you control. Cloudflare account tokens are encrypted at rest using `encryptCloudflareToken`.
 - **Blast radius** — the container mounts `/etc` read-write, so it can read and potentially modify host system configs. The browser terminal has a blocked-command guard, but you are effectively root on the managed host.
 - **Never expose it publicly without a reverse proxy + strong credentials.** Run behind HTTPS, change the seeded admin password on first login, and prefer key-based SSH auth over passwords.
 
@@ -210,18 +213,20 @@ Full responsible-disclosure policy and threat model: [SECURITY.md](./SECURITY.md
 
 ---
 
-## 🧭 Why this project is impressive (the CV angle)
+## 🧭 Why this project is impressive
 
 GroundControl is a from-scratch, full-stack DevOps product, not a tutorial clone. It demonstrates:
 
-- **Multi-VPS orchestration** — a single control plane managing a fleet of hosts over a cached SSH transport, with a clean local-vs-remote execution abstraction.
+- **Multi-VPS orchestration** — a single control plane managing a fleet over a cached SSH transport, with a clean local-vs-remote execution abstraction.
 - **An agentic AI ops assistant** — an embedded, context-aware LLM that reasons about real logs, metrics, and deploys, with streamed responses.
-- **Live infrastructure topology** — a clickable, auto-laid-out graph (React Flow + Dagre) generated from the *actual* state of Docker, the proxy, and the filesystem.
-- **Real systems integration** — parsing Caddyfiles, inspecting Docker labels to map containers ↔ compose projects, sampling `/proc`, and reconciling `docker-compose` vs `docker compose` portability quirks.
+- **Live infrastructure topology** — a clickable, auto-laid-out graph generated from the actual state of Docker, the proxy, and the filesystem.
+- **Real systems integration** — parsing Caddyfiles, inspecting Docker labels to map containers ↔ compose projects, sampling `/proc`, and reconciling `docker-compose` vs `docker compose` quirks.
 - **Production packaging** — Dockerized, published to GHCR, auto-deployed via GitHub Actions, with healthchecks and a persisted SQLite volume.
 - **Security-conscious by default** — JWT auth, bcrypt, rate-limiting, and an explicit threat model.
 
-### 🛣️ Roadmap
+---
+
+## 🛣️ Roadmap
 
 - [ ] Encrypted secrets at rest (`GROUNDCONTROL_SECRET`)
 - [x] Configurable model selection for the AI assistant (`AI_MODEL`)
