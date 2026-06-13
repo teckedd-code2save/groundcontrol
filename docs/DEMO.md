@@ -11,9 +11,9 @@ A click-by-click script for recording a 2–4 minute demo that shows GroundContr
    GC_SEED_DEMO=1 npm run db:seed
    npm run dev
    ```
-   This adds fake projects, alerts, metric history, and site mappings on top of the default admin user. It's idempotent and safe to re-run.
+   This adds fake projects, alerts, metric history, and site mappings. It's idempotent and safe to re-run.
 2. Open **http://localhost:3000** in a clean browser window (no extensions bar, no personal bookmarks). Use a ~1440px window.
-3. Have credentials ready: `admin` / `groundcontrol2024`.
+3. On first run, create the admin account via the `/setup` flow, or seed with `GC_SETUP_PASSWORD=your-strong-password GC_SEED_DEMO=1 npm run db:seed`.
 4. (Optional) Set `OPENAI_API_KEY` in `.env` so the AI assistant responds live during the demo. If you leave it unset, narrate that AI is optional and skip the AI beat.
 5. Decide your narration up front — keep it benefits-first ("one place to see every server"), not feature-first.
 

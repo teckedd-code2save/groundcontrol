@@ -1,23 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
-
-function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error("JWT_SECRET environment variable is required");
-  }
-  return secret;
-}
+import { prisma } from "@/lib/prisma";
+import { getUserFromToken } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.cookies.get("gc_token")?.value;
-    if (!token) {
+    const tokenUser = getUserFromToken(req);
+    if (!tokenUser) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    const payload = jwt.verify(token, getJwtSecret()) as any;
-    return NextResponse.json({ id: payload.id, username: payload.username, role: payload.role });
+    const user = await prisma.user.findUnique({ where: { id: tokenUser.id } });
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 401 });
+    }
+
+    return NextResponse.json({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      forcePasswordChange: user.forcePasswordChange,
+    });
   } catch {
     return NextResponse.json({ error: "Invalid token" }, { status: 401 });
   }

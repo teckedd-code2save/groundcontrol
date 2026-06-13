@@ -23,6 +23,8 @@ GroundControl is a self-hosted infrastructure dashboard: a single control plane 
 
 No agents to install on managed hosts. No SaaS in the middle. No telemetry leaving your network. Just a Next.js app, a SQLite file, and an SSH connection.
 
+**Single-tenant by design.** Each GroundControl instance has its own SQLite database on its own host/VPS. Your data never sits in someone else's instance, and a friend's GroundControl deployment on their VPS has no access to yours.
+
 > **Live instance:** [https://groundcontrol.serendepify.com](https://groundcontrol.serendepify.com)
 
 ---
@@ -79,14 +81,14 @@ cp .env.example .env
 # 4. Set up the database
 npx prisma migrate dev
 
-# 5. Seed the default admin user
+# 5. Seed the database (creates schema; no hardcoded admin)
 npm run db:seed
 
 # 6. Start the dev server
 npm run dev
 ```
 
-Open **http://localhost:3000**, sign in with `admin` / `groundcontrol2024`, then **change the password immediately** via Settings.
+Open **http://localhost:3000**. On a fresh database you will be redirected to `/setup` to create the first admin account with a strong password. Alternatively, set `GC_SETUP_PASSWORD` before running `npm run db:seed` to create the initial `admin` user non-interactively; that account will be forced to change its password on first login.
 
 ### Available scripts
 
@@ -96,7 +98,7 @@ Open **http://localhost:3000**, sign in with `admin` / `groundcontrol2024`, then
 | `npm run build` | Production build |
 | `npm run start` | Serve the production build |
 | `npm run lint` | Lint the codebase |
-| `npm run db:seed` | Seed the default admin user (idempotent) |
+| `npm run db:seed` | Seed the database schema (idempotent; no hardcoded password) |
 
 > **Note:** this repo pins **Next.js 16**, which has breaking changes versus older majors. When in doubt, trust `package.json` scripts and the bundled docs over memory.
 

@@ -54,7 +54,7 @@ There is no privilege separation between "view" and "act" beyond the single admi
 - **The AI assistant sends prompts to the OpenAI API.** Logs or metrics you paste into the chat leave your network. Leave `OPENAI_API_KEY` unset to disable AI entirely.
 - **The terminal blocklist is a guardrail, not a sandbox.** It is not a substitute for trusting the operator.
 - **Single-admin model.** There is no per-user RBAC yet; anyone who can log in has full control.
-- **The seed creates a well-known default credential** (`admin` / `groundcontrol2024`). Change it on first login.
+- **First-time setup.** GroundControl does not ship with a default password. On a fresh database you must create the first admin via the `/setup` web flow, or by setting `GC_SETUP_PASSWORD` before running the seed. Accounts created via `GC_SETUP_PASSWORD` are forced to change their password on first login.
 
 ---
 
@@ -63,7 +63,7 @@ There is no privilege separation between "view" and "act" beyond the single admi
 Before running GroundControl anywhere reachable:
 
 - [ ] Set a strong, unique `JWT_SECRET` (`openssl rand -hex 32`); never reuse a default.
-- [ ] Change the seeded `admin` password immediately after first login.
+- [ ] Complete the `/setup` flow with a strong admin password; do not share the account.
 - [ ] Run **only** behind an HTTPS reverse proxy (Caddy/Nginx/Traefik). Never expose port 3003/3000 directly.
 - [ ] Bind the container to `127.0.0.1` (the default compose config does this) so it's only reachable via the proxy.
 - [ ] Prefer **key-based** SSH auth over passwords for managed hosts.

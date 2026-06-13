@@ -1,15 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-
-function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error("JWT_SECRET environment variable is required");
-  }
-  return secret;
-}
+import { setAuthCookie } from "@/lib/auth";
 
 // Simple in-memory rate limiter: ip -> { attempts, resetAt }
 const loginAttempts = new Map<string, { attempts: number; resetAt: number }>();
@@ -61,20 +53,12 @@ export async function POST(req: NextRequest) {
     // Reset attempts on successful login
     loginAttempts.delete(ip);
 
-    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, getJwtSecret(), {
-      expiresIn: "7d",
+    const response = NextResponse.json({
+      success: true,
+      username: user.username,
+      forcePasswordChange: user.forcePasswordChange,
     });
-
-    const response = NextResponse.json({ success: true, username: user.username });
-    response.cookies.set("gc_token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7,
-      path: "/",
-    });
-
-    return response;
+    return setAuthCookie(response, { id: user.id, username: user.username, role: user.role });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
