@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useMemo, useEffect, useState } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
 import * as THREE from "three";
 
@@ -9,8 +9,8 @@ const ACCENT = new THREE.Color("#ff5500");
 const ACCENT_GLOW = new THREE.Color("#ff7b29");
 const ACCENT_SECONDARY = new THREE.Color("#c77dff");
 const CYAN = new THREE.Color("#00d4ff");
-const CLOUD = new THREE.Color("#e2e8f0");
-const BG = "#08080a";
+const GOLD = new THREE.Color("#f59e0b");
+const BG = "#050507";
 
 function mulberry32(seed: number) {
   return function () {
@@ -22,283 +22,327 @@ function mulberry32(seed: number) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Central mission-control hub                                        */
+/* Central command hub — larger, more commanding                      */
 /* ------------------------------------------------------------------ */
 function ControlHub() {
   const coreRef = useRef<THREE.Mesh>(null);
-  const ringARef = useRef<THREE.Mesh>(null);
-  const ringBRef = useRef<THREE.Mesh>(null);
-  const ringCRef = useRef<THREE.Mesh>(null);
+  const ringA = useRef<THREE.Mesh>(null);
+  const ringB = useRef<THREE.Mesh>(null);
+  const ringC = useRef<THREE.Mesh>(null);
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
     if (coreRef.current) {
-      coreRef.current.rotation.y = t * 0.12;
-      coreRef.current.rotation.x = Math.sin(t * 0.3) * 0.04;
+      coreRef.current.rotation.y = t * 0.1;
+      coreRef.current.rotation.x = Math.sin(t * 0.25) * 0.03;
     }
-    if (ringARef.current) ringARef.current.rotation.z = t * 0.08;
-    if (ringBRef.current) ringBRef.current.rotation.x = t * 0.05;
-    if (ringCRef.current) ringCRef.current.rotation.y = -t * 0.03;
+    if (ringA.current) ringA.current.rotation.z = t * 0.06;
+    if (ringB.current) ringB.current.rotation.x = t * 0.04;
+    if (ringC.current) ringC.current.rotation.y = -t * 0.025;
   });
 
   return (
-    <group position={[-3.2, 0, 0]}>
+    <group position={[-2.5, 0.2, 0]}>
       <mesh ref={coreRef}>
-        <sphereGeometry args={[1.1, 64, 64]} />
+        <sphereGeometry args={[1.35, 64, 64]} />
         <meshStandardMaterial
           color={ACCENT}
           emissive={ACCENT}
-          emissiveIntensity={1.4}
-          roughness={0.15}
+          emissiveIntensity={1.6}
+          roughness={0.1}
           metalness={0.95}
         />
       </mesh>
-      <mesh ref={ringARef} rotation={[0.3, 0.2, 0]}>
-        <torusGeometry args={[1.7, 0.02, 16, 128]} />
-        <meshBasicMaterial color={ACCENT} transparent opacity={0.35} />
+      <mesh ref={ringA} rotation={[0.2, 0.3, 0]}>
+        <torusGeometry args={[2, 0.025, 16, 128]} />
+        <meshBasicMaterial color={ACCENT} transparent opacity={0.3} />
       </mesh>
-      <mesh ref={ringBRef} rotation={[Math.PI / 2.2, 0.5, 0]}>
-        <torusGeometry args={[2.2, 0.015, 16, 128]} />
-        <meshBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.2} />
+      <mesh ref={ringB} rotation={[Math.PI / 2.1, 0.4, 0]}>
+        <torusGeometry args={[2.7, 0.018, 16, 128]} />
+        <meshBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.18} />
       </mesh>
-      <mesh ref={ringCRef} rotation={[0.1, 0, 0.4]}>
-        <torusGeometry args={[2.7, 0.01, 16, 128]} />
-        <meshBasicMaterial color={CYAN} transparent opacity={0.12} />
+      <mesh ref={ringC} rotation={[0.15, 0, 0.35]}>
+        <torusGeometry args={[3.3, 0.012, 16, 128]} />
+        <meshBasicMaterial color={CYAN} transparent opacity={0.1} />
       </mesh>
-      {/* base platform */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.8, 0]}>
-        <ringGeometry args={[1.4, 2.6, 64]} />
-        <meshBasicMaterial color={ACCENT} transparent opacity={0.06} />
-      </mesh>
-      {/* pulse rings */}
-      <PulseRing radius={3} color={ACCENT} speed={0.6} />
-      <PulseRing radius={4.2} color={ACCENT_SECONDARY} speed={0.45} delay={1.5} />
+      <PulseRing radius={3.6} color={ACCENT} speed={0.55} />
+      <PulseRing radius={4.8} color={ACCENT_SECONDARY} speed={0.4} delay={1.2} />
     </group>
   );
 }
 
-function PulseRing({
-  radius,
-  color,
-  speed,
-  delay = 0,
-}: {
-  radius: number;
-  color: THREE.Color;
-  speed: number;
-  delay?: number;
-}) {
+function PulseRing({ radius, color, speed, delay = 0 }: { radius: number; color: THREE.Color; speed: number; delay?: number }) {
   const ref = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
     if (!ref.current) return;
-    const t = (clock.getElapsedTime() + delay) * speed;
-    const phase = t % 1;
-    const scale = 1 + phase * 0.25;
-    ref.current.scale.set(scale, scale, scale);
-    const mat = ref.current.material as THREE.MeshBasicMaterial;
-    mat.opacity = 0.25 * (1 - phase);
+    const t = ((clock.getElapsedTime() + delay) * speed) % 1;
+    const s = 1 + t * 0.3;
+    ref.current.scale.set(s, s, s);
+    (ref.current.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - t);
   });
   return (
-    <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.8, 0]}>
-      <ringGeometry args={[radius * 0.85, radius, 128]} />
-      <meshBasicMaterial color={color} transparent opacity={0.25} />
+    <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]} position={[-2.5, -0.6, 0]}>
+      <ringGeometry args={[radius * 0.9, radius, 128]} />
+      <meshBasicMaterial color={color} transparent opacity={0.22} />
     </mesh>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* VPS server rack                                                    */
+/* Ground station — large base platform with structural columns       */
 /* ------------------------------------------------------------------ */
-function ServerRack({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const lightsRef = useRef<THREE.Group>(null);
+function GroundStation() {
+  const baseRef = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (baseRef.current) baseRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.08) * 0.03;
+  });
 
+  return (
+    <group ref={baseRef} position={[-2.5, -2.2, 0]}>
+      {/* main deck */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[3.8, 4.2, 0.25, 8]} />
+        <meshStandardMaterial color="#13131a" roughness={0.4} metalness={0.8} />
+      </mesh>
+      {/* inner ring */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.14, 0]}>
+        <ringGeometry args={[2.2, 3.6, 64]} />
+        <meshBasicMaterial color={ACCENT} transparent opacity={0.08} />
+      </mesh>
+      {/* support columns */}
+      {Array.from({ length: 8 }).map((_, i) => {
+        const a = (i / 8) * Math.PI * 2;
+        const r = 3.4;
+        return (
+          <mesh key={i} position={[Math.cos(a) * r, -0.8, Math.sin(a) * r]}>
+            <cylinderGeometry args={[0.08, 0.08, 1.6, 12]} />
+            <meshStandardMaterial color="#1f1f2a" metalness={0.7} roughness={0.4} />
+          </mesh>
+        );
+      })}
+      {/* runway lights */}
+      {Array.from({ length: 16 }).map((_, i) => {
+        const a = (i / 16) * Math.PI * 2;
+        const r = 3.0;
+        return (
+          <mesh key={i} position={[Math.cos(a) * r, 0.16, Math.sin(a) * r]}>
+            <sphereGeometry args={[0.06, 8, 8]} />
+            <meshBasicMaterial color={i % 2 === 0 ? ACCENT : CYAN} transparent opacity={0.7} />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Satellite dish pointing at the hub                                 */
+/* ------------------------------------------------------------------ */
+function SatelliteDish({ position }: { position: [number, number, number] }) {
+  const groupRef = useRef<THREE.Group>(null);
   useFrame(({ clock }) => {
     if (groupRef.current) {
-      groupRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.2) * 0.08;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.5 + position[0]) * 0.08;
+      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.4 + position[0]) * 0.05;
     }
-    if (lightsRef.current) {
-      lightsRef.current.children.forEach((child, i) => {
+  });
+
+  return (
+    <group ref={groupRef} position={position}>
+      {/* stand */}
+      <mesh position={[0, -0.7, 0]}>
+        <cylinderGeometry args={[0.1, 0.15, 1.4, 16]} />
+        <meshStandardMaterial color="#1f1f2a" metalness={0.7} roughness={0.4} />
+      </mesh>
+      {/* dish */}
+      <group rotation={[0, 0, -0.4]} position={[0, 0.2, 0]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <sphereGeometry args={[1.2, 32, 16, 0, Math.PI * 2, 0, 0.5]} />
+          <meshStandardMaterial color="#e2e8f0" roughness={0.25} metalness={0.6} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position={[0, 0.05, 0]}>
+          <cylinderGeometry args={[0.08, 0.08, 0.8, 12]} />
+          <meshStandardMaterial color={ACCENT} emissive={ACCENT} emissiveIntensity={0.4} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Data tower — tall vertical structure with glowing segments         */
+/* ------------------------------------------------------------------ */
+function DataTower({ position }: { position: [number, number, number] }) {
+  const towerRef = useRef<THREE.Group>(null);
+  const ringsRef = useRef<THREE.Group>(null);
+
+  useFrame(({ clock }) => {
+    if (towerRef.current) {
+      towerRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.3 + 2) * 0.06;
+    }
+    if (ringsRef.current) {
+      ringsRef.current.children.forEach((child, i) => {
         const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-        const t = clock.getElapsedTime() * 2 + i * 1.3;
-        mat.opacity = 0.4 + Math.max(0, Math.sin(t)) * 0.6;
+        const t = clock.getElapsedTime() * 1.5 + i;
+        mat.opacity = 0.25 + Math.max(0, Math.sin(t)) * 0.55;
       });
     }
   });
 
   return (
-    <group ref={groupRef} position={position}>
-      {/* chassis */}
+    <group ref={towerRef} position={position}>
+      {/* spine */}
       <mesh>
-        <boxGeometry args={[1.2, 2, 0.9]} />
-        <meshStandardMaterial color="#1a1a20" roughness={0.4} metalness={0.8} />
+        <cylinderGeometry args={[0.18, 0.25, 4.5, 8]} />
+        <meshStandardMaterial color="#16161f" metalness={0.8} roughness={0.35} />
       </mesh>
-      {/* faceplate */}
-      <mesh position={[0, 0, 0.46]}>
-        <boxGeometry args={[1.1, 1.9, 0.04]} />
-        <meshStandardMaterial color="#0f0f12" roughness={0.5} metalness={0.6} />
-      </mesh>
-      {/* slots + lights */}
-      <group ref={lightsRef}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <group key={i} position={[0, -0.65 + i * 0.26, 0.5]}>
-            <mesh position={[-0.35, 0, 0]}>
-              <boxGeometry args={[0.35, 0.04, 0.02]} />
-              <meshBasicMaterial color="#333" />
-            </mesh>
-            <mesh position={[0.35, 0, 0]}>
-              <circleGeometry args={[0.04, 16]} />
-              <meshBasicMaterial color={i % 3 === 0 ? ACCENT : i % 3 === 1 ? CYAN : ACCENT_SECONDARY} transparent opacity={0.8} />
-            </mesh>
-          </group>
+      {/* stacked rings */}
+      <group ref={ringsRef}>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <mesh key={i} position={[0, -1.6 + i * 0.8, 0]}>
+            <torusGeometry args={[0.55 - i * 0.05, 0.035, 12, 48]} />
+            <meshBasicMaterial color={i % 2 === 0 ? ACCENT_SECONDARY : CYAN} transparent opacity={0.6} />
+          </mesh>
         ))}
       </group>
-      {/* label */}
-      <mesh position={[0, -1.15, 0.5]}>
-        <planeGeometry args={[0.6, 0.12]} />
-        <meshBasicMaterial color="#222" />
+      {/* antenna tip */}
+      <mesh position={[0, 2.5, 0]}>
+        <cylinderGeometry args={[0.02, 0.02, 1.2, 8]} />
+        <meshBasicMaterial color={ACCENT} transparent opacity={0.8} />
+      </mesh>
+      <mesh position={[0, 3.2, 0]}>
+        <sphereGeometry args={[0.12, 16, 16]} />
+        <meshBasicMaterial color={ACCENT} transparent opacity={0.9} />
       </mesh>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Database stack                                                     */
+/* Network globe — wireframe sphere with orbiting nodes               */
 /* ------------------------------------------------------------------ */
-function DatabaseStack({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
+function NetworkGlobe({ position }: { position: [number, number, number] }) {
+  const globeRef = useRef<THREE.Group>(null);
+  const nodesRef = useRef<THREE.Group>(null);
+
   useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.15;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.4 + 2) * 0.06;
+    if (globeRef.current) globeRef.current.rotation.y = clock.getElapsedTime() * 0.04;
+    if (nodesRef.current) nodesRef.current.rotation.y = -clock.getElapsedTime() * 0.06;
+  });
+
+  const wireGeo = useMemo(() => {
+    const geo = new THREE.IcosahedronGeometry(1.6, 2);
+    const edges = new THREE.EdgesGeometry(geo);
+    return edges;
+  }, []);
+
+  return (
+    <group position={position}>
+      <group ref={globeRef}>
+        <lineSegments geometry={wireGeo}>
+          <lineBasicMaterial color={CYAN} transparent opacity={0.15} />
+        </lineSegments>
+      </group>
+      <group ref={nodesRef}>
+        {Array.from({ length: 8 }).map((_, i) => {
+          const a = (i / 8) * Math.PI * 2;
+          const r = 1.8;
+          return (
+            <mesh key={i} position={[Math.cos(a) * r, Math.sin(a * 1.3) * 0.8, Math.sin(a) * r]}>
+              <octahedronGeometry args={[0.12, 0]} />
+              <meshStandardMaterial color={i % 2 === 0 ? CYAN : ACCENT_GLOW} emissive={i % 2 === 0 ? CYAN : ACCENT_GLOW} emissiveIntensity={0.6} />
+            </mesh>
+          );
+        })}
+      </group>
+    </group>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Hex platform — floating landing pad                                */
+/* ------------------------------------------------------------------ */
+function HexPlatform({ position, scale = 1, color = ACCENT_SECONDARY }: { position: [number, number, number]; scale?: number; color?: THREE.Color }) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (ref.current) {
+      ref.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.35 + position[0]) * 0.06;
+      ref.current.rotation.y = clock.getElapsedTime() * 0.03;
     }
   });
 
   return (
-    <group ref={groupRef} position={position}>
-      {Array.from({ length: 3 }).map((_, i) => (
-        <mesh key={i} position={[0, -0.35 + i * 0.35, 0]}>
-          <cylinderGeometry args={[0.45, 0.45, 0.22, 32]} />
+    <group ref={ref} position={position} scale={scale}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[1, 1, 0.08, 6]} />
+        <meshStandardMaterial color="#16161f" metalness={0.7} roughness={0.4} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+        <ringGeometry args={[0.7, 0.95, 6]} />
+        <meshBasicMaterial color={color} transparent opacity={0.25} />
+      </mesh>
+      <mesh position={[0, 0.2, 0]}>
+        <boxGeometry args={[0.25, 0.35, 0.25]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.3} />
+      </mesh>
+    </group>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Data crystal — angular shard clusters                              */
+/* ------------------------------------------------------------------ */
+function DataCrystal({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (ref.current) {
+      ref.current.rotation.y = clock.getElapsedTime() * 0.12;
+      ref.current.rotation.z = Math.sin(clock.getElapsedTime() * 0.4) * 0.05;
+    }
+  });
+
+  return (
+    <group ref={ref} position={position} scale={scale}>
+      {[
+        { pos: [0, 0, 0], rot: [0, 0, 0], size: [0.35, 1.1, 0.35] },
+        { pos: [0.25, 0.1, 0.15], rot: [0.2, 0.4, 0.1], size: [0.28, 0.85, 0.28] },
+        { pos: [-0.2, -0.05, 0.2], rot: [-0.15, -0.3, 0.2], size: [0.22, 0.65, 0.22] },
+      ].map((s, i) => (
+        <mesh key={i} position={s.pos as [number, number, number]} rotation={s.rot as [number, number, number]}>
+          <cylinderGeometry args={[(s.size[0] as number) / 2, (s.size[0] as number) / 4, s.size[1] as number, 6]} />
           <meshStandardMaterial
-            color={i === 1 ? ACCENT_SECONDARY : "#2a2a35"}
-            emissive={i === 1 ? ACCENT_SECONDARY : "#000"}
-            emissiveIntensity={i === 1 ? 0.3 : 0}
-            roughness={0.3}
-            metalness={0.8}
+            color={i === 0 ? ACCENT : i === 1 ? ACCENT_SECONDARY : CYAN}
+            emissive={i === 0 ? ACCENT : i === 1 ? ACCENT_SECONDARY : CYAN}
+            emissiveIntensity={0.35}
+            roughness={0.15}
+            metalness={0.6}
+            transparent
+            opacity={0.9}
           />
         </mesh>
       ))}
-      {/* glow cap */}
-      <mesh position={[0, 0.25, 0]}>
-        <cylinderGeometry args={[0.46, 0.46, 0.02, 32]} />
-        <meshBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.4} />
-      </mesh>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Container ship / box                                               */
+/* Energy ring — large orbital structure                              */
 /* ------------------------------------------------------------------ */
-function ContainerBox({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.25;
-      groupRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 0.7) * 0.05;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.6 + 4) * 0.1;
-    }
-  });
-
-  return (
-    <group ref={groupRef} position={position}>
-      <mesh>
-        <boxGeometry args={[0.9, 0.9, 0.9]} />
-        <meshStandardMaterial color="#2563eb" roughness={0.2} metalness={0.6} />
-      </mesh>
-      {/* whale stripes */}
-      <mesh position={[0, 0.15, 0.46]}>
-        <planeGeometry args={[0.6, 0.12]} />
-        <meshBasicMaterial color="#fff" transparent opacity={0.9} />
-      </mesh>
-      <mesh position={[0, -0.1, 0.46]}>
-        <planeGeometry args={[0.4, 0.1]} />
-        <meshBasicMaterial color="#fff" transparent opacity={0.6} />
-      </mesh>
-      {/* corner ribs */}
-      {[-0.42, 0.42].map((x) =>
-        [-0.42, 0.42].map((y) => (
-          <mesh key={`${x}-${y}`} position={[x, y, 0.46]}>
-            <boxGeometry args={[0.04, 0.04, 0.04]} />
-            <meshBasicMaterial color="#60a5fa" />
-          </mesh>
-        ))
-      )}
-    </group>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Proxy / gateway shield                                             */
-/* ------------------------------------------------------------------ */
-function ProxyGateway({ position }: { position: [number, number, number] }) {
+function EnergyRing({ radius, color, speed, tilt = 0 }: { radius: number; color: THREE.Color; speed: number; tilt?: number }) {
   const ref = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
-    if (ref.current) {
-      ref.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.3) * 0.15;
-      ref.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.5 + 1) * 0.08;
-    }
+    if (ref.current) ref.current.rotation.z = clock.getElapsedTime() * speed;
   });
 
   return (
-    <mesh ref={ref} position={position}>
-      <octahedronGeometry args={[0.7, 0]} />
-      <meshStandardMaterial
-        color={CYAN}
-        emissive={CYAN}
-        emissiveIntensity={0.35}
-        roughness={0.2}
-        metalness={0.8}
-        transparent
-        opacity={0.9}
-      />
+    <mesh ref={ref} rotation={[Math.PI / 2, tilt, 0]} position={[-2.5, 0, 0]}>
+      <torusGeometry args={[radius, 0.015, 12, 160]} />
+      <meshBasicMaterial color={color} transparent opacity={0.08} />
     </mesh>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Cloud relay                                                        */
-/* ------------------------------------------------------------------ */
-function CloudRelay({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.06;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.35 + 3) * 0.07;
-    }
-  });
-
-  return (
-    <group ref={groupRef} position={position}>
-      {[
-        [0, 0, 0, 0.55],
-        [-0.4, 0.1, 0, 0.38],
-        [0.42, -0.05, 0.1, 0.4],
-        [-0.15, 0.25, -0.15, 0.32],
-        [0.18, -0.22, 0.12, 0.3],
-      ].map(([x, y, z, s], i) => (
-        <mesh key={i} position={[x as number, y as number, z as number]}>
-          <sphereGeometry args={[s as number, 24, 24]} />
-          <meshStandardMaterial color="#e2e8f0" roughness={0.6} metalness={0.1} transparent opacity={0.85} />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Connection beam with flowing data                                  */
+/* Connection beam with flowing particles                             */
 /* ------------------------------------------------------------------ */
 function ConnectionBeam({
   from,
@@ -314,9 +358,9 @@ function ConnectionBeam({
   speed?: number;
 }) {
   const linePoints = useMemo(() => {
-    const mid = from.clone().lerp(to, 0.5).add(new THREE.Vector3(0, 0.4, 0));
+    const mid = from.clone().lerp(to, 0.5).add(new THREE.Vector3(0, 0.5, 0));
     const curve = new THREE.QuadraticBezierCurve3(from, mid, to);
-    return curve.getPoints(40).map((p) => p.toArray()).flat();
+    return curve.getPoints(48).map((p) => p.toArray()).flat();
   }, [from, to]);
 
   const lineGeo = useMemo(() => {
@@ -327,18 +371,16 @@ function ConnectionBeam({
 
   const particlesRef = useRef<THREE.Group>(null);
   const curve = useMemo(() => {
-    const mid = from.clone().lerp(to, 0.5).add(new THREE.Vector3(0, 0.4, 0));
+    const mid = from.clone().lerp(to, 0.5).add(new THREE.Vector3(0, 0.5, 0));
     return new THREE.QuadraticBezierCurve3(from, mid, to);
   }, [from, to]);
 
   useFrame(({ clock }) => {
     if (!particlesRef.current) return;
     particlesRef.current.children.forEach((child, i) => {
-      const t = ((clock.getElapsedTime() * speed + i / particleCount) % 1);
-      const p = curve.getPoint(t);
-      (child as THREE.Mesh).position.copy(p);
-      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.4 + Math.sin(t * Math.PI) * 0.6;
+      const t = (clock.getElapsedTime() * speed + i / particleCount) % 1;
+      (child as THREE.Mesh).position.copy(curve.getPoint(t));
+      ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(t * Math.PI) * 0.7;
     });
   });
 
@@ -350,8 +392,8 @@ function ConnectionBeam({
       <group ref={particlesRef}>
         {Array.from({ length: particleCount }).map((_, i) => (
           <mesh key={i}>
-            <sphereGeometry args={[0.06, 12, 12]} />
-            <meshBasicMaterial color={color} transparent opacity={0.8} />
+            <sphereGeometry args={[0.07, 12, 12]} />
+            <meshBasicMaterial color={color} transparent opacity={0.85} />
           </mesh>
         ))}
       </group>
@@ -360,58 +402,14 @@ function ConnectionBeam({
 }
 
 /* ------------------------------------------------------------------ */
-/* Orbital containers around the hub                                  */
+/* Starfield                                                          */
 /* ------------------------------------------------------------------ */
-function OrbitalContainers() {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.08;
-      groupRef.current.rotation.x = Math.sin(clock.getElapsedTime() * 0.15) * 0.08;
-    }
-  });
-
-  const configs = useMemo(
-    () => [
-      { radius: 2.6, angle: 0, y: 0.4, color: "#2563eb" },
-      { radius: 2.8, angle: 2.1, y: -0.3, color: "#7c3aed" },
-      { radius: 2.4, angle: 4.2, y: 0.2, color: "#0891b2" },
-    ],
-    []
-  );
-
-  return (
-    <group ref={groupRef} position={[-3.2, 0, 0]}>
-      {configs.map((c, i) => (
-        <group key={i} position={[Math.cos(c.angle) * c.radius, c.y, Math.sin(c.angle) * c.radius]}>
-          <mesh>
-            <boxGeometry args={[0.35, 0.35, 0.35]} />
-            <meshStandardMaterial color={c.color} roughness={0.3} metalness={0.6} />
-          </mesh>
-          <mesh position={[0, 0, 0.18]}>
-            <planeGeometry args={[0.2, 0.05]} />
-            <meshBasicMaterial color="#fff" transparent opacity={0.7} />
-          </mesh>
-        </group>
-      ))}
-      {/* orbit ring */}
-      <mesh rotation={[Math.PI / 2.2, 0, 0]}>
-        <torusGeometry args={[2.6, 0.008, 12, 96]} />
-        <meshBasicMaterial color={ACCENT} transparent opacity={0.1} />
-      </mesh>
-    </group>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Ambient starfield                                                  */
-/* ------------------------------------------------------------------ */
-function Starfield({ count = 180 }: { count?: number }) {
+function Starfield({ count = 220 }: { count?: number }) {
   const geometry = useMemo(() => {
     const positions = new Float32Array(count * 3);
     const rand = mulberry32(99);
     for (let i = 0; i < count; i++) {
-      const r = 8 + rand() * 30;
+      const r = 10 + rand() * 36;
       const theta = rand() * Math.PI * 2;
       const phi = Math.acos(2 * rand() - 1);
       positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
@@ -425,65 +423,70 @@ function Starfield({ count = 180 }: { count?: number }) {
 
   const ref = useRef<THREE.Points>(null);
   useFrame(({ clock }) => {
-    if (ref.current) ref.current.rotation.y = clock.getElapsedTime() * 0.008;
+    if (ref.current) ref.current.rotation.y = clock.getElapsedTime() * 0.006;
   });
 
   return (
     <points ref={ref} geometry={geometry}>
-      <pointsMaterial size={0.045} color={ACCENT_SECONDARY} transparent opacity={0.35} sizeAttenuation />
+      <pointsMaterial size={0.05} color={ACCENT_SECONDARY} transparent opacity={0.3} sizeAttenuation />
     </points>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Full scene                                                         */
+/* Scene composition                                                  */
 /* ------------------------------------------------------------------ */
 function Scene({ mouseRef, isMobile }: { mouseRef: React.RefObject<{ x: number; y: number } | null>; isMobile: boolean }) {
   const groupRef = useRef<THREE.Group>(null);
   const target = useRef({ x: 0, y: 0 });
-  const { viewport } = useThree();
 
-  useFrame((state) => {
+  useFrame(() => {
     if (groupRef.current && mouseRef.current) {
-      target.current.x += (mouseRef.current.x * 0.6 - target.current.x) * 0.03;
-      target.current.y += (mouseRef.current.y * 0.35 - target.current.y) * 0.03;
+      target.current.x += (mouseRef.current.x * 0.5 - target.current.x) * 0.025;
+      target.current.y += (mouseRef.current.y * 0.28 - target.current.y) * 0.025;
       groupRef.current.position.x = target.current.x;
       groupRef.current.position.y = target.current.y;
-      groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.005;
     }
   });
 
-  // Adjust scene density/spread based on viewport width
-  const spread = viewport.width < 6 ? 0.75 : 1;
-
-  const hub = new THREE.Vector3(-3.2 * spread, 0, 0);
-  const server = new THREE.Vector3(-6.2 * spread, 2.2, -1.5);
-  const db = new THREE.Vector3(-6.4 * spread, -2.2, 1.2);
-  const proxy = new THREE.Vector3(-1.2 * spread, 2.8, -1.2);
-  const cloud = new THREE.Vector3(-1.4 * spread, -2.6, -1);
+  const hub = new THREE.Vector3(-2.5, 0.2, 0);
+  const dish = new THREE.Vector3(-7.2, 3.2, -2.5);
+  const tower = new THREE.Vector3(-7.5, -1.5, 1.5);
+  const globe = new THREE.Vector3(1.5, 2.5, -2.8);
+  const crystal = new THREE.Vector3(2.5, -1.8, 1.2);
 
   return (
     <group ref={groupRef}>
-      <PerspectiveCamera makeDefault position={[2, 0, isMobile ? 16 : 14]} fov={isMobile ? 55 : 48} />
-      <ambientLight intensity={0.22} />
-      <pointLight position={[4, 4, 6]} intensity={1.3} color={ACCENT_GLOW} />
-      <pointLight position={[-6, -3, -4]} intensity={0.7} color={ACCENT_SECONDARY} />
-      <pointLight position={[-2, 3, -3]} intensity={0.5} color={CYAN} />
+      <PerspectiveCamera makeDefault position={[1.5, 0.5, isMobile ? 17 : 15]} fov={isMobile ? 58 : 52} />
+      <ambientLight intensity={0.18} />
+      <pointLight position={[5, 5, 6]} intensity={1.4} color={ACCENT_GLOW} />
+      <pointLight position={[-6, -2, -4]} intensity={0.7} color={ACCENT_SECONDARY} />
+      <pointLight position={[3, -3, 4]} intensity={0.5} color={CYAN} />
 
-      <Starfield count={isMobile ? 80 : 160} />
+      <Starfield count={isMobile ? 100 : 220} />
+
+      {/* Massive background orbital rings */}
+      <EnergyRing radius={9} color={ACCENT} speed={0.012} tilt={0.15} />
+      <EnergyRing radius={11} color={ACCENT_SECONDARY} speed={-0.008} tilt={-0.25} />
+      <EnergyRing radius={7.5} color={CYAN} speed={0.015} tilt={0.4} />
+
+      <GroundStation />
       <ControlHub />
-      <OrbitalContainers />
 
-      <ServerRack position={[-6.2 * spread, 2.2, -1.5]} />
-      <DatabaseStack position={[-6.4 * spread, -2.2, 1.2]} />
-      <ProxyGateway position={[-1.2 * spread, 2.8, -1.2]} />
-      <CloudRelay position={[-1.4 * spread, -2.6, -1]} />
-      <ContainerBox position={[-4.8 * spread, 0, 2.2]} />
+      <SatelliteDish position={[-7.2, 3.2, -2.5]} />
+      <DataTower position={[-7.5, -1.5, 1.5]} />
+      <NetworkGlobe position={[1.5, 2.5, -2.8]} />
+      <DataCrystal position={[2.5, -1.8, 1.2]} scale={1.2} />
 
-      <ConnectionBeam from={hub} to={server} color={ACCENT} />
-      <ConnectionBeam from={hub} to={db} color={ACCENT_SECONDARY} particleCount={2} speed={0.3} />
-      <ConnectionBeam from={hub} to={proxy} color={CYAN} particleCount={2} speed={0.5} />
-      <ConnectionBeam from={hub} to={cloud} color={CLOUD} particleCount={2} speed={0.25} />
+      <HexPlatform position={[-6.2, -3.5, -1]} scale={0.9} color={ACCENT} />
+      <HexPlatform position={[-0.5, 4.2, -1.5]} scale={0.7} color={CYAN} />
+      <HexPlatform position={[3.8, 1.5, -1]} scale={0.6} color={ACCENT_SECONDARY} />
+      <HexPlatform position={[-5.5, 0.5, 3]} scale={0.5} color={GOLD} />
+
+      <ConnectionBeam from={hub} to={dish} color={ACCENT} particleCount={3} speed={0.35} />
+      <ConnectionBeam from={hub} to={tower} color={ACCENT_SECONDARY} particleCount={2} speed={0.28} />
+      <ConnectionBeam from={hub} to={globe} color={CYAN} particleCount={3} speed={0.4} />
+      <ConnectionBeam from={hub} to={crystal} color={ACCENT_GLOW} particleCount={2} speed={0.32} />
     </group>
   );
 }
@@ -517,7 +520,7 @@ export default function LoginScene3D() {
         gl={{ antialias: !isMobile, alpha: false, powerPreference: "high-performance" }}
       >
         <color attach="background" args={[BG]} />
-        <fog attach="fog" args={[BG, isMobile ? 18 : 22, isMobile ? 45 : 50]} />
+        <fog attach="fog" args={[BG, isMobile ? 20 : 26, isMobile ? 52 : 62]} />
         <Scene mouseRef={mouseRef} isMobile={isMobile} />
       </Canvas>
     </div>

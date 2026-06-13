@@ -32,13 +32,13 @@ export default function AuthCard({
         {/* Desktop: form anchored right; Mobile: form centered over scene */}
         <div className="relative z-10 min-h-screen flex items-center justify-center md:justify-end">
           {leftPanel && (
-            <div className="hidden md:flex absolute left-0 top-0 h-full w-[55%] items-center pl-10 lg:pl-16 xl:pl-24 pointer-events-none">
+            <div className="hidden md:flex absolute left-0 bottom-0 pb-10 pl-10 lg:pl-16 xl:pl-24 pointer-events-none z-20">
               {leftPanel}
             </div>
           )}
-          <div className="w-full md:w-[45%] lg:w-[420px] xl:w-[460px] px-6 py-12 md:pr-10 lg:pr-16 xl:pr-24 md:pl-0">
+          <div className="w-full md:w-auto md:min-w-[380px] lg:min-w-[400px] xl:min-w-[420px] px-6 py-12 md:pr-10 lg:pr-16 xl:pr-24 md:pl-0">
             <div className="relative rounded-3xl bg-gradient-to-b from-white/[0.08] to-white/[0.02] p-px shadow-2xl">
-              <div className="relative rounded-3xl bg-black/25 backdrop-blur-2xl px-8 py-10 overflow-hidden">
+              <div className="relative rounded-3xl bg-black/35 backdrop-blur-2xl px-8 py-10 overflow-hidden">
                 <div className="absolute -top-20 -right-20 w-44 h-44 rounded-full bg-accent/20 blur-[72px]" />
                 <div className="absolute -bottom-20 -left-20 w-44 h-44 rounded-full bg-purple-500/15 blur-[72px]" />
 

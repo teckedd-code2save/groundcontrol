@@ -91,32 +91,28 @@ export default function LoginPage() {
 
 function StoryPanel() {
   const items = [
-    { icon: "🛰️", label: "Fleet Control", desc: "One hub for every VPS" },
-    { icon: "📦", label: "Container Ops", desc: "Start, stop, deploy" },
-    { icon: "🗄️", label: "Databases", desc: "Monitor state at a glance" },
-    { icon: "🌩️", label: "Proxy & Cloud", desc: "Caddy, Nginx, Cloudflare" },
+    { label: "Fleet" },
+    { label: "Containers" },
+    { label: "Proxy" },
+    { label: "Cloud" },
   ];
 
   return (
-    <div className="flex flex-col gap-4 max-w-sm">
-      <h2 className="text-2xl lg:text-3xl font-bold text-white/90 tracking-tight drop-shadow-lg">
-        Mission control<br />for your servers.
+    <div className="flex flex-col gap-2 max-w-xs">
+      <h2 className="text-xl font-bold text-white/90 tracking-tight drop-shadow-lg">
+        Mission control for your fleet.
       </h2>
-      <p className="text-sm text-white/40 max-w-xs leading-relaxed">
-        GroundControl turns your VPS fleet into a live, clickable topology you can operate from anywhere.
+      <p className="text-xs text-white/40 leading-relaxed">
+        Live topology, container ops, reverse proxy, and AI-assisted deployments from one dashboard.
       </p>
-      <div className="mt-4 space-y-3">
+      <div className="mt-2 flex flex-wrap gap-2">
         {items.map((item) => (
-          <div
+          <span
             key={item.label}
-            className="flex items-center gap-3 rounded-xl bg-white/[0.03] border border-white/5 px-4 py-3 backdrop-blur-sm"
+            className="px-2 py-1 rounded-md bg-white/[0.04] border border-white/10 text-[10px] font-mono uppercase tracking-wider text-white/50"
           >
-            <span className="text-lg">{item.icon}</span>
-            <div>
-              <div className="text-sm font-semibold text-white/80">{item.label}</div>
-              <div className="text-xs text-white/40">{item.desc}</div>
-            </div>
-          </div>
+            {item.label}
+          </span>
         ))}
       </div>
     </div>
