@@ -15,11 +15,62 @@ async function detectOsFamily(vps?: VpsConnection | null): Promise<"alpine" | "d
   return "other";
 }
 
+/**
+ * Detect whether this GroundControl process is running inside a container.
+ * This matters because local-mode `execOnVps` runs commands in this process'
+ * namespace, so host package managers (apk/apt) will target the container
+ * filesystem and either fail or install packages in the wrong place.
+ */
+export async function isRunningInContainer(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+
+  // SSH mode always runs on the real host.
+  if (!conn.isLocal) return false;
+
+  const checks = await Promise.all([
+    execOnVps("test -f /.dockerenv && echo yes || echo no", conn),
+    execOnVps("cat /proc/1/cgroup 2>/dev/null | tr '\\n' ' ' || echo ''", conn),
+  ]);
+
+  if (checks[0].stdout.trim() === "yes") return true;
+  const cgroup = checks[1].stdout.toLowerCase();
+  if (/docker|containerd|kubepod|lxc|podman/.test(cgroup)) return true;
+  return false;
+}
+
+/**
+ * Host package installs (apk, apt) only make sense when commands execute on the
+ * real host OS. In local container mode they target the container filesystem.
+ */
+export async function canInstallHostPackages(vps?: VpsConnection | null): Promise<{ ok: boolean; reason?: string }> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { ok: false, reason: "No VPS configured." };
+
+  if (!conn.isLocal) return { ok: true };
+
+  const inContainer = await isRunningInContainer(conn);
+  if (inContainer) {
+    return {
+      ok: false,
+      reason:
+        "GroundControl is running inside a Docker container, so host package managers (apk/apt) cannot target the host OS. " +
+        "Run GroundControl directly on the host, or manage the host via SSH, to install host packages.",
+    };
+  }
+
+  return { ok: true };
+}
+
 export interface BootstrapResult {
   success: boolean;
   output: string;
   error: string;
 }
+
+const HOST_PACKAGE_BLOCKED =
+  "GroundControl is running inside a Docker container, so host package managers cannot target the host OS. " +
+  "Run GroundControl directly on the host, or manage the host via SSH, to install host packages.";
 
 /**
  * Install Docker using the official convenience script when possible,
@@ -28,6 +79,9 @@ export interface BootstrapResult {
 export async function installDocker(vps?: VpsConnection | null): Promise<BootstrapResult> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
 
   const os = await detectOsFamily(conn);
 
@@ -56,6 +110,9 @@ export async function installCaddy(vps?: VpsConnection | null): Promise<Bootstra
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return { success: false, output: "", error: "No VPS configured" };
 
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
   const os = await detectOsFamily(conn);
 
   if (os === "debian") {
@@ -82,13 +139,33 @@ chmod +x /usr/local/bin/caddy && /usr/local/bin/caddy version 2>&1`;
 }
 
 /**
- * Pull the cloudflared Docker image so a connector container can be started later.
+ * Install Nginx via the distribution package manager or static binary fallback.
  */
-export async function installCloudflared(vps?: VpsConnection | null): Promise<BootstrapResult> {
+export async function installNginx(vps?: VpsConnection | null): Promise<BootstrapResult> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return { success: false, output: "", error: "No VPS configured" };
 
-  const result = await execOnVps("docker pull cloudflare/cloudflared:latest 2>&1", conn);
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  const os = await detectOsFamily(conn);
+
+  if (os === "debian") {
+    const result = await execOnVps("apt-get update && apt-get install -y nginx 2>&1", conn);
+    return { success: result.code === 0, output: result.stdout, error: result.stderr };
+  }
+
+  if (os === "alpine") {
+    const result = await execOnVps("apk add --no-cache nginx 2>&1", conn);
+    return { success: result.code === 0, output: result.stdout, error: result.stderr };
+  }
+
+  // Static binary fallback (official mainline prebuilt).
+  const arch = await execOnVps("uname -m", conn);
+  const goArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
+  const script = `curl -Lo /tmp/nginx.tar.gz "https://nginx.org/download/nginx-1.26.2-linux-${shQuote(goArch)}.tar.gz" 2>&1 && \
+tar -xzf /tmp/nginx.tar.gz -C /usr/local/bin --strip-components=1 2>&1 && nginx -v 2>&1`;
+  const result = await execOnVps(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -98,6 +175,9 @@ export async function installCloudflared(vps?: VpsConnection | null): Promise<Bo
 export async function installNode(vps?: VpsConnection | null): Promise<BootstrapResult> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
 
   const os = await detectOsFamily(conn);
 
@@ -118,12 +198,71 @@ export async function installNode(vps?: VpsConnection | null): Promise<Bootstrap
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
+/**
+ * Install Git via the distribution package manager.
+ */
+export async function installGit(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  const os = await detectOsFamily(conn);
+
+  if (os === "debian") {
+    const result = await execOnVps("apt-get update && apt-get install -y git 2>&1", conn);
+    return { success: result.code === 0, output: result.stdout, error: result.stderr };
+  }
+
+  if (os === "alpine") {
+    const result = await execOnVps("apk add --no-cache git 2>&1", conn);
+    return { success: result.code === 0, output: result.stdout, error: result.stderr };
+  }
+
+  const result = await execOnVps("command -v git || (curl -fsSL https://raw.githubusercontent.com/git/git/master/INSTALL 2>/dev/null) 2>&1", conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+/**
+ * Pull a container image. Works in both SSH and local container mode because it
+ * uses the mounted host Docker socket.
+ */
+async function pullImage(image: string, vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+  const result = await execOnVps(`docker pull ${image} 2>&1`, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+/**
+ * Pull the cloudflared Docker image so a connector container can be started later.
+ */
+export async function installCloudflared(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  return pullImage("cloudflare/cloudflared:latest", vps);
+}
+
+export async function installPostgres(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  return pullImage("postgres:16-alpine", vps);
+}
+
+export async function installRedis(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  return pullImage("redis:7-alpine", vps);
+}
+
+export async function installTraefik(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  return pullImage("traefik:v3", vps);
+}
+
+export async function installCertbot(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  return pullImage("certbot/certbot:latest", vps);
+}
+
 export async function getServerIp(vps?: VpsConnection | null): Promise<string> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return "";
   const res = await execOnVps(
-    `hostname -I 2>/dev/null | awk '{print $1}' || ip route get 1 2>/dev/null | awk '{print $7; exit}' || echo ""`,
-    conn
+    `hostname -I 2>/dev/null | awk '{print $1}' || ip route get 1 2>/dev/null | awk '{print $7; exit}' || echo ""`
   );
   return res.stdout.trim();
 }
@@ -142,11 +281,32 @@ export async function isCaddyInstalled(vps?: VpsConnection | null): Promise<bool
   return res.stdout.trim() === "yes";
 }
 
+export async function isNginxInstalled(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnVps("nginx -v 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  return res.stdout.trim() === "yes";
+}
+
 export async function isNodeInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
   const res = await execOnVps("node --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
+}
+
+export async function isGitInstalled(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnVps("git --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  return res.stdout.trim() === "yes";
+}
+
+export async function isImagePulled(image: string, vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnVps(`docker images -q ${image} 2>/dev/null | head -n 1`, conn);
+  return res.stdout.trim().length > 0;
 }
 
 export async function getCloudflaredContainerStatus(
@@ -156,8 +316,7 @@ export async function getCloudflaredContainerStatus(
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return { running: false };
   const res = await execOnVps(
-    `docker ps --filter "name=${shQuote(connectorName)}" --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null || echo ""`,
-    conn
+    `docker ps --filter "name=${shQuote(connectorName)}" --format "{{.Names}}|{{.Status}}|{{.State}}" 2>/dev/null || echo ""`
   );
   const line = res.stdout.trim().split("\n")[0];
   if (!line) return { running: false };
