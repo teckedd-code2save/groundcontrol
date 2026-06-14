@@ -2,7 +2,7 @@
 
 import { useRef, useMemo, useEffect, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { PerspectiveCamera, Html } from "@react-three/drei";
+import { PerspectiveCamera, Html, ContactShadows, RoundedBox } from "@react-three/drei";
 import * as THREE from "three";
 
 const ACCENT = new THREE.Color("#ff5500");
@@ -27,7 +27,7 @@ function mulberry32(seed: number) {
 function ObjectLabel({ children, offset = [0, -1.2, 0] }: { children: React.ReactNode; offset?: [number, number, number] }) {
   return (
     <Html position={offset} center distanceFactor={12}>
-      <div className="px-2.5 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[10px] font-mono uppercase tracking-wider text-white/70 whitespace-nowrap shadow-lg pointer-events-none">
+      <div className="px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-sm text-[11px] font-bold uppercase tracking-wider text-white/90 whitespace-nowrap shadow-lg pointer-events-none">
         {children}
       </div>
     </Html>
@@ -35,48 +35,30 @@ function ObjectLabel({ children, offset = [0, -1.2, 0] }: { children: React.Reac
 }
 
 /* ------------------------------------------------------------------ */
-/* Ship control wheel — the GroundControl metaphor                    */
+/* Ship control wheel — smaller, thicker, truly 3D                    */
 /* ------------------------------------------------------------------ */
-function ShipWheel({ position }: { position: [number, number, number] }) {
-  const wheelRef = useRef<THREE.Group>(null);
-  const ringRef = useRef<THREE.Mesh>(null);
-  const hubRef = useRef<THREE.Mesh>(null);
-
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    if (wheelRef.current) {
-      wheelRef.current.rotation.z = Math.sin(t * 0.08) * 0.06;
-      wheelRef.current.rotation.y = t * 0.03;
-    }
-    if (ringRef.current) {
-      ringRef.current.rotation.z = t * 0.02;
-    }
-    if (hubRef.current) {
-      hubRef.current.rotation.z = -t * 0.05;
-    }
-  });
-
+function ShipWheel({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   const spokeCount = 8;
 
   return (
-    <group ref={wheelRef} position={position}>
-      {/* outer rim */}
-      <mesh ref={ringRef}>
-        <torusGeometry args={[2.4, 0.12, 16, 96]} />
-        <meshStandardMaterial color={ACCENT} emissive={ACCENT} emissiveIntensity={0.4} roughness={0.2} metalness={0.8} />
+    <group position={position} scale={scale}>
+      {/* outer rim — thick torus */}
+      <mesh castShadow receiveShadow>
+        <torusGeometry args={[1.6, 0.18, 20, 100]} />
+        <meshStandardMaterial color={ACCENT} emissive={ACCENT} emissiveIntensity={0.25} roughness={0.15} metalness={0.9} />
       </mesh>
       {/* inner rim */}
-      <mesh>
-        <torusGeometry args={[1.6, 0.07, 12, 80]} />
-        <meshStandardMaterial color={ACCENT_GLOW} emissive={ACCENT_GLOW} emissiveIntensity={0.3} roughness={0.25} metalness={0.75} />
+      <mesh castShadow receiveShadow>
+        <torusGeometry args={[0.95, 0.09, 16, 80]} />
+        <meshStandardMaterial color={ACCENT_GLOW} emissive={ACCENT_GLOW} emissiveIntensity={0.2} roughness={0.2} metalness={0.85} />
       </mesh>
-      {/* spokes */}
+      {/* spokes — cylinders for real depth */}
       {Array.from({ length: spokeCount }).map((_, i) => {
         const a = (i / spokeCount) * Math.PI * 2;
         return (
-          <mesh key={i} rotation={[0, 0, a]} position={[Math.cos(a) * 2, Math.sin(a) * 2, 0]}>
-            <boxGeometry args={[2.0, 0.12, 0.08]} />
-            <meshStandardMaterial color="#c2410c" roughness={0.3} metalness={0.7} />
+          <mesh key={i} rotation={[0, 0, a]} position={[Math.cos(a) * 1.28, Math.sin(a) * 1.28, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[0.07, 0.07, 1.3, 12]} />
+            <meshStandardMaterial color="#c2410c" roughness={0.3} metalness={0.75} />
           </mesh>
         );
       })}
@@ -84,327 +66,203 @@ function ShipWheel({ position }: { position: [number, number, number] }) {
       {Array.from({ length: spokeCount }).map((_, i) => {
         const a = (i / spokeCount) * Math.PI * 2;
         return (
-          <mesh key={i} position={[Math.cos(a) * 2.4, Math.sin(a) * 2.4, 0.12]}>
-            <sphereGeometry args={[0.14, 16, 16]} />
-            <meshStandardMaterial color={GOLD} emissive={GOLD} emissiveIntensity={0.3} roughness={0.2} metalness={0.8} />
+          <mesh key={i} position={[Math.cos(a) * 1.6, Math.sin(a) * 1.6, 0.12]} castShadow>
+            <sphereGeometry args={[0.14, 24, 24]} />
+            <meshStandardMaterial color={GOLD} emissive={GOLD} emissiveIntensity={0.2} roughness={0.15} metalness={0.85} />
           </mesh>
         );
       })}
       {/* central hub */}
-      <mesh ref={hubRef}>
-        <cylinderGeometry args={[0.5, 0.5, 0.35, 32]} />
-        <meshStandardMaterial color={ACCENT} emissive={ACCENT} emissiveIntensity={1.2} roughness={0.15} metalness={0.95} />
+      <mesh castShadow receiveShadow>
+        <cylinderGeometry args={[0.4, 0.4, 0.45, 32]} />
+        <meshStandardMaterial color={ACCENT} emissive={ACCENT} emissiveIntensity={0.8} roughness={0.1} metalness={0.95} />
       </mesh>
-      {/* hub cap */}
-      <mesh position={[0, 0, 0.2]}>
-        <sphereGeometry args={[0.25, 24, 24]} />
-        <meshStandardMaterial color={GOLD} emissive={GOLD} emissiveIntensity={0.6} />
+      <mesh position={[0, 0, 0.25]} castShadow>
+        <sphereGeometry args={[0.2, 32, 32]} />
+        <meshStandardMaterial color={GOLD} emissive={GOLD} emissiveIntensity={0.4} roughness={0.1} metalness={0.9} />
       </mesh>
       {/* pedestal */}
-      <mesh position={[0, 0, -0.8]}>
-        <cylinderGeometry args={[0.35, 0.5, 1.2, 16]} />
-        <meshStandardMaterial color="#1f1f2a" metalness={0.7} roughness={0.4} />
+      <mesh position={[0, 0, -0.7]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.25, 0.4, 1, 24]} />
+        <meshStandardMaterial color="#1f1f2a" metalness={0.7} roughness={0.35} />
       </mesh>
-      <ObjectLabel offset={[0, -3.3, 0]}>Control</ObjectLabel>
+      <ObjectLabel offset={[0, -2.4, 0]}>Control</ObjectLabel>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Server rack                                                        */
+/* Server rack — rounded, inset face, LEDs                            */
 /* ------------------------------------------------------------------ */
-function ServerRack({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const lightsRef = useRef<THREE.Group>(null);
-
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.35 + position[0]) * 0.06;
-      groupRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.12) * 0.08;
-    }
-    if (lightsRef.current) {
-      lightsRef.current.children.forEach((child, i) => {
-        const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-        const t = clock.getElapsedTime() * 2.5 + i * 1.2;
-        mat.opacity = 0.35 + Math.max(0, Math.sin(t)) * 0.65;
-      });
-    }
-  });
-
+function ServerRack({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
-    <group ref={groupRef} position={position}>
-      <mesh>
-        <boxGeometry args={[1.4, 2.4, 1.2]} />
-        <meshStandardMaterial color="#16161f" roughness={0.4} metalness={0.75} />
+    <group position={position} scale={scale}>
+      <RoundedBox args={[1.3, 2.2, 1]} radius={0.06} smoothness={4} castShadow receiveShadow>
+        <meshStandardMaterial color="#16161f" roughness={0.35} metalness={0.75} />
+      </RoundedBox>
+      <mesh position={[0, 0, 0.51]} castShadow receiveShadow>
+        <boxGeometry args={[1.1, 2.0, 0.05]} />
+        <meshStandardMaterial color="#0a0a0e" roughness={0.5} metalness={0.5} />
       </mesh>
-      <mesh position={[0, 0, 0.62]}>
-        <boxGeometry args={[1.3, 2.3, 0.06]} />
-        <meshStandardMaterial color="#0c0c10" roughness={0.5} metalness={0.6} />
-      </mesh>
-      <group ref={lightsRef}>
-        {Array.from({ length: 7 }).map((_, i) => (
-          <group key={i} position={[0, -0.8 + i * 0.28, 0.68]}>
-            <mesh position={[-0.4, 0, 0]}>
-              <boxGeometry args={[0.45, 0.04, 0.02]} />
-              <meshBasicMaterial color="#2a2a35" />
-            </mesh>
-            <mesh position={[0.42, 0, 0]}>
-              <circleGeometry args={[0.05, 12]} />
-              <meshBasicMaterial color={i % 3 === 0 ? GREEN : i % 3 === 1 ? CYAN : ACCENT} transparent opacity={0.9} />
-            </mesh>
-          </group>
-        ))}
-      </group>
-      {/* rack ears */}
-      <mesh position={[-0.72, 0, 0]}>
-        <boxGeometry args={[0.04, 2.4, 0.1]} />
-        <meshStandardMaterial color="#333" metalness={0.8} />
-      </mesh>
-      <mesh position={[0.72, 0, 0]}>
-        <boxGeometry args={[0.04, 2.4, 0.1]} />
-        <meshStandardMaterial color="#333" metalness={0.8} />
-      </mesh>
-      <ObjectLabel offset={[0, -1.6, 0]}>Servers</ObjectLabel>
+      {Array.from({ length: 6 }).map((_, i) => (
+        <group key={i} position={[0, -0.65 + i * 0.26, 0.56]}>
+          <mesh position={[-0.32, 0, 0]}>
+            <boxGeometry args={[0.4, 0.04, 0.02]} />
+            <meshBasicMaterial color="#22222a" />
+          </mesh>
+          <mesh position={[0.32, 0, 0]}>
+            <circleGeometry args={[0.05, 16]} />
+            <meshBasicMaterial color={i % 3 === 0 ? GREEN : i % 3 === 1 ? CYAN : ACCENT} transparent opacity={0.9} />
+          </mesh>
+        </group>
+      ))}
+      <ObjectLabel offset={[0, -1.5, 0]}>Servers</ObjectLabel>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Computer / monitor                                                 */
+/* Computer — rounded monitor with depth                              */
 /* ------------------------------------------------------------------ */
-function Computer({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.4 + 1) * 0.05;
-      groupRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.15) * 0.1;
-    }
-  });
-
+function Computer({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
-    <group ref={groupRef} position={position}>
-      {/* screen */}
-      <mesh>
-        <boxGeometry args={[2.2, 1.4, 0.12]} />
-        <meshStandardMaterial color="#111" roughness={0.3} metalness={0.5} />
+    <group position={position} scale={scale}>
+      <RoundedBox args={[2, 1.3, 0.22]} radius={0.08} smoothness={4} castShadow receiveShadow>
+        <meshStandardMaterial color="#111" roughness={0.25} metalness={0.55} />
+      </RoundedBox>
+      <mesh position={[0, 0, 0.12]} castShadow>
+        <boxGeometry args={[1.8, 1.1, 0.02]} />
+        <meshStandardMaterial color="#050507" roughness={0.2} metalness={0.3} />
       </mesh>
-      {/* display glow */}
-      <mesh position={[0, 0, 0.07]}>
-        <planeGeometry args={[2.05, 1.25]} />
-        <meshBasicMaterial color={CYAN} transparent opacity={0.15} />
+      <mesh position={[0, 0, 0.13]}>
+        <planeGeometry args={[1.7, 1.0]} />
+        <meshBasicMaterial color={CYAN} transparent opacity={0.1} />
       </mesh>
-      {/* chart bars on screen */}
       {[
-        { h: 0.4, x: -0.6 },
-        { h: 0.7, x: -0.2 },
-        { h: 0.5, x: 0.2 },
-        { h: 0.85, x: 0.6 },
+        { h: 0.32, x: -0.5 },
+        { h: 0.55, x: -0.17 },
+        { h: 0.4, x: 0.17 },
+        { h: 0.68, x: 0.5 },
       ].map((bar, i) => (
-        <mesh key={i} position={[bar.x, -0.2 + bar.h / 2, 0.08]}>
-          <boxGeometry args={[0.22, bar.h, 0.02]} />
-          <meshBasicMaterial color={ACCENT} transparent opacity={0.8} />
+        <mesh key={i} position={[bar.x, -0.15 + bar.h / 2, 0.14]}>
+          <boxGeometry args={[0.18, bar.h, 0.02]} />
+          <meshBasicMaterial color={ACCENT} transparent opacity={0.75} />
         </mesh>
       ))}
-      {/* stand */}
-      <mesh position={[0, -0.95, -0.1]}>
-        <boxGeometry args={[0.4, 0.5, 0.25]} />
-        <meshStandardMaterial color="#222" metalness={0.6} roughness={0.4} />
+      <mesh position={[0, -0.9, -0.05]} castShadow receiveShadow>
+        <boxGeometry args={[0.35, 0.5, 0.25]} />
+        <meshStandardMaterial color="#222" metalness={0.6} roughness={0.35} />
       </mesh>
-      <mesh position={[0, -1.25, -0.1]}>
-        <boxGeometry args={[1, 0.12, 0.5]} />
-        <meshStandardMaterial color="#222" metalness={0.6} roughness={0.4} />
+      <mesh position={[0, -1.15, -0.05]} castShadow receiveShadow>
+        <boxGeometry args={[0.9, 0.12, 0.5]} />
+        <meshStandardMaterial color="#222" metalness={0.6} roughness={0.35} />
       </mesh>
-      {/* keyboard */}
-      <mesh position={[0, -1.5, 0.35]} rotation={[0.2, 0, 0]}>
-        <boxGeometry args={[1.4, 0.08, 0.5]} />
-        <meshStandardMaterial color="#1a1a20" metalness={0.5} roughness={0.5} />
-      </mesh>
-      <ObjectLabel offset={[0, -2.1, 0]}>Monitor</ObjectLabel>
+      <ObjectLabel offset={[0, -1.8, 0]}>Monitor</ObjectLabel>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Docker container                                                   */
+/* Docker container — rounded, ribbed sides                           */
 /* ------------------------------------------------------------------ */
-function ContainerBox({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.2;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.6 + 2) * 0.08;
-    }
-  });
-
+function ContainerBox({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
-    <group ref={groupRef} position={position}>
-      <mesh>
-        <boxGeometry args={[1.2, 1.2, 1.2]} />
-        <meshStandardMaterial color={BLUE} roughness={0.25} metalness={0.55} />
-      </mesh>
-      {/* whale logo stripes */}
-      <mesh position={[0, 0.2, 0.61]}>
-        <planeGeometry args={[0.9, 0.18]} />
+    <group position={position} scale={scale}>
+      <RoundedBox args={[1.2, 1.2, 1.2]} radius={0.06} smoothness={4} castShadow receiveShadow>
+        <meshStandardMaterial color={BLUE} roughness={0.2} metalness={0.6} />
+      </RoundedBox>
+      {/* side ribs */}
+      {Array.from({ length: 5 }).map((_, i) => (
+        <mesh key={i} position={[-0.5 + i * 0.25, 0, 0.61]} castShadow>
+          <boxGeometry args={[0.04, 1.05, 0.04]} />
+          <meshStandardMaterial color="#1d4ed8" roughness={0.3} metalness={0.6} />
+        </mesh>
+      ))}
+      <mesh position={[0, 0.15, 0.62]}>
+        <planeGeometry args={[0.65, 0.14]} />
         <meshBasicMaterial color="#fff" transparent opacity={0.95} />
       </mesh>
-      <mesh position={[0, -0.08, 0.61]}>
-        <planeGeometry args={[0.55, 0.12]} />
-        <meshBasicMaterial color="#fff" transparent opacity={0.7} />
+      <mesh position={[0, -0.1, 0.62]}>
+        <planeGeometry args={[0.4, 0.1]} />
+        <meshBasicMaterial color="#fff" transparent opacity={0.65} />
       </mesh>
-      {/* corner castings */}
-      {[-0.52, 0.52].map((x) =>
-        [-0.52, 0.52].map((y) =>
-          [-0.52, 0.52].map((z, zi) => (
-            <mesh key={`${x}-${y}-${zi}`} position={[x, y, z]}>
-              <boxGeometry args={[0.12, 0.12, 0.12]} />
-              <meshStandardMaterial color="#60a5fa" />
-            </mesh>
-          ))
-        )
-      )}
-      <ObjectLabel offset={[0, -1.1, 0]}>Containers</ObjectLabel>
+      <ObjectLabel offset={[0, -1, 0]}>Containers</ObjectLabel>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Docker image — golden disc / framed icon                           */
+/* Database — grooved cylinders                                       */
 /* ------------------------------------------------------------------ */
-function DockerImage({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.18;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.5 + 3) * 0.07;
-    }
-  });
-
+function Database({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
-    <group ref={groupRef} position={position}>
-      {/* frame */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.85, 0.85, 0.1, 32]} />
-        <meshStandardMaterial color={GOLD} emissive={GOLD} emissiveIntensity={0.25} roughness={0.2} metalness={0.8} />
-      </mesh>
-      {/* face */}
-      <mesh position={[0, 0.06, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.72, 0.72, 0.05, 32]} />
-        <meshStandardMaterial color="#1a1508" roughness={0.4} metalness={0.4} />
-      </mesh>
-      {/* image icon */}
-      <mesh position={[0, 0.1, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[0.7, 0.7]} />
-        <meshBasicMaterial color={GOLD} transparent opacity={0.3} />
-      </mesh>
-      <mesh position={[-0.15, 0.11, 0.1]} rotation={[Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.12, 16]} />
-        <meshBasicMaterial color="#fbbf24" />
-      </mesh>
-      <mesh position={[0.2, 0.11, -0.1]} rotation={[Math.PI / 2, 0, 0]}>
-        <boxGeometry args={[0.25, 0.2, 0.02]} />
-        <meshBasicMaterial color="#f59e0b" />
-      </mesh>
-      {/* label tab */}
-      <mesh position={[0, -0.7, 0]}>
-        <boxGeometry args={[0.6, 0.18, 0.05]} />
-        <meshBasicMaterial color={GOLD} transparent opacity={0.8} />
-      </mesh>
-      <ObjectLabel offset={[0, -1.2, 0]}>Images</ObjectLabel>
-    </group>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Database                                                           */
-/* ------------------------------------------------------------------ */
-function Database({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.12;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.45 + 4) * 0.06;
-    }
-  });
-
-  return (
-    <group ref={groupRef} position={position}>
-      {Array.from({ length: 4 }).map((_, i) => (
-        <mesh key={i} position={[0, -0.55 + i * 0.37, 0]}>
-          <cylinderGeometry args={[0.55, 0.55, 0.3, 32]} />
-          <meshStandardMaterial
-            color={i === 2 ? ACCENT_SECONDARY : "#252530"}
-            emissive={i === 2 ? ACCENT_SECONDARY : "#000"}
-            emissiveIntensity={i === 2 ? 0.35 : 0}
-            roughness={0.3}
-            metalness={0.75}
-          />
-        </mesh>
+    <group position={position} scale={scale}>
+      {Array.from({ length: 3 }).map((_, i) => (
+        <group key={i} position={[0, -0.42 + i * 0.42, 0]}>
+          <mesh castShadow receiveShadow>
+            <cylinderGeometry args={[0.55, 0.55, 0.32, 36]} />
+            <meshStandardMaterial
+              color={i === 1 ? ACCENT_SECONDARY : "#252530"}
+              emissive={i === 1 ? ACCENT_SECONDARY : "#000"}
+              emissiveIntensity={i === 1 ? 0.25 : 0}
+              roughness={0.25}
+              metalness={0.8}
+            />
+          </mesh>
+          <mesh position={[0, 0.16, 0]}>
+            <cylinderGeometry args={[0.56, 0.56, 0.015, 36]} />
+            <meshBasicMaterial color="#3a3a4a" transparent opacity={0.6} />
+          </mesh>
+          <mesh position={[0, -0.16, 0]}>
+            <cylinderGeometry args={[0.56, 0.56, 0.015, 36]} />
+            <meshBasicMaterial color="#3a3a4a" transparent opacity={0.6} />
+          </mesh>
+        </group>
       ))}
-      <mesh position={[0, 0.55, 0]}>
-        <cylinderGeometry args={[0.56, 0.56, 0.02, 32]} />
-        <meshBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.4} />
-      </mesh>
       <ObjectLabel offset={[0, -1.1, 0]}>Databases</ObjectLabel>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Cloud relay                                                        */
+/* Cloud relay — volumetric spheres                                   */
 /* ------------------------------------------------------------------ */
-function CloudNode({ position }: { position: [number, number, number] }) {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y = clock.getElapsedTime() * 0.05;
-      groupRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.3 + 5) * 0.08;
-    }
-  });
-
+function CloudNode({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
-    <group ref={groupRef} position={position}>
+    <group position={position} scale={scale}>
       {[
         [0, 0, 0, 0.7],
-        [-0.5, 0.1, 0.1, 0.48],
-        [0.55, -0.05, 0.05, 0.5],
-        [-0.15, 0.3, -0.15, 0.4],
-        [0.2, -0.25, 0.15, 0.38],
+        [-0.48, 0.08, 0.1, 0.45],
+        [0.5, -0.04, 0.05, 0.48],
+        [0.15, 0.25, -0.12, 0.35],
       ].map(([x, y, z, s], i) => (
-        <mesh key={i} position={[x as number, y as number, z as number]}>
-          <sphereGeometry args={[s as number, 24, 24]} />
-          <meshStandardMaterial color="#e2e8f0" roughness={0.6} metalness={0.1} transparent opacity={0.85} />
+        <mesh key={i} position={[x as number, y as number, z as number]} castShadow receiveShadow>
+          <sphereGeometry args={[s as number, 32, 32]} />
+          <meshStandardMaterial color="#e2e8f0" roughness={0.5} metalness={0.1} transparent opacity={0.9} />
         </mesh>
       ))}
-      <ObjectLabel offset={[0, -1.2, 0]}>Cloud</ObjectLabel>
+      <ObjectLabel offset={[0, -1.1, 0]}>Cloud</ObjectLabel>
     </group>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Proxy gateway — archway / shield                                   */
+/* Proxy gateway — 3D shield with frame                               */
 /* ------------------------------------------------------------------ */
-function ProxyGateway({ position }: { position: [number, number, number] }) {
-  const ref = useRef<THREE.Mesh>(null);
-  useFrame(({ clock }) => {
-    if (ref.current) {
-      ref.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.25) * 0.12;
-      ref.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 0.4 + 6) * 0.06;
-    }
-  });
-
+function ProxyGateway({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
   return (
-    <group position={position}>
-      <mesh ref={ref}>
-        <torusKnotGeometry args={[0.55, 0.18, 64, 16, 2, 3]} />
-        <meshStandardMaterial
-          color={CYAN}
-          emissive={CYAN}
-          emissiveIntensity={0.3}
-          roughness={0.2}
-          metalness={0.8}
-          transparent
-          opacity={0.9}
-        />
+    <group position={position} scale={scale}>
+      <mesh castShadow receiveShadow>
+        <octahedronGeometry args={[0.75, 0]} />
+        <meshStandardMaterial color={CYAN} emissive={CYAN} emissiveIntensity={0.2} roughness={0.15} metalness={0.85} transparent opacity={0.9} />
+      </mesh>
+      <mesh position={[0, 0, 0.12]} castShadow>
+        <octahedronGeometry args={[0.38, 0]} />
+        <meshStandardMaterial color="#050507" roughness={0.3} metalness={0.6} />
+      </mesh>
+      <mesh position={[0, 0, 0.3]} castShadow>
+        <boxGeometry args={[0.18, 0.18, 0.05]} />
+        <meshStandardMaterial color={CYAN} emissive={CYAN} emissiveIntensity={0.6} />
       </mesh>
       <ObjectLabel offset={[0, -1.2, 0]}>Proxy</ObjectLabel>
     </group>
@@ -414,21 +272,9 @@ function ProxyGateway({ position }: { position: [number, number, number] }) {
 /* ------------------------------------------------------------------ */
 /* Connection beams                                                   */
 /* ------------------------------------------------------------------ */
-function ConnectionBeam({
-  from,
-  to,
-  color = ACCENT,
-  particleCount = 3,
-  speed = 0.4,
-}: {
-  from: THREE.Vector3;
-  to: THREE.Vector3;
-  color?: THREE.Color;
-  particleCount?: number;
-  speed?: number;
-}) {
+function ConnectionBeam({ from, to, color = ACCENT }: { from: THREE.Vector3; to: THREE.Vector3; color?: THREE.Color }) {
   const linePoints = useMemo(() => {
-    const mid = from.clone().lerp(to, 0.5).add(new THREE.Vector3(0, 0.5, 0));
+    const mid = from.clone().lerp(to, 0.5).add(new THREE.Vector3(0, 0.4, 0));
     const curve = new THREE.QuadraticBezierCurve3(from, mid, to);
     return curve.getPoints(48).map((p) => p.toArray()).flat();
   }, [from, to]);
@@ -439,42 +285,17 @@ function ConnectionBeam({
     return geo;
   }, [linePoints]);
 
-  const particlesRef = useRef<THREE.Group>(null);
-  const curve = useMemo(() => {
-    const mid = from.clone().lerp(to, 0.5).add(new THREE.Vector3(0, 0.5, 0));
-    return new THREE.QuadraticBezierCurve3(from, mid, to);
-  }, [from, to]);
-
-  useFrame(({ clock }) => {
-    if (!particlesRef.current) return;
-    particlesRef.current.children.forEach((child, i) => {
-      const t = (clock.getElapsedTime() * speed + i / particleCount) % 1;
-      (child as THREE.Mesh).position.copy(curve.getPoint(t));
-      ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(t * Math.PI) * 0.7;
-    });
-  });
-
   return (
-    <group>
-      <lineSegments geometry={lineGeo}>
-        <lineBasicMaterial color={color} transparent opacity={0.12} />
-      </lineSegments>
-      <group ref={particlesRef}>
-        {Array.from({ length: particleCount }).map((_, i) => (
-          <mesh key={i}>
-            <sphereGeometry args={[0.07, 12, 12]} />
-            <meshBasicMaterial color={color} transparent opacity={0.85} />
-          </mesh>
-        ))}
-      </group>
-    </group>
+    <lineSegments geometry={lineGeo}>
+      <lineBasicMaterial color={color} transparent opacity={0.1} />
+    </lineSegments>
   );
 }
 
 /* ------------------------------------------------------------------ */
 /* Starfield                                                          */
 /* ------------------------------------------------------------------ */
-function Starfield({ count = 220 }: { count?: number }) {
+function Starfield({ count = 160 }: { count?: number }) {
   const geometry = useMemo(() => {
     const positions = new Float32Array(count * 3);
     const rand = mulberry32(99);
@@ -493,12 +314,12 @@ function Starfield({ count = 220 }: { count?: number }) {
 
   const ref = useRef<THREE.Points>(null);
   useFrame(({ clock }) => {
-    if (ref.current) ref.current.rotation.y = clock.getElapsedTime() * 0.006;
+    if (ref.current) ref.current.rotation.y = clock.getElapsedTime() * 0.004;
   });
 
   return (
     <points ref={ref} geometry={geometry}>
-      <pointsMaterial size={0.05} color={ACCENT_SECONDARY} transparent opacity={0.3} sizeAttenuation />
+      <pointsMaterial size={0.045} color={ACCENT_SECONDARY} transparent opacity={0.25} sizeAttenuation />
     </points>
   );
 }
@@ -512,48 +333,48 @@ function Scene({ mouseRef, isMobile }: { mouseRef: React.RefObject<{ x: number; 
 
   useFrame(() => {
     if (groupRef.current && mouseRef.current) {
-      target.current.x += (mouseRef.current.x * 0.5 - target.current.x) * 0.025;
-      target.current.y += (mouseRef.current.y * 0.28 - target.current.y) * 0.025;
+      target.current.x += (mouseRef.current.x * 0.35 - target.current.x) * 0.02;
+      target.current.y += (mouseRef.current.y * 0.2 - target.current.y) * 0.02;
       groupRef.current.position.x = target.current.x;
       groupRef.current.position.y = target.current.y;
     }
   });
 
-  const wheel = new THREE.Vector3(-2.5, 0, 0);
-  const server = new THREE.Vector3(-6.5, 3, -2);
-  const computer = new THREE.Vector3(-6.2, -2.8, 1.5);
-  const container = new THREE.Vector3(-0.5, 3.2, 1.2);
-  const image = new THREE.Vector3(2.5, 3.5, -2.5);
-  const database = new THREE.Vector3(3, -2.2, 1);
-  const cloud = new THREE.Vector3(0.5, -3.6, -1.5);
-  const proxy = new THREE.Vector3(4.2, 0.5, -1.5);
+  const wheel = new THREE.Vector3(-2.8, 0, 0);
+  const server = new THREE.Vector3(-6.8, 3.2, -1.5);
+  const computer = new THREE.Vector3(-6.2, -3.2, 1.5);
+  const container = new THREE.Vector3(-0.6, 3.6, 1.5);
+  const database = new THREE.Vector3(3.6, -2.8, 1.5);
+  const cloud = new THREE.Vector3(0.4, -4, -1.5);
+  const proxy = new THREE.Vector3(5.4, 0.4, -1.5);
 
   return (
     <group ref={groupRef}>
-      <PerspectiveCamera makeDefault position={[1.5, 0.5, isMobile ? 17 : 15]} fov={isMobile ? 58 : 52} />
+      <PerspectiveCamera makeDefault position={[1.2, 0.4, isMobile ? 17 : 15]} fov={isMobile ? 56 : 52} />
       <ambientLight intensity={0.2} />
-      <pointLight position={[5, 5, 6]} intensity={1.4} color={ACCENT_GLOW} />
-      <pointLight position={[-6, -2, -4]} intensity={0.7} color={ACCENT_SECONDARY} />
-      <pointLight position={[3, -3, 4]} intensity={0.5} color={CYAN} />
+      <directionalLight position={[6, 8, 6]} intensity={1.2} color="#fff" castShadow shadow-mapSize={[1024, 1024]} shadow-bias={-0.0001} />
+      <pointLight position={[-5, 4, 4]} intensity={0.8} color={ACCENT_GLOW} />
+      <pointLight position={[4, -4, 4]} intensity={0.5} color={CYAN} />
+      <pointLight position={[-4, -4, -4]} intensity={0.4} color={ACCENT_SECONDARY} />
 
-      <Starfield count={isMobile ? 100 : 220} />
+      <Starfield count={isMobile ? 80 : 160} />
 
-      <ShipWheel position={[-2.5, 0, 0]} />
-      <ServerRack position={[-6.5, 3, -2]} />
-      <Computer position={[-6.2, -2.8, 1.5]} />
-      <ContainerBox position={[-0.5, 3.2, 1.2]} />
-      <DockerImage position={[2.5, 3.5, -2.5]} />
-      <Database position={[3, -2.2, 1]} />
-      <CloudNode position={[0.5, -3.6, -1.5]} />
-      <ProxyGateway position={[4.2, 0.5, -1.5]} />
+      <ShipWheel position={[-2.8, 0, 0]} scale={0.9} />
+      <ServerRack position={[-6.8, 3.2, -1.5]} scale={1.1} />
+      <Computer position={[-6.2, -3.2, 1.5]} scale={1.1} />
+      <ContainerBox position={[-0.6, 3.6, 1.5]} scale={1.15} />
+      <Database position={[3.6, -2.8, 1.5]} scale={1.1} />
+      <CloudNode position={[0.4, -4, -1.5]} scale={1.15} />
+      <ProxyGateway position={[5.4, 0.4, -1.5]} scale={1.1} />
 
-      <ConnectionBeam from={wheel} to={server} color={GREEN} particleCount={3} speed={0.35} />
-      <ConnectionBeam from={wheel} to={computer} color={CYAN} particleCount={2} speed={0.3} />
-      <ConnectionBeam from={wheel} to={container} color={BLUE} particleCount={3} speed={0.45} />
-      <ConnectionBeam from={wheel} to={image} color={GOLD} particleCount={2} speed={0.32} />
-      <ConnectionBeam from={wheel} to={database} color={ACCENT_SECONDARY} particleCount={2} speed={0.28} />
-      <ConnectionBeam from={wheel} to={cloud} color={CLOUD} particleCount={2} speed={0.22} />
-      <ConnectionBeam from={wheel} to={proxy} color={CYAN} particleCount={2} speed={0.38} />
+      <ConnectionBeam from={wheel} to={server} color={GREEN} />
+      <ConnectionBeam from={wheel} to={computer} color={CYAN} />
+      <ConnectionBeam from={wheel} to={container} color={BLUE} />
+      <ConnectionBeam from={wheel} to={database} color={ACCENT_SECONDARY} />
+      <ConnectionBeam from={wheel} to={cloud} color={CLOUD} />
+      <ConnectionBeam from={wheel} to={proxy} color={CYAN} />
+
+      <ContactShadows position={[0, -5, 0]} opacity={0.35} scale={25} blur={2.5} far={10} />
     </group>
   );
 }
@@ -584,6 +405,7 @@ export default function LoginScene3D() {
     <div className="fixed inset-0 -z-10" style={{ background: BG }}>
       <Canvas
         dpr={isMobile ? [1, 1] : [1, 1.5]}
+        shadows
         gl={{ antialias: !isMobile, alpha: false, powerPreference: "high-performance" }}
       >
         <color attach="background" args={[BG]} />

@@ -32,7 +32,7 @@ export default function AuthCard({
         {/* Desktop: form anchored right; Mobile: form centered over scene */}
         <div className="relative z-10 min-h-screen flex items-center justify-center md:justify-end">
           {leftPanel && (
-            <div className="hidden md:flex absolute left-0 bottom-0 pb-10 pl-10 lg:pl-16 xl:pl-24 pointer-events-none z-20">
+            <div className="hidden md:flex absolute left-0 top-0 pt-10 pl-10 lg:pl-16 xl:pl-24 pointer-events-none z-20">
               {leftPanel}
             </div>
           )}
@@ -41,6 +41,12 @@ export default function AuthCard({
               <div className="relative rounded-3xl bg-black/30 backdrop-blur-2xl px-10 py-12 overflow-hidden">
                 <div className="absolute -top-20 -right-20 w-44 h-44 rounded-full bg-accent/20 blur-[72px]" />
                 <div className="absolute -bottom-20 -left-20 w-44 h-44 rounded-full bg-purple-500/15 blur-[72px]" />
+
+                {footer && (
+                  <p className="relative mb-8 text-center text-xs text-white/40 leading-relaxed max-w-[320px] mx-auto">
+                    {footer}
+                  </p>
+                )}
 
                 <div className="relative flex flex-col items-center text-center mb-8">
                   <div className="relative mb-5">
@@ -53,11 +59,6 @@ export default function AuthCard({
                   </div>
                   <h1 className="text-3xl font-bold tracking-tight text-white drop-shadow-sm">{title}</h1>
                   <p className="mt-2 text-sm text-white/50 font-medium">{subtitle}</p>
-                  {footer && (
-                    <p className="mt-4 text-center text-[11px] text-white/30 leading-relaxed max-w-[280px]">
-                      {footer}
-                    </p>
-                  )}
                 </div>
 
                 <div className="relative">{children}</div>
@@ -79,6 +80,12 @@ export default function AuthCard({
             <div className="absolute -top-24 -right-24 w-48 h-48 rounded-full bg-accent/20 blur-[80px]" />
             <div className="absolute -bottom-24 -left-24 w-48 h-48 rounded-full bg-purple-500/15 blur-[80px]" />
 
+            {footer && (
+              <p className="relative mb-8 text-center text-xs text-white/40 leading-relaxed max-w-[320px] mx-auto">
+                {footer}
+              </p>
+            )}
+
             <div className="relative flex flex-col items-center text-center mb-8">
               <div className="relative mb-5">
                 <div
@@ -90,11 +97,6 @@ export default function AuthCard({
               </div>
               <h1 className="text-3xl font-bold tracking-tight text-white drop-shadow-sm">{title}</h1>
               <p className="mt-2 text-sm text-white/50 font-medium">{subtitle}</p>
-              {footer && (
-                <p className="mt-4 text-center text-[11px] text-white/30 leading-relaxed max-w-[280px]">
-                  {footer}
-                </p>
-              )}
             </div>
 
             <div className="relative">{children}</div>
