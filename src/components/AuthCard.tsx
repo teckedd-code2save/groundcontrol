@@ -36,9 +36,9 @@ export default function AuthCard({
               {leftPanel}
             </div>
           )}
-          <div className="w-full md:w-auto md:min-w-[380px] lg:min-w-[400px] xl:min-w-[420px] px-6 py-12 md:pr-10 lg:pr-16 xl:pr-24 md:pl-0">
+          <div className="w-full md:w-[480px] lg:w-[500px] xl:w-[520px] px-6 py-12 md:pr-12 lg:pr-20 xl:pr-28 md:pl-0">
             <div className="relative rounded-3xl bg-gradient-to-b from-white/[0.08] to-white/[0.02] p-px shadow-2xl">
-              <div className="relative rounded-3xl bg-black/35 backdrop-blur-2xl px-8 py-10 overflow-hidden">
+              <div className="relative rounded-3xl bg-black/30 backdrop-blur-2xl px-10 py-12 overflow-hidden">
                 <div className="absolute -top-20 -right-20 w-44 h-44 rounded-full bg-accent/20 blur-[72px]" />
                 <div className="absolute -bottom-20 -left-20 w-44 h-44 rounded-full bg-purple-500/15 blur-[72px]" />
 
