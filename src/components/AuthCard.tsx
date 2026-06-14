@@ -53,11 +53,14 @@ export default function AuthCard({
                   </div>
                   <h1 className="text-3xl font-bold tracking-tight text-white drop-shadow-sm">{title}</h1>
                   <p className="mt-2 text-sm text-white/50 font-medium">{subtitle}</p>
+                  {footer && (
+                    <p className="mt-4 text-center text-[11px] text-white/30 leading-relaxed max-w-[280px]">
+                      {footer}
+                    </p>
+                  )}
                 </div>
 
                 <div className="relative">{children}</div>
-
-                {footer && <p className="relative mt-6 text-center text-[11px] text-white/30">{footer}</p>}
               </div>
             </div>
           </div>
@@ -87,11 +90,14 @@ export default function AuthCard({
               </div>
               <h1 className="text-3xl font-bold tracking-tight text-white drop-shadow-sm">{title}</h1>
               <p className="mt-2 text-sm text-white/50 font-medium">{subtitle}</p>
+              {footer && (
+                <p className="mt-4 text-center text-[11px] text-white/30 leading-relaxed max-w-[280px]">
+                  {footer}
+                </p>
+              )}
             </div>
 
             <div className="relative">{children}</div>
-
-            {footer && <p className="relative mt-6 text-center text-[11px] text-white/30">{footer}</p>}
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { useRef, useMemo, useEffect, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { PerspectiveCamera } from "@react-three/drei";
+import { PerspectiveCamera, Html } from "@react-three/drei";
 import * as THREE from "three";
 
 const ACCENT = new THREE.Color("#ff5500");
@@ -22,6 +22,16 @@ function mulberry32(seed: number) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+function ObjectLabel({ children, offset = [0, -1.2, 0] }: { children: React.ReactNode; offset?: [number, number, number] }) {
+  return (
+    <Html position={offset} center distanceFactor={12}>
+      <div className="px-2.5 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[10px] font-mono uppercase tracking-wider text-white/70 whitespace-nowrap shadow-lg pointer-events-none">
+        {children}
+      </div>
+    </Html>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -95,6 +105,7 @@ function ShipWheel({ position }: { position: [number, number, number] }) {
         <cylinderGeometry args={[0.35, 0.5, 1.2, 16]} />
         <meshStandardMaterial color="#1f1f2a" metalness={0.7} roughness={0.4} />
       </mesh>
+      <ObjectLabel offset={[0, -3.3, 0]}>Control</ObjectLabel>
     </group>
   );
 }
@@ -153,6 +164,7 @@ function ServerRack({ position }: { position: [number, number, number] }) {
         <boxGeometry args={[0.04, 2.4, 0.1]} />
         <meshStandardMaterial color="#333" metalness={0.8} />
       </mesh>
+      <ObjectLabel offset={[0, -1.6, 0]}>Servers</ObjectLabel>
     </group>
   );
 }
@@ -207,6 +219,7 @@ function Computer({ position }: { position: [number, number, number] }) {
         <boxGeometry args={[1.4, 0.08, 0.5]} />
         <meshStandardMaterial color="#1a1a20" metalness={0.5} roughness={0.5} />
       </mesh>
+      <ObjectLabel offset={[0, -2.1, 0]}>Monitor</ObjectLabel>
     </group>
   );
 }
@@ -249,6 +262,7 @@ function ContainerBox({ position }: { position: [number, number, number] }) {
           ))
         )
       )}
+      <ObjectLabel offset={[0, -1.1, 0]}>Containers</ObjectLabel>
     </group>
   );
 }
@@ -295,6 +309,7 @@ function DockerImage({ position }: { position: [number, number, number] }) {
         <boxGeometry args={[0.6, 0.18, 0.05]} />
         <meshBasicMaterial color={GOLD} transparent opacity={0.8} />
       </mesh>
+      <ObjectLabel offset={[0, -1.2, 0]}>Images</ObjectLabel>
     </group>
   );
 }
@@ -329,6 +344,7 @@ function Database({ position }: { position: [number, number, number] }) {
         <cylinderGeometry args={[0.56, 0.56, 0.02, 32]} />
         <meshBasicMaterial color={ACCENT_SECONDARY} transparent opacity={0.4} />
       </mesh>
+      <ObjectLabel offset={[0, -1.1, 0]}>Databases</ObjectLabel>
     </group>
   );
 }
@@ -359,6 +375,7 @@ function CloudNode({ position }: { position: [number, number, number] }) {
           <meshStandardMaterial color="#e2e8f0" roughness={0.6} metalness={0.1} transparent opacity={0.85} />
         </mesh>
       ))}
+      <ObjectLabel offset={[0, -1.2, 0]}>Cloud</ObjectLabel>
     </group>
   );
 }
@@ -376,18 +393,21 @@ function ProxyGateway({ position }: { position: [number, number, number] }) {
   });
 
   return (
-    <mesh ref={ref} position={position}>
-      <torusKnotGeometry args={[0.55, 0.18, 64, 16, 2, 3]} />
-      <meshStandardMaterial
-        color={CYAN}
-        emissive={CYAN}
-        emissiveIntensity={0.3}
-        roughness={0.2}
-        metalness={0.8}
-        transparent
-        opacity={0.9}
-      />
-    </mesh>
+    <group position={position}>
+      <mesh ref={ref}>
+        <torusKnotGeometry args={[0.55, 0.18, 64, 16, 2, 3]} />
+        <meshStandardMaterial
+          color={CYAN}
+          emissive={CYAN}
+          emissiveIntensity={0.3}
+          roughness={0.2}
+          metalness={0.8}
+          transparent
+          opacity={0.9}
+        />
+      </mesh>
+      <ObjectLabel offset={[0, -1.2, 0]}>Proxy</ObjectLabel>
+    </group>
   );
 }
 

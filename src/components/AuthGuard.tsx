@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { Sidebar } from "@/components/Sidebar";
+import { SidebarProvider } from "@/components/SidebarContext";
+import { MainLayout } from "@/components/MainLayout";
 
 interface MeResponse {
   id: number;
@@ -10,21 +13,20 @@ interface MeResponse {
   forcePasswordChange?: boolean;
 }
 
+const PUBLIC_PATHS = ["/login", "/setup"];
+const NO_LAYOUT_PATHS = ["/login", "/setup", "/force-password-change"];
+
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [authChecked, setAuthChecked] = useState(false);
+  const isPublic = PUBLIC_PATHS.includes(pathname);
+  const noLayout = NO_LAYOUT_PATHS.includes(pathname);
+
+  const [authChecked, setAuthChecked] = useState(isPublic);
   const [authenticated, setAuthenticated] = useState(false);
 
-  const publicPaths = ["/login", "/setup"];
-  const isPublic = publicPaths.includes(pathname);
-
   useEffect(() => {
-    if (isPublic) {
-      setAuthChecked(true);
-      setAuthenticated(false);
-      return;
-    }
+    if (isPublic) return;
 
     fetch("/api/auth/me")
       .then((res) => {
@@ -56,7 +58,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // On public pages, render children without layout wrapper
+  // Public pages: render content without app layout
   if (isPublic) {
     return <>{children}</>;
   }
@@ -73,5 +75,16 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  // Authenticated special pages (e.g. force-password-change): no sidebar/layout
+  if (noLayout) {
+    return <>{children}</>;
+  }
+
+  // Authenticated app pages: full layout
+  return (
+    <SidebarProvider>
+      <Sidebar />
+      <MainLayout>{children}</MainLayout>
+    </SidebarProvider>
+  );
 }
