@@ -9,6 +9,9 @@ import {
   isNodeInstalled,
   isGitInstalled,
   isImagePulled,
+  isK3sInstalled,
+  isKubectlInstalled,
+  isHelmInstalled,
 } from "@/lib/bootstrap";
 
 export async function GET(req: NextRequest) {
@@ -28,6 +31,9 @@ export async function GET(req: NextRequest) {
       redis,
       traefik,
       certbot,
+      k3s,
+      kubectl,
+      helm,
     ] = await Promise.all([
       isRunningInContainer(),
       canInstallHostPackages(),
@@ -41,6 +47,9 @@ export async function GET(req: NextRequest) {
       isImagePulled("redis:7-alpine"),
       isImagePulled("traefik:v3"),
       isImagePulled("certbot/certbot:latest"),
+      isK3sInstalled(),
+      isKubectlInstalled(),
+      isHelmInstalled(),
     ]);
 
     return NextResponse.json({
@@ -57,6 +66,9 @@ export async function GET(req: NextRequest) {
         redis,
         traefik,
         certbot,
+        k3s,
+        kubectl,
+        helm,
       },
     });
   } catch (err: unknown) {

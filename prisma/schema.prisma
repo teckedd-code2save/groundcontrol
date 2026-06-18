@@ -49,6 +49,7 @@ model VpsConfig {
   updatedAt DateTime @updatedAt
 
   systemConfig SystemConfig?
+  deploymentTargets DeploymentTarget[]
 }
 
 model Project {
@@ -58,6 +59,10 @@ model Project {
   domain      String?
   path        String   // /opt/slug or /var/www/slug
   repoUrl     String?
+  buildCommand String?
+  outputDir   String?
+  dockerfile  String?
+  envVars     String?  // JSON object of default env vars
   caddyFile   String?
   dockerCompose String?
   category    String   @default("app") // app | static | docker
@@ -65,6 +70,47 @@ model Project {
   lastDeploy  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  deployments Deployment[]
+}
+
+model DeploymentTarget {
+  id          Int      @id @default(autoincrement())
+  name        String
+  type        String   // docker-compose | static | nixpacks | custom
+  vpsConfigId Int?
+  configJson  String   @default("") // target-specific configuration
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: SetNull)
+  deployments Deployment[]
+
+  @@index([type, isActive])
+}
+
+model Deployment {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  targetId    Int
+  status      String   @default("pending") // pending | building | deploying | success | failed | rolled_back
+  branch      String   @default("main")
+  commitSha   String?
+  imageTag    String?
+  publicUrl   String?
+  previewUrl  String?
+  output      String?
+  error       String?
+  durationMs  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target  DeploymentTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([targetId, createdAt])
 }
 
 model DeploymentLog {
@@ -131,6 +177,34 @@ model SystemConfig {
   updatedAt      DateTime @updatedAt
 
   vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
+}
+
+model CloudProviderAccount {
+  id          Int      @id @default(autoincrement())
+  name        String
+  provider    String   // gcp | aws | azure
+  credentials String   // encrypted JSON
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([provider, isActive])
+}
+
+model TerraformStack {
+  id           Int      @id @default(autoincrement())
+  name         String
+  provider     String   // hetzner | aws | gcp | azure
+  workspace    String   @default("default")
+  hcl          String   // generated Terraform configuration
+  varsJson     String   @default("") // encrypted terraform.tfvars
+  stateBackend String   @default("local") // local | s3 | gcs
+  statePath    String?  // where state is stored
+  lastPlan     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([provider, workspace])
 }
 
 model CloudflareAccount {

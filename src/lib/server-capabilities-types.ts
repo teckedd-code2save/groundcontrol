@@ -5,6 +5,9 @@ export interface ServerCapabilities {
   hasCaddy: boolean;
   hasNginx: boolean;
   hasNode: boolean;
+  hasK3s: boolean;
+  hasKubectl: boolean;
+  hasHelm: boolean;
   hasSystemctl: boolean;
   hasService: boolean;
   /** Preferred network socket listing tool, if any. */
@@ -66,6 +69,9 @@ export function capabilitySummary(capabilities: ServerCapabilities | null): stri
   if (capabilities.hasCaddy) parts.push("Caddy");
   if (capabilities.hasNginx) parts.push("Nginx");
   if (capabilities.hasNode) parts.push("Node");
+  if (capabilities.hasK3s) parts.push("k3s");
+  if (capabilities.hasKubectl) parts.push("kubectl");
+  if (capabilities.hasHelm) parts.push("Helm");
   parts.push(capabilities.initSystem);
   return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" · ");
 }

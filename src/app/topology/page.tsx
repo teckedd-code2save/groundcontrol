@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { type Node, type Edge } from "@xyflow/react";
 import TopologyFlow from "@/components/TopologyFlow";
 import type { TopologyFilters } from "@/components/TopologyFlow";
@@ -8,6 +9,24 @@ import { linkSitesToContainers, buildProjectTopology } from "@/lib/topology";
 import type { ScannedProjectLite, Site } from "@/lib/topology";
 import type { TopoNodeData } from "@/components/TopoNode";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+
+interface K8sPod {
+  name: string;
+  namespace: string;
+  status: string;
+  restarts?: number;
+  age?: string;
+  ready?: string;
+}
+
+interface K8sService {
+  name: string;
+  namespace: string;
+  type: string;
+  clusterIP?: string;
+  externalIP?: string;
+  ports?: string;
+}
 
 interface CaddySite {
   domain: string;
@@ -53,6 +72,10 @@ function projectGroupHealth(liveContainers: Container[]): TopoNodeData["health"]
 }
 
 export default function TopologyPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const k8sNamespace = searchParams.get("k8sNamespace");
+
   const [nodes, setNodes] = useState<Node<TopoNodeData>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +83,11 @@ export default function TopologyPage() {
   const [dbProjects, setDbProjects] = useState<{ slug: string; name: string; domain?: string | null; path?: string | null }[]>([]);
   const [scannedProjects, setScannedProjects] = useState<ScannedProjectLite[]>([]);
   const [filters, setFilters] = useState<TopologyFilters>({});
+
+  const [k8sPods, setK8sPods] = useState<K8sPod[]>([]);
+  const [k8sServices, setK8sServices] = useState<K8sService[]>([]);
+  const [k8sLoading, setK8sLoading] = useState(false);
+  const [k8sError, setK8sError] = useState("");
 
   const fetchTopology = useCallback(
     async (mode: ViewMode) => {
@@ -116,6 +144,48 @@ export default function TopologyPage() {
     return () => clearInterval(interval);
   }, [fetchTopology, view]);
 
+  useEffect(() => {
+    if (!k8sNamespace) return;
+
+    let cancelled = false;
+    // Data fetching triggered by URL query param change; loading/error state
+    // must be reset synchronously before the async fetch begins.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setK8sLoading(true);
+    setK8sError("");
+
+    Promise.all([
+      fetch(`/api/k8s/pods?namespace=${encodeURIComponent(k8sNamespace)}`),
+      fetch(`/api/k8s/services?namespace=${encodeURIComponent(k8sNamespace)}`),
+    ])
+      .then(async ([podsRes, servicesRes]) => {
+        const podsJson = await podsRes.json().catch(() => ({ error: "Invalid response" }));
+        const servicesJson = await servicesRes.json().catch(() => ({ error: "Invalid response" }));
+        if (cancelled) return;
+        if (!podsRes.ok || podsJson.error) {
+          setK8sError(podsJson.error || "Failed to load pods");
+          setK8sPods([]);
+          setK8sServices([]);
+          return;
+        }
+        setK8sPods(Array.isArray(podsJson) ? podsJson : []);
+        setK8sServices(Array.isArray(servicesJson) ? servicesJson : []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setK8sError(err instanceof Error ? err.message : "Failed to load Kubernetes resources");
+        setK8sPods([]);
+        setK8sServices([]);
+      })
+      .finally(() => {
+        if (!cancelled) setK8sLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [k8sNamespace]);
+
   const filterProjects =
     view === "projects"
       ? scannedProjects.map((p) => ({ slug: p.slug, name: p.name }))
@@ -125,11 +195,15 @@ export default function TopologyPage() {
     <div className="p-4 md:p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] flex flex-col">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Topology</h1>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {k8sNamespace ? `Namespace: ${k8sNamespace}` : "Topology"}
+          </h1>
           <p className="text-muted mt-1">
-            {view === "projects"
-              ? "Host → projects → services → containers"
-              : "Internet → proxy → sites → containers"}
+            {k8sNamespace
+              ? "Kubernetes pods and services in this namespace"
+              : view === "projects"
+                ? "Host → projects → services → containers"
+                : "Internet → proxy → sites → containers"}
           </p>
         </div>
         <div className="flex items-center gap-3 text-[10px] font-mono text-muted">
@@ -147,55 +221,156 @@ export default function TopologyPage() {
 
       {/* View toggle + Filter Bar */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="flex rounded-lg border border-border overflow-hidden text-xs font-mono">
+        {k8sNamespace ? (
           <button
-            onClick={() => setView("projects")}
-            className={`px-3 py-1.5 transition-colors ${view === "projects" ? "bg-accent/20 text-accent" : "text-muted hover:text-foreground"}`}
+            onClick={() => router.push("/topology")}
+            className="px-3 py-1.5 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
           >
-            Projects
+            ← Back to topology
           </button>
-          <button
-            onClick={() => setView("sites")}
-            className={`px-3 py-1.5 transition-colors border-l border-border ${view === "sites" ? "bg-accent/20 text-accent" : "text-muted hover:text-foreground"}`}
-          >
-            Sites
-          </button>
-        </div>
-        <select
-          className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
-          value={filters.status || ""}
-          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as TopologyFilters["status"] || undefined }))}
-        >
-          <option value="">All Statuses</option>
-          <option value="running">Running</option>
-          <option value="stopped">Stopped</option>
-          <option value="unhealthy">Unhealthy</option>
-          <option value="unknown">Unknown</option>
-        </select>
-        <select
-          className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
-          value={filters.projectSlug || ""}
-          onChange={(e) => setFilters((f) => ({ ...f, projectSlug: e.target.value || undefined }))}
-        >
-          <option value="">All Projects</option>
-          {filterProjects.map((p) => (
-            <option key={p.slug} value={p.slug}>{p.name || p.slug}</option>
-          ))}
-        </select>
-        {(filters.status || filters.projectSlug) && (
-          <button
-            onClick={() => setFilters({})}
-            className="text-xs text-muted hover:text-foreground transition-colors"
-          >
-            Clear filters
-          </button>
+        ) : (
+          <>
+            <div className="flex rounded-lg border border-border overflow-hidden text-xs font-mono">
+              <button
+                onClick={() => setView("projects")}
+                className={`px-3 py-1.5 transition-colors ${view === "projects" ? "bg-accent/20 text-accent" : "text-muted hover:text-foreground"}`}
+              >
+                Projects
+              </button>
+              <button
+                onClick={() => setView("sites")}
+                className={`px-3 py-1.5 transition-colors border-l border-border ${view === "sites" ? "bg-accent/20 text-accent" : "text-muted hover:text-foreground"}`}
+              >
+                Sites
+              </button>
+            </div>
+            <select
+              className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+              value={filters.status || ""}
+              onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as TopologyFilters["status"] || undefined }))}
+            >
+              <option value="">All Statuses</option>
+              <option value="running">Running</option>
+              <option value="stopped">Stopped</option>
+              <option value="unhealthy">Unhealthy</option>
+              <option value="unknown">Unknown</option>
+            </select>
+            <select
+              className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+              value={filters.projectSlug || ""}
+              onChange={(e) => setFilters((f) => ({ ...f, projectSlug: e.target.value || undefined }))}
+            >
+              <option value="">All Projects</option>
+              {filterProjects.map((p) => (
+                <option key={p.slug} value={p.slug}>{p.name || p.slug}</option>
+              ))}
+            </select>
+            {(filters.status || filters.projectSlug) && (
+              <button
+                onClick={() => setFilters({})}
+                className="text-xs text-muted hover:text-foreground transition-colors"
+              >
+                Clear filters
+              </button>
+            )}
+          </>
         )}
       </div>
 
-      <LoaderOverlay3D open={loading && nodes.length === 0} variant="project" title="Mapping infrastructure..." />
+      <LoaderOverlay3D
+        open={k8sNamespace ? k8sLoading : loading && nodes.length === 0}
+        variant="project"
+        title={k8sNamespace ? "Loading Kubernetes resources..." : "Mapping infrastructure..."}
+      />
 
       <div className="flex-1 bg-card border border-border rounded-xl relative overflow-hidden">
-        {loading && nodes.length === 0 ? null : nodes.length === 0 ? (
+        {k8sNamespace ? (
+          <div className="absolute inset-0 overflow-auto p-4 md:p-6">
+            {k8sError && (
+              <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono">
+                {k8sError}
+              </div>
+            )}
+
+            <div className="space-y-6">
+              <section>
+                <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-3">Pods</h2>
+                {k8sPods.length === 0 && !k8sLoading ? (
+                  <div className="text-xs text-muted font-mono">No pods found in this namespace.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-border text-muted">
+                          <th className="text-left py-2 px-3">Name</th>
+                          <th className="text-left py-2 px-3">Status</th>
+                          <th className="text-left py-2 px-3">Ready</th>
+                          <th className="text-left py-2 px-3">Restarts</th>
+                          <th className="text-left py-2 px-3">Age</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {k8sPods.map((pod) => (
+                          <tr key={pod.name} className="border-b border-border/50 hover:bg-background/50">
+                            <td className="py-2 px-3">{pod.name}</td>
+                            <td className="py-2 px-3">
+                              <span
+                                className={`px-1.5 py-0.5 rounded border ${
+                                  pod.status === "Running"
+                                    ? "bg-success/10 text-success border-success/30"
+                                    : pod.status === "Pending"
+                                      ? "bg-warning/10 text-warning border-warning/30"
+                                      : "bg-error/10 text-error border-error/30"
+                                }`}
+                              >
+                                {pod.status}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3">{pod.ready || "-"}</td>
+                            <td className="py-2 px-3">{pod.restarts ?? "-"}</td>
+                            <td className="py-2 px-3">{pod.age || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-3">Services</h2>
+                {k8sServices.length === 0 && !k8sLoading ? (
+                  <div className="text-xs text-muted font-mono">No services found in this namespace.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-border text-muted">
+                          <th className="text-left py-2 px-3">Name</th>
+                          <th className="text-left py-2 px-3">Type</th>
+                          <th className="text-left py-2 px-3">Cluster IP</th>
+                          <th className="text-left py-2 px-3">External IP</th>
+                          <th className="text-left py-2 px-3">Ports</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {k8sServices.map((svc) => (
+                          <tr key={svc.name} className="border-b border-border/50 hover:bg-background/50">
+                            <td className="py-2 px-3">{svc.name}</td>
+                            <td className="py-2 px-3">{svc.type}</td>
+                            <td className="py-2 px-3">{svc.clusterIP || "-"}</td>
+                            <td className="py-2 px-3">{svc.externalIP || "-"}</td>
+                            <td className="py-2 px-3">{svc.ports || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        ) : loading && nodes.length === 0 ? null : nodes.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center text-center px-6">
             <div className="text-muted text-sm font-mono">
               {view === "projects"

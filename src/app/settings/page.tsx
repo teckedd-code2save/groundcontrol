@@ -7,6 +7,9 @@ import VpsFilePicker from "@/components/VpsFilePicker";
 import CloudflareSettingsTab from "@/components/CloudflareSettingsTab";
 import AlertSettingsTab from "@/components/AlertSettingsTab";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+import { DeployTargetsTab } from "@/components/DeployTargetsTab";
+import CloudAccountsTab from "@/components/CloudAccountsTab";
+import TerraformStacksTab from "@/components/TerraformStacksTab";
 
 interface VpsConfig {
   id: number;
@@ -22,7 +25,7 @@ interface VpsConfig {
   createdAt: string;
 }
 
-type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare";
+type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "cloud-accounts" | "deploy-targets" | "infrastructure";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>(() => {
@@ -30,7 +33,7 @@ export default function SettingsPage() {
     const tab = new URLSearchParams(window.location.search).get("tab");
     if (
       tab &&
-      ["connections", "layout", "ai", "security", "alerts", "cloudflare"].includes(tab)
+      ["connections", "layout", "ai", "security", "alerts", "cloudflare", "cloud-accounts", "deploy-targets", "infrastructure"].includes(tab)
     ) {
       return tab as TabKey;
     }
@@ -41,7 +44,7 @@ export default function SettingsPage() {
     <div className="p-8 max-w-5xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, security, Cloudflare, and alerts</p>
+        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, security, Cloudflare, cloud accounts, alerts, and deploy targets</p>
       </div>
 
       {/* Tabs */}
@@ -52,7 +55,10 @@ export default function SettingsPage() {
           { key: "ai", label: "AI" },
           { key: "security", label: "Security" },
           { key: "cloudflare", label: "Cloudflare" },
+          { key: "cloud-accounts", label: "Cloud Accounts" },
           { key: "alerts", label: "Alerts" },
+          { key: "deploy-targets", label: "Deploy Targets" },
+          { key: "infrastructure", label: "Infrastructure" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -73,7 +79,10 @@ export default function SettingsPage() {
       {activeTab === "ai" && <AIConfigTab />}
       {activeTab === "security" && <SecurityTab />}
       {activeTab === "cloudflare" && <CloudflareSettingsTab />}
+      {activeTab === "cloud-accounts" && <CloudAccountsTab />}
       {activeTab === "alerts" && <AlertSettingsTab />}
+      {activeTab === "deploy-targets" && <DeployTargetsTab />}
+      {activeTab === "infrastructure" && <TerraformStacksTab />}
     </div>
   );
 }

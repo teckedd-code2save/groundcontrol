@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { ContainerIcon, getContainerType, getContainerTypeLabel } from "@/components/TopoIcons";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ActionConfirm } from "@/components/ActionConfirm";
+import type { TerraformStack } from "@/components/TerraformStacksTab";
 
 interface CaddySite {
   file: string;
@@ -58,6 +59,58 @@ interface ProjectData {
   scannedProjects?: ScannedProject[];
   plainDirs?: string[];
   scanError?: string | null;
+  projects?: ProjectRecord[];
+}
+
+interface ProjectRecord {
+  id: number;
+  slug: string;
+  name: string;
+  domain: string | null;
+  path: string;
+  repoUrl: string | null;
+  buildCommand: string | null;
+  outputDir: string | null;
+  dockerfile: string | null;
+  envVars: string | null;
+  category: string;
+  status: string;
+}
+
+interface DeploymentTarget {
+  id: number;
+  name: string;
+  type: string;
+  vpsConfigId: number | null;
+  configJson: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  vps?: { id: number; name: string } | null;
+}
+
+interface Deployment {
+  id: number;
+  projectId: number;
+  targetId: number;
+  status: string;
+  branch: string;
+  commitSha: string | null;
+  imageTag: string | null;
+  publicUrl: string | null;
+  previewUrl: string | null;
+  output: string | null;
+  error: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  updatedAt: string;
+  project: { id: number; slug: string; name: string };
+  target: DeploymentTarget;
+}
+
+interface CloudflareZone {
+  id: string;
+  name: string;
 }
 
 interface ComposeActionState {
@@ -68,6 +121,25 @@ interface ComposeActionState {
 interface ConfirmComposeState {
   slug: string;
   type: ComposeActionState["type"];
+}
+
+interface DeployOptions {
+  targetId: number | "";
+  branch: string;
+  generatePreviewUrl: boolean;
+  subdomain: string;
+  zoneId: string;
+  proxied: boolean;
+  replicas: number;
+  port: number;
+  ingressClass: "traefik" | "caddy";
+  projectId: string;
+  region: string;
+  serviceName: string;
+  cpu: number;
+  memory: string;
+  concurrency: number;
+  maxInstances: number;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,6 +170,22 @@ function pathInside(workingDir: string, projectPath: string): boolean {
   return wd === pp || wd.startsWith(pp + "/");
 }
 
+function statusColor(status: string): string {
+  switch (status) {
+    case "success":
+      return "bg-success/10 text-success border-success/30";
+    case "failed":
+    case "rolled_back":
+      return "bg-error/10 text-error border-error/30";
+    case "running":
+    case "building":
+    case "deploying":
+      return "bg-accent/10 text-accent border-accent/30";
+    default:
+      return "bg-warning/10 text-warning border-warning/30";
+  }
+}
+
 export function ProjectsPanel() {
   const [data, setData] = useState<ProjectData | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
@@ -112,6 +200,18 @@ export function ProjectsPanel() {
   const [selectedServices, setSelectedServices] = useState<Record<string, Set<string>>>({});
   const [confirmCompose, setConfirmCompose] = useState<ConfirmComposeState | null>(null);
 
+  const [targets, setTargets] = useState<DeploymentTarget[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [zones, setZones] = useState<CloudflareZone[]>([]);
+  const [stacks, setStacks] = useState<TerraformStack[]>([]);
+  const [deployOptions, setDeployOptions] = useState<Record<string, DeployOptions>>({});
+
+  const defaultTargetId = useMemo(() => {
+    const active = targets.find((t) => t.isActive);
+    if (active) return active.id;
+    return targets[0]?.id || "";
+  }, [targets]);
+
   useEffect(() => {
     Promise.all([
       fetch("/api/projects").then((r) => safeJson(r)),
@@ -120,13 +220,60 @@ export function ProjectsPanel() {
       fetch("/api/system-config")
         .then((r) => safeJson(r))
         .catch(() => ({ ok: true, data: null, text: "" })),
+      fetch("/api/deployment-targets")
+        .then((r) => safeJson(r))
+        .catch(() => ({ ok: true, data: [], text: "" })),
+      fetch("/api/deployments")
+        .then((r) => safeJson(r))
+        .catch(() => ({ ok: true, data: [], text: "" })),
+      fetch("/api/cloudflare/zones")
+        .then((r) => safeJson(r))
+        .catch(() => ({ ok: true, data: { success: false, result: [] }, text: "" })),
+      fetch("/api/terraform/stacks")
+        .then((r) => safeJson(r))
+        .catch(() => ({ ok: true, data: [], text: "" })),
     ])
-      .then(([projectsRes, containersRes, imagesRes, configRes]) => {
+      .then(([projectsRes, containersRes, imagesRes, configRes, targetsRes, deploymentsRes, zonesRes, stacksRes]) => {
         setData(projectsRes.data);
         setContainers(Array.isArray(containersRes.data) ? containersRes.data : []);
         setImages(Array.isArray(imagesRes.data) ? imagesRes.data : []);
         if (configRes.data?.projectRoot) setProjectRoot(configRes.data.projectRoot);
         if (projectsRes.data?.scanError) setError(`Scan warning: ${projectsRes.data.scanError}`);
+
+        const loadedTargets: DeploymentTarget[] = Array.isArray(targetsRes.data) ? targetsRes.data : [];
+        setTargets(loadedTargets);
+
+        const loadedDeployments: Deployment[] = Array.isArray(deploymentsRes.data) ? deploymentsRes.data : [];
+        setDeployments(loadedDeployments);
+
+        const zoneResult = zonesRes.data?.result;
+        setZones(Array.isArray(zoneResult) ? zoneResult : []);
+        setStacks(Array.isArray(stacksRes.data) ? stacksRes.data : []);
+
+        const activeTarget = loadedTargets.find((t) => t.isActive) || loadedTargets[0];
+        const initialOptions: Record<string, DeployOptions> = {};
+        for (const p of projectsRes.data?.scannedProjects || []) {
+          initialOptions[p.slug] = {
+            targetId: activeTarget?.id || "",
+            branch: "main",
+            generatePreviewUrl: false,
+            subdomain: p.domain || "",
+            zoneId: "",
+            proxied: true,
+            replicas: 1,
+            port: 80,
+            ingressClass: "traefik",
+            projectId: "",
+            region: "us-central1",
+            serviceName: p.slug,
+            cpu: 1,
+            memory: "512Mi",
+            concurrency: 80,
+            maxInstances: 5,
+          };
+        }
+        setDeployOptions(initialOptions);
+
         setLoading(false);
       })
       .catch((err) => {
@@ -135,17 +282,137 @@ export function ProjectsPanel() {
       });
   }, []);
 
+  async function refreshDeployments() {
+    try {
+      const res = await fetch("/api/deployments");
+      const { data } = await safeJson(res);
+      setDeployments(Array.isArray(data) ? data : []);
+    } catch {
+      // ignore refresh errors
+    }
+  }
+
+  function getDbProject(slug: string): ProjectRecord | undefined {
+    return data?.projects?.find((p) => p.slug === slug);
+  }
+
+  function getLatestDeployment(projectId?: number): Deployment | undefined {
+    if (!projectId) return undefined;
+    return deployments
+      .filter((d) => d.projectId === projectId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+  }
+
+  function getDeployOptions(slug: string): DeployOptions {
+    return (
+      deployOptions[slug] || {
+        targetId: defaultTargetId,
+        branch: "main",
+        generatePreviewUrl: false,
+        subdomain: "",
+        zoneId: "",
+        proxied: true,
+        replicas: 1,
+        port: 80,
+        ingressClass: "traefik",
+        projectId: "",
+        region: "us-central1",
+        serviceName: slug,
+        cpu: 1,
+        memory: "512Mi",
+        concurrency: 80,
+        maxInstances: 5,
+      }
+    );
+  }
+
+  function updateDeployOptions(slug: string, patch: Partial<DeployOptions>) {
+    setDeployOptions((prev) => ({
+      ...prev,
+      [slug]: { ...getDeployOptions(slug), ...patch },
+    }));
+  }
+
   async function triggerDeploy(slug: string) {
+    const dbProject = getDbProject(slug);
+    if (!dbProject) {
+      setError(`Project ${slug} is not registered in the database.`);
+      setConfirmDeploy(null);
+      return;
+    }
+
+    const opts = getDeployOptions(slug);
+    const selectedTarget = targets.find((t) => t.id === opts.targetId);
+    const activeTarget = targets.find((t) => t.isActive);
+    const target = selectedTarget || activeTarget;
+    const isK3s = target?.type === "k3s";
+    const isCloudRun = target?.type === "cloudrun";
+    const isTerraform = target?.type === "terraform";
     setDeploying(slug);
     try {
+      if (isTerraform && target) {
+        let stackId: string | number | undefined;
+        try {
+          const cfg = JSON.parse(target.configJson || "{}");
+          stackId = cfg.stackId;
+        } catch {
+          stackId = undefined;
+        }
+        if (!stackId) {
+          setError(`Terraform target ${target.name} has no stack configured.`);
+          setConfirmDeploy(null);
+          return;
+        }
+        const provisionRes = await fetch("/api/terraform/provision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: dbProject.id, stackId }),
+        });
+        const { ok: provOk, data: provData } = await safeJson(provisionRes);
+        if (!provOk || provData.error) {
+          setError(`Terraform provision failed: ${provData.error || "Unknown error"}`);
+          setConfirmDeploy(null);
+          return;
+        }
+      }
+
+      const body: Record<string, unknown> = {
+        projectSlug: slug,
+        branch: opts.branch || "main",
+      };
+      if (opts.targetId) body.targetId = opts.targetId;
+      if (opts.generatePreviewUrl) body.generatePreviewUrl = true;
+      if (opts.subdomain && opts.zoneId) {
+        body.subdomain = opts.subdomain;
+        body.zoneId = opts.zoneId;
+        body.proxied = opts.proxied;
+      }
+      if (isK3s) {
+        body.replicas = opts.replicas;
+        body.port = opts.port;
+        body.ingressClass = opts.ingressClass;
+      }
+      if (isCloudRun) {
+        if (opts.projectId) body.projectId = opts.projectId;
+        if (opts.region) body.region = opts.region;
+        if (opts.serviceName) body.serviceName = opts.serviceName;
+        if (opts.cpu) body.cpu = opts.cpu;
+        if (opts.memory) body.memory = opts.memory;
+        if (opts.concurrency) body.concurrency = opts.concurrency;
+        if (opts.maxInstances) body.maxInstances = opts.maxInstances;
+      }
+
       const res = await fetch("/api/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectSlug: slug, branch: "main" }),
+        body: JSON.stringify(body),
       });
       const { ok, data } = await safeJson(res);
       if (!ok || data.error) setError(`Deploy failed: ${data.error || "Unknown error"}`);
-      else setError("");
+      else {
+        setError("");
+        await refreshDeployments();
+      }
     } catch (err) {
       setError(`Deploy failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -344,6 +611,14 @@ export function ProjectsPanel() {
                     )
                   );
                 const selected = selectedServicesFor(project.slug);
+                const dbProject = getDbProject(project.slug);
+                const latest = getLatestDeployment(dbProject?.id);
+                const opts = getDeployOptions(project.slug);
+                const selectedTarget = targets.find((t) => t.id === opts.targetId);
+                const isK3s = selectedTarget?.type === "k3s";
+                const isCloudRun = selectedTarget?.type === "cloudrun";
+                const isTerraform = selectedTarget?.type === "terraform";
+                const selectedTargetName = selectedTarget?.name || "default";
 
                 return (
                   <div
@@ -376,6 +651,43 @@ export function ProjectsPanel() {
                           <p className="text-xs text-muted font-mono mt-1">No domain mapped</p>
                         )}
                         <p className="text-xs text-muted font-mono mt-0.5 truncate">{project.path}</p>
+
+                        {latest && (latest.publicUrl || latest.previewUrl) && (
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {latest.publicUrl && (
+                              <a
+                                href={latest.publicUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-success/10 text-success border-success/30 hover:bg-success/20 transition-colors"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                </svg>
+                                {latest.publicUrl}
+                              </a>
+                            )}
+                            {latest.previewUrl && (
+                              <a
+                                href={latest.previewUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-accent/10 text-accent border-accent/30 hover:bg-accent/20 transition-colors"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                                preview
+                              </a>
+                            )}
+                            {latest.status && (
+                              <span className={`text-[10px] font-mono px-2 py-1 rounded border ${statusColor(latest.status)}`}>
+                                {latest.status}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                         <button
@@ -399,6 +711,232 @@ export function ProjectsPanel() {
                         >
                           Redeploy
                         </button>
+                      </div>
+                    </div>
+
+                    {/* Deploy options */}
+                    <div className="mb-4 p-3 bg-background/50 border border-border rounded-lg space-y-3">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div>
+                          <label className="block text-[10px] font-mono text-muted mb-1">Target</label>
+                          <select
+                            value={opts.targetId}
+                            onChange={(e) => updateDeployOptions(project.slug, { targetId: e.target.value ? Number(e.target.value) : "" })}
+                            className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent min-w-[140px]"
+                          >
+                            <option value="">Default target</option>
+                            {targets.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name} ({t.type})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-mono text-muted mb-1">Branch</label>
+                          <input
+                            type="text"
+                            value={opts.branch}
+                            onChange={(e) => updateDeployOptions(project.slug, { branch: e.target.value })}
+                            placeholder="main"
+                            className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-32"
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-mono text-muted cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={opts.generatePreviewUrl}
+                            onChange={(e) => updateDeployOptions(project.slug, { generatePreviewUrl: e.target.checked })}
+                            className="accent-accent"
+                          />
+                          Generate preview URL
+                        </label>
+                      </div>
+
+                      {isK3s && (
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Replicas</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              value={opts.replicas}
+                              onChange={(e) => updateDeployOptions(project.slug, { replicas: Math.max(1, Number(e.target.value) || 1) })}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Port</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={65535}
+                              value={opts.port}
+                              onChange={(e) => updateDeployOptions(project.slug, { port: Math.max(1, Number(e.target.value) || 1) })}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Ingress class</label>
+                            <select
+                              value={opts.ingressClass}
+                              onChange={(e) => updateDeployOptions(project.slug, { ingressClass: e.target.value as "traefik" | "caddy" })}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent min-w-[120px]"
+                            >
+                              <option value="traefik">Traefik</option>
+                              <option value="caddy">Caddy</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+
+                      {isCloudRun && (
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">GCP Project</label>
+                            <input
+                              type="text"
+                              value={opts.projectId}
+                              onChange={(e) => updateDeployOptions(project.slug, { projectId: e.target.value })}
+                              placeholder="my-project-123"
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-40"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Region</label>
+                            <input
+                              type="text"
+                              value={opts.region}
+                              onChange={(e) => updateDeployOptions(project.slug, { region: e.target.value })}
+                              placeholder="us-central1"
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-32"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Service name</label>
+                            <input
+                              type="text"
+                              value={opts.serviceName}
+                              onChange={(e) => updateDeployOptions(project.slug, { serviceName: e.target.value })}
+                              placeholder={project.slug}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-40"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">CPU</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={8}
+                              step={1}
+                              value={opts.cpu}
+                              onChange={(e) => updateDeployOptions(project.slug, { cpu: Math.max(1, Number(e.target.value) || 1) })}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-20"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Memory</label>
+                            <input
+                              type="text"
+                              value={opts.memory}
+                              onChange={(e) => updateDeployOptions(project.slug, { memory: e.target.value })}
+                              placeholder="512Mi"
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Concurrency</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={1000}
+                              value={opts.concurrency}
+                              onChange={(e) => updateDeployOptions(project.slug, { concurrency: Math.max(1, Number(e.target.value) || 1) })}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Max instances</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={1000}
+                              value={opts.maxInstances}
+                              onChange={(e) => updateDeployOptions(project.slug, { maxInstances: Math.max(1, Number(e.target.value) || 1) })}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {isTerraform && (
+                        <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg space-y-2">
+                          <div className="text-[11px] text-muted leading-relaxed">
+                            <strong className="text-accent">Provision infra first:</strong> this target references a
+                            Terraform stack. GroundControl will run <span className="font-mono">terraform apply</span>{" "}
+                            before deploying the project.
+                          </div>
+                          <div className="text-[10px] font-mono text-muted">
+                            Stack:{" "}
+                            {(() => {
+                              try {
+                                const cfg = JSON.parse(selectedTarget?.configJson || "{}");
+                                const stack = stacks.find((s) => String(s.id) === String(cfg.stackId));
+                                return stack ? `${stack.name} (${stack.provider})` : cfg.stackId || "none";
+                              } catch {
+                                return "none";
+                              }
+                            })()}
+                          </div>
+                        </div>
+                      )}
+
+                      {zones.length > 0 && (
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Subdomain</label>
+                            <input
+                              type="text"
+                              value={opts.subdomain}
+                              onChange={(e) => updateDeployOptions(project.slug, { subdomain: e.target.value })}
+                              placeholder={`${project.slug}.example.com`}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-56"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-mono text-muted mb-1">Zone</label>
+                            <select
+                              value={opts.zoneId}
+                              onChange={(e) => updateDeployOptions(project.slug, { zoneId: e.target.value })}
+                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent min-w-[160px]"
+                            >
+                              <option value="">Select zone</option>
+                              {zones.map((z) => (
+                                <option key={z.id} value={z.id}>
+                                  {z.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs font-mono text-muted cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={opts.proxied}
+                              onChange={(e) => updateDeployOptions(project.slug, { proxied: e.target.checked })}
+                              className="accent-accent"
+                            />
+                            Proxied
+                          </label>
+                        </div>
+                      )}
+
+                      <div className="text-[10px] text-muted/60 font-mono">
+                        Deploying via {selectedTargetName}
+                        {isCloudRun && ` · ${opts.serviceName} · ${opts.region}`}
+                        {isTerraform && " · terraform provision + deploy"}
+                        {opts.generatePreviewUrl && " · quick tunnel preview"}
+                        {opts.subdomain && opts.zoneId && ` · ${opts.subdomain} → ${zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId}`}
                       </div>
                     </div>
 

@@ -29,6 +29,12 @@ interface ToolDef {
   kind: "host" | "container";
 }
 
+interface K3sToolDef {
+  key: string;
+  label: string;
+  route: string;
+}
+
 const TOOLS: ToolDef[] = [
   {
     key: "docker",
@@ -112,6 +118,12 @@ const TOOLS: ToolDef[] = [
   },
 ];
 
+const K3S_TOOLS: K3sToolDef[] = [
+  { key: "k3s", label: "k3s", route: "/api/bootstrap/k3s" },
+  { key: "kubectl", label: "kubectl", route: "/api/bootstrap/kubectl" },
+  { key: "helm", label: "Helm", route: "/api/bootstrap/helm" },
+];
+
 export function BootstrapPanel() {
   const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [status, setStatus] = useState<{
@@ -171,10 +183,67 @@ export function BootstrapPanel() {
   }
 
   const runningKey = Object.keys(jobs).find((k) => jobs[k].running);
-  const runningTool = runningKey ? TOOLS.find((t) => t.key === runningKey) : undefined;
+  const runningTool = runningKey
+    ? TOOLS.find((t) => t.key === runningKey) ?? K3S_TOOLS.find((t) => t.key === runningKey)
+    : undefined;
 
   const hostTools = TOOLS.filter((t) => t.kind === "host");
   const containerTools = TOOLS.filter((t) => t.kind === "container");
+
+  function renderK3sCard() {
+    const hostDisabled = status?.inContainerLocalMode;
+    return (
+      <div className={`border border-border rounded-xl p-4 bg-background/30 ${hostDisabled ? "opacity-70" : ""}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <ServiceIcon className="w-4 h-4 text-muted" />
+              <div className="font-medium text-sm">Install k3s</div>
+            </div>
+            <div className="text-[11px] text-muted mt-0.5">
+              Lightweight Kubernetes stack: k3s server, kubectl CLI, and Helm package manager.
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {K3S_TOOLS.map((tool) => {
+            const job = jobs[tool.key];
+            const installed = status?.installed[tool.key];
+            return (
+              <button
+                key={tool.key}
+                onClick={() => run(tool.key, tool.route)}
+                disabled={job?.running || hostDisabled}
+                className="px-3 py-1.5 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+              >
+                {job?.running ? "Installing..." : installed ? `Re-install ${tool.label}` : `Install ${tool.label}`}
+              </button>
+            );
+          })}
+        </div>
+        {K3S_TOOLS.map((tool) => {
+          const job = jobs[tool.key];
+          if (!job || job.running) return null;
+          return (
+            <div key={`${tool.key}-out`} className="mt-3">
+              {job.success === false && (
+                <div className="text-xs font-mono text-error mb-1">{tool.label} failed: {job.error}</div>
+              )}
+              {job.success === true && (
+                <div className="text-xs font-mono text-success mb-1">{tool.label} install finished</div>
+              )}
+              {(job.output || job.error) && (
+                <pre className="max-h-40 overflow-auto rounded-lg bg-background border border-border p-2 text-[10px] font-mono whitespace-pre-wrap">
+                  {job.output}
+                  {job.error}
+                </pre>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   function renderTool(tool: ToolDef) {
     const job = jobs[tool.key];
@@ -272,6 +341,11 @@ export function BootstrapPanel() {
               <section>
                 <h3 className="text-xs font-mono uppercase tracking-wider text-muted mb-3">Container Images</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{containerTools.map(renderTool)}</div>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-mono uppercase tracking-wider text-muted mb-3">Kubernetes</h3>
+                <div className="grid grid-cols-1 gap-4">{renderK3sCard()}</div>
               </section>
             </div>
           </>

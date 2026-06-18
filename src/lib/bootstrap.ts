@@ -309,6 +309,95 @@ export async function isImagePulled(image: string, vps?: VpsConnection | null): 
   return res.stdout.trim().length > 0;
 }
 
+export async function isK3sInstalled(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnVps("k3s --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  return res.stdout.trim() === "yes";
+}
+
+export async function isKubectlInstalled(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnVps("kubectl version --client 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  return res.stdout.trim() === "yes";
+}
+
+export async function isHelmInstalled(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnVps("helm version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  return res.stdout.trim() === "yes";
+}
+
+/**
+ * Install k3s via the official installer. Idempotent: skips if k3s is already present.
+ */
+export async function installK3s(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  if (await isK3sInstalled(conn)) {
+    return { success: true, output: "k3s is already installed", error: "" };
+  }
+
+  const script = `curl -sfL https://get.k3s.io | sh - 2>&1`;
+  const result = await execOnVps(script, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+/**
+ * Install kubectl by downloading the static binary to /usr/local/bin/kubectl.
+ * Idempotent: skips if kubectl is already present.
+ */
+export async function installKubectl(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  if (await isKubectlInstalled(conn)) {
+    return { success: true, output: "kubectl is already installed", error: "" };
+  }
+
+  const arch = await execOnVps("uname -m", conn);
+  const kubeArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
+  const script = `curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/${shQuote(kubeArch)}/kubectl" && \
+chmod +x /usr/local/bin/kubectl && /usr/local/bin/kubectl version --client 2>&1`;
+  const result = await execOnVps(script, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+/**
+ * Install Helm by downloading the static binary to /usr/local/bin/helm.
+ * Idempotent: skips if helm is already present.
+ */
+export async function installHelm(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  if (await isHelmInstalled(conn)) {
+    return { success: true, output: "helm is already installed", error: "" };
+  }
+
+  const arch = await execOnVps("uname -m", conn);
+  const helmArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
+  const script = `curl -fsSL -o /tmp/get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
+chmod 700 /tmp/get_helm.sh && \
+DESIRED_VERSION=v3.14.0 /tmp/get_helm.sh 2>&1 || \
+(export HELM_INSTALL_DIR=/usr/local/bin && curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-${shQuote(helmArch)}.tar.gz | tar -xzO linux-${shQuote(helmArch)}/helm > /usr/local/bin/helm && chmod +x /usr/local/bin/helm) 2>&1 && \
+/usr/local/bin/helm version 2>&1`;
+  const result = await execOnVps(script, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
 export async function getCloudflaredContainerStatus(
   connectorName: string,
   vps?: VpsConnection | null

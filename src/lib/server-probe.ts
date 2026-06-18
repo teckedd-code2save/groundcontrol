@@ -7,6 +7,10 @@ export interface ServerLayout {
   dockerAvailable: boolean;
   caddyAvailable: boolean;
   nodeAvailable: boolean;
+  hasK3s: boolean;
+  hasKubectl: boolean;
+  hasHelm: boolean;
+  kubeconfigPath: string;
   composeCommand: string;
   projectRoot: string;
   caddySitesDir: string;
@@ -24,6 +28,10 @@ const DEFAULT_LAYOUT: ServerLayout = {
   dockerAvailable: false,
   caddyAvailable: false,
   nodeAvailable: false,
+  hasK3s: false,
+  hasKubectl: false,
+  hasHelm: false,
+  kubeconfigPath: "/etc/rancher/k3s/k3s.yaml",
   composeCommand: "docker compose",
   projectRoot: "/opt",
   caddySitesDir: "/etc/caddy/sites",
@@ -137,6 +145,29 @@ async function detectNodeAvailable(vps?: VpsConnection | null): Promise<boolean>
   return result.stdout.trim() === "yes";
 }
 
+async function detectK3sAvailable(vps?: VpsConnection | null): Promise<boolean> {
+  const result = await execOnVps(`k3s --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  return result.stdout.trim() === "yes";
+}
+
+async function detectKubectlAvailable(vps?: VpsConnection | null): Promise<boolean> {
+  const result = await execOnVps(`kubectl version --client 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  return result.stdout.trim() === "yes";
+}
+
+async function detectHelmAvailable(vps?: VpsConnection | null): Promise<boolean> {
+  const result = await execOnVps(`helm version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  return result.stdout.trim() === "yes";
+}
+
+async function detectKubeconfigPath(vps?: VpsConnection | null): Promise<string> {
+  const result = await execOnVps(
+    `if [ -f /etc/rancher/k3s/k3s.yaml ]; then echo /etc/rancher/k3s/k3s.yaml; elif [ -f "$HOME/.kube/config" ]; then echo "$HOME/.kube/config"; else echo /etc/rancher/k3s/k3s.yaml; fi`,
+    vps
+  );
+  return result.stdout.trim() || "/etc/rancher/k3s/k3s.yaml";
+}
+
 /**
  * Probe a VPS (or the active VPS) for filesystem layout and available tooling.
  *
@@ -150,6 +181,10 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       dockerAvailable,
       caddyAvailable,
       nodeAvailable,
+      hasK3s,
+      hasKubectl,
+      hasHelm,
+      kubeconfigPath,
       composeCommand,
       projectRoot,
       caddySitesDir,
@@ -160,6 +195,10 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       detectDockerAvailable(vps),
       detectCaddyAvailable(vps),
       detectNodeAvailable(vps),
+      detectK3sAvailable(vps),
+      detectKubectlAvailable(vps),
+      detectHelmAvailable(vps),
+      detectKubeconfigPath(vps),
       detectComposeCommand(vps),
       detectProjectRoot(vps),
       detectCaddySitesDir(vps),
@@ -175,6 +214,10 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       dockerAvailable,
       caddyAvailable,
       nodeAvailable,
+      hasK3s,
+      hasKubectl,
+      hasHelm,
+      kubeconfigPath,
       composeCommand,
       projectRoot,
       caddySitesDir,

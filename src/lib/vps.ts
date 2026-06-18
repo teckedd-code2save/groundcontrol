@@ -6,6 +6,7 @@ import { decryptMaybe } from "./crypto";
 
 const execAsync = promisify(exec);
 const OS_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
+export const DEFAULT_KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml";
 
 interface SshConfig {
   host: string;
@@ -62,6 +63,10 @@ export async function getActiveVps(): Promise<VpsConnection | null> {
     username: config.username,
     isLocal: config.isLocal,
   };
+}
+
+export function getKubeconfigEnv(vps?: VpsConnection | null): string {
+  return `KUBECONFIG=${shQuote(DEFAULT_KUBECONFIG_PATH)}`;
 }
 
 export async function execOnVps(
