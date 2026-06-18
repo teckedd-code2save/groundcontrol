@@ -2,9 +2,9 @@
 
 # 🛰️ GroundControl
 
-### The self-hosted cockpit for your VPS fleet.
+### The self-hosted cockpit and deployment control plane for your VPS fleet.
 
-**One dashboard to see every container, proxy, deployment, and metric across all your servers — with an AI ops assistant riding shotgun.**
+**One dashboard to see every container, proxy, deployment, and metric across all your servers — then build, deploy, and expose apps on Docker Compose, Kubernetes, Cloud Run, or Terraform-provisioned infra, with an AI ops assistant riding shotgun.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
@@ -19,7 +19,9 @@
 
 ---
 
-GroundControl is a self-hosted infrastructure dashboard: a single control plane for the servers you actually run. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and the filesystem, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
+GroundControl is a self-hosted infrastructure dashboard and deployment control plane: a single pane of glass for the servers you actually run. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and Kubernetes, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
+
+It also builds and deploys your applications to multiple targets — Docker Compose, static sites, k3s Kubernetes, Google Cloud Run, or Terraform-provisioned infrastructure — and can provision custom domains and ephemeral preview URLs through Cloudflare automatically.
 
 No agents to install on managed hosts. No SaaS in the middle. No telemetry leaving your network. Just a Next.js app, a SQLite file, and an SSH connection.
 
@@ -33,18 +35,22 @@ No agents to install on managed hosts. No SaaS in the middle. No telemetry leavi
 
 | | Feature | Why it matters |
 |---|---|---|
-| 🗺️ | **Live Topology** | Visual React Flow graph of hosts → projects → sites → services → containers. Click any node to inspect or act. |
+| 🗺️ | **Live Topology** | Visual React Flow graph of hosts → projects → sites → services → containers → Kubernetes pods. Click any node to inspect or act. |
 | 📦 | **Container Ops** | Start, stop, restart, remove, and tail logs. Bulk actions with blast-radius confirmation. |
 | 🗂️ | **Projects** | Folder-first view of `/opt`, cross-referenced with Caddy sites and running compose stacks. |
-| 🚀 | **Smart Onboarding** | Auto-detects OS, Docker, compose command, and server paths from a local or SSH connection. |
+| 🚀 | **Multi-Target Deployments** | Deploy to Docker Compose, static sites, k3s Kubernetes, Google Cloud Run, or Terraform-provisioned infrastructure from one UI. |
+| 🌐 | **Auto-Generated Deploy Links** | Provision custom Cloudflare domains or get ephemeral `trycloudflare.com` preview URLs at deploy time. |
+| 📜 | **Terraform Control Plane** | Generate HCL for Hetzner/GCP, run `plan`/`apply`/`destroy`, and use outputs to drive the deploy pipeline. |
+| ☁️ | **Cloud Accounts** | Store encrypted GCP/AWS/Azure credentials and use them across deployment targets. |
+| 🚀 | **Smart Onboarding** | Auto-detects OS, Docker, compose command, Kubernetes, and server paths from a local or SSH connection. |
 | 🤖 | **AI Ops Assistant** | GPT-powered assistant that reasons about logs, metrics, and deploys with streamed responses. |
 | 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
 | 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
-| 🔀 | **Services** | Containers, reverse proxy, projects, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
-| ⚙️ | **Tabbed Settings** | Connections, server layout, AI provider/model, security, Cloudflare, and alert rules. |
-| 🌩️ | **Cloudflare Integration** | List/create tunnels and manage DNS records from the UI. |
+| 🔀 | **Services** | Containers, reverse proxy, projects, deployments, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
+| ⚙️ | **Tabbed Settings** | Connections, server layout, AI provider/model, security, Cloudflare, cloud accounts, deploy targets, infrastructure, and alert rules. |
+| 🌩️ | **Cloudflare Integration** | List/create tunnels and manage DNS records from the UI, automatically at deploy time. |
 | 🛰️ | **Multi-VPS** | Register many hosts; GroundControl talks to whichever VPS is active. |
 | 🔐 | **Built-in Auth** | JWT cookie auth, bcrypt passwords, login rate-limiting, and a guarded UI. |
 
@@ -131,7 +137,9 @@ GroundControl is a single Next.js 16 (App Router) app. It does **not** run Caddy
         └──────────  ... or other remote VPS hosts in the fleet
 ```
 
-Every host operation — `docker ps`, reading a Caddyfile, sampling `/proc/loadavg` — runs either **locally** (when GroundControl sits on the managed host) or **over SSH** via a cached `node-ssh` connection to the active `VpsConfig`. No agent to install: GroundControl *is* the agent.
+Every host operation — `docker ps`, reading a Caddyfile, sampling `/proc/loadavg`, running `kubectl`, or executing `terraform` — runs either **locally** (when GroundControl sits on the managed host) or **over SSH** via a cached `node-ssh` connection to the active `VpsConfig`. No agent to install: GroundControl *is* the agent.
+
+Deployments are handled by a pluggable target system (`src/lib/deploy/targets/`). Each target implements a common `DeployTarget` interface, so the UI and API stay agnostic to whether a project lands on Compose, k3s, Cloud Run, or Terraform-provisioned infra.
 
 | Layer | Technology |
 |---|---|
@@ -143,6 +151,9 @@ Every host operation — `docker ps`, reading a Caddyfile, sampling `/proc/loada
 | Terminal | xterm.js + socket.io |
 | Database | SQLite via Prisma ORM |
 | Remote exec | node-ssh / ssh2 |
+| Kubernetes | k3s, kubectl, Helm |
+| Cloud APIs | GCP Cloud Run (JWT auth), Cloudflare v4 API |
+| IaC | Terraform (runner on active VPS) |
 | AI | OpenAI SDK (streamed chat) |
 | Auth | JWT + bcrypt |
 | 3D Hero | React Three Fiber + Three.js |
@@ -187,7 +198,7 @@ GroundControl runs commands on your servers. Treat it like the powerful tool it 
 - **Authentication** — every API route is guarded by a JWT cookie (`gc_token`, httpOnly, `secure` in production, 7-day expiry). Passwords are bcrypt-hashed (cost 12). Login is rate-limited (5 attempts / 15 min per IP).
 - **Strong passwords** — first-run setup and password changes enforce a 12-character minimum with uppercase, lowercase, number, and symbol.
 - **Audit log** — login, logout, password-change, and failed sign-in events are recorded with IP and timestamp. Admins can review them in **Settings → Security → Authentication Audit Log**.
-- **Secrets at rest** — VPS keys and passwords are stored in SQLite. **Protect the database file** and run GroundControl only on a host you control. Cloudflare account tokens are encrypted at rest using `encryptCloudflareToken`.
+- **Secrets at rest** — VPS keys, passwords, cloud-provider credentials, Terraform variables, and Cloudflare tokens are encrypted at rest in SQLite. **Protect the database file** and run GroundControl only on a host you control.
 - **Blast radius** — the container mounts `/etc` read-write, so it can read and potentially modify host system configs. The browser terminal has a blocked-command guard, but you are effectively root on the managed host.
 - **Never expose it publicly without a reverse proxy + strong credentials.** Run behind HTTPS, prefer key-based SSH auth over passwords, and review the audit log regularly.
 
@@ -210,13 +221,23 @@ GroundControl is a from-scratch, full-stack DevOps product, not a tutorial clone
 
 ## 🛣️ Roadmap
 
-- [ ] Encrypted secrets at rest (`GROUNDCONTROL_SECRET`)
+- [x] Encrypted secrets at rest (`GROUNDCONTROL_SECRET`)
 - [x] Configurable model selection for the AI assistant (`AI_MODEL`)
 - [x] Runtime-configurable filesystem paths (per-VPS SystemConfig)
 - [x] First-class multi-VPS switcher in Settings + sidebar onboarding
+- [x] Git-based build + deploy pipeline with deployment targets
+- [x] Cloudflare auto-DNS and ephemeral preview URLs
+- [x] k3s / Kubernetes deploy target
+- [x] Google Cloud Run managed deploy target
+- [x] Terraform-first infrastructure control plane
+- [ ] AWS Fargate / Azure Container Apps deploy targets
+- [ ] Background job queue + real-time deploy logs
+- [ ] Auto-create VPS connections from Terraform output
 - [ ] Role-based access control beyond single-admin
 - [ ] One-click container/stack rollback from the topology view
 - [ ] Exportable metrics (Prometheus endpoint)
+
+See [docs/PENDINGS.md](./docs/PENDINGS.md) for the full list of known sharp edges and recommended next steps.
 
 ---
 
@@ -229,6 +250,7 @@ Dev setup, project structure map, code conventions, and how to add a page or API
 - [DEPLOY.md](./DEPLOY.md) — full self-deployment guide (VPS, domain, Caddy, SSL, Cloudflare)
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup & project map
 - [SECURITY.md](./SECURITY.md) — disclosure policy & threat model
+- [docs/PENDINGS.md](./docs/PENDINGS.md) — known sharp edges, pending work, and recommended next steps
 - [docs/DEMO.md](./docs/DEMO.md) — click-by-click demo recording script
 - [docs/demo-data.md](./docs/demo-data.md) — safe demo seed data (no real VPS needed)
 - [docs/screenshots/](./docs/screenshots/) — what to capture for the README
