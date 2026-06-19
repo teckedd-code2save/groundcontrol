@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { execKubectl } from "@/lib/k8s/utils";
+import { handleApiError, sanitizeStderr } from "@/lib/errors";
 import type { K8sList, K8sNamespace } from "@/lib/k8s/types";
 
 export async function GET(req: NextRequest) {
@@ -8,8 +9,9 @@ export async function GET(req: NextRequest) {
     requireAuth(req);
     const result = await execKubectl("get namespaces -o json");
     if (result.code !== 0) {
+      const details = sanitizeStderr(result.stderr);
       return NextResponse.json(
-        { error: result.stderr || "kubectl get namespaces failed" },
+        { error: "kubectl get namespaces failed", ...(details ? { details } : {}) },
         { status: 500 }
       );
     }
@@ -29,10 +31,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ namespaces });
   } catch (err: unknown) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    return handleApiError(err);
   }
 }
 

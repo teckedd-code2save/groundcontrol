@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { runRollback } from "@/lib/deploy/pipeline";
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
+import { handleApiError } from "@/lib/errors";
 
 export async function POST(
   req: NextRequest,
@@ -26,9 +19,6 @@ export async function POST(
     await runRollback(deploymentId);
     return NextResponse.json({ ok: true, status: "rolled_back" });
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

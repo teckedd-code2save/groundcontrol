@@ -47,9 +47,43 @@ export interface QuickTunnelListItem {
 const QUICK_TUNNEL_REGEX = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com\b/;
 const QUICK_TUNNEL_LOG_DIR = "/tmp";
 
+/** Extract the first trycloudflare.com quick-tunnel URL from a string. */
+export function extractQuickTunnelUrl(stdout: string): string | undefined {
+  const match = stdout.match(QUICK_TUNNEL_REGEX);
+  return match?.[0];
+}
+
+/** Redact common credential-like patterns from a string. */
+export function redactSecrets(input: string): string {
+  let output = input;
+
+  // PEM private keys (-----BEGIN ... -----END ...-----)
+  output = output.replace(
+    /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/gi,
+    "[REDACTED]"
+  );
+
+  // JSON/object values for sensitive keys.
+  const sensitiveKeys = ["private_key", "token", "password", "secret", "credential"];
+  const keyPattern = sensitiveKeys.join("|");
+  output = output.replace(
+    new RegExp(`"(${keyPattern})":\\s*"[^"]*"`, "gi"),
+    `"$1": "[REDACTED]"`
+  );
+  output = output.replace(
+    new RegExp(`(${keyPattern})=([^\\s&]+)`, "gi"),
+    `$1=[REDACTED]`
+  );
+
+  return output;
+}
+
 /**
  * Create or update a DNS record in a Cloudflare zone so a custom domain points
  * at the deployment target.
+ *
+ * If `recordId` is provided the existing record is updated directly, making the
+ * call idempotent for a target that already tracks its DNS record.
  */
 export async function provisionCustomDomain({
   subdomain,
@@ -57,25 +91,20 @@ export async function provisionCustomDomain({
   targetHost,
   proxied = true,
   recordType = "CNAME",
+  recordId: existingRecordId,
 }: {
   subdomain: string;
   zoneId: string;
   targetHost: string;
   proxied?: boolean;
   recordType?: "A" | "CNAME" | string;
+  recordId?: string;
 }): Promise<CustomDomainResult> {
   if (!subdomain || !zoneId || !targetHost) {
     throw new Error("subdomain, zoneId and targetHost are required");
   }
 
   console.log(`[cloudflare-links] provisioning ${recordType} ${subdomain} -> ${targetHost}`);
-
-  const records = await listDnsRecords(zoneId);
-  const existing = records.find(
-    (r) =>
-      typeof r.name === "string" &&
-      r.name.toLowerCase() === subdomain.toLowerCase()
-  );
 
   const data: DnsRecordData = {
     type: recordType,
@@ -86,12 +115,24 @@ export async function provisionCustomDomain({
   };
 
   let result: Record<string, unknown>;
-  if (existing && typeof existing.id === "string") {
-    console.log(`[cloudflare-links] updating existing DNS record ${existing.id}`);
-    result = await updateDnsRecord(zoneId, existing.id, data);
+  if (existingRecordId) {
+    console.log(`[cloudflare-links] updating existing DNS record ${existingRecordId}`);
+    result = await updateDnsRecord(zoneId, existingRecordId, data);
   } else {
-    console.log(`[cloudflare-links] creating new DNS record`);
-    result = await createDnsRecord(zoneId, data);
+    const records = await listDnsRecords(zoneId);
+    const existing = records.find(
+      (r) =>
+        typeof r.name === "string" &&
+        r.name.toLowerCase() === subdomain.toLowerCase()
+    );
+
+    if (existing && typeof existing.id === "string") {
+      console.log(`[cloudflare-links] updating existing DNS record ${existing.id}`);
+      result = await updateDnsRecord(zoneId, existing.id, data);
+    } else {
+      console.log(`[cloudflare-links] creating new DNS record`);
+      result = await createDnsRecord(zoneId, data);
+    }
   }
 
   const recordId = typeof result.id === "string" ? result.id : "";
@@ -269,6 +310,39 @@ export async function destroyQuickTunnel(
 }
 
 /**
+ * Parse a JSON quick-tunnel process info string (e.g. stored on a Deployment)
+ * and stop the tunnel. No-op if the input is empty or cannot be parsed.
+ */
+export async function destroyQuickTunnelByInfo(
+  processInfo: string | null | undefined
+): Promise<void> {
+  if (!processInfo) return;
+
+  let parsed: Partial<QuickTunnelProcessInfo> & { vps?: VpsConnection | null };
+  try {
+    parsed = JSON.parse(processInfo) as typeof parsed;
+  } catch {
+    console.warn("[cloudflare-links] could not parse quick tunnel process info");
+    return;
+  }
+
+  if (!parsed.pid || !parsed.vps) return;
+
+  await destroyQuickTunnel({
+    pid: parsed.pid,
+    port: parsed.port ?? 0,
+    logPath: parsed.logPath ?? "",
+    vps: parsed.vps,
+  }).catch((err) => {
+    console.warn(
+      `[cloudflare-links] failed to destroy quick tunnel by info: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  });
+}
+
+/**
  * List running cloudflared quick tunnels on the active VPS.
  * This is a best-effort helper; URLs are only available when the corresponding
  * log file path can be inferred and still exists.
@@ -326,9 +400,9 @@ async function waitForQuickTunnelUrl(
   while (Date.now() < deadline) {
     const result = await execOnVps(`cat ${shQuote(logPath)} 2>/dev/null || true`, vps);
     if (result.code === 0 && result.stdout) {
-      const match = result.stdout.match(QUICK_TUNNEL_REGEX);
-      if (match) {
-        return match[0];
+      const url = extractQuickTunnelUrl(result.stdout);
+      if (url) {
+        return url;
       }
     }
     await sleep(500);
@@ -359,8 +433,8 @@ async function readQuickTunnelUrlFromRunningProcess(
     // Heuristic: the log belongs to this PID if it mentions the same PID.
     if (!content.stdout.includes(String(pid))) continue;
 
-    const match = content.stdout.match(QUICK_TUNNEL_REGEX);
-    if (match) return match[0];
+    const url = extractQuickTunnelUrl(content.stdout);
+    if (url) return url;
   }
 
   return undefined;

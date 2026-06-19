@@ -5,6 +5,7 @@
  * optional custom domain provisioning, and optional quick-tunnel preview URLs.
  */
 
+import { createHash } from "crypto";
 import type { Project, DeploymentTarget } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getActiveVps, execOnVps, shQuote } from "@/lib/vps";
@@ -13,12 +14,15 @@ import {
   provisionCustomDomain,
   provisionK3sIngress,
   createQuickTunnel,
+  destroyQuickTunnelByInfo,
 } from "./cloudflare-links";
 import { getK3sPreviewPort } from "@/lib/k8s/utils";
 import { createAdapter } from "./targets";
 import type { DeployContext, DeployResult } from "./targets/types";
 import { runTerraformApply } from "@/lib/terraform/runner";
 import type { TerraformOutput } from "@/lib/terraform/types";
+
+const IDEMPOTENCY_WINDOW_MS = 5 * 60 * 1000;
 
 export interface RunDeployOptions {
   projectId: number;
@@ -30,6 +34,8 @@ export interface RunDeployOptions {
   proxied?: boolean;
   /** Runtime overrides merged into DeploymentTarget.configJson for this deploy only. */
   configOverrides?: Record<string, unknown>;
+  /** Optional explicit idempotency key. Defaults to a hash of the deploy inputs. */
+  idempotencyKey?: string;
 }
 
 export interface RunBuildOptions {
@@ -76,6 +82,44 @@ export async function provisionInfraForDeploy(
   };
 }
 
+function computeIdempotencyKey(options: RunDeployOptions): string {
+  const { projectId, targetId, branch = "main", ...inputs } = options;
+  const body = JSON.stringify({ projectId, targetId, branch, inputs });
+  const hash = createHash("sha256").update(body).digest("hex");
+  return `deploy:${projectId}:${targetId ?? "default"}:${branch}:${hash}`;
+}
+
+async function findRecentIdempotentDeployment(
+  idempotencyKey: string
+): Promise<{ id: number } | null> {
+  const windowStart = new Date(Date.now() - IDEMPOTENCY_WINDOW_MS);
+  return prisma.deployment.findFirst({
+    where: {
+      idempotencyKey,
+      createdAt: { gte: windowStart },
+      status: { not: "failed" },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+}
+
+async function destroyPreviousQuickTunnel(projectId: number): Promise<void> {
+  const previous = await prisma.deployment.findFirst({
+    where: {
+      projectId,
+      previewProcessInfo: { not: null },
+      status: { not: "failed" },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { previewProcessInfo: true },
+  });
+
+  if (previous?.previewProcessInfo) {
+    await destroyQuickTunnelByInfo(previous.previewProcessInfo);
+  }
+}
+
 export async function runDeploy(options: RunDeployOptions): Promise<number> {
   const {
     projectId,
@@ -86,11 +130,21 @@ export async function runDeploy(options: RunDeployOptions): Promise<number> {
     zoneId,
     proxied,
     configOverrides,
+    idempotencyKey: explicitKey,
   } = options;
 
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) {
     throw new Error(`Project ${projectId} not found`);
+  }
+
+  const idempotencyKey = explicitKey || computeIdempotencyKey(options);
+  const existing = await findRecentIdempotentDeployment(idempotencyKey);
+  if (existing) {
+    console.log(
+      `[pipeline] returning existing deployment ${existing.id} for idempotency key`
+    );
+    return existing.id;
   }
 
   const target = await mergeTargetConfig(await resolveTarget(targetId), configOverrides);
@@ -101,6 +155,7 @@ export async function runDeploy(options: RunDeployOptions): Promise<number> {
       targetId: target.id,
       status: "running",
       branch,
+      idempotencyKey,
     },
   });
 
@@ -314,6 +369,9 @@ export async function runRollback(deploymentId: number): Promise<void> {
     throw new Error(`Deployment ${deploymentId} not found`);
   }
 
+  // Best-effort cleanup of any ephemeral preview tunnel tied to this deployment.
+  await destroyQuickTunnelByInfo(deployment.previewProcessInfo).catch(() => {});
+
   const { project, target } = deployment;
   const logBuffer: string[] = [];
   const vps = await getActiveVps();
@@ -435,6 +493,7 @@ async function attachUrls(
 ): Promise<DeployResult> {
   let publicUrl = deployResult.publicUrl;
   let previewUrl = deployResult.previewUrl;
+  let previewProcessInfo: string | undefined;
 
   if (options.subdomain && options.zoneId) {
     if (target.type === "k3s") {
@@ -461,18 +520,38 @@ async function attachUrls(
         zoneId: options.zoneId,
         targetHost,
         proxied: options.proxied,
+        recordId: target.dnsRecordId ?? undefined,
       });
       publicUrl = `https://${record.name}`;
       ctx.log(`[pipeline] custom domain provisioned: ${publicUrl}`);
+
+      // Persist the record so subsequent deploys update instead of duplicate.
+      await prisma.deploymentTarget.update({
+        where: { id: target.id },
+        data: {
+          dnsRecordId: record.recordId,
+          dnsRecordName: record.name,
+        },
+      });
     }
   }
 
   if (options.generatePreviewUrl) {
+    // Clean up any previous project's quick tunnel before starting a new one.
+    await destroyPreviousQuickTunnel(project.id).catch((err) => {
+      ctx.log(
+        `[pipeline] warning: failed to destroy previous quick tunnel: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    });
+
     if (target.type === "k3s") {
       const port = await getK3sPreviewPort(project.slug, ctx.vps);
       if (port) {
         const tunnel = await createQuickTunnel(port, ctx.vps);
         previewUrl = tunnel.url;
+        previewProcessInfo = JSON.stringify(tunnel.processInfo);
         ctx.log(`[pipeline] k3s preview tunnel ready: ${previewUrl} (port ${port})`);
       } else {
         ctx.log(`[pipeline] could not determine k3s preview port; skipping preview tunnel`);
@@ -482,10 +561,18 @@ async function attachUrls(
       if (port) {
         const tunnel = await createQuickTunnel(port, ctx.vps);
         previewUrl = tunnel.url;
+        previewProcessInfo = JSON.stringify(tunnel.processInfo);
         ctx.log(`[pipeline] preview tunnel ready: ${previewUrl}`);
       } else {
         ctx.log(`[pipeline] could not determine exposed port; skipping preview tunnel`);
       }
+    }
+
+    if (previewProcessInfo) {
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: { previewProcessInfo },
+      });
     }
   }
 

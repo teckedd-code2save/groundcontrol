@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
+import { handleApiError } from "@/lib/errors";
 
 const GCP_REGIONS = [
   { value: "us-central1", label: "us-central1 (Iowa)" },
@@ -42,9 +39,6 @@ export async function GET(req: NextRequest) {
     requireAuth(req);
     return NextResponse.json({ regions: GCP_REGIONS });
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

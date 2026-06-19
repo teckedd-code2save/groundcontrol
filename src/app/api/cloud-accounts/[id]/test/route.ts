@@ -2,14 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { decryptCloudCredentials } from "@/lib/cloud/accounts";
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
+import { handleApiError, sanitizeError } from "@/lib/errors";
 
 async function validateGcpCredentials(credentials: Record<string, unknown>): Promise<{
   success: boolean;
@@ -32,7 +25,7 @@ async function validateGcpCredentials(credentials: Record<string, unknown>): Pro
       const text = await res.text();
       return { success: false, message: `Google tokeninfo rejected token: ${text}` };
     } catch (err: unknown) {
-      return { success: false, message: `Tokeninfo request failed: ${getErrorMessage(err)}` };
+      return { success: false, message: `Tokeninfo request failed: ${sanitizeError(err).message}` };
     }
   }
 
@@ -126,9 +119,6 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

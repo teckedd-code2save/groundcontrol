@@ -5,14 +5,7 @@ import {
   encryptCloudCredentials,
   serializeCloudProviderAccount,
 } from "@/lib/cloud/accounts";
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
+import { handleApiError } from "@/lib/errors";
 
 function isValidProvider(provider: string): boolean {
   return ["gcp", "aws", "azure"].includes(provider.toLowerCase());
@@ -26,10 +19,7 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(accounts.map(serializeCloudProviderAccount));
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }
 
@@ -70,9 +60,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(serializeCloudProviderAccount(account), { status: 201 });
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

@@ -2,15 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateHcl } from "@/lib/terraform/generator";
+import { handleApiError } from "@/lib/errors";
 import type { TerraformProvider } from "@/lib/terraform/types";
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
 
 export async function POST(
   req: NextRequest,
@@ -46,9 +39,6 @@ export async function POST(
 
     return NextResponse.json({ ok: true, hcl });
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
+import { handleApiError } from "@/lib/errors";
 
 export async function PATCH(
   req: NextRequest,
@@ -40,10 +33,7 @@ export async function PATCH(
 
     return NextResponse.json(target);
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }
 
@@ -63,9 +53,6 @@ export async function DELETE(
     await prisma.deploymentTarget.delete({ where: { id: targetId } });
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

@@ -3,14 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { runDeploy } from "@/lib/deploy/pipeline";
 import { getActiveCloudProviderAccount } from "@/lib/cloud/accounts";
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
+import { handleApiError } from "@/lib/errors";
 
 async function resolveCloudRunTarget(targetId?: number) {
   if (targetId) {
@@ -109,9 +102,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ id, status: "running" });
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

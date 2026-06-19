@@ -2,15 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { encryptIfNeeded } from "@/lib/crypto";
+import { handleApiError } from "@/lib/errors";
 import type { TerraformProvider, StateBackend } from "@/lib/terraform/types";
-
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && err.message === "Unauthorized";
-}
 
 const VALID_PROVIDERS: TerraformProvider[] = ["hetzner", "aws", "gcp", "azure"];
 const VALID_BACKENDS: StateBackend[] = ["local", "s3", "gcs"];
@@ -46,10 +39,7 @@ export async function GET(
 
     return NextResponse.json(stack);
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }
 
@@ -115,10 +105,7 @@ export async function PATCH(
 
     return NextResponse.json(stack);
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }
 
@@ -138,9 +125,6 @@ export async function DELETE(
     await prisma.terraformStack.delete({ where: { id: stackId } });
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
+    return handleApiError(err);
   }
 }

@@ -75,14 +75,16 @@ model Project {
 }
 
 model DeploymentTarget {
-  id          Int      @id @default(autoincrement())
-  name        String
-  type        String   // docker-compose | static | nixpacks | custom
-  vpsConfigId Int?
-  configJson  String   @default("") // target-specific configuration
-  isActive    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  name         String
+  type         String   // docker-compose | static | nixpacks | custom
+  vpsConfigId  Int?
+  configJson   String   @default("") // target-specific configuration
+  isActive     Boolean  @default(false)
+  dnsRecordId  String?  // Cloudflare DNS record created by this target
+  dnsRecordName String? // Name of the Cloudflare DNS record created by this target
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: SetNull)
   deployments Deployment[]
@@ -91,26 +93,29 @@ model DeploymentTarget {
 }
 
 model Deployment {
-  id          Int      @id @default(autoincrement())
-  projectId   Int
-  targetId    Int
-  status      String   @default("pending") // pending | building | deploying | success | failed | rolled_back
-  branch      String   @default("main")
-  commitSha   String?
-  imageTag    String?
-  publicUrl   String?
-  previewUrl  String?
-  output      String?
-  error       String?
-  durationMs  Int?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 Int      @id @default(autoincrement())
+  projectId          Int
+  targetId           Int
+  status             String   @default("pending") // pending | building | deploying | success | failed | rolled_back
+  branch             String   @default("main")
+  commitSha          String?
+  imageTag           String?
+  publicUrl          String?
+  previewUrl         String?
+  previewProcessInfo String?  // PID/log path for ephemeral quick tunnels
+  idempotencyKey     String?
+  output             String?
+  error              String?
+  durationMs         Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   target  DeploymentTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@index([projectId, createdAt])
   @@index([targetId, createdAt])
+  @@index([idempotencyKey])
 }
 
 model DeploymentLog {

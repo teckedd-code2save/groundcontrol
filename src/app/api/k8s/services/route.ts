@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { execKubectl } from "@/lib/k8s/utils";
 import { shQuote } from "@/lib/vps";
+import { handleApiError, sanitizeStderr } from "@/lib/errors";
 import type { K8sList, K8sService } from "@/lib/k8s/types";
 
 export async function GET(req: NextRequest) {
@@ -20,8 +21,9 @@ export async function GET(req: NextRequest) {
       `get services -n ${shQuote(namespace)} -o json`
     );
     if (result.code !== 0) {
+      const details = sanitizeStderr(result.stderr);
       return NextResponse.json(
-        { error: result.stderr || "kubectl get services failed" },
+        { error: "kubectl get services failed", ...(details ? { details } : {}) },
         { status: 500 }
       );
     }
@@ -44,10 +46,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ services });
   } catch (err: unknown) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    return handleApiError(err);
   }
 }
 
