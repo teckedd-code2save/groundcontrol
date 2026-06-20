@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useSidebar } from "./SidebarContext";
 
 interface ToolEvent {
@@ -24,16 +24,44 @@ interface Message {
   confirm?: ConfirmRequest;
 }
 
+interface ThreadSummary {
+  id: number;
+  title: string;
+  updatedAt: string;
+  _count?: { messages: number };
+}
+
+interface ThreadDetail {
+  id: number;
+  title: string;
+  messages: {
+    id: number;
+    role: string;
+    content: string;
+    sortOrder: number;
+    toolCalls: {
+      id: number;
+      name: string;
+      args: string;
+      output: string | null;
+      status: string;
+      readOnly: boolean;
+    }[];
+  }[];
+}
+
 type WireEvent =
+  | { type: "thread"; threadId: number }
   | { type: "tool"; name: string; args?: Record<string, unknown>; status: "running" | "done" | "error"; output?: string }
   | { type: "confirm"; name: string; args: Record<string, unknown>; description?: string }
   | { type: "text"; delta: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "done" };
 
 const STORAGE_OPEN = "gc:ai-chat:open";
 const STORAGE_EXPANDED = "gc:ai-chat:expanded";
+const STORAGE_THREAD_ID = "gc:ai-chat:thread-id";
 
-/** Minimal, safe-ish markdown -> HTML for assistant answers. */
 function renderMarkdown(md: string): string {
   const esc = (s: string) =>
     s
@@ -41,7 +69,6 @@ function renderMarkdown(md: string): string {
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
-  // Extract fenced code blocks first so their content isn't further processed.
   const blocks: string[] = [];
   let text = md.replace(/```(?:[a-zA-Z0-9]*)\n?([\s\S]*?)```/g, (_m, code) => {
     blocks.push(
@@ -53,22 +80,15 @@ function renderMarkdown(md: string): string {
   });
 
   text = esc(text);
-  // Inline code
   text = text.replace(/`([^`]+)`/g, '<code class="rounded bg-gray-200 px-1 py-0.5 text-xs dark:bg-gray-700">$1</code>');
-  // Bold / italic
   text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   text = text.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
-  // Headings
   text = text.replace(/^###\s+(.*)$/gm, '<p class="font-semibold mt-2">$1</p>');
   text = text.replace(/^##\s+(.*)$/gm, '<p class="font-semibold mt-2">$1</p>');
   text = text.replace(/^#\s+(.*)$/gm, '<p class="font-bold mt-2">$1</p>');
-  // Bullet lists
   text = text.replace(/^\s*[-*]\s+(.*)$/gm, "<li>$1</li>");
   text = text.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul class="list-disc pl-5 my-1">$1</ul>');
-  // Paragraph breaks
   text = text.replace(/\n{2,}/g, "<br/><br/>").replace(/\n/g, "<br/>");
-
-  // Restore code blocks
   text = text.replace(/\x00BLOCK(\d+)\x00/g, (_m, i) => blocks[Number(i)]);
   return text;
 }
@@ -76,8 +96,7 @@ function renderMarkdown(md: string): string {
 function ToolChip({ tool }: { tool: ToolEvent }) {
   const [expanded, setExpanded] = useState(false);
   const icon = tool.status === "running" ? "⏳" : tool.status === "error" ? "⚠" : "⚙";
-  const label =
-    tool.status === "running" ? `Running ${tool.name}…` : `ran ${tool.name}`;
+  const label = tool.status === "running" ? `Running ${tool.name}…` : `ran ${tool.name}`;
   return (
     <div className="my-1">
       <button
@@ -98,14 +117,53 @@ function ToolChip({ tool }: { tool: ToolEvent }) {
   );
 }
 
+function safeJson(raw: string): Record<string, unknown> {
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function threadMessagesToUi(thread: ThreadDetail): Message[] {
+  const out: Message[] = [];
+  for (const m of thread.messages) {
+    if (m.role === "user") {
+      out.push({ role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      const tools: ToolEvent[] = m.toolCalls.map((tc) => ({
+        name: tc.name,
+        args: safeJson(tc.args),
+        status: (tc.status === "running" || tc.status === "done" || tc.status === "error"
+          ? tc.status
+          : "done") as ToolEvent["status"],
+        output: tc.output ?? undefined,
+      }));
+      out.push({ role: "assistant", content: m.content, tools });
+    }
+  }
+  if (!out.length) {
+    out.push({
+      role: "assistant",
+      content:
+        'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',
+    });
+  }
+  return out;
+}
+
 export default function AIChatWidget() {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [threadId, setThreadId] = useState<number | null>(null);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [showThreadMenu, setShowThreadMenu] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
       content:
-        'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',    },
+        'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',
+    },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -113,33 +171,35 @@ export default function AIChatWidget() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const { setCollapsed } = useSidebar();
 
-  // Restore persisted state on mount.
+  // Restore persisted UI state on mount.
   useEffect(() => {
     try {
       const savedOpen = localStorage.getItem(STORAGE_OPEN);
       const savedExpanded = localStorage.getItem(STORAGE_EXPANDED);
+      const savedThreadId = localStorage.getItem(STORAGE_THREAD_ID);
       if (savedOpen === "true") setOpen(true);
       if (savedExpanded === "true") setExpanded(true);
+      if (savedThreadId) {
+        const id = parseInt(savedThreadId, 10);
+        if (!Number.isNaN(id)) setThreadId(id);
+      }
     } catch {
       // localStorage may be unavailable.
     }
   }, []);
 
-  // Persist open/expanded state.
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_OPEN, String(open));
       localStorage.setItem(STORAGE_EXPANDED, String(expanded));
+      if (threadId) localStorage.setItem(STORAGE_THREAD_ID, String(threadId));
     } catch {
       // ignore
     }
-  }, [open, expanded]);
+  }, [open, expanded, threadId]);
 
-  // Collapse sidebar when expanded so chat fills the viewport.
   useEffect(() => {
-    if (expanded) {
-      setCollapsed(true);
-    }
+    if (expanded) setCollapsed(true);
   }, [expanded, setCollapsed]);
 
   useEffect(() => {
@@ -148,6 +208,93 @@ export default function AIChatWidget() {
       setUnread(0);
     }
   }, [messages, open]);
+
+  // Load thread list on mount and when a new thread is created.
+  const loadThreads = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ai/threads");
+      if (!res.ok) return;
+      const data = await res.json();
+      setThreads(data.threads ?? []);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    loadThreads();
+  }, [loadThreads]);
+
+  // When threadId changes, load messages.
+  useEffect(() => {
+    if (!threadId) return;
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch(`/api/ai/threads/${threadId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data.thread) return;
+        const loaded = threadMessagesToUi(data.thread as ThreadDetail);
+        setMessages(loaded);
+      } catch {
+        // ignore
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId]);
+
+  async function startNewThread() {
+    try {
+      const res = await fetch("/api/ai/threads", { method: "POST" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.thread?.id) {
+        setThreadId(data.thread.id);
+        setMessages([
+          {
+            role: "assistant",
+            content:
+              'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',
+          },
+        ]);
+        setShowThreadMenu(false);
+        await loadThreads();
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function selectThread(id: number) {
+    setThreadId(id);
+    setShowThreadMenu(false);
+  }
+
+  async function deleteThread(id: number, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!confirm("Delete this chat thread?")) return;
+    try {
+      const res = await fetch(`/api/ai/threads/${id}`, { method: "DELETE" });
+      if (!res.ok) return;
+      if (threadId === id) {
+        setThreadId(null);
+        setMessages([
+          {
+            role: "assistant",
+            content:
+              'Hi! I\'m GroundControl AI. I can inspect your server directly — ask me things like "which service is using the most memory", "show me the caddy config", or "tail the logs for <container>".',
+          },
+        ]);
+      }
+      await loadThreads();
+    } catch {
+      // ignore
+    }
+  }
 
   useEffect(() => {
     function handleExternalQuery(e: Event) {
@@ -163,7 +310,6 @@ export default function AIChatWidget() {
     return () => window.removeEventListener("gc:ai-chat-query", handleExternalQuery);
   }, []);
 
-  // Listen for the layout-level global shortcut event.
   useEffect(() => {
     function handleToggle() {
       setOpen((prevOpen) => {
@@ -178,7 +324,6 @@ export default function AIChatWidget() {
     return () => window.removeEventListener("gc:ai-chat-toggle", handleToggle);
   }, []);
 
-  // Global keyboard shortcut: Ctrl/Cmd+Shift+G.
   useEffect(() => {
     function handleGlobalKeydown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "g" || e.key === "G")) {
@@ -196,24 +341,11 @@ export default function AIChatWidget() {
     return () => window.removeEventListener("keydown", handleGlobalKeydown);
   }, []);
 
-  /** Build the wire history (role + content) from local messages. */
-  function buildHistory(): { role: string; content: string }[] {
-    return messages
-      .filter((m) => m.role !== "error" && (m.content || "").trim())
-      .map((m) => ({ role: m.role, content: m.content }));
-  }
-
-  /**
-   * Core streaming call. Either a fresh user turn (text provided) or a
-   * confirmed mutating tool (confirmedTool provided). Streams NDJSON events
-   * into a single assistant message.
-   */
   async function runTurn(opts: {
-    historyOverride?: { role: string; content: string }[];
+    message?: string;
     confirmedTool?: { name: string; args: Record<string, unknown> };
   }) {
     setLoading(true);
-    // Append a fresh assistant message that we stream into.
     const assistantIndexRef = { current: -1 };
     setMessages((prev) => {
       const next = [...prev, { role: "assistant" as const, content: "", tools: [] as ToolEvent[] }];
@@ -235,13 +367,14 @@ export default function AIChatWidget() {
     };
 
     try {
+      const body: Record<string, unknown> = { threadId };
+      if (opts.message) body.message = opts.message;
+      if (opts.confirmedTool) body.confirmedTool = opts.confirmedTool;
+
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: opts.historyOverride ?? buildHistory(),
-          confirmedTool: opts.confirmedTool,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -255,13 +388,12 @@ export default function AIChatWidget() {
       let answer = "";
 
       const handleEvent = (ev: WireEvent) => {
-        if (ev.type === "tool") {
+        if (ev.type === "thread") {
+          setThreadId(ev.threadId);
+        } else if (ev.type === "tool") {
           updateAssistant((m) => {
             const tools = m.tools || [];
-            // Update an existing running entry for the same tool, else push.
-            const existingIdx = tools.findIndex(
-              (t) => t.name === ev.name && t.status === "running"
-            );
+            const existingIdx = tools.findIndex((t) => t.name === ev.name && t.status === "running");
             const entry: ToolEvent = {
               name: ev.name,
               args: ev.args,
@@ -306,7 +438,6 @@ export default function AIChatWidget() {
             }
           }
         }
-        // Flush any trailing buffered line.
         const tail = buffer.trim();
         if (tail) {
           try {
@@ -316,6 +447,8 @@ export default function AIChatWidget() {
           }
         }
       }
+
+      await loadThreads();
     } catch (err: unknown) {
       updateAssistant((m) => {
         m.role = "error";
@@ -331,16 +464,14 @@ export default function AIChatWidget() {
     const text = input.trim();
     if (!text || loading) return;
 
-    const history = [...buildHistory(), { role: "user", content: text }];
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setInput("");
-    await runTurn({ historyOverride: history });
+    await runTurn({ message: text });
   }
 
   async function approveConfirm(msgIndex: number) {
     const confirm = messages[msgIndex]?.confirm;
     if (!confirm || loading) return;
-    // Mark resolved so buttons disappear.
     setMessages((prev) => {
       const next = [...prev];
       if (next[msgIndex]?.confirm) {
@@ -351,10 +482,7 @@ export default function AIChatWidget() {
       }
       return next;
     });
-    await runTurn({
-      historyOverride: buildHistory(),
-      confirmedTool: { name: confirm.name, args: confirm.args },
-    });
+    await runTurn({ confirmedTool: { name: confirm.name, args: confirm.args } });
   }
 
   function cancelConfirm(msgIndex: number) {
@@ -386,6 +514,9 @@ export default function AIChatWidget() {
     setExpanded((v) => !v);
   }
 
+  const currentThread = threads.find((t) => t.id === threadId);
+  const threadTitle = currentThread?.title || "GroundControl AI";
+
   const header = (
     <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
       <div className="flex items-center gap-3">
@@ -395,11 +526,61 @@ export default function AIChatWidget() {
           </svg>
         </div>
         <div>
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">GroundControl AI</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{threadTitle}</p>
           <p className="text-xs text-gray-500 dark:text-gray-400">Your DevOps assistant</p>
         </div>
       </div>
       <div className="flex items-center gap-1">
+        <div className="relative">
+          <button
+            onClick={() => setShowThreadMenu((v) => !v)}
+            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            aria-label="Threads"
+            title="Threads"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          {showThreadMenu && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-gray-700">
+                <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Threads</span>
+                <button
+                  onClick={startNewThread}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                >
+                  + New
+                </button>
+              </div>
+              <div className="max-h-60 overflow-y-auto py-1">
+                {threads.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-gray-400">No saved threads yet.</p>
+                )}
+                {threads.map((t) => (
+                  <div
+                    key={t.id}
+                    onClick={() => selectThread(t.id)}
+                    className={`group flex cursor-pointer items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                      t.id === threadId ? "bg-blue-50 dark:bg-blue-900/20" : ""
+                    }`}
+                  >
+                    <span className="truncate text-gray-800 dark:text-gray-200">{t.title}</span>
+                    <button
+                      onClick={(e) => deleteThread(t.id, e)}
+                      className="ml-2 rounded p-1 text-gray-400 opacity-0 hover:bg-red-100 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-red-900/30 dark:hover:text-red-300"
+                      title="Delete"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         {open && (
           <button
             onClick={toggleExpand}
@@ -446,7 +627,6 @@ export default function AIChatWidget() {
                 : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 rounded-bl-md"
             }`}
           >
-            {/* Tool activity chips */}
             {m.tools && m.tools.length > 0 && (
               <div className="mb-1">
                 {m.tools.map((t, ti) => (
@@ -455,7 +635,6 @@ export default function AIChatWidget() {
               </div>
             )}
 
-            {/* Answer text (markdown for assistant, plain otherwise) */}
             {m.content ? (
               m.role === "assistant" ? (
                 <div
@@ -478,7 +657,6 @@ export default function AIChatWidget() {
               ) : null
             )}
 
-            {/* Confirmation prompt for mutating tools */}
             {m.confirm && (
               <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
                 <p className="font-semibold">Confirm action</p>
@@ -556,7 +734,6 @@ export default function AIChatWidget() {
 
   return (
     <>
-      {/* Floating toggle */}
       <button
         onClick={toggleOpen}
         className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors"
@@ -578,7 +755,6 @@ export default function AIChatWidget() {
         )}
       </button>
 
-      {/* Chat panel */}
       {open && (
         <div
           className={`fixed flex flex-col bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 ${

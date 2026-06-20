@@ -12,6 +12,22 @@ import {
   getDockerContainerLabels,
 } from "@/lib/vps";
 import { prisma } from "@/lib/prisma";
+import { getHostCapabilities, clearHostCapabilitiesCache, formatCapabilitiesForPrompt } from "@/lib/host-capabilities";
+import {
+  installDocker,
+  installCaddy,
+  installNginx,
+  installNode,
+  installGit,
+  installK3s,
+  installKubectl,
+  installHelm,
+  installTerraform,
+  installCloudflared,
+  canInstallHostPackages,
+  type BootstrapResult,
+} from "@/lib/bootstrap";
+import { isAllowedSystemPath, validateSafePath, validateSystemCommand } from "@/lib/host-safety";
 
 /**
  * GroundControl AI agent tool set.
@@ -30,7 +46,7 @@ export interface AgentTool {
   parameters: Record<string, unknown>;
   /** Read-only tools auto-run. Mutating tools require explicit user confirmation. */
   readOnly: boolean;
-  execute: (args: Record<string, any>) => Promise<string>;
+  execute: (args: Record<string, unknown>) => Promise<string>;
 }
 
 /** Safe wrapper: run a command, never throw, surface stderr/exit code clearly. */
@@ -162,6 +178,109 @@ export function checkDiagnosticCommand(command: string): string | null {
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Host capability helpers
+// ---------------------------------------------------------------------------
+
+/** Read a system file if its path is allow-listed. */
+async function readSystemFile(path: string, limitBytes = 128_000): Promise<string> {
+  const refusal = validateSafePath(path);
+  if (refusal) return `ERROR: ${refusal}`;
+  const result = await execOnVps(`cat ${shQuote(path)} 2>&1 | head -c ${limitBytes}`);
+  if (result.code !== 0) return `ERROR: could not read ${path}\n${result.stderr || result.stdout}`;
+  return result.stdout || "(empty file)";
+}
+
+/** Write a system file if its path is allow-listed, with a backup. */
+async function writeSystemFile(path: string, content: string): Promise<string> {
+  const refusal = validateSafePath(path);
+  if (refusal) return `ERROR: ${refusal}`;
+  const b64 = Buffer.from(content).toString("base64");
+  const mkdir = await execOnVps(`mkdir -p "$(dirname ${shQuote(path)})"`);
+  if (mkdir.code !== 0) return `ERROR: could not create parent directory\n${mkdir.stderr}`;
+  const backup = await execOnVps(`test -f ${shQuote(path)} && cp ${shQuote(path)} ${shQuote(path)}.bak-$(date +%s) 2>/dev/null || true`);
+  if (backup.code !== 0) return `ERROR: backup failed\n${backup.stderr}`;
+  const result = await execOnVps(`printf '%s' ${shQuote(b64)} | base64 -d > ${shQuote(path)} 2>&1`);
+  if (result.code !== 0) return `ERROR: could not write ${path}\n${result.stderr || result.stdout}`;
+  return `Wrote ${content.length} bytes to ${path}.`;
+}
+
+/** Map installer names to bootstrap functions. */
+const SOFTWARE_INSTALLERS: Record<string, () => Promise<BootstrapResult>> = {
+  docker: installDocker,
+  caddy: installCaddy,
+  nginx: installNginx,
+  node: installNode,
+  git: installGit,
+  k3s: installK3s,
+  kubectl: installKubectl,
+  helm: installHelm,
+  terraform: installTerraform,
+  cloudflared: installCloudflared,
+};
+
+async function ensureSoftware(name: string): Promise<string> {
+  const normalized = name.toLowerCase().trim();
+  const installer = SOFTWARE_INSTALLERS[normalized];
+  if (!installer) {
+    return `ERROR: unknown software "${name}". Supported: ${Object.keys(SOFTWARE_INSTALLERS).join(", ")}.`;
+  }
+  const allowed = await canInstallHostPackages();
+  if (!allowed.ok) return `ERROR: ${allowed.reason || "Host package installs are not allowed in this environment."}`;
+  const result = await installer();
+  clearHostCapabilitiesCache();
+  if (!result.success) return `ERROR: install failed\n${result.error || result.output}`;
+  return `Installed ${normalized}.\n${result.output}`;
+}
+
+/** Manage a service using the detected init system. */
+async function manageService(service: string, action: string): Promise<string> {
+  const validActions = new Set(["start", "stop", "restart", "reload", "enable", "disable", "status"]);
+  const a = action.toLowerCase().trim();
+  if (!validActions.has(a)) return `ERROR: unsupported action "${action}". Use start/stop/restart/reload/enable/disable/status.`;
+
+  const caps = await getHostCapabilities();
+  const init = caps.capabilities.initSystem;
+
+  if (init === "systemd") {
+    if (a === "enable" || a === "disable") {
+      return safeExec(`systemctl ${a} ${shQuote(service)}`);
+    }
+    return safeExec(`systemctl ${a} ${shQuote(service)}`);
+  }
+
+  if (init === "openrc") {
+    if (a === "enable") return safeExec(`rc-update add ${shQuote(service)} default`);
+    if (a === "disable") return safeExec(`rc-update delete ${shQuote(service)} default`);
+    return safeExec(`rc-service ${shQuote(service)} ${a}`);
+  }
+
+  if (a === "enable" || a === "disable") {
+    return `ERROR: enable/disable are not supported on init system "${init}".`;
+  }
+  return safeExec(`service ${shQuote(service)} ${a}`);
+}
+
+/** List services for the detected init system. */
+async function listServices(): Promise<string> {
+  const caps = await getHostCapabilities();
+  const init = caps.capabilities.initSystem;
+  if (init === "systemd") {
+    return safeExec("systemctl list-units --type=service --state=running,failed --no-pager --plain");
+  }
+  if (init === "openrc") {
+    return safeExec("rc-status --servicelist 2>/dev/null || rc-update show");
+  }
+  return safeExec("service --status-all 2>&1 || echo 'service command unavailable'");
+}
+
+/** Run a scoped system command with validation and confirmation. */
+async function runSystemCommand(command: string): Promise<string> {
+  const refusal = validateSystemCommand(command);
+  if (refusal) return `ERROR: ${refusal}`;
+  return safeExec(command);
 }
 
 // ---------------------------------------------------------------------------
@@ -618,6 +737,134 @@ export const AGENT_TOOLS: AgentTool[] = [
         const name = String(args?.name || "").trim();
         if (!name) return "ERROR: container name is required.";
         return safeExec(`docker stop ${shQuote(name)}`);
+      }),
+  },
+  // --- Host capability and system-level tools --------------------------------
+  {
+    name: "get_host_capabilities",
+    description:
+      "Get a unified report of the active VPS: OS, init system, installed tooling (Docker, Caddy, k3s, kubectl, Helm, Terraform, cloudflared), filesystem layout, and network tool. Call this first when asked to install, configure, or manage the host itself.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const caps = await getHostCapabilities();
+        return formatCapabilitiesForPrompt(caps) + "\n\n" + JSON.stringify(caps, null, 2);
+      }),
+  },
+  {
+    name: "read_system_file",
+    description:
+      "Read the contents of an allow-listed system configuration file (Caddyfile, nginx site, /etc/hosts, env files, systemd units, project files under /opt, etc.). Paths outside the allow-list are refused.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute file path to read." },
+        limitBytes: { type: "integer", description: "Max bytes to read (default 128KB).", default: 128000 },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const path = String(args?.path || "").trim();
+        const limit = Math.max(1, Math.min(1_000_000, Number(args?.limitBytes) || 128_000));
+        if (!path) return "ERROR: path is required.";
+        return readSystemFile(path, limit);
+      }),
+  },
+  {
+    name: "list_services",
+    description:
+      "List running/failed services on the host using the detected init system (systemd, OpenRC, or sysvinit service).",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () => guard(listServices),
+  },
+  {
+    name: "ensure_software",
+    description:
+      "Install a known binary/package on the host if it is not already present. Supports: docker, caddy, nginx, node, git, k3s, kubectl, helm, terraform, cloudflared. Uses the OS package manager or official installer scripts. MUTATING — requires explicit user confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Software name to install." },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const name = String(args?.name || "").trim();
+        if (!name) return "ERROR: software name is required.";
+        return ensureSoftware(name);
+      }),
+  },
+  {
+    name: "manage_service",
+    description:
+      "Start, stop, restart, reload, enable, disable, or check status of a host service using the correct init system (systemctl, rc-service, or service). MUTATING — requires explicit user confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        service: { type: "string", description: "Service name (e.g., 'caddy', 'docker', 'nginx')." },
+        action: { type: "string", enum: ["start", "stop", "restart", "reload", "enable", "disable", "status"], description: "Action to perform." },
+      },
+      required: ["service", "action"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const service = String(args?.service || "").trim();
+        const action = String(args?.action || "").trim();
+        if (!service) return "ERROR: service name is required.";
+        return manageService(service, action);
+      }),
+  },
+  {
+    name: "write_system_file",
+    description:
+      "Write content to an allow-listed system configuration file, creating parent directories and a .bak-<timestamp> backup if the file exists. Allow-listed paths include /etc/caddy/*, /etc/nginx/*, /etc/hosts, /etc/environment, /etc/systemd/system/*, /etc/init.d/*, /opt/*, /var/www/*, /root/*, /home/*, /tmp/*. MUTATING — requires explicit user confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute file path to write." },
+        content: { type: "string", description: "Full file content." },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const path = String(args?.path || "").trim();
+        const content = String(args?.content ?? "");
+        if (!path) return "ERROR: path is required.";
+        if (!isAllowedSystemPath(path)) return `ERROR: path ${path} is not allow-listed.`;
+        return writeSystemFile(path, content);
+      }),
+  },
+  {
+    name: "run_system_command",
+    description:
+      "Escape hatch to run a scoped system administration command (systemctl/service/rc-service, apt/apk/dnf, ufw/iptables/nft, sysctl, timedatectl, hostnamectl, etc.). Blocked patterns include rm, redirection, curl|sh, eval, sudo, netcat, reboot/shutdown. MUTATING — requires explicit user confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "The system command to run." },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const command = String(args?.command || "").trim();
+        if (!command) return "ERROR: command is required.";
+        return runSystemCommand(command);
       }),
   },
 ];
