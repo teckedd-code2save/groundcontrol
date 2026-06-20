@@ -20,6 +20,7 @@ interface Deployment {
   id: number;
   projectId: number;
   targetId: number;
+  jobId: number | null;
   status: string;
   branch: string;
   commitSha: string | null;
@@ -33,6 +34,62 @@ interface Deployment {
   updatedAt: string;
   project: DeploymentProject;
   target: DeploymentTarget;
+}
+
+function JobOutput({ jobId, baseOutput }: { jobId: number; baseOutput: string | null }) {
+  const [output, setOutput] = useState(baseOutput || "");
+  const [status, setStatus] = useState<string>("");
+
+  useEffect(() => {
+    let source: EventSource | null = null;
+    let cancelled = false;
+
+    if (jobId) {
+      source = new EventSource(`/api/jobs/${jobId}/stream`);
+      source.addEventListener("log", (event) => {
+        if (cancelled) return;
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          setOutput((prev) => prev + (data.delta || ""));
+          if (data.status) setStatus(data.status);
+        } catch {
+          // ignore malformed events
+        }
+      });
+      source.addEventListener("done", (event) => {
+        if (cancelled) return;
+        try {
+          const data = JSON.parse((event as MessageEvent).data);
+          if (data.status) setStatus(data.status);
+        } catch {
+          // ignore
+        }
+      });
+      source.addEventListener("error", () => {
+        source?.close();
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      source?.close();
+    };
+  }, [jobId]);
+
+  return (
+    <div className="space-y-2">
+      {status && (
+        <div className="text-[10px] font-mono text-muted">
+          job status: <span className="text-accent">{status}</span>
+        </div>
+      )}
+      {output && (
+        <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded p-2 max-h-96 overflow-auto whitespace-pre-wrap">
+          {output}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -322,7 +379,7 @@ export function DeploymentsPanel() {
                       View in k8s
                     </a>
                   )}
-                  {(d.output || d.error) && (
+                  {(d.output || d.error || d.jobId) && (
                     <button
                       onClick={() => setExpandedOutput(expandedOutput === d.id ? null : d.id)}
                       className="px-3 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
@@ -340,18 +397,20 @@ export function DeploymentsPanel() {
                 </div>
               </div>
 
-              {expandedOutput === d.id && (d.output || d.error) && (
+              {expandedOutput === d.id && (d.output || d.error || d.jobId) && (
                 <div className="mt-3 space-y-2">
                   {d.error && (
                     <div className="text-[10px] font-mono text-error bg-error/5 border border-error/20 rounded p-2 whitespace-pre-wrap">
                       {d.error}
                     </div>
                   )}
-                  {d.output && (
+                  {d.jobId && isRunningStatus(d.status) ? (
+                    <JobOutput jobId={d.jobId} baseOutput={d.output} />
+                  ) : d.output ? (
                     <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded p-2 max-h-60 overflow-auto whitespace-pre-wrap">
                       {d.output}
                     </pre>
-                  )}
+                  ) : null}
                 </div>
               )}
             </div>

@@ -94,10 +94,30 @@ model DeploymentTarget {
   @@index([type, isActive])
 }
 
+model Job {
+  id          Int      @id @default(autoincrement())
+  type        String   // deploy | build | rollback | terraform_apply
+  status      String   @default("pending") // pending | running | success | failed | cancelled
+  payload     String   // JSON
+  output      String   @default("")
+  result      String?  // JSON
+  error       String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deployments Deployment[]
+
+  @@index([status, createdAt])
+  @@index([type, status])
+}
+
 model Deployment {
   id                 Int      @id @default(autoincrement())
   projectId          Int
   targetId           Int
+  jobId              Int?     // Background job tracking real-time logs
   status             String   @default("pending") // pending | building | deploying | success | failed | rolled_back
   branch             String   @default("main")
   commitSha          String?
@@ -114,6 +134,7 @@ model Deployment {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   target  DeploymentTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  job     Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([projectId, createdAt])
   @@index([targetId, createdAt])

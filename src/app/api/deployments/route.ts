@@ -7,14 +7,23 @@ export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
 
-    const deployments = await prisma.deployment.findMany({
+    const rows = await prisma.deployment.findMany({
       orderBy: { createdAt: "desc" },
       take: 100,
       include: {
         project: { select: { id: true, slug: true, name: true } },
         target: { select: { id: true, name: true, type: true } },
+        job: { select: { id: true, status: true, output: true } },
       },
     });
+
+    const deployments = rows.map((d) => ({
+      ...d,
+      jobId: d.job?.id ?? null,
+      jobStatus: d.job?.status ?? null,
+      jobOutput: d.job?.output ?? null,
+      job: undefined,
+    }));
 
     return NextResponse.json(deployments);
   } catch (err: unknown) {

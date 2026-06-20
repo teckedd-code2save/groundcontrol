@@ -22,6 +22,7 @@ import type { DeployContext, DeployResult } from "./targets/types";
 import { runTerraformApply } from "@/lib/terraform/runner";
 import { syncTerraformVpsConfig } from "@/lib/terraform/vps-sync";
 import type { TerraformOutput } from "@/lib/terraform/types";
+import { createJob, runJob } from "@/lib/jobs/job-runner";
 
 const IDEMPOTENCY_WINDOW_MS = 5 * 60 * 1000;
 
@@ -150,136 +151,152 @@ export async function runDeploy(options: RunDeployOptions): Promise<number> {
 
   const target = await mergeTargetConfig(await resolveTarget(targetId), configOverrides);
 
-  const deployment = await prisma.deployment.create({
-    data: {
-      projectId: project.id,
-      targetId: target.id,
-      status: "running",
-      branch,
-      idempotencyKey,
-    },
+  const job = await createJob("deploy", {
+    projectId,
+    targetId,
+    branch,
+    generatePreviewUrl,
+    subdomain,
+    zoneId,
+    proxied,
+    configOverrides,
+    idempotencyKey,
   });
 
-  const startTime = Date.now();
-  const logBuffer: string[] = [];
-  const vps = await getActiveVps();
+  return runJob(job.id, async (jobLog) => {
+    const deployment = await prisma.deployment.create({
+      data: {
+        projectId: project.id,
+        targetId: target.id,
+        jobId: job.id,
+        status: "running",
+        branch,
+        idempotencyKey,
+      },
+    });
 
-  const ctx: DeployContext = {
-    vps,
-    env: parseEnv(project.envVars),
-    secrets: {},
-    log(chunk: string) {
-      logBuffer.push(chunk);
-    },
-  };
+    const startTime = Date.now();
+    const logBuffer: string[] = [];
+    const vps = await getActiveVps();
 
-  let effectiveTarget = target;
-  if (target.type === "terraform") {
-    const terraformCfg = JSON.parse(target.configJson || "{}") as {
-      stackId?: number;
+    const ctx: DeployContext = {
+      vps,
+      env: parseEnv(project.envVars),
+      secrets: {},
+      log(chunk: string) {
+        logBuffer.push(chunk);
+        jobLog(chunk);
+      },
     };
-    if (terraformCfg.stackId) {
-      const stack = await prisma.terraformStack.findUnique({
-        where: { id: terraformCfg.stackId },
-      });
-      if (!stack) {
-        throw new Error(`Terraform stack ${terraformCfg.stackId} not found`);
-      }
-      const applyResult = await runTerraformApply(stack);
-      if (!applyResult.success) {
-        throw new Error(
-          `Terraform apply failed: ${applyResult.stderr || applyResult.stdout}`
-        );
-      }
 
-      const vpsSync = await syncTerraformVpsConfig(stack, applyResult.outputs);
-      if (vpsSync) {
-        ctx.log(
-          `[pipeline] terraform synced VpsConfig ${vpsSync.vpsConfigId} (${vpsSync.created ? "created" : "updated"})`
-        );
-      }
-
-      const derivedType = applyResult.outputs.cloudrun_url ? "cloudrun" : "compose";
-      effectiveTarget = {
-        ...target,
-        type: derivedType,
-        vpsConfigId: derivedType === "compose" && vpsSync ? vpsSync.vpsConfigId : target.vpsConfigId,
-        configJson: JSON.stringify({
-          ...terraformCfg,
-          ...applyResult.outputs,
-        }),
+    let effectiveTarget = target;
+    if (target.type === "terraform") {
+      const terraformCfg = JSON.parse(target.configJson || "{}") as {
+        stackId?: number;
       };
-      ctx.log(
-        `[pipeline] terraform stack ${stack.id} applied; derived target type: ${derivedType}`
-      );
+      if (terraformCfg.stackId) {
+        const stack = await prisma.terraformStack.findUnique({
+          where: { id: terraformCfg.stackId },
+        });
+        if (!stack) {
+          throw new Error(`Terraform stack ${terraformCfg.stackId} not found`);
+        }
+        const applyResult = await runTerraformApply(stack);
+        if (!applyResult.success) {
+          throw new Error(
+            `Terraform apply failed: ${applyResult.stderr || applyResult.stdout}`
+          );
+        }
+
+        const vpsSync = await syncTerraformVpsConfig(stack, applyResult.outputs);
+        if (vpsSync) {
+          ctx.log(
+            `[pipeline] terraform synced VpsConfig ${vpsSync.vpsConfigId} (${vpsSync.created ? "created" : "updated"})\n`
+          );
+        }
+
+        const derivedType = applyResult.outputs.cloudrun_url ? "cloudrun" : "compose";
+        effectiveTarget = {
+          ...target,
+          type: derivedType,
+          vpsConfigId: derivedType === "compose" && vpsSync ? vpsSync.vpsConfigId : target.vpsConfigId,
+          configJson: JSON.stringify({
+            ...terraformCfg,
+            ...applyResult.outputs,
+          }),
+        };
+        ctx.log(
+          `[pipeline] terraform stack ${stack.id} applied; derived target type: ${derivedType}\n`
+        );
+      }
     }
-  }
 
-  try {
-    const adapter = createAdapter(project, effectiveTarget);
+    try {
+      const adapter = createAdapter(project, effectiveTarget);
 
-    ctx.log(`[pipeline] deploy ${deployment.id} for ${project.slug}`);
-    await adapter.prepare(ctx);
+      ctx.log(`[pipeline] deploy ${deployment.id} for ${project.slug}\n`);
+      await adapter.prepare(ctx);
 
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: { status: "building" },
-    });
-    const buildResult = await adapter.build(project, ctx);
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: { status: "building" },
+      });
+      const buildResult = await adapter.build(project, ctx);
 
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: { status: "deploying" },
-    });
-    const deployResult = await adapter.deploy(project, deployment, ctx);
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: { status: "deploying" },
+      });
+      const deployResult = await adapter.deploy(project, deployment, ctx);
 
-    const result = await attachUrls(
-      project,
-      effectiveTarget,
-      deployment,
-      deployResult,
-      ctx,
-      { generatePreviewUrl, subdomain, zoneId, proxied }
-    );
+      const result = await attachUrls(
+        project,
+        effectiveTarget,
+        deployment,
+        deployResult,
+        ctx,
+        { generatePreviewUrl, subdomain, zoneId, proxied }
+      );
 
-    const durationMs = Date.now() - startTime;
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        status: "success",
-        publicUrl: result.publicUrl ?? null,
-        previewUrl: result.previewUrl ?? null,
-        imageTag: buildResult.imageTag ?? null,
-        output: logBuffer.join("\n"),
-        durationMs,
-      },
-    });
+      const durationMs = Date.now() - startTime;
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          status: "success",
+          publicUrl: result.publicUrl ?? null,
+          previewUrl: result.previewUrl ?? null,
+          imageTag: buildResult.imageTag ?? null,
+          output: logBuffer.join("\n"),
+          durationMs,
+        },
+      });
 
-    ctx.log(`[pipeline] deploy ${deployment.id} succeeded in ${durationMs}ms`);
-    return deployment.id;
-  } catch (err) {
-    const durationMs = Date.now() - startTime;
-    const message = err instanceof Error ? err.message : String(err);
+      ctx.log(`[pipeline] deploy ${deployment.id} succeeded in ${durationMs}ms\n`);
+      return deployment.id;
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const message = err instanceof Error ? err.message : String(err);
 
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        status: "failed",
-        error: message,
-        output: logBuffer.join("\n"),
-        durationMs,
-      },
-    });
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          status: "failed",
+          error: message,
+          output: logBuffer.join("\n"),
+          durationMs,
+        },
+      });
 
-    await createAlert({
-      title: `Deploy Failed: ${project.slug}`,
-      message,
-      severity: "error",
-      source: "deploy",
-    });
+      await createAlert({
+        title: `Deploy Failed: ${project.slug}`,
+        message,
+        severity: "error",
+        source: "deploy",
+      });
 
-    throw err;
-  }
+      throw err;
+    }
+  });
 }
 
 /**
@@ -295,76 +312,81 @@ export async function runBuild(options: RunBuildOptions): Promise<number> {
   }
 
   const target = await resolveTarget(targetId);
+  const job = await createJob("build", { projectId, targetId, branch });
 
-  const deployment = await prisma.deployment.create({
-    data: {
-      projectId: project.id,
-      targetId: target.id,
-      status: "running",
-      branch,
-    },
+  return runJob(job.id, async (jobLog) => {
+    const deployment = await prisma.deployment.create({
+      data: {
+        projectId: project.id,
+        targetId: target.id,
+        jobId: job.id,
+        status: "running",
+        branch,
+      },
+    });
+
+    const startTime = Date.now();
+    const logBuffer: string[] = [];
+    const vps = await getActiveVps();
+
+    const ctx: DeployContext = {
+      vps,
+      env: parseEnv(project.envVars),
+      secrets: {},
+      log(chunk: string) {
+        logBuffer.push(chunk);
+        jobLog(chunk);
+      },
+    };
+
+    try {
+      const adapter = createAdapter(project, target);
+
+      ctx.log(`[pipeline] build ${deployment.id} for ${project.slug}\n`);
+      await adapter.prepare(ctx);
+
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: { status: "building" },
+      });
+      const buildResult = await adapter.build(project, ctx);
+
+      const durationMs = Date.now() - startTime;
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          status: "success",
+          imageTag: buildResult.imageTag ?? null,
+          output: logBuffer.join("\n"),
+          durationMs,
+        },
+      });
+
+      return deployment.id;
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const message = err instanceof Error ? err.message : String(err);
+
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          status: "failed",
+          error: message,
+          output: logBuffer.join("\n"),
+          durationMs,
+        },
+      });
+
+      await createAlert({
+        title: `Build Failed: ${project.slug}`,
+        message,
+        severity: "error",
+        source: "deploy",
+      });
+
+      throw err;
+    }
   });
-
-  const startTime = Date.now();
-  const logBuffer: string[] = [];
-  const vps = await getActiveVps();
-
-  const ctx: DeployContext = {
-    vps,
-    env: parseEnv(project.envVars),
-    secrets: {},
-    log(chunk: string) {
-      logBuffer.push(chunk);
-    },
-  };
-
-  try {
-    const adapter = createAdapter(project, target);
-
-    ctx.log(`[pipeline] build ${deployment.id} for ${project.slug}`);
-    await adapter.prepare(ctx);
-
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: { status: "building" },
-    });
-    const buildResult = await adapter.build(project, ctx);
-
-    const durationMs = Date.now() - startTime;
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        status: "success",
-        imageTag: buildResult.imageTag ?? null,
-        output: logBuffer.join("\n"),
-        durationMs,
-      },
-    });
-
-    return deployment.id;
-  } catch (err) {
-    const durationMs = Date.now() - startTime;
-    const message = err instanceof Error ? err.message : String(err);
-
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        status: "failed",
-        error: message,
-        output: logBuffer.join("\n"),
-        durationMs,
-      },
-    });
-
-    await createAlert({
-      title: `Build Failed: ${project.slug}`,
-      message,
-      severity: "error",
-      source: "deploy",
-    });
-
-    throw err;
-  }
 }
 
 /**
@@ -383,53 +405,60 @@ export async function runRollback(deploymentId: number): Promise<void> {
   await destroyQuickTunnelByInfo(deployment.previewProcessInfo).catch(() => {});
 
   const { project, target } = deployment;
-  const logBuffer: string[] = [];
-  const vps = await getActiveVps();
+  const job = await createJob("rollback", { deploymentId });
 
-  const ctx: DeployContext = {
-    vps,
-    env: parseEnv(project.envVars),
-    secrets: {},
-    log(chunk: string) {
-      logBuffer.push(chunk);
-    },
-  };
+  await runJob(job.id, async (jobLog) => {
+    const logBuffer: string[] = [];
+    const vps = await getActiveVps();
 
-  try {
-    const adapter = createAdapter(project, target);
-    ctx.log(`[pipeline] rolling back deployment ${deployment.id}`);
-    await adapter.rollback(deployment, ctx);
-
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        status: "rolled_back",
-        output: [deployment.output || "", logBuffer.join("\n")]
-          .filter(Boolean)
-          .join("\n"),
+    const ctx: DeployContext = {
+      vps,
+      env: parseEnv(project.envVars),
+      secrets: {},
+      log(chunk: string) {
+        logBuffer.push(chunk);
+        jobLog(chunk);
       },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await prisma.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        error: [deployment.error || "", message].filter(Boolean).join("\n"),
-        output: [deployment.output || "", logBuffer.join("\n")]
-          .filter(Boolean)
-          .join("\n"),
-      },
-    });
+    };
 
-    await createAlert({
-      title: `Rollback Failed: ${project.slug}`,
-      message,
-      severity: "error",
-      source: "deploy",
-    });
+    try {
+      const adapter = createAdapter(project, target);
+      ctx.log(`[pipeline] rolling back deployment ${deployment.id}\n`);
+      await adapter.rollback(deployment, ctx);
 
-    throw err;
-  }
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          status: "rolled_back",
+          jobId: job.id,
+          output: [deployment.output || "", logBuffer.join("\n")]
+            .filter(Boolean)
+            .join("\n"),
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await prisma.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          jobId: job.id,
+          error: [deployment.error || "", message].filter(Boolean).join("\n"),
+          output: [deployment.output || "", logBuffer.join("\n")]
+            .filter(Boolean)
+            .join("\n"),
+        },
+      });
+
+      await createAlert({
+        title: `Rollback Failed: ${project.slug}`,
+        message,
+        severity: "error",
+        source: "deploy",
+      });
+
+      throw err;
+    }
+  });
 }
 
 function mergeTargetConfig(
