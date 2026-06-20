@@ -1,5 +1,9 @@
+import { exec } from "child_process";
+import { promisify } from "util";
 import { probeServerLayout } from "./server-probe";
 import { detectServerCapabilities } from "./server-capabilities";
+import { execOnTarget } from "./host-exec";
+import { isContainerized } from "./runtime";
 import {
   isDockerInstalled,
   isCaddyInstalled,
@@ -14,6 +18,8 @@ import {
 } from "./bootstrap";
 import type { ServerLayout } from "./server-probe";
 import type { ServerCapabilities } from "./server-capabilities";
+
+const execAsync = promisify(exec);
 
 export interface HostCapabilities {
   layout: ServerLayout;
@@ -30,6 +36,11 @@ export interface HostCapabilities {
     terraform: boolean;
     cloudflared: boolean;
   };
+  hostAccess: {
+    containerized: boolean;
+    verified: boolean;
+    warning?: string;
+  };
 }
 
 interface Cached {
@@ -40,14 +51,66 @@ interface Cached {
 const TTL_MS = 30_000;
 let cache: Cached | null = null;
 
+async function readOsId(execFn: (cmd: string) => Promise<{ stdout: string; stderr: string; code: number }>): Promise<string> {
+  const result = await execFn("awk -F= '/^ID=/{print $2}' /etc/os-release 2>/dev/null | tr -d '\\\"'");
+  return result.stdout.trim().toLowerCase();
+}
+
+/**
+ * Verify that execOnTarget is actually reaching the host OS when GroundControl
+ * runs inside a container. Some container deployments do not share the host PID
+ * namespace, so nsenter -t 1 only enters the container's own PID 1.
+ */
+async function verifyHostAccess(): Promise<{ containerized: boolean; verified: boolean; warning?: string }> {
+  if (!isContainerized()) return { containerized: false, verified: true };
+
+  try {
+    const [containerId, targetId] = await Promise.all([
+      readOsId(async (cmd) => {
+        const { stdout, stderr } = await execAsync(cmd, { timeout: 5000 });
+        return { stdout, stderr, code: 0 };
+      }),
+      readOsId(execOnTarget),
+    ]);
+
+    if (!containerId || !targetId) {
+      return {
+        containerized: true,
+        verified: false,
+        warning: "Could not determine container or host OS; host access status is unknown.",
+      };
+    }
+
+    if (containerId === targetId) {
+      return {
+        containerized: true,
+        verified: false,
+        warning:
+          "GroundControl is running inside a container but host-level commands appear to run in the same OS namespace. " +
+          "Host installs and service management may target the container filesystem instead of the host. " +
+          "Run GroundControl with --pid=host or manage the host via SSH.",
+      };
+    }
+
+    return { containerized: true, verified: true };
+  } catch (err) {
+    return {
+      containerized: true,
+      verified: false,
+      warning: `Host access verification failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 export async function getHostCapabilities(): Promise<HostCapabilities> {
   if (cache && Date.now() - cache.at < TTL_MS) {
     return cache.data;
   }
 
-  const [layout, capabilities] = await Promise.all([
+  const [layout, capabilities, hostAccess] = await Promise.all([
     probeServerLayout(),
     detectServerCapabilities(),
+    verifyHostAccess(),
   ]);
 
   const [
@@ -89,6 +152,7 @@ export async function getHostCapabilities(): Promise<HostCapabilities> {
       terraform,
       cloudflared,
     },
+    hostAccess,
   };
 
   cache = { at: Date.now(), data };
@@ -135,5 +199,9 @@ export function formatCapabilitiesForPrompt(caps: HostCapabilities): string {
     `compose: ${l.composeCommand}`,
   ].filter(Boolean);
 
-  return `Host capabilities: ${parts.join("; ")}.`;
+  let summary = `Host capabilities: ${parts.join("; ")}.`;
+  if (caps.hostAccess.warning) {
+    summary += `\nWARNING: ${caps.hostAccess.warning}`;
+  }
+  return summary;
 }

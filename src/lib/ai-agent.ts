@@ -11,6 +11,7 @@ import {
   resolveComposeProjectPath,
   getDockerContainerLabels,
 } from "@/lib/vps";
+import { execOnTarget } from "@/lib/host-exec";
 import { prisma } from "@/lib/prisma";
 import { getHostCapabilities, clearHostCapabilitiesCache, formatCapabilitiesForPrompt } from "@/lib/host-capabilities";
 import {
@@ -57,6 +58,25 @@ async function safeExec(command: string): Promise<string> {
     const err = (stderr || "").trim();
     if (out) {
       // Include stderr only if it carries extra signal alongside output.
+      return err ? `${out}\n[stderr] ${err}` : out;
+    }
+    if (err) return `[exit ${code}] ${err}`;
+    return code === 0 ? "(no output)" : `[exit ${code}] (no output)`;
+  } catch (err: unknown) {
+    return `ERROR: could not reach the VPS or run the command: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+/**
+ * Like safeExec, but routes through execOnTarget so host-level commands hit the
+ * host OS when GroundControl runs inside a container.
+ */
+async function safeExecOnTarget(command: string): Promise<string> {
+  try {
+    const { stdout, stderr, code } = await execOnTarget(command);
+    const out = (stdout || "").trim();
+    const err = (stderr || "").trim();
+    if (out) {
       return err ? `${out}\n[stderr] ${err}` : out;
     }
     if (err) return `[exit ${code}] ${err}`;
@@ -188,7 +208,7 @@ export function checkDiagnosticCommand(command: string): string | null {
 async function readSystemFile(path: string, limitBytes = 128_000): Promise<string> {
   const refusal = validateSafePath(path);
   if (refusal) return `ERROR: ${refusal}`;
-  const result = await execOnVps(`cat ${shQuote(path)} 2>&1 | head -c ${limitBytes}`);
+  const result = await execOnTarget(`cat ${shQuote(path)} 2>&1 | head -c ${limitBytes}`);
   if (result.code !== 0) return `ERROR: could not read ${path}\n${result.stderr || result.stdout}`;
   return result.stdout || "(empty file)";
 }
@@ -198,11 +218,11 @@ async function writeSystemFile(path: string, content: string): Promise<string> {
   const refusal = validateSafePath(path);
   if (refusal) return `ERROR: ${refusal}`;
   const b64 = Buffer.from(content).toString("base64");
-  const mkdir = await execOnVps(`mkdir -p "$(dirname ${shQuote(path)})"`);
+  const mkdir = await execOnTarget(`mkdir -p "$(dirname ${shQuote(path)})"`);
   if (mkdir.code !== 0) return `ERROR: could not create parent directory\n${mkdir.stderr}`;
-  const backup = await execOnVps(`test -f ${shQuote(path)} && cp ${shQuote(path)} ${shQuote(path)}.bak-$(date +%s) 2>/dev/null || true`);
+  const backup = await execOnTarget(`test -f ${shQuote(path)} && cp ${shQuote(path)} ${shQuote(path)}.bak-$(date +%s) 2>/dev/null || true`);
   if (backup.code !== 0) return `ERROR: backup failed\n${backup.stderr}`;
-  const result = await execOnVps(`printf '%s' ${shQuote(b64)} | base64 -d > ${shQuote(path)} 2>&1`);
+  const result = await execOnTarget(`printf '%s' ${shQuote(b64)} | base64 -d > ${shQuote(path)} 2>&1`);
   if (result.code !== 0) return `ERROR: could not write ${path}\n${result.stderr || result.stdout}`;
   return `Wrote ${content.length} bytes to ${path}.`;
 }
@@ -246,21 +266,21 @@ async function manageService(service: string, action: string): Promise<string> {
 
   if (init === "systemd") {
     if (a === "enable" || a === "disable") {
-      return safeExec(`systemctl ${a} ${shQuote(service)}`);
+      return safeExecOnTarget(`systemctl ${a} ${shQuote(service)}`);
     }
-    return safeExec(`systemctl ${a} ${shQuote(service)}`);
+    return safeExecOnTarget(`systemctl ${a} ${shQuote(service)}`);
   }
 
   if (init === "openrc") {
-    if (a === "enable") return safeExec(`rc-update add ${shQuote(service)} default`);
-    if (a === "disable") return safeExec(`rc-update delete ${shQuote(service)} default`);
-    return safeExec(`rc-service ${shQuote(service)} ${a}`);
+    if (a === "enable") return safeExecOnTarget(`rc-update add ${shQuote(service)} default`);
+    if (a === "disable") return safeExecOnTarget(`rc-update delete ${shQuote(service)} default`);
+    return safeExecOnTarget(`rc-service ${shQuote(service)} ${a}`);
   }
 
   if (a === "enable" || a === "disable") {
     return `ERROR: enable/disable are not supported on init system "${init}".`;
   }
-  return safeExec(`service ${shQuote(service)} ${a}`);
+  return safeExecOnTarget(`service ${shQuote(service)} ${a}`);
 }
 
 /** List services for the detected init system. */
@@ -268,19 +288,19 @@ async function listServices(): Promise<string> {
   const caps = await getHostCapabilities();
   const init = caps.capabilities.initSystem;
   if (init === "systemd") {
-    return safeExec("systemctl list-units --type=service --state=running,failed --no-pager --plain");
+    return safeExecOnTarget("systemctl list-units --type=service --state=running,failed --no-pager --plain");
   }
   if (init === "openrc") {
-    return safeExec("rc-status --servicelist 2>/dev/null || rc-update show");
+    return safeExecOnTarget("rc-status --servicelist 2>/dev/null || rc-update show");
   }
-  return safeExec("service --status-all 2>&1 || echo 'service command unavailable'");
+  return safeExecOnTarget("service --status-all 2>&1 || echo 'service command unavailable'");
 }
 
 /** Run a scoped system command with validation and confirmation. */
 async function runSystemCommand(command: string): Promise<string> {
   const refusal = validateSystemCommand(command);
   if (refusal) return `ERROR: ${refusal}`;
-  return safeExec(command);
+  return safeExecOnTarget(command);
 }
 
 // ---------------------------------------------------------------------------

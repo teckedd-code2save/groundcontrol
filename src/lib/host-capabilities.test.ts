@@ -56,6 +56,11 @@ function makeCaps(partial: Partial<HostCapabilities> = {}): HostCapabilities {
       cloudflared: false,
       ...partial.installed,
     },
+    hostAccess: {
+      containerized: false,
+      verified: true,
+      ...partial.hostAccess,
+    },
   };
 }
 
@@ -90,6 +95,14 @@ describe("host-capabilities", () => {
       const summary = formatCapabilitiesForPrompt(caps);
       expect(summary).toContain("installed:");
       expect(summary).not.toContain("missing:");
+    });
+
+    it("includes host access warning when present", () => {
+      const caps = makeCaps({
+        hostAccess: { containerized: true, verified: false, warning: "Host access not verified." },
+      });
+      const summary = formatCapabilitiesForPrompt(caps);
+      expect(summary).toContain("WARNING: Host access not verified.");
     });
   });
 });
