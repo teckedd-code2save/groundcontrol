@@ -20,6 +20,7 @@ import { getK3sPreviewPort } from "@/lib/k8s/utils";
 import { createAdapter } from "./targets";
 import type { DeployContext, DeployResult } from "./targets/types";
 import { runTerraformApply } from "@/lib/terraform/runner";
+import { syncTerraformVpsConfig } from "@/lib/terraform/vps-sync";
 import type { TerraformOutput } from "@/lib/terraform/types";
 
 const IDEMPOTENCY_WINDOW_MS = 5 * 60 * 1000;
@@ -190,10 +191,19 @@ export async function runDeploy(options: RunDeployOptions): Promise<number> {
           `Terraform apply failed: ${applyResult.stderr || applyResult.stdout}`
         );
       }
+
+      const vpsSync = await syncTerraformVpsConfig(stack, applyResult.outputs);
+      if (vpsSync) {
+        ctx.log(
+          `[pipeline] terraform synced VpsConfig ${vpsSync.vpsConfigId} (${vpsSync.created ? "created" : "updated"})`
+        );
+      }
+
       const derivedType = applyResult.outputs.cloudrun_url ? "cloudrun" : "compose";
       effectiveTarget = {
         ...target,
         type: derivedType,
+        vpsConfigId: derivedType === "compose" && vpsSync ? vpsSync.vpsConfigId : target.vpsConfigId,
         configJson: JSON.stringify({
           ...terraformCfg,
           ...applyResult.outputs,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { runTerraformApply } from "@/lib/terraform/runner";
+import { syncTerraformVpsConfig } from "@/lib/terraform/vps-sync";
 import { handleApiError, redactSensitive } from "@/lib/errors";
 import type { TerraformStack } from "@/lib/terraform/types";
 
@@ -27,14 +28,22 @@ export async function POST(
 
     const result = await runTerraformApply(stack);
 
-    if (result.success && result.statePath) {
-      await prisma.terraformStack.update({
-        where: { id: stackId },
-        data: { statePath: result.statePath },
-      });
+    let vpsConfigSync: { vpsConfigId: number; created: boolean } | null = null;
+    if (result.success) {
+      if (result.statePath) {
+        await prisma.terraformStack.update({
+          where: { id: stackId },
+          data: { statePath: result.statePath },
+        });
+      }
+      vpsConfigSync = await syncTerraformVpsConfig(stack, result.outputs);
     }
 
-    return NextResponse.json({ ...result, stderr: redactSensitive(result.stderr) });
+    return NextResponse.json({
+      ...result,
+      vpsConfigSync,
+      stderr: redactSensitive(result.stderr),
+    });
   } catch (err: unknown) {
     return handleApiError(err);
   }
