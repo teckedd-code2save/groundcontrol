@@ -12,16 +12,24 @@ interface VpsConfig {
   isLocal: boolean;
 }
 
+interface CloudAccount {
+  id: number;
+  name: string;
+  provider: string;
+}
+
 interface DeploymentTarget {
   id: number;
   name: string;
   type: string;
   vpsConfigId: number | null;
+  cloudProviderAccountId: number | null;
   configJson: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
   vps?: VpsConfig | null;
+  cloudAccount?: CloudAccount | null;
 }
 
 const TARGET_TYPES = [
@@ -96,6 +104,7 @@ function isValidJson(value: string): boolean {
 export function DeployTargetsTab() {
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [vpsConfigs, setVpsConfigs] = useState<VpsConfig[]>([]);
+  const [cloudAccounts, setCloudAccounts] = useState<CloudAccount[]>([]);
   const [stacks, setStacks] = useState<TerraformStack[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -109,18 +118,21 @@ export function DeployTargetsTab() {
     name: "",
     type: "compose",
     vpsConfigId: "",
+    cloudProviderAccountId: "",
     configJson: formatJson(DEFAULT_CONFIG.compose),
     isActive: false,
   });
 
   const refresh = useCallback(async () => {
-    const [targetsRes, vpsRes, stacksRes] = await Promise.all([
+    const [targetsRes, vpsRes, accountsRes, stacksRes] = await Promise.all([
       fetch("/api/deployment-targets").then((r) => safeJson(r)),
       fetch("/api/vps").then((r) => safeJson(r)),
+      fetch("/api/cloud-accounts").then((r) => safeJson(r)).catch(() => ({ ok: true, data: [], text: "" })),
       fetch("/api/terraform/stacks").then((r) => safeJson(r)).catch(() => ({ ok: true, data: [], text: "" })),
     ]);
     setTargets(Array.isArray(targetsRes.data) ? targetsRes.data : []);
     setVpsConfigs(Array.isArray(vpsRes.data) ? vpsRes.data : []);
+    setCloudAccounts(Array.isArray(accountsRes.data) ? accountsRes.data : []);
     setStacks(Array.isArray(stacksRes.data) ? stacksRes.data : []);
   }, []);
 
@@ -129,12 +141,14 @@ export function DeployTargetsTab() {
     Promise.all([
       fetch("/api/deployment-targets").then((r) => safeJson(r)),
       fetch("/api/vps").then((r) => safeJson(r)),
+      fetch("/api/cloud-accounts").then((r) => safeJson(r)).catch(() => ({ ok: true, data: [], text: "" })),
       fetch("/api/terraform/stacks").then((r) => safeJson(r)).catch(() => ({ ok: true, data: [], text: "" })),
     ])
-      .then(([targetsRes, vpsRes, stacksRes]) => {
+      .then(([targetsRes, vpsRes, accountsRes, stacksRes]) => {
         if (cancelled) return;
         setTargets(Array.isArray(targetsRes.data) ? targetsRes.data : []);
         setVpsConfigs(Array.isArray(vpsRes.data) ? vpsRes.data : []);
+        setCloudAccounts(Array.isArray(accountsRes.data) ? accountsRes.data : []);
         setStacks(Array.isArray(stacksRes.data) ? stacksRes.data : []);
       })
       .catch((err) => {
@@ -155,6 +169,7 @@ export function DeployTargetsTab() {
       name: "",
       type: "compose",
       vpsConfigId: "",
+      cloudProviderAccountId: "",
       configJson: formatJson(DEFAULT_CONFIG.compose),
       isActive: false,
     });
@@ -167,6 +182,7 @@ export function DeployTargetsTab() {
       name: target.name,
       type: TARGET_TYPES.some((t) => t.value === target.type) ? target.type : "compose",
       vpsConfigId: target.vpsConfigId ? String(target.vpsConfigId) : "",
+      cloudProviderAccountId: target.cloudProviderAccountId ? String(target.cloudProviderAccountId) : "",
       configJson: formatJson(target.configJson),
       isActive: target.isActive,
     });
@@ -195,6 +211,10 @@ export function DeployTargetsTab() {
       setResult({ success: false, message: "Config JSON is invalid" });
       return;
     }
+    if (form.type === "cloudrun" && !form.cloudProviderAccountId) {
+      setResult({ success: false, message: "A GCP cloud account is required for Cloud Run targets" });
+      return;
+    }
 
     setSaving(true);
     try {
@@ -202,6 +222,7 @@ export function DeployTargetsTab() {
         name: form.name.trim(),
         type: form.type,
         vpsConfigId: form.vpsConfigId ? Number(form.vpsConfigId) : null,
+        cloudProviderAccountId: form.cloudProviderAccountId ? Number(form.cloudProviderAccountId) : null,
         configJson: form.configJson,
         isActive: form.isActive,
       };
@@ -335,11 +356,40 @@ export function DeployTargetsTab() {
           )}
 
           {form.type === "cloudrun" && (
-            <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg text-[11px] text-muted leading-relaxed">
-              <strong className="text-accent">GCP account required:</strong> add a GCP service account in{" "}
-              <span className="font-mono text-foreground">Settings → Cloud Accounts</span> before deploying to Cloud
-              Run. The active GCP account is used automatically.
-            </div>
+            <>
+              <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg text-[11px] text-muted leading-relaxed">
+                <strong className="text-accent">GCP account required:</strong> add a GCP service account in{" "}
+                <span className="font-mono text-foreground">Settings → Cloud Accounts</span> before deploying to Cloud
+                Run.
+              </div>
+
+              {cloudAccounts.length > 0 && (
+                <div>
+                  <label className="block text-xs font-mono text-muted mb-1.5">Cloud Account</label>
+                  <select
+                    value={form.cloudProviderAccountId}
+                    onChange={(e) => setForm({ ...form, cloudProviderAccountId: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
+                  >
+                    <option value="">Select a GCP account</option>
+                    {cloudAccounts
+                      .filter((a) => a.provider === "gcp")
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {cloudAccounts.length === 0 && (
+                <div className="p-3 bg-warning/5 border border-warning/20 rounded-lg text-[11px] text-warning leading-relaxed">
+                  No cloud accounts found. Create a GCP account in{" "}
+                  <span className="font-mono">Settings → Cloud Accounts</span> first.
+                </div>
+              )}
+            </>
           )}
 
           {form.type === "terraform" && (
@@ -502,6 +552,10 @@ export function DeployTargetsTab() {
                             return "none";
                           }
                         })()}
+                      </>
+                    ) : t.type === "cloudrun" ? (
+                      <>
+                        Account: {t.cloudAccount?.name || "none"} ({t.cloudAccount?.provider || "?"})
                       </>
                     ) : (
                       <>

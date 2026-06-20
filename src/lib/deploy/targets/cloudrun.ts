@@ -12,6 +12,8 @@ import type {
   DeployResult,
 } from "./types";
 import { execOnVps, shQuote, type VpsConnection } from "@/lib/vps";
+import { prisma } from "@/lib/prisma";
+import { decryptCloudCredentials } from "@/lib/cloud/accounts";
 import {
   getGcpAccessToken,
   cloudRunDeploy,
@@ -29,10 +31,30 @@ export interface CloudRunTargetConfig {
   concurrency?: number;
   maxInstances?: number;
   minInstances?: number;
-  /** GCP service account key JSON (stringified JSON object). */
-  serviceAccountKey: string | Record<string, unknown>;
   /** Artifact Registry repository name (defaults to "groundcontrol"). */
   repository?: string;
+}
+
+async function loadGcpCredentials(target: DeploymentTarget): Promise<Record<string, unknown>> {
+  if (!target.cloudProviderAccountId) {
+    throw new Error("Cloud Run target is not linked to a cloud provider account");
+  }
+
+  const account = await prisma.cloudProviderAccount.findUnique({
+    where: { id: target.cloudProviderAccountId },
+  });
+  if (!account) {
+    throw new Error("Linked cloud provider account not found");
+  }
+  if (account.provider !== "gcp") {
+    throw new Error(`Cloud Run requires a GCP account, got ${account.provider}`);
+  }
+
+  const credentials = decryptCloudCredentials(account.credentials);
+  if (!credentials || typeof credentials !== "object") {
+    throw new Error("Could not decrypt GCP credentials");
+  }
+  return credentials as Record<string, unknown>;
 }
 
 export function createCloudRunTarget(
@@ -52,12 +74,11 @@ export function createCloudRunTarget(
           "Cloud Run target requires projectId and region in config"
         );
       }
-      if (!config.serviceAccountKey) {
-        throw new Error("Cloud Run target requires serviceAccountKey");
-      }
+
+      const serviceAccountKey = await loadGcpCredentials(target);
 
       ctx.log(`[cloudrun] validating GCP credentials`);
-      const accessToken = await getGcpAccessToken(config.serviceAccountKey);
+      const accessToken = await getGcpAccessToken(serviceAccountKey);
 
       // Smoke-test the token by listing services for the configured project/region.
       await listCloudRunServices({
@@ -71,7 +92,8 @@ export function createCloudRunTarget(
 
     async build(project, ctx): Promise<DeployBuildResult> {
       const vps = requireVps(ctx.vps);
-      const accessToken = await getGcpAccessToken(config.serviceAccountKey);
+      const serviceAccountKey = await loadGcpCredentials(target);
+      const accessToken = await getGcpAccessToken(serviceAccountKey);
       const workingDir = getWorkingDir(project);
       const dockerfile = project.dockerfile || "Dockerfile";
       const imageTag = `deploy-${Date.now()}`;
@@ -130,7 +152,8 @@ export function createCloudRunTarget(
     },
 
     async deploy(project, deployment, ctx): Promise<DeployResult> {
-      const accessToken = await getGcpAccessToken(config.serviceAccountKey);
+      const serviceAccountKey = await loadGcpCredentials(target);
+      const accessToken = await getGcpAccessToken(serviceAccountKey);
       const image = deployment.imageTag || `gc-${project.slug}:latest`;
 
       ctx.log(`[cloudrun] deploying service ${serviceName}`);
@@ -154,7 +177,8 @@ export function createCloudRunTarget(
     },
 
     async rollback(_deployment, ctx) {
-      const accessToken = await getGcpAccessToken(config.serviceAccountKey);
+      const serviceAccountKey = await loadGcpCredentials(target);
+      const accessToken = await getGcpAccessToken(serviceAccountKey);
       ctx.log(`[cloudrun] rolling back ${serviceName}`);
 
       const result = await cloudRunRollbackToPrevious({
@@ -168,7 +192,8 @@ export function createCloudRunTarget(
     },
 
     async destroy(project, ctx) {
-      const accessToken = await getGcpAccessToken(config.serviceAccountKey);
+      const serviceAccountKey = await loadGcpCredentials(target);
+      const accessToken = await getGcpAccessToken(serviceAccountKey);
       ctx.log(`[cloudrun] destroying ${serviceName}`);
 
       try {

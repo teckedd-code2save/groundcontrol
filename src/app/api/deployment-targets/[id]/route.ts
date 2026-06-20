@@ -22,13 +22,17 @@ export async function PATCH(
     if (body.name !== undefined) data.name = body.name;
     if (body.type !== undefined) data.type = body.type;
     if (body.vpsConfigId !== undefined) data.vpsConfigId = body.vpsConfigId ?? null;
+    if (body.cloudProviderAccountId !== undefined) data.cloudProviderAccountId = body.cloudProviderAccountId ?? null;
     if (body.configJson !== undefined) data.configJson = String(body.configJson);
     if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
 
     const target = await prisma.deploymentTarget.update({
       where: { id: targetId },
       data,
-      include: { vps: { select: { id: true, name: true, host: true } } },
+      include: {
+        vps: { select: { id: true, name: true, host: true } },
+        cloudAccount: { select: { id: true, name: true, provider: true } },
+      },
     });
 
     return NextResponse.json(target);

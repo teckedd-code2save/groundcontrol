@@ -9,8 +9,8 @@ export interface RuntimeEnv {
 }
 
 export interface RuntimeDeps {
-  existsSync: typeof fs.existsSync;
-  readFileSync: typeof fs.readFileSync;
+  existsSync: (path: string) => boolean;
+  readFileSync: (path: string, encoding?: string) => string;
   env: RuntimeEnv;
 }
 
@@ -21,8 +21,9 @@ export function __resetRuntimeCache(): void {
 }
 
 const defaultDeps: RuntimeDeps = {
-  existsSync: fs.existsSync,
-  readFileSync: fs.readFileSync,
+  existsSync: (path: string) => fs.existsSync(path),
+  readFileSync: (path: string, encoding?: string) =>
+    fs.readFileSync(path, encoding as BufferEncoding) as string,
   env: process.env as RuntimeEnv,
 };
 

@@ -27,6 +27,7 @@ const mockTarget = (type: string): DeploymentTarget => ({
   name: "test-target",
   type,
   vpsConfigId: null,
+  cloudProviderAccountId: null,
   configJson: JSON.stringify({}),
   isActive: false,
   dnsRecordId: null,

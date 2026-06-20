@@ -79,6 +79,7 @@ model DeploymentTarget {
   name         String
   type         String   // docker-compose | static | nixpacks | custom
   vpsConfigId  Int?
+  cloudProviderAccountId Int? // GCP/AWS/Azure account for cloud targets
   configJson   String   @default("") // target-specific configuration
   isActive     Boolean  @default(false)
   dnsRecordId  String?  // Cloudflare DNS record created by this target
@@ -87,6 +88,7 @@ model DeploymentTarget {
   updatedAt    DateTime @updatedAt
 
   vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: SetNull)
+  cloudAccount CloudProviderAccount? @relation(fields: [cloudProviderAccountId], references: [id], onDelete: SetNull)
   deployments Deployment[]
 
   @@index([type, isActive])
@@ -192,6 +194,8 @@ model CloudProviderAccount {
   isActive    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  deploymentTargets DeploymentTarget[]
 
   @@index([provider, isActive])
 }

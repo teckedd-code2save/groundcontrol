@@ -9,6 +9,7 @@ import {
   listDnsRecords,
   createDnsRecord,
   updateDnsRecord,
+  getZone,
   type DnsRecordData,
 } from "@/lib/cloudflare";
 import {
@@ -46,6 +47,32 @@ export interface QuickTunnelListItem {
 
 const QUICK_TUNNEL_REGEX = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com\b/;
 const QUICK_TUNNEL_LOG_DIR = "/tmp";
+
+/**
+ * Ensure a subdomain is a fully-qualified DNS record name.
+ * If the user types "api" and the zone is "example.com", returns "api.example.com".
+ * If the user already typed "api.example.com", returns it unchanged.
+ */
+export async function resolveRecordName(
+  subdomain: string,
+  zoneId: string
+): Promise<string> {
+  if (!subdomain) return "";
+  if (subdomain.includes(".")) return subdomain;
+
+  try {
+    const zone = await getZone(zoneId);
+    const zoneName = typeof zone?.name === "string" ? zone.name : "";
+    if (zoneName) {
+      return `${subdomain}.${zoneName}`;
+    }
+  } catch {
+    // fall through to returning the bare subdomain; the API call will fail
+    // with a clearer error if the name is invalid.
+  }
+
+  return subdomain;
+}
 
 /** Extract the first trycloudflare.com quick-tunnel URL from a string. */
 export function extractQuickTunnelUrl(stdout: string): string | undefined {
@@ -104,11 +131,13 @@ export async function provisionCustomDomain({
     throw new Error("subdomain, zoneId and targetHost are required");
   }
 
-  console.log(`[cloudflare-links] provisioning ${recordType} ${subdomain} -> ${targetHost}`);
+  const recordName = await resolveRecordName(subdomain, zoneId);
+
+  console.log(`[cloudflare-links] provisioning ${recordType} ${recordName} -> ${targetHost}`);
 
   const data: DnsRecordData = {
     type: recordType,
-    name: subdomain,
+    name: recordName,
     content: targetHost,
     proxied,
     ttl: 1, // auto
@@ -123,7 +152,7 @@ export async function provisionCustomDomain({
     const existing = records.find(
       (r) =>
         typeof r.name === "string" &&
-        r.name.toLowerCase() === subdomain.toLowerCase()
+        r.name.toLowerCase() === recordName.toLowerCase()
     );
 
     if (existing && typeof existing.id === "string") {
@@ -136,7 +165,7 @@ export async function provisionCustomDomain({
   }
 
   const recordId = typeof result.id === "string" ? result.id : "";
-  const name = typeof result.name === "string" ? result.name : subdomain;
+  const name = typeof result.name === "string" ? result.name : recordName;
   const content = typeof result.content === "string" ? result.content : targetHost;
 
   return { recordId, name, content };

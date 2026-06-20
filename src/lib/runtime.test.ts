@@ -1,5 +1,19 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { isContainerized, getRuntimeInfo, __resetRuntimeCache, detectRuntime } from "./runtime";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  isContainerized,
+  getRuntimeInfo,
+  __resetRuntimeCache,
+  detectRuntime,
+  type RuntimeDeps,
+} from "./runtime";
+
+function deps(partial: Partial<RuntimeDeps> & { env: RuntimeDeps["env"] }): RuntimeDeps {
+  return {
+    existsSync: () => false,
+    readFileSync: () => "",
+    ...partial,
+  };
+}
 
 describe("runtime detection", () => {
   beforeEach(() => {
@@ -7,71 +21,66 @@ describe("runtime detection", () => {
   });
 
   it("returns false when no container markers exist", () => {
-    const result = detectRuntime({
-      existsSync: () => false,
-      readFileSync: () => "",
-      env: {},
-    });
+    const result = detectRuntime(deps({ env: {} }));
     expect(result.containerized).toBe(false);
     expect(result.containerRuntime).toBeUndefined();
   });
 
   it("detects docker via /.dockerenv", () => {
-    const result = detectRuntime({
-      existsSync: (p: string) => p === "/.dockerenv",
-      readFileSync: () => "",
-      env: {},
-    });
+    const result = detectRuntime(
+      deps({
+        existsSync: (p: string) => p === "/.dockerenv",
+        readFileSync: () => "",
+        env: {},
+      })
+    );
     expect(result.containerized).toBe(true);
     expect(result.containerRuntime).toBe("docker");
   });
 
   it("detects docker via /proc/self/cgroup", () => {
-    const result = detectRuntime({
-      existsSync: () => false,
-      readFileSync: () => "12:freezer:/docker/abc\n",
-      env: {},
-    });
+    const result = detectRuntime(
+      deps({
+        readFileSync: () => "12:freezer:/docker/abc\n",
+        env: {},
+      })
+    );
     expect(result.containerized).toBe(true);
     expect(result.containerRuntime).toBe("docker");
   });
 
   it("detects kubernetes via KUBERNETES_SERVICE_HOST", () => {
-    const result = detectRuntime({
-      existsSync: () => false,
-      readFileSync: () => "",
-      env: { KUBERNETES_SERVICE_HOST: "10.0.0.1" },
-    });
+    const result = detectRuntime(
+      deps({
+        env: { KUBERNETES_SERVICE_HOST: "10.0.0.1" },
+      })
+    );
     expect(result.containerized).toBe(true);
     expect(result.containerRuntime).toBe("kubernetes");
   });
 
   it("detects podman via container env var", () => {
-    const result = detectRuntime({
-      existsSync: () => false,
-      readFileSync: () => "",
-      env: { container: "podman" },
-    });
+    const result = detectRuntime(
+      deps({
+        env: { container: "podman" },
+      })
+    );
     expect(result.containerized).toBe(true);
     expect(result.containerRuntime).toBe("podman");
   });
 
   it("detects containerd via cgroup", () => {
-    const result = detectRuntime({
-      existsSync: () => false,
-      readFileSync: () => "0::/system.slice/containerd.service/container:abc\n",
-      env: {},
-    });
+    const result = detectRuntime(
+      deps({
+        readFileSync: () => "0::/system.slice/containerd.service/container:abc\n",
+        env: {},
+      })
+    );
     expect(result.containerized).toBe(true);
     expect(result.containerRuntime).toBe("containerd");
   });
 
   it("caches isContainerized() result", () => {
-    const existsSync = vi.fn(() => true);
-    const readFileSync = vi.fn(() => "");
-
-    // First call should populate cache using default deps (real fs), so we
-    // test the cache directly by resetting and using a synthetic path.
     __resetRuntimeCache();
     const first = isContainerized();
     const second = isContainerized();

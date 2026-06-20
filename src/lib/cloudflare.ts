@@ -140,6 +140,10 @@ export async function listZones(account?: CloudflareAccountRecord | null) {
   return cfRequest<Array<Record<string, unknown>>>("/zones", { method: "GET" }, account);
 }
 
+export async function getZone(zoneId: string, account?: CloudflareAccountRecord | null) {
+  return cfRequest<Record<string, unknown>>(`/zones/${zoneId}`, { method: "GET" }, account);
+}
+
 export interface DnsRecordData {
   type: "A" | "CNAME" | string;
   name: string;

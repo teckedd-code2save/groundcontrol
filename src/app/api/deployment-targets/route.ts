@@ -9,7 +9,10 @@ export async function GET(req: NextRequest) {
 
     const targets = await prisma.deploymentTarget.findMany({
       orderBy: { updatedAt: "desc" },
-      include: { vps: { select: { id: true, name: true, host: true } } },
+      include: {
+        vps: { select: { id: true, name: true, host: true } },
+        cloudAccount: { select: { id: true, name: true, provider: true } },
+      },
     });
 
     return NextResponse.json(targets);
@@ -35,10 +38,14 @@ export async function POST(req: NextRequest) {
         name: body.name,
         type: body.type,
         vpsConfigId: body.vpsConfigId ?? null,
+        cloudProviderAccountId: body.cloudProviderAccountId ?? null,
         configJson: typeof body.configJson === "string" ? body.configJson : "{}",
         isActive: body.isActive === true,
       },
-      include: { vps: { select: { id: true, name: true, host: true } } },
+      include: {
+        vps: { select: { id: true, name: true, host: true } },
+        cloudAccount: { select: { id: true, name: true, provider: true } },
+      },
     });
 
     return NextResponse.json(target, { status: 201 });
