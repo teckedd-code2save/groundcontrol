@@ -1,9 +1,10 @@
 import { execOnVps, shQuote, type VpsConnection, getActiveVps } from "./vps";
+import { execOnTarget, canExecOnHost } from "./host-exec";
 
 async function detectOsFamily(vps?: VpsConnection | null): Promise<"alpine" | "debian" | "other"> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return "other";
-  const result = await execOnVps("cat /etc/os-release 2>/dev/null || echo 'ID=unknown'", conn);
+  const result = await execOnTarget("cat /etc/os-release 2>/dev/null || echo 'ID=unknown'", conn);
   const id = result.stdout
     .split("\n")
     .find((l) => l.startsWith("ID="))
@@ -51,6 +52,9 @@ export async function canInstallHostPackages(vps?: VpsConnection | null): Promis
 
   const inContainer = await isRunningInContainer(conn);
   if (inContainer) {
+    if (await canExecOnHost()) {
+      return { ok: true };
+    }
     return {
       ok: false,
       reason:
@@ -86,19 +90,19 @@ export async function installDocker(vps?: VpsConnection | null): Promise<Bootstr
   const os = await detectOsFamily(conn);
 
   if (os === "alpine") {
-    const result = await execOnVps("apk add --no-cache docker docker-cli-compose 2>&1", conn);
+    const result = await execOnTarget("apk add --no-cache docker docker-cli-compose 2>&1", conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   if (os === "debian") {
     const script = `curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh 2>&1`;
-    const result = await execOnVps(script, conn);
+    const result = await execOnTarget(script, conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   // Generic fallback: try the official script.
   const script = `curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh 2>&1`;
-  const result = await execOnVps(script, conn);
+  const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -120,21 +124,21 @@ export async function installCaddy(vps?: VpsConnection | null): Promise<Bootstra
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list && \
 apt-get update && apt-get install -y caddy 2>&1`;
-    const result = await execOnVps(script, conn);
+    const result = await execOnTarget(script, conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   if (os === "alpine") {
-    const result = await execOnVps("apk add --no-cache caddy 2>&1", conn);
+    const result = await execOnTarget("apk add --no-cache caddy 2>&1", conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   // Static binary fallback.
-  const arch = await execOnVps("uname -m", conn);
+  const arch = await execOnTarget("uname -m", conn);
   const goArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
   const script = `curl -Lo /usr/local/bin/caddy "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${shQuote(goArch)}" && \
 chmod +x /usr/local/bin/caddy && /usr/local/bin/caddy version 2>&1`;
-  const result = await execOnVps(script, conn);
+  const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -151,21 +155,21 @@ export async function installNginx(vps?: VpsConnection | null): Promise<Bootstra
   const os = await detectOsFamily(conn);
 
   if (os === "debian") {
-    const result = await execOnVps("apt-get update && apt-get install -y nginx 2>&1", conn);
+    const result = await execOnTarget("apt-get update && apt-get install -y nginx 2>&1", conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   if (os === "alpine") {
-    const result = await execOnVps("apk add --no-cache nginx 2>&1", conn);
+    const result = await execOnTarget("apk add --no-cache nginx 2>&1", conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   // Static binary fallback (official mainline prebuilt).
-  const arch = await execOnVps("uname -m", conn);
+  const arch = await execOnTarget("uname -m", conn);
   const goArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
   const script = `curl -Lo /tmp/nginx.tar.gz "https://nginx.org/download/nginx-1.26.2-linux-${shQuote(goArch)}.tar.gz" 2>&1 && \
 tar -xzf /tmp/nginx.tar.gz -C /usr/local/bin --strip-components=1 2>&1 && nginx -v 2>&1`;
-  const result = await execOnVps(script, conn);
+  const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -183,18 +187,18 @@ export async function installNode(vps?: VpsConnection | null): Promise<Bootstrap
 
   if (os === "debian") {
     const script = `curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs 2>&1`;
-    const result = await execOnVps(script, conn);
+    const result = await execOnTarget(script, conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   if (os === "alpine") {
-    const result = await execOnVps("apk add --no-cache nodejs npm 2>&1", conn);
+    const result = await execOnTarget("apk add --no-cache nodejs npm 2>&1", conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   // Generic fallback: try NodeSource script.
   const script = `curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs 2>&1`;
-  const result = await execOnVps(script, conn);
+  const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -211,16 +215,16 @@ export async function installGit(vps?: VpsConnection | null): Promise<BootstrapR
   const os = await detectOsFamily(conn);
 
   if (os === "debian") {
-    const result = await execOnVps("apt-get update && apt-get install -y git 2>&1", conn);
+    const result = await execOnTarget("apt-get update && apt-get install -y git 2>&1", conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   if (os === "alpine") {
-    const result = await execOnVps("apk add --no-cache git 2>&1", conn);
+    const result = await execOnTarget("apk add --no-cache git 2>&1", conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
-  const result = await execOnVps("command -v git || (curl -fsSL https://raw.githubusercontent.com/git/git/master/INSTALL 2>/dev/null) 2>&1", conn);
+  const result = await execOnTarget("command -v git || (curl -fsSL https://raw.githubusercontent.com/git/git/master/INSTALL 2>/dev/null) 2>&1", conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -236,10 +240,55 @@ async function pullImage(image: string, vps?: VpsConnection | null): Promise<Boo
 }
 
 /**
- * Pull the cloudflared Docker image so a connector container can be started later.
+ * Install the cloudflared daemon binary to /usr/local/bin/cloudflared.
+ * Idempotent: skips if cloudflared is already present.
  */
 export async function installCloudflared(vps?: VpsConnection | null): Promise<BootstrapResult> {
-  return pullImage("cloudflare/cloudflared:latest", vps);
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  if (await isCloudflaredInstalled(conn)) {
+    return { success: true, output: "cloudflared is already installed", error: "" };
+  }
+
+  const arch = await execOnTarget("uname -m", conn);
+  const goArch =
+    arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
+  const script = `curl -Lo /usr/local/bin/cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${shQuote(
+    goArch
+  )}" && chmod +x /usr/local/bin/cloudflared && /usr/local/bin/cloudflared version 2>&1`;
+  const result = await execOnTarget(script, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+/**
+ * Install the Terraform binary to /usr/local/bin/terraform.
+ * Idempotent: skips if Terraform is already present.
+ */
+export async function installTerraform(vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  if (await isTerraformInstalled(conn)) {
+    return { success: true, output: "Terraform is already installed", error: "" };
+  }
+
+  const arch = await execOnTarget("uname -m", conn);
+  const tfArch =
+    arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
+  const script = `VERSION=$(curl -s https://checkpoint-api.hashicorp.com/v1/check/terraform | sed -n 's/.*"current_version":"\\([^"]*\\)".*/\\1/p') && \
+curl -Lo /tmp/terraform.zip "https://releases.hashicorp.com/terraform/\${VERSION}/terraform_\${VERSION}_linux_${shQuote(
+    tfArch
+  )}.zip" && \
+unzip -o /tmp/terraform.zip -d /usr/local/bin && chmod +x /usr/local/bin/terraform && /usr/local/bin/terraform version 2>&1`;
+  const result = await execOnTarget(script, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
 export async function installPostgres(vps?: VpsConnection | null): Promise<BootstrapResult> {
@@ -270,35 +319,35 @@ export async function getServerIp(vps?: VpsConnection | null): Promise<string> {
 export async function isDockerInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("docker --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("docker --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
 export async function isCaddyInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("caddy version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("caddy version 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
 export async function isNginxInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("nginx -v 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("nginx -v 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
 export async function isNodeInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("node --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("node --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
 export async function isGitInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("git --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("git --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
@@ -312,21 +361,35 @@ export async function isImagePulled(image: string, vps?: VpsConnection | null): 
 export async function isK3sInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("k3s --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("k3s --version 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
 export async function isKubectlInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("kubectl version --client 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("kubectl version --client 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
 export async function isHelmInstalled(vps?: VpsConnection | null): Promise<boolean> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return false;
-  const res = await execOnVps("helm version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  const res = await execOnTarget("helm version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  return res.stdout.trim() === "yes";
+}
+
+export async function isTerraformInstalled(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnTarget("terraform version 2>/dev/null >/dev/null && echo yes || echo no", conn);
+  return res.stdout.trim() === "yes";
+}
+
+export async function isCloudflaredInstalled(vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+  const res = await execOnTarget("cloudflared version 2>/dev/null >/dev/null && echo yes || echo no", conn);
   return res.stdout.trim() === "yes";
 }
 
@@ -345,7 +408,7 @@ export async function installK3s(vps?: VpsConnection | null): Promise<BootstrapR
   }
 
   const script = `curl -sfL https://get.k3s.io | sh - 2>&1`;
-  const result = await execOnVps(script, conn);
+  const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -364,11 +427,11 @@ export async function installKubectl(vps?: VpsConnection | null): Promise<Bootst
     return { success: true, output: "kubectl is already installed", error: "" };
   }
 
-  const arch = await execOnVps("uname -m", conn);
+  const arch = await execOnTarget("uname -m", conn);
   const kubeArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
   const script = `curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/${shQuote(kubeArch)}/kubectl" && \
 chmod +x /usr/local/bin/kubectl && /usr/local/bin/kubectl version --client 2>&1`;
-  const result = await execOnVps(script, conn);
+  const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
@@ -387,14 +450,14 @@ export async function installHelm(vps?: VpsConnection | null): Promise<Bootstrap
     return { success: true, output: "helm is already installed", error: "" };
   }
 
-  const arch = await execOnVps("uname -m", conn);
+  const arch = await execOnTarget("uname -m", conn);
   const helmArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
   const script = `curl -fsSL -o /tmp/get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
 chmod 700 /tmp/get_helm.sh && \
 DESIRED_VERSION=v3.14.0 /tmp/get_helm.sh 2>&1 || \
 (export HELM_INSTALL_DIR=/usr/local/bin && curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-${shQuote(helmArch)}.tar.gz | tar -xzO linux-${shQuote(helmArch)}/helm > /usr/local/bin/helm && chmod +x /usr/local/bin/helm) 2>&1 && \
 /usr/local/bin/helm version 2>&1`;
-  const result = await execOnVps(script, conn);
+  const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 

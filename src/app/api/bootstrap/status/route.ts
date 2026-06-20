@@ -12,6 +12,8 @@ import {
   isK3sInstalled,
   isKubectlInstalled,
   isHelmInstalled,
+  isTerraformInstalled,
+  isCloudflaredInstalled,
 } from "@/lib/bootstrap";
 
 export async function GET(req: NextRequest) {
@@ -34,6 +36,7 @@ export async function GET(req: NextRequest) {
       k3s,
       kubectl,
       helm,
+      terraform,
     ] = await Promise.all([
       isRunningInContainer(),
       canInstallHostPackages(),
@@ -42,7 +45,7 @@ export async function GET(req: NextRequest) {
       isNginxInstalled(),
       isNodeInstalled(),
       isGitInstalled(),
-      isImagePulled("cloudflare/cloudflared:latest"),
+      isCloudflaredInstalled(),
       isImagePulled("postgres:16-alpine"),
       isImagePulled("redis:7-alpine"),
       isImagePulled("traefik:v3"),
@@ -50,6 +53,7 @@ export async function GET(req: NextRequest) {
       isK3sInstalled(),
       isKubectlInstalled(),
       isHelmInstalled(),
+      isTerraformInstalled(),
     ]);
 
     return NextResponse.json({
@@ -69,6 +73,7 @@ export async function GET(req: NextRequest) {
         k3s,
         kubectl,
         helm,
+        terraform,
       },
     });
   } catch (err: unknown) {

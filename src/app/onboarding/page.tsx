@@ -41,11 +41,17 @@ export default function OnboardingPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [availableKeys, setAvailableKeys] = useState<{ path: string; content: string }[]>([]);
+  const [runtime, setRuntime] = useState<{ containerized: boolean; gatewayIp: string | null; sshPortOpen: boolean } | null>(null);
 
   useEffect(() => {
     fetch("/api/onboarding/ssh-keys")
       .then((r) => (r.ok ? r.json() : { keys: [] }))
       .then((data) => setAvailableKeys(data.keys || []))
+      .catch(() => {});
+
+    fetch("/api/onboarding/detect-host")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setRuntime(data))
       .catch(() => {});
   }, []);
 
@@ -122,6 +128,76 @@ export default function OnboardingPage() {
     }
   }
 
+  async function finishSetup(vps: {
+    name: string;
+    host: string;
+    port: number;
+    username: string;
+    authType: string;
+    privateKey: string;
+    password: string;
+    isLocal: boolean;
+  }) {
+    setTesting(true);
+    setTestResult(null);
+    setError("");
+    try {
+      const testRes = await fetch("/api/vps/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(vps),
+      });
+      const testData = (await testRes.json()) as { success: boolean; message: string };
+      setTestResult(testData);
+      if (!testData.success) {
+        setError(testData.message);
+        return;
+      }
+
+      const detectRes = await fetch("/api/onboarding/detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(vps),
+      });
+      const detectData = (await detectRes.json()) as ServerLayout & { error?: string };
+      if (!detectRes.ok) throw new Error(detectData.error || "Detection failed");
+      setLayout(detectData);
+
+      const saveRes = await fetch("/api/onboarding/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vps, layout: detectData }),
+      });
+      const saveData = (await saveRes.json()) as { success?: boolean; error?: string };
+      if (!saveRes.ok || !saveData.success) throw new Error(saveData.error || "Failed to save");
+      router.push("/dashboard");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Setup failed");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleUseThisServer() {
+    await finishSetup({
+      name: form.name || "primary",
+      host: "local",
+      port: 22,
+      username: "root",
+      authType: "key",
+      privateKey: "",
+      password: "",
+      isLocal: true,
+    });
+  }
+
+  function handleUseHostAsVps() {
+    if (!runtime?.gatewayIp) return;
+    setMode("remote");
+    setForm((f) => ({ ...f, host: runtime.gatewayIp as string }));
+    setStep(2);
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-2xl bg-card border border-border rounded-2xl p-8 shadow-xl">
@@ -151,6 +227,46 @@ export default function OnboardingPage() {
         {step === 1 && (
           <div className="space-y-6">
             <h2 className="text-lg font-medium">Step 1: Choose server mode</h2>
+
+            {runtime && (
+              <div className="p-5 rounded-xl border border-accent/30 bg-accent/5">
+                <div className="font-medium mb-1">
+                  {runtime.containerized
+                    ? "GroundControl is running inside Docker"
+                    : "GroundControl is running on this server"}
+                </div>
+                <div className="text-xs text-muted mb-3">
+                  {runtime.containerized
+                    ? `GroundControl is containerized, so host-level commands need access to the Docker host. Detected gateway ${runtime.gatewayIp || "unknown"}. Provide SSH credentials for the host to use it as your active VPS.`
+                    : "Use this server as your active VPS — no SSH credentials needed."}
+                </div>
+                {runtime.containerized ? (
+                  <div className="space-y-2">
+                    {runtime.sshPortOpen ? (
+                      <div className="text-xs text-success">SSH port appears open on {runtime.gatewayIp}.</div>
+                    ) : (
+                      <div className="text-xs text-warning">Could not confirm SSH port is open on {runtime.gatewayIp}.</div>
+                    )}
+                    <button
+                      onClick={handleUseHostAsVps}
+                      disabled={!runtime.gatewayIp}
+                      className="px-5 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+                    >
+                      Use host as my active VPS
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleUseThisServer}
+                    disabled={testing}
+                    className="px-5 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+                  >
+                    {testing ? "Setting up..." : "Use this server as my active VPS"}
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <button
                 onClick={() => setMode("local")}

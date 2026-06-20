@@ -85,6 +85,14 @@ const TOOLS: ToolDef[] = [
     kind: "container",
   },
   {
+    key: "terraform",
+    label: "Terraform",
+    desc: "HashiCorp Terraform CLI",
+    route: "/api/bootstrap/terraform",
+    icon: <ServiceIcon className="w-4 h-4 text-muted" />,
+    kind: "host",
+  },
+  {
     key: "postgres",
     label: "PostgreSQL",
     desc: "Pull the PostgreSQL 16 image",
@@ -131,6 +139,8 @@ export function BootstrapPanel() {
     hostPackagesAllowed: { ok: boolean; reason?: string };
     installed: Record<string, boolean>;
   } | null>(null);
+
+  const hostPackagesBlocked = status?.inContainerLocalMode && !status?.hostPackagesAllowed.ok;
   const [statusLoading, setStatusLoading] = useState(true);
 
   useEffect(() => {
@@ -191,7 +201,7 @@ export function BootstrapPanel() {
   const containerTools = TOOLS.filter((t) => t.kind === "container");
 
   function renderK3sCard() {
-    const hostDisabled = status?.inContainerLocalMode;
+    const hostDisabled = hostPackagesBlocked;
     return (
       <div className={`border border-border rounded-xl p-4 bg-background/30 ${hostDisabled ? "opacity-70" : ""}`}>
         <div className="flex items-start justify-between gap-4">
@@ -248,7 +258,7 @@ export function BootstrapPanel() {
   function renderTool(tool: ToolDef) {
     const job = jobs[tool.key];
     const installed = status?.installed[tool.key];
-    const hostDisabled = status?.inContainerLocalMode && tool.kind === "host";
+    const hostDisabled = hostPackagesBlocked && tool.kind === "host";
 
     return (
       <div
@@ -324,11 +334,18 @@ export function BootstrapPanel() {
           </div>
         ) : (
           <>
-            {status?.inContainerLocalMode && (
+            {hostPackagesBlocked && (
               <div className="mb-6 p-3 bg-warning/10 border border-warning/30 rounded-lg text-warning text-xs font-mono">
                 <strong>Host-package installs are disabled.</strong> GroundControl is running inside a Docker
-                container, so apk/apt cannot target the host OS. Use SSH mode or run GroundControl directly on the
-                host to install Docker, Caddy, Nginx, Node.js, and Git. Container-image pulls still work.
+                container and cannot reach the host OS. Use SSH mode or run GroundControl directly on the host to
+                install Docker, Caddy, Nginx, Node.js, Git, Terraform, k3s, kubectl, and Helm. Container-image pulls
+                still work.
+              </div>
+            )}
+            {status?.inContainerLocalMode && !hostPackagesBlocked && (
+              <div className="mb-6 p-3 bg-info/10 border border-info/30 rounded-lg text-info text-xs font-mono">
+                <strong>Running inside Docker.</strong> Host-level installs will be applied to the host operating
+                system via namespace access.
               </div>
             )}
 

@@ -1,4 +1,6 @@
-import { execOnVps, VpsConnection, shQuote } from "./vps";
+import { VpsConnection, shQuote } from "./vps";
+import { execOnTarget } from "./host-exec";
+
 
 export interface ServerLayout {
   osFamily: "alpine" | "debian" | "other";
@@ -50,7 +52,7 @@ function normalizeOsId(id: string): "alpine" | "debian" | "other" {
 }
 
 async function readOsRelease(vps?: VpsConnection | null): Promise<{ id: string; name: string; version: string }> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `cat /etc/os-release 2>/dev/null || echo 'ID=unknown\nPRETTY_NAME=unknown\nVERSION_ID='`,
     vps
   );
@@ -75,13 +77,13 @@ async function detectComposeCommand(vps?: VpsConnection | null): Promise<string>
     { cmd: "podman-compose version", value: "podman-compose" },
   ];
   for (const candidate of candidates) {
-    const result = await execOnVps(`${candidate.cmd} 2>/dev/null || echo ""`, vps);
+    const result = await execOnTarget(`${candidate.cmd} 2>/dev/null || echo ""`, vps);
     if (result.code === 0 && result.stdout.toLowerCase().includes("compose")) {
       return candidate.value;
     }
   }
   // Fallback: check binary existence even if `version` fails
-  const which = await execOnVps(
+  const which = await execOnTarget(
     `command -v docker-compose 2>/dev/null || echo ""`,
     vps
   );
@@ -92,14 +94,14 @@ async function detectComposeCommand(vps?: VpsConnection | null): Promise<string>
 async function detectProjectRoot(vps?: VpsConnection | null): Promise<string> {
   const candidates = ["/opt", "/var/www", "/home"];
   for (const dir of candidates) {
-    const result = await execOnVps(`test -d ${shQuote(dir)} && echo ${shQuote(dir)} || echo ""`, vps);
+    const result = await execOnTarget(`test -d ${shQuote(dir)} && echo ${shQuote(dir)} || echo ""`, vps);
     if (result.stdout.trim()) return dir;
   }
   return "/opt";
 }
 
 async function detectCaddySitesDir(vps?: VpsConnection | null): Promise<string> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `test -d /etc/caddy/sites && echo /etc/caddy/sites || echo /etc/caddy`,
     vps
   );
@@ -107,7 +109,7 @@ async function detectCaddySitesDir(vps?: VpsConnection | null): Promise<string> 
 }
 
 async function detectNginxSitesDir(vps?: VpsConnection | null): Promise<string> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `test -d /etc/nginx/sites-available && echo /etc/nginx/sites-available || echo /etc/nginx/conf.d`,
     vps
   );
@@ -115,7 +117,7 @@ async function detectNginxSitesDir(vps?: VpsConnection | null): Promise<string> 
 }
 
 async function detectStaticRoot(vps?: VpsConnection | null): Promise<string> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `test -d /var/www && echo /var/www || echo ""`,
     vps
   );
@@ -123,7 +125,7 @@ async function detectStaticRoot(vps?: VpsConnection | null): Promise<string> {
 }
 
 async function detectSshDefaultCwd(vps?: VpsConnection | null): Promise<string> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `u=$(whoami 2>/dev/null || echo root); if [ "$u" = "root" ]; then echo /root; else echo /home/$u; fi`,
     vps
   );
@@ -131,37 +133,37 @@ async function detectSshDefaultCwd(vps?: VpsConnection | null): Promise<string> 
 }
 
 async function detectDockerAvailable(vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnVps(`docker --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  const result = await execOnTarget(`docker --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
   return result.stdout.trim() === "yes";
 }
 
 async function detectCaddyAvailable(vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnVps(`caddy version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  const result = await execOnTarget(`caddy version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
   return result.stdout.trim() === "yes";
 }
 
 async function detectNodeAvailable(vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnVps(`node --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  const result = await execOnTarget(`node --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
   return result.stdout.trim() === "yes";
 }
 
 async function detectK3sAvailable(vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnVps(`k3s --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  const result = await execOnTarget(`k3s --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
   return result.stdout.trim() === "yes";
 }
 
 async function detectKubectlAvailable(vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnVps(`kubectl version --client 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  const result = await execOnTarget(`kubectl version --client 2>/dev/null >/dev/null && echo yes || echo no`, vps);
   return result.stdout.trim() === "yes";
 }
 
 async function detectHelmAvailable(vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnVps(`helm version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
+  const result = await execOnTarget(`helm version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
   return result.stdout.trim() === "yes";
 }
 
 async function detectKubeconfigPath(vps?: VpsConnection | null): Promise<string> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `if [ -f /etc/rancher/k3s/k3s.yaml ]; then echo /etc/rancher/k3s/k3s.yaml; elif [ -f "$HOME/.kube/config" ]; then echo "$HOME/.kube/config"; else echo /etc/rancher/k3s/k3s.yaml; fi`,
     vps
   );

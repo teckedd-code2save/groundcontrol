@@ -8,10 +8,16 @@ export interface ServerCapabilities {
   hasK3s: boolean;
   hasKubectl: boolean;
   hasHelm: boolean;
+  hasTerraform: boolean;
+  hasCloudflared: boolean;
   hasSystemctl: boolean;
   hasService: boolean;
   /** Preferred network socket listing tool, if any. */
   networkTool: "ss" | "netstat" | null;
+  /** True when GroundControl itself is running inside a container. */
+  containerized: boolean;
+  /** True when host-level execution is available from inside the container. */
+  hostExecAvailable: boolean;
 }
 
 /**

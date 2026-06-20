@@ -1,4 +1,5 @@
-import { execOnVps, shQuote, type VpsConnection } from "./vps";
+import { shQuote, type VpsConnection } from "./vps";
+import { execOnTarget, canExecOnHost, isContainerized } from "./host-exec";
 import type { ServerCapabilities } from "./server-capabilities-types";
 
 export type { ServerCapabilities };
@@ -11,7 +12,7 @@ function normalizeOsId(id: string): "alpine" | "debian" | "other" {
 }
 
 async function readOsFamily(vps?: VpsConnection | null): Promise<"alpine" | "debian" | "other"> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `cat /etc/os-release 2>/dev/null || echo 'ID=unknown'`,
     vps
   );
@@ -25,7 +26,7 @@ async function readOsFamily(vps?: VpsConnection | null): Promise<"alpine" | "deb
 }
 
 async function hasBinary(name: string, vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnVps(
+  const result = await execOnTarget(
     `command -v ${shQuote(name)} >/dev/null 2>&1 && echo yes || echo no`,
     vps
   );
@@ -34,7 +35,7 @@ async function hasBinary(name: string, vps?: VpsConnection | null): Promise<bool
 
 async function detectInitSystem(vps?: VpsConnection | null): Promise<"systemd" | "openrc" | "other"> {
   // systemd leaves a well-known runtime marker.
-  const systemdMarker = await execOnVps(
+  const systemdMarker = await execOnTarget(
     `[ -d /run/systemd/system ] && echo yes || echo no`,
     vps
   );
@@ -43,7 +44,7 @@ async function detectInitSystem(vps?: VpsConnection | null): Promise<"systemd" |
   }
 
   // OpenRC markers.
-  const openrcMarker = await execOnVps(
+  const openrcMarker = await execOnTarget(
     `(command -v openrc >/dev/null 2>&1 || command -v rc-status >/dev/null 2>&1 || [ -x /sbin/openrc-init ]) && echo yes || echo no`,
     vps
   );
@@ -69,10 +70,13 @@ export async function detectServerCapabilities(vps?: VpsConnection | null): Prom
     hasK3s,
     hasKubectl,
     hasHelm,
+    hasTerraform,
+    hasCloudflared,
     hasSystemctl,
     hasService,
     hasSs,
     hasNetstat,
+    hostExec,
   ] = await Promise.all([
     readOsFamily(vps),
     detectInitSystem(vps),
@@ -83,10 +87,13 @@ export async function detectServerCapabilities(vps?: VpsConnection | null): Prom
     hasBinary("k3s", vps),
     hasBinary("kubectl", vps),
     hasBinary("helm", vps),
+    hasBinary("terraform", vps),
+    hasBinary("cloudflared", vps),
     hasBinary("systemctl", vps),
     hasBinary("service", vps),
     hasBinary("ss", vps),
     hasBinary("netstat", vps),
+    canExecOnHost(),
   ]);
 
   return {
@@ -99,8 +106,12 @@ export async function detectServerCapabilities(vps?: VpsConnection | null): Prom
     hasK3s,
     hasKubectl,
     hasHelm,
+    hasTerraform,
+    hasCloudflared,
     hasSystemctl,
     hasService,
     networkTool: hasSs ? "ss" : hasNetstat ? "netstat" : null,
+    containerized: isContainerized(),
+    hostExecAvailable: hostExec,
   };
 }
