@@ -340,7 +340,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           `ps -eo pid,comm,%mem,%cpu,rss --sort=-%mem 2>/dev/null | head -n ${n + 1} ` +
           `|| ps -eo pid,comm,%mem,%cpu,rss 2>/dev/null | sort -k3 -nr | head -n ${n} ` +
           `|| ps aux 2>/dev/null | sort -k4 -nr | head -n ${n}`;
-        return safeExec(cmd);
+        return safeExecOnTarget(cmd);
       }),
   },
   {
@@ -362,7 +362,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           `ps -eo pid,comm,%cpu,%mem --sort=-%cpu 2>/dev/null | head -n ${n + 1} ` +
           `|| ps -eo pid,comm,%cpu,%mem 2>/dev/null | sort -k3 -nr | head -n ${n} ` +
           `|| ps aux 2>/dev/null | sort -k3 -nr | head -n ${n}`;
-        return safeExec(cmd);
+        return safeExecOnTarget(cmd);
       }),
   },
   {
@@ -424,7 +424,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       guard(async () => {
         const config = await getSystemConfig();
         const root = config.projectRoot || "/opt";
-        return safeExec(
+        return safeExecOnTarget(
           `ls -1 ${shQuote(root)} 2>/dev/null || find ${shQuote(root)} -mindepth 1 -maxdepth 1 -type d 2>/dev/null`
         );
       }),
@@ -439,8 +439,8 @@ export const AGENT_TOOLS: AgentTool[] = [
       guard(async () => {
         const config = await getSystemConfig();
         const root = config.projectRoot || "/opt";
-        const df = await safeExec("df -h");
-        const du = await safeExec(
+        const df = await safeExecOnTarget("df -h");
+        const du = await safeExecOnTarget(
           `du -sh ${shQuote(root)}/* 2>/dev/null | sort -hr | head -n 30`
         );
         return `# df -h\n${df}\n\n# du -sh ${root}/*\n${du}`;
@@ -469,13 +469,13 @@ export const AGENT_TOOLS: AgentTool[] = [
         const proxy = (args?.proxy === "nginx" ? "nginx" : "caddy") as "caddy" | "nginx";
         if (proxy === "nginx") {
           const dir = config.nginxSitesDir || "/etc/nginx/sites-available";
-          return safeExec(
+          return safeExecOnTarget(
             `for f in ${shQuote(dir)}/*; do [ -f "$f" ] && echo "===== $f =====" && cat "$f"; done 2>/dev/null || echo "(no nginx site files found in ${dir})"`
           );
         }
         const dir = config.caddySitesDir || "/etc/caddy/sites";
         const file = config.caddyFile || "/etc/caddy/Caddyfile";
-        return safeExec(
+        return safeExecOnTarget(
           `for f in ${shQuote(dir)}/*; do [ -f "$f" ] && echo "===== $f =====" && cat "$f"; done 2>/dev/null; ` +
           `[ -f ${shQuote(file)} ] && echo "===== ${file} =====" && cat ${shQuote(file)} 2>/dev/null; ` +
           `true`
@@ -500,7 +500,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         const command = String(args?.command || "");
         const refusal = checkDiagnosticCommand(command);
         if (refusal) return refusal;
-        return safeExec(command);
+        return safeExecOnTarget(command);
       }),
   },
   {
@@ -535,7 +535,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           `ps -eo pid,comm,%cpu,%mem --sort=-%cpu 2>/dev/null | head -n 11 ` +
           `|| ps -eo pid,comm,%cpu,%mem 2>/dev/null | sort -k3 -nr | head -n 10 ` +
           `|| ps aux 2>/dev/null | sort -k3 -nr | head -n 10`;
-        const [topMem, topCpu] = await Promise.all([safeExec(topMemCmd), safeExec(topCpuCmd)]);
+        const [topMem, topCpu] = await Promise.all([safeExecOnTarget(topMemCmd), safeExecOnTarget(topCpuCmd)]);
 
         const unhealthy = containers.filter((c) => c.status.includes("unhealthy"));
         const stopped = containers.filter((c) => c.state !== "running");
@@ -585,7 +585,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         const files = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
         for (const f of files) {
           const path = `${projectPath}/${f}`;
-          const result = await safeExec(`cat ${shQuote(path)} 2>/dev/null`);
+          const result = await safeExecOnTarget(`cat ${shQuote(path)} 2>/dev/null`);
           if (!result.startsWith("[exit") && !result.startsWith("ERROR:")) {
             return `===== ${path} =====\n${result}`;
           }
