@@ -25,9 +25,31 @@ It also builds and deploys your applications to multiple targets — Docker Comp
 
 No agents to install on managed hosts. No SaaS in the middle. No telemetry leaving your network. Just a Next.js app, a SQLite file, and an SSH connection.
 
+> **The twist:** GroundControl is designed to run *inside Docker on the VPS it manages*. That should make host-level operations impossible — but it uses a small namespace bridge to escape the container and run commands on the host OS anyway. Read the story in [`docs/THE-HACK.md`](./docs/THE-HACK.md) and the full design in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+
 **Single-tenant by design.** Each GroundControl instance has its own SQLite database on its own host/VPS. Your data never sits in someone else's instance, and a friend's GroundControl deployment on their VPS has no access to yours.
 
 > **Live instance:** [https://groundcontrol.serendepify.com](https://groundcontrol.serendepify.com)
+
+---
+
+## 🧬 The story
+
+GroundControl started as a dashboard. Then it became an experiment in **containerized privilege**.
+
+The obvious way to ship a VPS cockpit is to put it in a container on the VPS it manages. But containers are jails: the dashboard could see Docker containers through the mounted socket, yet it could not run `systemctl`, install packages with `apk`/`apt`, call `kubectl`, or even find `caddy` on the host. The terminal reported `command not found` for tools that were clearly installed. The install buttons failed. The dashboard lied.
+
+The conventional fixes were uninspiring:
+
+- Run the container with `--pid=host` — works, but forgets to mention it in `docker-compose.yml`.
+- Force users to set up SSH keys for the local box — correct, but friction.
+- Install a host agent — clean, but now you have two things to update.
+
+GroundControl chose a different path. Since the Docker socket is already root-equivalent, it uses that socket to spawn a one-shot privileged helper container that enters the host's namespaces through `nsenter`. The helper is ephemeral, auto-removed, and lets GC run commands on the host OS as if it were native — without changing the default compose file, without SSH, without a host agent.
+
+That is the hack that makes the terminal feel like a real VPS shell. That is the moment a containerized web app stops being a viewer and becomes a cockpit.
+
+Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 
 ---
 

@@ -67,7 +67,9 @@ NEXT_PUBLIC_SITE_URL=https://groundcontrol.yourdomain.com
 docker compose up -d
 ```
 
-The compose file exposes the app on host port `3003` bound to `127.0.0.1`. Check it is healthy:
+The compose file exposes the app on host port `3003` bound to `127.0.0.1`. It does **not** require `--pid=host` or `--privileged`; GroundControl uses the mounted Docker socket to spawn a one-shot privileged helper container when it needs to run commands on the host OS. See [`docs/THE-HACK.md`](./docs/THE-HACK.md) for how this works.
+
+Check it is healthy:
 
 ```bash
 docker compose ps
