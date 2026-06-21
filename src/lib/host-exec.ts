@@ -5,6 +5,10 @@ import { isContainerized } from "./runtime";
 import { prisma } from "./prisma";
 import { decryptMaybe } from "./crypto";
 import { execOnVps, shQuote, type VpsConnection } from "./vps";
+import {
+  canUseDockerHostBridge,
+  execViaDockerHostBridge,
+} from "./docker-host-bridge";
 
 export { isContainerized };
 
@@ -30,10 +34,12 @@ interface SshCredentials {
 }
 
 let nsenterCache: boolean | null = null;
+let bridgeCache: boolean | null = null;
 
 /** Reset internal caches. Exported for tests only. */
 export function __resetHostExecCache(): void {
   nsenterCache = null;
+  bridgeCache = null;
 }
 
 async function isNsenterAvailable(): Promise<boolean> {
@@ -194,6 +200,20 @@ export async function execOnHost(
     return execInContainer(command, opts.cwd);
   }
 
+  // Strategy 0: use the mounted Docker socket to spawn a temporary privileged
+  // container that enters the host namespaces. This works even when the GC
+  // container itself is not started with --pid=host.
+  if (bridgeCache === null) {
+    bridgeCache = await canUseDockerHostBridge();
+  }
+  if (bridgeCache) {
+    try {
+      return await execViaDockerHostBridge(command, { cwd: opts.cwd });
+    } catch {
+      // bridge unavailable or failed; fall through to other strategies
+    }
+  }
+
   // Strategy 1: enter the host namespaces via nsenter.
   if (await isNsenterAvailable()) {
     try {
@@ -232,6 +252,10 @@ export async function execOnHost(
  */
 export async function canExecOnHost(): Promise<boolean> {
   if (!isContainerized()) return false;
+  if (bridgeCache === null) {
+    bridgeCache = await canUseDockerHostBridge();
+  }
+  if (bridgeCache) return true;
   if (await isNsenterAvailable()) return true;
   const gateway = await resolveHostGateway();
   const creds = await getActiveVpsCredentials();

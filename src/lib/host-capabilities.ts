@@ -51,44 +51,56 @@ interface Cached {
 const TTL_MS = 30_000;
 let cache: Cached | null = null;
 
-async function readOsId(execFn: (cmd: string) => Promise<{ stdout: string; stderr: string; code: number }>): Promise<string> {
-  const result = await execFn("awk -F= '/^ID=/{print $2}' /etc/os-release 2>/dev/null | tr -d '\\\"'");
-  return result.stdout.trim().toLowerCase();
+async function readInitCmdline(
+  execFn: (cmd: string) => Promise<{ stdout: string; stderr: string; code: number }>
+): Promise<string> {
+  const result = await execFn("cat /proc/1/cmdline 2>/dev/null | tr '\\0' ' ' | head -c 200");
+  return result.stdout.trim();
+}
+
+function normalizeInitCmdline(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")[0]
+    .replace(/^.*\//, "");
 }
 
 /**
  * Verify that execOnTarget is actually reaching the host OS when GroundControl
  * runs inside a container. Some container deployments do not share the host PID
- * namespace, so nsenter -t 1 only enters the container's own PID 1.
+ * namespace, so nsenter -t 1 only enters the container's own PID 1. We compare
+ * the init process (PID 1) command line: on the host it is usually systemd/init,
+ * while inside the GC container it is node/docker-init/nextjs.
  */
 async function verifyHostAccess(): Promise<{ containerized: boolean; verified: boolean; warning?: string }> {
   if (!isContainerized()) return { containerized: false, verified: true };
 
   try {
-    const [containerId, targetId] = await Promise.all([
-      readOsId(async (cmd) => {
+    const [containerInit, targetInit] = await Promise.all([
+      readInitCmdline(async (cmd) => {
         const { stdout, stderr } = await execAsync(cmd, { timeout: 5000 });
         return { stdout, stderr, code: 0 };
       }),
-      readOsId(execOnTarget),
+      readInitCmdline(execOnTarget),
     ]);
 
-    if (!containerId || !targetId) {
+    if (!containerInit || !targetInit) {
       return {
         containerized: true,
         verified: false,
-        warning: "Could not determine container or host OS; host access status is unknown.",
+        warning: "Could not determine container or host init process; host access status is unknown.",
       };
     }
 
-    if (containerId === targetId) {
+    if (normalizeInitCmdline(containerInit) === normalizeInitCmdline(targetInit)) {
       return {
         containerized: true,
         verified: false,
         warning:
           "GroundControl is running inside a container but host-level commands appear to run in the same OS namespace. " +
           "Host installs and service management may target the container filesystem instead of the host. " +
-          "Run GroundControl with --pid=host or manage the host via SSH.",
+          "Mount the Docker socket and ensure the GC container can spawn privileged helper containers, or manage the host via SSH.",
       };
     }
 
