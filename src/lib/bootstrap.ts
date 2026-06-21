@@ -136,7 +136,7 @@ apt-get update && apt-get install -y caddy 2>&1`;
   // Static binary fallback.
   const arch = await execOnTarget("uname -m", conn);
   const goArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
-  const script = `curl -Lo /usr/local/bin/caddy "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${shQuote(goArch)}" && \
+  const script = `curl -fsSL -o /usr/local/bin/caddy "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${shQuote(goArch)}" && \
 chmod +x /usr/local/bin/caddy && /usr/local/bin/caddy version 2>&1`;
   const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
@@ -167,8 +167,8 @@ export async function installNginx(vps?: VpsConnection | null): Promise<Bootstra
   // Static binary fallback (official mainline prebuilt).
   const arch = await execOnTarget("uname -m", conn);
   const goArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
-  const script = `curl -Lo /tmp/nginx.tar.gz "https://nginx.org/download/nginx-1.26.2-linux-${shQuote(goArch)}.tar.gz" 2>&1 && \
-tar -xzf /tmp/nginx.tar.gz -C /usr/local/bin --strip-components=1 2>&1 && nginx -v 2>&1`;
+  const script = `curl -fsSL -o /tmp/nginx.tar.gz "https://nginx.org/download/nginx-1.26.2-linux-${shQuote(goArch)}.tar.gz" && \
+tar -xzf /tmp/nginx.tar.gz -C /usr/local/bin --strip-components=1 && nginx -v 2>&1`;
   const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
@@ -257,7 +257,7 @@ export async function installCloudflared(vps?: VpsConnection | null): Promise<Bo
   const arch = await execOnTarget("uname -m", conn);
   const goArch =
     arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
-  const script = `curl -Lo /usr/local/bin/cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${shQuote(
+  const script = `curl -fsSL -o /usr/local/bin/cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${shQuote(
     goArch
   )}" && chmod +x /usr/local/bin/cloudflared && /usr/local/bin/cloudflared version 2>&1`;
   const result = await execOnTarget(script, conn);
@@ -282,8 +282,8 @@ export async function installTerraform(vps?: VpsConnection | null): Promise<Boot
   const arch = await execOnTarget("uname -m", conn);
   const tfArch =
     arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
-  const script = `VERSION=$(curl -s https://checkpoint-api.hashicorp.com/v1/check/terraform | sed -n 's/.*"current_version":"\\([^"]*\\)".*/\\1/p') && \
-curl -Lo /tmp/terraform.zip "https://releases.hashicorp.com/terraform/\${VERSION}/terraform_\${VERSION}_linux_${shQuote(
+  const script = `VERSION=$(curl -fsSL https://checkpoint-api.hashicorp.com/v1/check/terraform | sed -n 's/.*"current_version":"\\([^"]*\\)".*/\\1/p') && \
+curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/\${VERSION}/terraform_\${VERSION}_linux_${shQuote(
     tfArch
   )}.zip" && \
 unzip -o /tmp/terraform.zip -d /usr/local/bin && chmod +x /usr/local/bin/terraform && /usr/local/bin/terraform version 2>&1`;
@@ -429,7 +429,8 @@ export async function installKubectl(vps?: VpsConnection | null): Promise<Bootst
 
   const arch = await execOnTarget("uname -m", conn);
   const kubeArch = arch.stdout.trim() === "aarch64" ? "arm64" : arch.stdout.trim() === "x86_64" ? "amd64" : arch.stdout.trim();
-  const script = `curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/${shQuote(kubeArch)}/kubectl" && \
+  const script = `KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt) && \
+curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/${shQuote(kubeArch)}/kubectl" && \
 chmod +x /usr/local/bin/kubectl && /usr/local/bin/kubectl version --client 2>&1`;
   const result = await execOnTarget(script, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
