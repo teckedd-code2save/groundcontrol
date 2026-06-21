@@ -416,7 +416,10 @@ export function invalidateSystemConfigCache() {
   systemConfigCache.clear();
 }
 
-export async function getDockerComposeCommand(vps?: VpsConnection | null): Promise<string> {
+export async function getDockerComposeCommand(
+  vps?: VpsConnection | null,
+  execFn: (command: string, vps?: VpsConnection | null, cwd?: string) => Promise<{ stdout: string; stderr: string; code: number }> = execOnVps
+): Promise<string> {
   const config = await getSystemConfig();
   if (config.composeCommand) {
     return config.composeCommand;
@@ -424,16 +427,16 @@ export async function getDockerComposeCommand(vps?: VpsConnection | null): Promi
 
   const conn = vps || (await getActiveVps());
   // Try docker compose (plugin) first, fallback to docker-compose (standalone)
-  const pluginCheck = await execOnVps("docker compose version 2>/dev/null", conn);
+  const pluginCheck = await execFn("docker compose version 2>/dev/null", conn);
   if (pluginCheck.code === 0 && pluginCheck.stdout.toLowerCase().includes("compose")) {
     return "docker compose";
   }
-  const standaloneCheck = await execOnVps("docker-compose version 2>/dev/null", conn);
+  const standaloneCheck = await execFn("docker-compose version 2>/dev/null", conn);
   if (standaloneCheck.code === 0 && standaloneCheck.stdout.toLowerCase().includes("compose")) {
     return "docker-compose";
   }
   // Also check if docker-compose binary exists on common paths even if `version` fails
-  const whichDc = await execOnVps(`which docker-compose 2>/dev/null || command -v docker-compose 2>/dev/null || echo ""`, conn);
+  const whichDc = await execFn(`which docker-compose 2>/dev/null || command -v docker-compose 2>/dev/null || echo ""`, conn);
   if (whichDc.stdout.trim()) {
     return "docker-compose";
   }
@@ -577,17 +580,18 @@ export type BinaryResolution =
 
 export async function resolveBinary(
   name: string,
-  vps?: VpsConnection | null
+  vps?: VpsConnection | null,
+  execFn: (command: string, vps?: VpsConnection | null, cwd?: string) => Promise<{ stdout: string; stderr: string; code: number }> = execOnVps
 ): Promise<BinaryResolution> {
   const conn = vps || (await getActiveVps());
 
   // Try `which` first (works on most systems)
-  const which = await execOnVps(`which ${shQuote(name)} 2>/dev/null || echo ""`, conn);
+  const which = await execFn(`which ${shQuote(name)} 2>/dev/null || echo ""`, conn);
   const path = which.stdout.trim();
   if (path && !path.includes("not found")) return { type: "path", path };
 
   // Try `command -v` (more portable on BusyBox/Alpine)
-  const commandV = await execOnVps(`command -v ${shQuote(name)} 2>/dev/null || echo ""`, conn);
+  const commandV = await execFn(`command -v ${shQuote(name)} 2>/dev/null || echo ""`, conn);
   const commandPath = commandV.stdout.trim();
   if (commandPath && commandPath.startsWith("/")) return { type: "path", path: commandPath };
 
@@ -603,12 +607,12 @@ export async function resolveBinary(
     `/snap/bin/${name}`,
   ];
   for (const p of candidates) {
-    const test = await execOnVps(`test -x ${shQuote(p)} && echo ${shQuote(p)} || echo ""`, conn);
+    const test = await execFn(`test -x ${shQuote(p)} && echo ${shQuote(p)} || echo ""`, conn);
     if (test.stdout.trim()) return { type: "path", path: test.stdout.trim() };
   }
 
   // Alpine: check if installed via apk
-  const apk = await execOnVps(
+  const apk = await execFn(
     `apk info -L ${shQuote(name)} 2>/dev/null | grep -E ${shQuote(`(sbin|bin)/${name}$`)} || echo ""`,
     conn
   );
@@ -616,7 +620,7 @@ export async function resolveBinary(
 
   // Also try docker container name for caddy/nginx
   if (name === "caddy" || name === "nginx") {
-    const docker = await execOnVps(
+    const docker = await execFn(
       `docker ps --format "{{.Names}}\t{{.Image}}" | awk -F '\\t' 'tolower($1) ~ /(^|[-_])${name}($|[-_])/ || tolower($2) ~ /(^|\\/|:)${name}(:|$)/ {print $1; exit}' || true`,
       conn
     );

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps, getDockerComposeCommand, resolveBinary, shQuote } from "@/lib/vps";
+import { getDockerComposeCommand, resolveBinary, shQuote } from "@/lib/vps";
+import { execOnTarget } from "@/lib/host-exec";
 import { requireAuth } from "@/lib/auth";
 
 const PATH_EXPORT = 'export PATH="/usr/local/bin:/usr/bin:/bin:/snap/bin:$PATH"';
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
 
     if (isDockerCompose) {
       try {
-        const composeCmd = await getDockerComposeCommand();
+        const composeCmd = await getDockerComposeCommand(null, execOnTarget);
         if (composeCmd !== "docker compose") {
           cmd = cmd.replace(/^\s*docker\s+compose\b/, composeCmd);
         }
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
     // Auto-resolve common host/container binaries for non-interactive shells.
     if (["caddy", "nginx", "docker-compose"].includes(firstWord)) {
       try {
-        const resolution = await resolveBinary(firstWord);
+        const resolution = await resolveBinary(firstWord, null, execOnTarget);
         if (resolution.type === "docker" && (firstWord === "caddy" || firstWord === "nginx")) {
           cmd = cmd.replace(
             new RegExp(`^\\s*${firstWord}\\b`),
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const result = await execOnVps(cmd, null, cwd || "/");
+    const result = await execOnTarget(cmd, null, cwd || "/");
     return NextResponse.json({
       stdout: result.stdout,
       stderr: result.stderr,
