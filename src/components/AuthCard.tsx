@@ -1,7 +1,6 @@
 "use client";
 
-import LoginHero3D from "@/components/LoginHero3D";
-import LoginScene3D from "@/components/LoginScene3D";
+import BrandLogo from "@/components/BrandLogo";
 
 interface AuthCardProps {
   title: string;
@@ -17,92 +16,137 @@ interface AuthCardProps {
 export default function AuthCard({
   title,
   subtitle,
-  badge = "GC",
-  badgeColor = "from-accent via-orange-500 to-orange-600",
-  children,
   footer,
   layout = "center",
   leftPanel,
+  children,
 }: AuthCardProps) {
-  if (layout === "split") {
-    return (
-      <main className="relative min-h-screen w-full overflow-hidden">
-        <LoginScene3D />
+  return (
+    <main className="sr-theme relative min-h-screen w-full overflow-hidden">
+      {/* Warm ambient background */}
+      <div className="absolute inset-0 bg-[var(--sr-bg)]" />
+      <div
+        className="pointer-events-none absolute -top-[20%] -right-[8%] w-[46%] aspect-square rounded-full opacity-60"
+        style={{
+          background:
+            "radial-gradient(circle at 50% 50%, rgba(255, 106, 64, 0.16), transparent 68%)",
+        }}
+      />
+      <div
+        className="pointer-events-none absolute bottom-0 left-0 w-full h-1/2 opacity-40"
+        style={{
+          background:
+            "linear-gradient(to top, rgba(236, 234, 227, 1) 0%, transparent 100%)",
+        }}
+      />
 
-        {/* Desktop: form anchored right; Mobile: form centered over scene */}
-        <div className="relative z-10 min-h-screen flex items-center justify-center md:justify-end">
-          {leftPanel && (
-            <div className="hidden md:flex absolute left-0 top-0 pt-10 pl-10 lg:pl-16 xl:pl-24 pointer-events-none z-20">
-              {leftPanel}
+      {layout === "split" ? (
+        <div className="relative z-10 min-h-screen flex flex-col md:flex-row">
+          {/* Left panel: brand story */}
+          <div className="hidden md:flex md:w-1/2 lg:w-[55%] flex-col justify-between px-10 lg:px-16 xl:px-24 py-12">
+            <div className="flex items-center gap-3">
+              <BrandLogo size={32} stroke="#1b1916" />
+              <span
+                className="sr-display text-lg font-medium tracking-tight"
+                style={{ color: "var(--sr-text-90)" }}
+              >
+                GroundControl
+                <span style={{ color: "var(--sr-coral)" }}>.</span>
+              </span>
             </div>
-          )}
-          <div className="w-full md:w-[480px] lg:w-[500px] xl:w-[520px] px-6 py-12 md:pr-12 lg:pr-20 xl:pr-28 md:pl-0">
-            <div className="relative rounded-3xl bg-gradient-to-b from-white/[0.08] to-white/[0.02] p-px shadow-2xl">
-              <div className="relative rounded-3xl bg-black/30 backdrop-blur-2xl px-10 py-12 overflow-hidden">
-                <div className="absolute -top-20 -right-20 w-44 h-44 rounded-full bg-accent/20 blur-[72px]" />
-                <div className="absolute -bottom-20 -left-20 w-44 h-44 rounded-full bg-purple-500/15 blur-[72px]" />
+            <div className="max-w-md">{leftPanel}</div>
+            <p
+              className="sr-mono text-[11px] uppercase tracking-widest"
+              style={{ color: "var(--sr-text-35)" }}
+            >
+              Self-hosted VPS cockpit
+            </p>
+          </div>
 
-                {footer && (
-                  <p className="relative mb-8 text-center text-xs text-white/40 leading-relaxed max-w-[320px] mx-auto">
-                    {footer}
-                  </p>
-                )}
+          {/* Right panel: form */}
+          <div className="flex-1 flex items-center justify-center px-6 py-12 md:px-12 lg:px-20">
+            <div className="w-full max-w-[420px]">
+              {footer && (
+                <p
+                  className="mb-6 text-center text-xs leading-relaxed"
+                  style={{ color: "var(--sr-text-35)" }}
+                >
+                  {footer}
+                </p>
+              )}
 
-                <div className="relative flex flex-col items-center text-center mb-8">
+              <div
+                className="rounded-[var(--radius-xl)] p-8 md:p-10 shadow-lg"
+                style={{
+                  background: "var(--sr-paper)",
+                  boxShadow: "0 26px 60px rgba(27, 25, 22, 0.12)",
+                }}
+              >
+                <div className="flex flex-col items-center text-center mb-8">
                   <div className="relative mb-5">
-                    <div
-                      className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${badgeColor} flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-accent/20`}
-                    >
-                      {badge}
-                    </div>
-                    <div className="absolute inset-0 rounded-2xl bg-accent/40 blur-xl -z-10 animate-pulse-slow" />
+                    <BrandLogo size={56} stroke="#1b1916" />
                   </div>
-                  <h1 className="text-3xl font-bold tracking-tight text-white drop-shadow-sm">{title}</h1>
-                  <p className="mt-2 text-sm text-white/50 font-medium">{subtitle}</p>
+                  <h1
+                    className="sr-display text-2xl md:text-3xl font-medium tracking-tight"
+                    style={{ color: "var(--sr-text-90)" }}
+                  >
+                    {title}
+                  </h1>
+                  <p
+                    className="mt-2 text-sm font-medium"
+                    style={{ color: "var(--sr-text-55)" }}
+                  >
+                    {subtitle}
+                  </p>
                 </div>
 
-                <div className="relative">{children}</div>
+                <div>{children}</div>
               </div>
             </div>
           </div>
         </div>
-      </main>
-    );
-  }
-
-  return (
-    <main className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden px-6">
-      <LoginHero3D />
-
-      <div className="relative z-10 w-full max-w-sm">
-        <div className="relative rounded-3xl bg-gradient-to-b from-white/[0.07] to-white/[0.02] p-px shadow-2xl">
-          <div className="relative rounded-3xl bg-black/20 backdrop-blur-2xl px-8 py-10 overflow-hidden">
-            <div className="absolute -top-24 -right-24 w-48 h-48 rounded-full bg-accent/20 blur-[80px]" />
-            <div className="absolute -bottom-24 -left-24 w-48 h-48 rounded-full bg-purple-500/15 blur-[80px]" />
-
+      ) : (
+        <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-6 py-12">
+          <div className="w-full max-w-[420px]">
             {footer && (
-              <p className="relative mb-8 text-center text-xs text-white/40 leading-relaxed max-w-[320px] mx-auto">
+              <p
+                className="mb-6 text-center text-xs leading-relaxed"
+                style={{ color: "var(--sr-text-35)" }}
+              >
                 {footer}
               </p>
             )}
 
-            <div className="relative flex flex-col items-center text-center mb-8">
-              <div className="relative mb-5">
-                <div
-                  className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${badgeColor} flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-accent/20`}
-                >
-                  {badge}
+            <div
+              className="rounded-[var(--radius-xl)] p-8 md:p-10"
+              style={{
+                background: "var(--sr-paper)",
+                boxShadow: "0 26px 60px rgba(27, 25, 22, 0.12)",
+              }}
+            >
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="relative mb-5">
+                  <BrandLogo size={56} stroke="#1b1916" />
                 </div>
-                <div className="absolute inset-0 rounded-2xl bg-accent/40 blur-xl -z-10 animate-pulse-slow" />
+                <h1
+                  className="sr-display text-2xl md:text-3xl font-medium tracking-tight"
+                  style={{ color: "var(--sr-text-90)" }}
+                >
+                  {title}
+                </h1>
+                <p
+                  className="mt-2 text-sm font-medium"
+                  style={{ color: "var(--sr-text-55)" }}
+                >
+                  {subtitle}
+                </p>
               </div>
-              <h1 className="text-3xl font-bold tracking-tight text-white drop-shadow-sm">{title}</h1>
-              <p className="mt-2 text-sm text-white/50 font-medium">{subtitle}</p>
-            </div>
 
-            <div className="relative">{children}</div>
+              <div>{children}</div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }
@@ -113,11 +157,27 @@ export function AuthInput({
 }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) {
   return (
     <div className="group">
-      <label className="block text-[11px] font-semibold uppercase tracking-wider text-white/40 mb-1.5 group-focus-within:text-accent transition-colors">
+      <label
+        className="block text-[11px] font-semibold uppercase tracking-wider mb-1.5 transition-colors"
+        style={{ color: "var(--sr-text-35)" }}
+      >
         {label}
       </label>
       <input
-        className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/20 outline-none transition-all focus:bg-white/[0.07] focus:border-accent/50 focus:ring-2 focus:ring-accent/10"
+        className="w-full rounded-xl px-4 py-3 text-sm outline-none transition-all"
+        style={{
+          background: "var(--sr-bg)",
+          color: "var(--sr-text-90)",
+          border: "1px solid var(--sr-stone)",
+        }}
+        onFocus={(e) => {
+          e.currentTarget.style.borderColor = "var(--sr-coral)";
+          e.currentTarget.style.boxShadow = "0 0 0 3px rgba(232, 84, 42, 0.10)";
+        }}
+        onBlur={(e) => {
+          e.currentTarget.style.borderColor = "var(--sr-stone)";
+          e.currentTarget.style.boxShadow = "none";
+        }}
         {...props}
       />
     </div>
@@ -132,13 +192,13 @@ export function AuthButton({
   return (
     <button
       disabled={loading}
-      className="relative w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-accent via-orange-500 to-accent bg-[length:200%_100%] text-white text-sm font-semibold shadow-lg shadow-accent/20 transition-all hover:shadow-accent/30 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
+      className="sr-btn sr-btn-coral relative w-full mt-2 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
       {...props}
     >
       <span className="relative z-10 flex items-center justify-center gap-2">
         {loading ? (
           <>
-            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            <span className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
             {children}...
           </>
         ) : (
@@ -152,7 +212,14 @@ export function AuthButton({
 export function AuthError({ message }: { message?: string }) {
   if (!message) return null;
   return (
-    <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-sm text-center animate-shake">
+    <div
+      className="p-3 rounded-xl text-sm text-center animate-shake"
+      style={{
+        background: "rgba(239, 68, 68, 0.08)",
+        border: "1px solid rgba(239, 68, 68, 0.18)",
+        color: "#c0392b",
+      }}
+    >
       {message}
     </div>
   );

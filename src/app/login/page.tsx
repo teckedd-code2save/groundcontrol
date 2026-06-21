@@ -98,18 +98,29 @@ function StoryPanel() {
   ];
 
   return (
-    <div className="flex flex-col gap-4 max-w-xs lg:max-w-sm">
-      <h2 className="text-2xl lg:text-3xl font-bold text-white/90 tracking-tight drop-shadow-lg leading-tight">
-        Mission control<br />for your fleet.
+    <div className="flex flex-col gap-5 max-w-md">
+      <div className="sr-eyebrow">AI-assisted operations</div>
+      <h2
+        className="sr-display text-3xl lg:text-4xl xl:text-5xl font-medium tracking-tight leading-[1.05]"
+        style={{ color: "var(--sr-text-90)" }}
+      >
+        A container that learned to drive the host.
       </h2>
-      <p className="text-sm text-white/40 leading-relaxed">
-        Live topology, container ops, reverse proxy, and AI-assisted deployments from one dashboard.
+      <p
+        className="text-base leading-relaxed max-w-sm"
+        style={{ color: "var(--sr-text-55)" }}
+      >
+        GroundControl runs inside Docker, talks to the host OS through a one-shot namespace bridge, and gives you a real VPS cockpit from the browser.
       </p>
       <div className="mt-2 flex flex-wrap gap-2">
         {items.map((item) => (
           <span
             key={item.label}
-            className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/10 text-[10px] font-mono uppercase tracking-wider text-white/50"
+            className="sr-mono px-3 py-1.5 rounded-full text-[10px] uppercase tracking-widest"
+            style={{
+              background: "var(--sr-stone)",
+              color: "var(--sr-text-55)",
+            }}
           >
             {item.label}
           </span>

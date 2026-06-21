@@ -13,15 +13,34 @@ export function StatCard({ title, value, subtitle, trend = "neutral", icon }: St
     trend === "up" ? "text-success" : trend === "down" ? "text-error" : "text-muted";
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 hover:border-border-hover transition-colors">
+    <div
+      className="rounded-[var(--radius-lg)] p-5 transition-all duration-300 hover:-translate-y-1 group"
+      style={{
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "var(--border-hover)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+      }}
+    >
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs font-mono uppercase tracking-wider text-muted mb-2">{title}</p>
+          <p className="sr-mono text-[11px] uppercase tracking-widest text-muted mb-2">{title}</p>
           <p className="text-2xl font-bold tracking-tight">{value}</p>
           {subtitle && <p className={`text-xs mt-1 ${trendColor}`}>{subtitle}</p>}
         </div>
         {icon && (
-          <div className="w-9 h-9 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent text-sm">
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-sm transition-transform duration-300 group-hover:scale-110"
+            style={{
+              background: "rgba(232, 84, 42, 0.10)",
+              border: "1px solid rgba(232, 84, 42, 0.20)",
+              color: "var(--accent)",
+            }}
+          >
             {icon}
           </div>
         )}

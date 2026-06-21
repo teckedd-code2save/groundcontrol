@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import LoginHero3D from "@/components/LoginHero3D";
+import BrandLogo from "@/components/BrandLogo";
 import AuthCard, { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 
 export default function SetupPage() {
@@ -58,11 +58,13 @@ export default function SetupPage() {
 
   if (checking) {
     return (
-      <main className="relative min-h-screen w-full flex items-center justify-center">
-        <LoginHero3D />
-        <div className="relative z-10 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-accent animate-pulse" />
-          <span className="text-sm font-mono text-white/50">Loading...</span>
+      <main className="sr-theme relative min-h-screen w-full flex items-center justify-center">
+        <div className="absolute inset-0" style={{ background: "var(--sr-bg)" }} />
+        <div className="relative z-10 flex flex-col items-center gap-4">
+          <BrandLogo size={48} stroke="#1b1916" />
+          <span className="sr-mono text-sm" style={{ color: "var(--sr-text-35)" }}>
+            Loading...
+          </span>
         </div>
       </main>
     );
