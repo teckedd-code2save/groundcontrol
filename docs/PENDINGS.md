@@ -2,6 +2,8 @@
 
 This file tracks the known gaps, rough edges, and follow-up work from the four-phase "next-level deployment" push. It is meant to be a living list: pick an item, fix it, and remove or update its entry.
 
+> **New:** For a step-by-step guide on installing and testing every integration, see [`INTEGRATION-GUIDE.md`](./INTEGRATION-GUIDE.md).
+
 > Last updated: 2026-06-20
 
 ---

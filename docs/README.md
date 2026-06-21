@@ -20,6 +20,10 @@
 - **[DEMO.md](./DEMO.md)** — a click-by-click script for recording a 2–4 minute demo.
 - **[demo-data.md](./demo-data.md)** — seed fake data so the dashboard looks alive without a real server.
 
+## 🧪 Test all integrations
+
+- **[INTEGRATION-GUIDE.md](./INTEGRATION-GUIDE.md)** — step-by-step guide for k3s, kubectl, Helm, Terraform, Cloudflare, and cloud accounts, plus a full end-to-end testing checklist.
+
 ## 🛠️ Reference
 
 - `src/lib/docker-host-bridge.ts` — the container-to-host bridge implementation.
