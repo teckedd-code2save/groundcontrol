@@ -3,14 +3,25 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { serializeProgress } from "@/lib/guides/progress";
+import { upsertGuidesFromDisk } from "@/lib/guides/loader";
 
 export async function GET(req: NextRequest) {
   try {
     const user = requireAuth(req);
-    const guides = await prisma.guide.findMany({
+    let guides = await prisma.guide.findMany({
       where: { isPublished: true },
       orderBy: [{ category: "asc" }, { title: "asc" }],
     });
+
+    // Self-healing: if no guides are in the DB, load them from disk automatically.
+    // This avoids requiring a manual `npm run db:seed` in every deployment environment.
+    if (guides.length === 0) {
+      await upsertGuidesFromDisk();
+      guides = await prisma.guide.findMany({
+        where: { isPublished: true },
+        orderBy: [{ category: "asc" }, { title: "asc" }],
+      });
+    }
 
     const progressRecords = await prisma.userGuideProgress.findMany({
       where: { userId: user.id },

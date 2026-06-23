@@ -3,16 +3,28 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { getOrCreateProgress, serializeProgress } from "@/lib/guides/progress";
-import { parseGuideSteps } from "@/lib/guides/loader";
+import { parseGuideSteps, upsertGuidesFromDisk } from "@/lib/guides/loader";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const user = requireAuth(req);
     const { slug } = await params;
 
-    const guide = await prisma.guide.findUnique({
+    let guide = await prisma.guide.findUnique({
       where: { slug, isPublished: true },
     });
+
+    // Self-healing: seed guides from disk if this one is missing.
+    if (!guide) {
+      const count = await prisma.guide.count();
+      if (count === 0) {
+        await upsertGuidesFromDisk();
+        guide = await prisma.guide.findUnique({
+          where: { slug, isPublished: true },
+        });
+      }
+    }
+
     if (!guide) {
       return NextResponse.json({ error: "Guide not found" }, { status: 404 });
     }
