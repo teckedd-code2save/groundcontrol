@@ -1,0 +1,63 @@
+{
+  "slug": "k3s-traefik-incident",
+  "title": "Recovering from a k3s Traefik port hijack",
+  "description": "A step-by-step incident walkthrough: how k3s's bundled Traefik LoadBalancer can steal ports 80/443 from Caddy, and how to fix it.",
+  "category": "incident",
+  "sourceRef": "docs/INCIDENT-k3s-traefik-port-hijack.md",
+  "isPublished": true,
+  "steps": [
+    {
+      "id": "symptoms",
+      "title": "Recognize the symptoms",
+      "content": "All Caddy-fronted domains return `404 Not Found` with the **TRAEFIK DEFAULT CERT**. Your apps are healthy when checked directly on their localhost ports, but public HTTPS fails uniformly.\n\nThis happens because k3s's bundled Traefik is exposed as a `LoadBalancer`, and k3s's ServiceLB (Klipper) pod DNATs host `:80/:443` traffic into the cluster before it reaches Caddy."
+    },
+    {
+      "id": "confirm-listeners",
+      "title": "Confirm who is listening on 80/443",
+      "content": "Caddy may still hold the socket, but packets can be redirected below it by iptables. Check both the socket owner and the firewall rules.",
+      "checkCommand": "sudo ss -tlnp | grep -E ':80\\s|:443\\s'",
+      "expectedOutput": "caddy",
+      "aiHint": "If you see 'traefik' or 'klipper' here, the k3s ServiceLB pod is binding the host network ports directly."
+    },
+    {
+      "id": "confirm-dnat",
+      "title": "Confirm iptables DNAT rules",
+      "content": "ServiceLB inserts iptables rules that rewrite packets destined for the host's public IP on `:80/:443` to the cluster's internal Traefik service. Even if Caddy owns the socket, the packet never arrives.",
+      "checkCommand": "sudo iptables -t nat -L -n | grep -E ':80|:443'",
+      "expectedOutput": "",
+      "aiHint": "If you see DNAT rules pointing to 10.43.x.x addresses, ServiceLB is actively hijacking the ports. An empty result means the hijack is not present."
+    },
+    {
+      "id": "inspect-svclb",
+      "title": "Inspect the k3s ServiceLB pods",
+      "content": "k3s creates a host-network DaemonSet called `svclb-traefik-*` for each Traefik LoadBalancer service. These pods bind the host ports.",
+      "checkCommand": "kubectl get pods -n kube-system -l svccontroller.k3s.cattle.io/svcname=traefik",
+      "expectedOutput": "",
+      "aiHint": "If pods are Running, they are holding the host ports. Deleting the Traefik HelmChart and LoadBalancer service will remove them."
+    },
+    {
+      "id": "disable-traefik",
+      "title": "Disable Traefik in k3s config",
+      "content": "Create or edit `/etc/rancher/k3s/config.yaml`:\n\n```yaml\ndisable:\n  - traefik\n```\n\nThen restart k3s:\n\n```bash\nsudo systemctl restart k3s\n```",
+      "checkCommand": "cat /etc/rancher/k3s/config.yaml",
+      "expectedOutput": "traefik",
+      "aiHint": "If the config file does not exist or does not contain 'disable: [traefik]', the next k3s restart may re-enable Traefik."
+    },
+    {
+      "id": "remove-leftovers",
+      "title": "Remove leftover Traefik resources",
+      "content": "Delete the HelmChart so k3s does not recreate Traefik, then delete the LoadBalancer service and its svclb DaemonSet:\n\n```bash\nkubectl delete helmchart -n kube-system traefik\nkubectl delete svc -n kube-system traefik\nkubectl delete daemonset -n kube-system svclb-traefik\n```",
+      "checkCommand": "kubectl get svc -n kube-system traefik",
+      "expectedOutput": "",
+      "aiHint": "If the service still exists, ServiceLB may still be running. The expected result is 'Error from server (NotFound)'."
+    },
+    {
+      "id": "verify-fix",
+      "title": "Verify the edge is free",
+      "content": "After k3s settles, confirm no DNAT rules remain and Caddy is serving the real certificates again.",
+      "checkCommand": "sudo iptables -t nat -L -n | grep -E ':80|:443' && curl -I -k https://cloudie.serendepify.com/",
+      "expectedOutput": "HTTP/2 200",
+      "aiHint": "If the curl still shows a Traefik certificate, look for stale DNAT rules or another LoadBalancer service in kube-system."
+    }
+  ]
+}

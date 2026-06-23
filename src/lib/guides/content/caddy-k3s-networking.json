@@ -1,0 +1,46 @@
+{
+  "slug": "caddy-k3s-networking",
+  "title": "Caddy and k3s networking concepts",
+  "description": "Learn ClusterIP, NodePort, LoadBalancer, ServiceLB, and Traefik — and how they fit together with Caddy as the edge proxy.",
+  "category": "concept",
+  "sourceRef": "docs/CADDY-K3S-NETWORKING-PRIMER.md",
+  "isPublished": true,
+  "steps": [
+    {
+      "id": "clusterip",
+      "title": "ClusterIP — internal only",
+      "content": "A `ClusterIP` Service is reachable only from inside the k3s cluster. Think of it as an internal phone extension. Other pods can call it by name, but the host OS and the internet cannot reach it directly.\n\n**Use it for:** databases, internal APIs, or any workload that should never be exposed publicly."
+    },
+    {
+      "id": "nodeport",
+      "title": "NodePort — a public door on a high port",
+      "content": "A `NodePort` Service exposes the app on every node at a specific high port (default `30000–32767`). From outside you can hit `128.140.12.62:30080` and reach the app.\n\n**Key point:** NodePort does not use `:80` or `:443` by default, so it does not conflict with Caddy. You can point Caddy to `127.0.0.1:<nodeport>` as an upstream.",
+      "checkCommand": "kubectl get svc",
+      "expectedOutput": "",
+      "aiHint": "Look for services with TYPE NodePort. The PORT(S) column shows the high port after the colon, e.g. 80:30080/TCP."
+    },
+    {
+      "id": "loadbalancer",
+      "title": "LoadBalancer — normal ports, hidden danger",
+      "content": "A `LoadBalancer` Service asks for a public IP and normal ports like `:80/:443`. In the cloud this creates a real load balancer. In k3s it triggers **ServiceLB / Klipper**, which binds the host ports via iptables DNAT.\n\nThat is exactly what broke Caddy: k3s's Traefik LoadBalancer told ServiceLB to claim `:443` on the host."
+    },
+    {
+      "id": "traefik-role",
+      "title": "What Traefik does",
+      "content": "Traefik is an **ingress controller**. It reads Kubernetes Ingress resources and routes requests to pods. It is not evil — it is just another reverse proxy.\n\nThe conflict only happens when Traefik and Caddy both want to be the edge proxy on the same host ports."
+    },
+    {
+      "id": "recommended-pattern",
+      "title": "Recommended pattern: Caddy edge + k3s NodePort",
+      "content": "Keep Caddy as the single TLS terminator on `:443`. For each k3s app, expose it via NodePort and add a Caddy site block:\n\n```caddy\nmyapp.serendepify.com {\n    reverse_proxy 127.0.0.1:30080\n}\n```\n\nThis gives you Kubernetes orchestration without port conflicts."
+    },
+    {
+      "id": "experiment",
+      "title": "Try it yourself",
+      "content": "Deploy a small app to k3s and expose it as NodePort. Find the assigned port with `kubectl get svc`, then curl it from the host. Once it works, add a Caddy route and visit it from the internet.",
+      "checkCommand": "curl -s http://127.0.0.1:30080 | head -c 200",
+      "expectedOutput": "",
+      "aiHint": "If you do not have a NodePort service yet, run 'kubectl expose deployment <name> --type=NodePort --port=80' or create one from the k3s integration guide."
+    }
+  ]
+}

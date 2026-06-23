@@ -29,6 +29,7 @@ import {
   type BootstrapResult,
 } from "@/lib/bootstrap";
 import { isAllowedSystemPath, validateSafePath, validateSystemCommand } from "@/lib/host-safety";
+import { listPublishedGuides, getGuideBySlug, parseGuideSteps } from "@/lib/guides/loader";
 
 /**
  * GroundControl AI agent tool set.
@@ -885,6 +886,81 @@ export const AGENT_TOOLS: AgentTool[] = [
         const command = String(args?.command || "").trim();
         if (!command) return "ERROR: command is required.";
         return runSystemCommand(command);
+      }),
+  },
+  // --- Interactive learning guide tools --------------------------------------
+  {
+    name: "list_guides",
+    description:
+      "List the interactive learning guides available in GroundControl (integrations, incidents, concepts, checklists). Use when the user wants to browse guides or find a walkthrough.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const guides = await listPublishedGuides();
+        return JSON.stringify(
+          guides.map((g) => ({ slug: g.slug, title: g.title, category: g.category, description: g.description })),
+          null,
+          2
+        );
+      }),
+  },
+  {
+    name: "get_guide_step",
+    description:
+      "Get the full content of a specific step from an interactive guide. Use when the user asks about a guide step that is not the current one, or wants to peek ahead.",
+    parameters: {
+      type: "object",
+      properties: {
+        guideSlug: { type: "string", description: "Guide slug, e.g. 'k3s-integration'." },
+        stepId: { type: "string", description: "Step id, e.g. 'install-k3s'." },
+      },
+      required: ["guideSlug", "stepId"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.guideSlug || "").trim();
+        const stepId = String(args?.stepId || "").trim();
+        if (!slug) return "ERROR: guideSlug is required.";
+        if (!stepId) return "ERROR: stepId is required.";
+        const guide = await getGuideBySlug(slug);
+        if (!guide) return `Guide "${slug}" not found.`;
+        const steps = parseGuideSteps(guide);
+        const step = steps.find((s) => s.id === stepId);
+        if (!step) return `Step "${stepId}" not found in guide "${slug}".`;
+        return JSON.stringify(step, null, 2);
+      }),
+  },
+  {
+    name: "run_guide_check",
+    description:
+      "Run the verification command associated with a specific guide step on the active VPS. Use when the user is working through a guide and wants to validate the current step. The command is read-only by definition (it only inspects).",
+    parameters: {
+      type: "object",
+      properties: {
+        guideSlug: { type: "string", description: "Guide slug." },
+        stepId: { type: "string", description: "Step id." },
+      },
+      required: ["guideSlug", "stepId"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.guideSlug || "").trim();
+        const stepId = String(args?.stepId || "").trim();
+        if (!slug) return "ERROR: guideSlug is required.";
+        if (!stepId) return "ERROR: stepId is required.";
+        const guide = await getGuideBySlug(slug);
+        if (!guide) return `Guide "${slug}" not found.`;
+        const steps = parseGuideSteps(guide);
+        const step = steps.find((s) => s.id === stepId);
+        if (!step) return `Step "${stepId}" not found in guide "${slug}".`;
+        if (!step.checkCommand) return `Step "${stepId}" has no verification command.`;
+        const { stdout, stderr, code } = await execOnVps(step.checkCommand);
+        return JSON.stringify({ ok: code === 0, stdout, stderr, code, expectedOutput: step.expectedOutput }, null, 2);
       }),
   },
 ];

@@ -1,0 +1,66 @@
+{
+  "slug": "bootstrap-checklist",
+  "title": "GroundControl bootstrap checklist",
+  "description": "Verify every core integration is installed and reachable on the active VPS.",
+  "category": "checklist",
+  "sourceRef": "docs/INTEGRATION-GUIDE.md",
+  "isPublished": true,
+  "steps": [
+    {
+      "id": "docker",
+      "title": "Docker is installed",
+      "content": "GroundControl manages containers through Docker. Verify the daemon is reachable from the host.",
+      "checkCommand": "docker --version && docker ps",
+      "expectedOutput": "Docker version",
+      "aiHint": "If docker is missing, install it from Services → Install or run the bootstrap routine."
+    },
+    {
+      "id": "git",
+      "title": "Git is installed",
+      "content": "Git is used to clone repositories during builds and deploys.",
+      "checkCommand": "git --version",
+      "expectedOutput": "git version",
+      "aiHint": "Install git from Services → Install if this check fails."
+    },
+    {
+      "id": "caddy",
+      "title": "Caddy is installed and running",
+      "content": "Caddy is the default edge reverse proxy. It should be installed and managed by systemd or openrc.",
+      "checkCommand": "caddy version && systemctl is-active caddy",
+      "expectedOutput": "active",
+      "aiHint": "If caddy is installed but not active, run 'systemctl start caddy' or check the Caddyfile syntax."
+    },
+    {
+      "id": "nginx",
+      "title": "Nginx is available",
+      "content": "Nginx is a fallback/alternative proxy. GroundControl can write Nginx site blocks if Caddy is not preferred.",
+      "checkCommand": "nginx -v || command -v nginx",
+      "expectedOutput": "nginx",
+      "aiHint": "Nginx is optional if you only use Caddy. Skip this step if you do not need it."
+    },
+    {
+      "id": "k3s",
+      "title": "k3s is installed (optional)",
+      "content": "Only needed if you plan to deploy to the k3s target. Remember to disable Traefik if Caddy owns :80/:443.",
+      "checkCommand": "kubectl get nodes",
+      "expectedOutput": "Ready",
+      "aiHint": "See the k3s integration guide for install steps. If you do not need Kubernetes, you can skip this."
+    },
+    {
+      "id": "terraform",
+      "title": "Terraform is installed (optional)",
+      "content": "Terraform is used by the Infrastructure control plane to provision VPS resources.",
+      "checkCommand": "terraform version",
+      "expectedOutput": "Terraform v",
+      "aiHint": "Install Terraform from Services → Install if you plan to use the Infrastructure stacks."
+    },
+    {
+      "id": "cloudflared",
+      "title": "cloudflared is installed (optional)",
+      "content": "cloudflared creates preview tunnels and persistent Cloudflare tunnels.",
+      "checkCommand": "cloudflared version",
+      "expectedOutput": "cloudflared",
+      "aiHint": "Install cloudflared from Services → Install if you want preview URLs or persistent tunnels."
+    }
+  ]
+}

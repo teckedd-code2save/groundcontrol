@@ -13,6 +13,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: "◈" },
   { href: "/topology", label: "Topology", icon: "◐" },
   { href: "/services", label: "Services", icon: "◉" },
+  { href: "/guides", label: "Guides", icon: "▣" },
   { href: "/terminal", label: "Terminal", icon: "⌘" },
   { href: "/alerts", label: "Alerts", icon: "◑" },
   { href: "/settings", label: "Settings", icon: "⚙" },

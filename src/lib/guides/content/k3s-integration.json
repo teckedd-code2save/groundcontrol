@@ -1,0 +1,55 @@
+{
+  "slug": "k3s-integration",
+  "title": "Install and use k3s in GroundControl",
+  "description": "Walk through installing k3s, kubectl, and Helm on the active VPS, then deploy your first project into the cluster.",
+  "category": "integration",
+  "sourceRef": "docs/INTEGRATION-GUIDE.md",
+  "isPublished": true,
+  "steps": [
+    {
+      "id": "what-is-k3s",
+      "title": "What is k3s?",
+      "content": "k3s is a lightweight Kubernetes distribution. In GroundControl it is the **server**: the cluster that runs your containers. kubectl is the **remote** used to talk to it, and Helm is the **app installer** for Kubernetes packages.\n\nYou do not need k3s to use kubectl — GroundControl can point kubectl at any cluster — but the default path assumes k3s lives on the active VPS because that is the simplest self-hosted setup."
+    },
+    {
+      "id": "install-k3s",
+      "title": "Install k3s on the active VPS",
+      "content": "Go to **Services → Install** and click **k3s**. GroundControl will run the official installer on the active host and write a kubeconfig to `/etc/rancher/k3s/k3s.yaml`.\n\n> **Important on Caddy-first hosts:** k3s ships a bundled Traefik exposed as a LoadBalancer. Its ServiceLB (Klipper) pod will claim host ports `:80` and `:443` via iptables DNAT, which breaks Caddy. If you use Caddy as your edge proxy, disable Traefik during install or immediately after. See the *Recovering from a k3s Traefik port hijack* guide for the fix.",
+      "checkCommand": "kubectl get nodes",
+      "expectedOutput": "Ready",
+      "aiHint": "If this check fails, either k3s is not installed, the kubeconfig path is wrong, or kubectl is not in PATH. Start by verifying 'systemctl status k3s' and that /etc/rancher/k3s/k3s.yaml exists."
+    },
+    {
+      "id": "install-kubectl",
+      "title": "Install kubectl and Helm",
+      "content": "In **Services → Install**, click **kubectl** and **Helm**. GroundControl downloads static binaries to `/usr/local/bin`. These tools run on the host and talk to the k3s API.",
+      "checkCommand": "kubectl version --client && helm version",
+      "expectedOutput": "Client Version",
+      "aiHint": "If either command is missing, the install did not place the binary in PATH. Check /usr/local/bin and the active VPS's SystemConfig paths."
+    },
+    {
+      "id": "verify-cluster",
+      "title": "Verify the cluster is reachable",
+      "content": "Use the terminal or AI assistant to inspect the cluster. You should see one Ready node. Try asking the AI \"show me the pods\" — it will run `kubectl get pods -A` on the host.",
+      "checkCommand": "kubectl get nodes -o wide",
+      "expectedOutput": "Ready",
+      "aiHint": "A NotReady node usually means the k3s service is not running or the kubelet cannot talk to the API server. Check 'systemctl status k3s' and /var/log/syslog or journalctl."
+    },
+    {
+      "id": "deploy-project",
+      "title": "Deploy a project to k3s",
+      "content": "1. Go to **Services → Projects**.\n2. Create or edit a project.\n3. Set **Deploy target** to `k3s`.\n4. GroundControl builds a Docker image, imports it into the k3s container runtime, generates Kubernetes manifests (Deployment, Service, Ingress), and applies them.\n5. Open **Services → Projects → Deployments** to watch status.",
+      "checkCommand": "kubectl get pods -n default",
+      "expectedOutput": "Running",
+      "aiHint": "If pods are in ImagePullBackOff, the image was not imported successfully. Run 'k3s ctr images ls | grep <image-name>' to verify. If CrashLoopBackOff, check the pod logs with 'kubectl logs -n default <pod-name>'."
+    },
+    {
+      "id": "inspect-resources",
+      "title": "Inspect the cluster from the UI",
+      "content": "GroundControl exposes read-only Kubernetes APIs at `/api/k8s/namespaces`, `/api/k8s/pods`, `/api/k8s/services`, and `/api/k8s/ingresses`. The topology and AI assistant use these to answer questions like \"why is my pod crashing?\"",
+      "checkCommand": "kubectl get svc,ingress -n default",
+      "expectedOutput": "",
+      "aiHint": "If no Service or Ingress appears, the deploy target may not have applied manifests. Check the deployment job output in the UI."
+    }
+  ]
+}

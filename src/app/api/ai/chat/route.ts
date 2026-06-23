@@ -20,6 +20,7 @@ import {
   type ToolCallRecord,
 } from "@/lib/ai-memory";
 import { getHostCapabilities, formatCapabilitiesForPrompt } from "@/lib/host-capabilities";
+import { formatGuideContextForPrompt } from "@/lib/guides/ai-context";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -72,6 +73,7 @@ interface RequestBody {
   threadId?: number;
   message?: string;
   confirmedTool?: ConfirmedTool;
+  guideContext?: { guideSlug: string; stepId?: string };
 }
 
 const encoder = new TextEncoder();
@@ -100,7 +102,7 @@ export async function POST(req: NextRequest) {
     const user = requireAuth(req);
 
     const body = (await req.json()) as RequestBody;
-    const { threadId: existingThreadId, message, confirmedTool } = body;
+    const { threadId: existingThreadId, message, confirmedTool, guideContext } = body;
 
     const { provider, apiKey } = getActiveAi();
     if (!apiKey) {
@@ -137,9 +139,14 @@ export async function POST(req: NextRequest) {
         try {
           const caps = await getHostCapabilities().catch(() => null);
           const capabilityPreamble = caps ? formatCapabilitiesForPrompt(caps) : "";
-          const systemPrompt = capabilityPreamble
-            ? `${capabilityPreamble}\n\n${SYSTEM_PROMPT}`
-            : SYSTEM_PROMPT;
+          const guidePreamble = guideContext
+            ? await formatGuideContextForPrompt(user.id, guideContext).catch(() => "")
+            : "";
+
+          const parts = [SYSTEM_PROMPT];
+          if (capabilityPreamble) parts.unshift(capabilityPreamble);
+          if (guidePreamble) parts.unshift(guidePreamble);
+          const systemPrompt = parts.join("\n\n");
 
           // Let the agent know it can query/install/manage the host.
           // Record the incoming user message if present.

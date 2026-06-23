@@ -18,6 +18,7 @@ model User {
 
   auditLogs AuditLog[]
   aiThreads AiThread[]
+  guideProgress UserGuideProgress[]
 }
 
 model AuditLog {
@@ -347,4 +348,44 @@ model AiUsage {
   createdAt    DateTime @default(now())
 
   @@index([threadId, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// Interactive learning guides
+// -----------------------------------------------------------------------------
+
+model Guide {
+  id          Int      @id @default(autoincrement())
+  slug        String   @unique
+  title       String
+  description String   @default("")
+  category    String   // integration | incident | concept | checklist
+  sourceRef   String   @default("") // e.g. docs/INTEGRATION-GUIDE.md
+  stepsJson   String   // JSON array of GuideStep objects
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  progress UserGuideProgress[]
+
+  @@index([category, isPublished])
+  @@index([slug, isPublished])
+}
+
+model UserGuideProgress {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  guideId          Int
+  currentStepId    String   @default("")
+  completedStepIds String   @default("[]") // JSON array of step ids
+  status           String   @default("not_started") // not_started | in_progress | completed
+  startedAt        DateTime?
+  completedAt      DateTime?
+  updatedAt        DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guide Guide @relation(fields: [guideId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, guideId])
+  @@index([userId, status])
 }

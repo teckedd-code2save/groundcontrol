@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useSidebar } from "./SidebarContext";
+import { renderMarkdown } from "@/lib/markdown";
 
 interface ToolEvent {
   name: string;
@@ -61,37 +62,6 @@ type WireEvent =
 const STORAGE_OPEN = "gc:ai-chat:open";
 const STORAGE_EXPANDED = "gc:ai-chat:expanded";
 const STORAGE_THREAD_ID = "gc:ai-chat:thread-id";
-
-function renderMarkdown(md: string): string {
-  const esc = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-  const blocks: string[] = [];
-  let text = md.replace(/```(?:[a-zA-Z0-9]*)\n?([\s\S]*?)```/g, (_m, code) => {
-    blocks.push(
-      `<pre class="my-2 overflow-x-auto rounded-lg bg-gray-900 p-2 text-xs text-gray-100"><code>${esc(
-        code.replace(/\n$/, "")
-      )}</code></pre>`
-    );
-    return `\x00BLOCK${blocks.length - 1}\x00`;
-  });
-
-  text = esc(text);
-  text = text.replace(/`([^`]+)`/g, '<code class="rounded bg-gray-200 px-1 py-0.5 text-xs dark:bg-gray-700">$1</code>');
-  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  text = text.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
-  text = text.replace(/^###\s+(.*)$/gm, '<p class="font-semibold mt-2">$1</p>');
-  text = text.replace(/^##\s+(.*)$/gm, '<p class="font-semibold mt-2">$1</p>');
-  text = text.replace(/^#\s+(.*)$/gm, '<p class="font-bold mt-2">$1</p>');
-  text = text.replace(/^\s*[-*]\s+(.*)$/gm, "<li>$1</li>");
-  text = text.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul class="list-disc pl-5 my-1">$1</ul>');
-  text = text.replace(/\n{2,}/g, "<br/><br/>").replace(/\n/g, "<br/>");
-  text = text.replace(/\x00BLOCK(\d+)\x00/g, (_m, i) => blocks[Number(i)]);
-  return text;
-}
 
 function ToolChip({ tool }: { tool: ToolEvent }) {
   const [expanded, setExpanded] = useState(false);
@@ -168,6 +138,7 @@ export default function AIChatWidget() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [unread, setUnread] = useState(0);
+  const [guideContext, setGuideContext] = useState<{ guideSlug: string; stepId: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const { setCollapsed } = useSidebar();
 
@@ -299,8 +270,26 @@ export default function AIChatWidget() {
   useEffect(() => {
     function handleExternalQuery(e: Event) {
       const detail = (e as CustomEvent).detail;
+      let message = "";
+      let context: { guideSlug: string; stepId: string } | null = null;
+
       if (typeof detail === "string" && detail.trim()) {
-        setInput(detail.trim());
+        message = detail.trim();
+      } else if (detail && typeof detail === "object") {
+        if (typeof detail.message === "string" && detail.message.trim()) {
+          message = detail.message.trim();
+        }
+        if (detail.guideContext && typeof detail.guideContext.guideSlug === "string") {
+          context = {
+            guideSlug: detail.guideContext.guideSlug,
+            stepId: detail.guideContext.stepId || "",
+          };
+        }
+      }
+
+      if (message) {
+        setInput(message);
+        setGuideContext(context);
         setOpen(true);
         setExpanded(false);
         setUnread(0);
@@ -344,6 +333,7 @@ export default function AIChatWidget() {
   async function runTurn(opts: {
     message?: string;
     confirmedTool?: { name: string; args: Record<string, unknown> };
+    guideContext?: { guideSlug: string; stepId: string } | null;
   }) {
     setLoading(true);
     const assistantIndexRef = { current: -1 };
@@ -370,6 +360,7 @@ export default function AIChatWidget() {
       const body: Record<string, unknown> = { threadId };
       if (opts.message) body.message = opts.message;
       if (opts.confirmedTool) body.confirmedTool = opts.confirmedTool;
+      if (opts.guideContext) body.guideContext = opts.guideContext;
 
       const res = await fetch("/api/ai/chat", {
         method: "POST",
@@ -466,7 +457,9 @@ export default function AIChatWidget() {
 
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setInput("");
-    await runTurn({ message: text });
+    await runTurn({ message: text, guideContext });
+    // Clear guide context after sending so it does not leak into unrelated follow-ups.
+    setGuideContext(null);
   }
 
   async function approveConfirm(msgIndex: number) {

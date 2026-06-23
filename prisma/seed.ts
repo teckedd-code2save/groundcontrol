@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { upsertGuidesFromDisk } from "@/lib/guides/loader";
 
 const prisma = new PrismaClient();
 
@@ -178,8 +179,15 @@ async function seedDemo() {
   console.log("Demo data seed complete.");
 }
 
+async function seedGuides() {
+  console.log("Loading interactive learning guides from disk...");
+  const { created, updated } = await upsertGuidesFromDisk(prisma);
+  console.log(`Guides: ${created} created, ${updated} updated.`);
+}
+
 async function main() {
   await seedAdmin();
+  await seedGuides();
   if (process.env.GC_SEED_DEMO) {
     await seedDemo();
   }

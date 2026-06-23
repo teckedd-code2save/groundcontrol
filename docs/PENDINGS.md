@@ -4,7 +4,7 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 
 > **New:** For a step-by-step guide on installing and testing every integration, see [`INTEGRATION-GUIDE.md`](./INTEGRATION-GUIDE.md).
 
-> Last updated: 2026-06-20
+> Last updated: 2026-06-23
 
 ---
 
@@ -31,6 +31,7 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 | 2.4 | **Preview tunnel defaults to host port 80** | May miss the ingress controller if it is not exposed on the host network. | Small — discover the ingress controller NodePort or host port. | pending |
 | 2.5 | **Quick tunnels are not auto-cleaned** | Zombie `cloudflared` processes can accumulate on the VPS. | Small — track PIDs and clean up on destroy/timeout. | **mitigated** `aa1f759` — previous tunnel PID tracked and destroyed before new deploy |
 | 2.6 | **kubectl/helm install may need root** | Static binary install to `/usr/local/bin` can fail without root. | Small — fall back to `~/.local/bin` or warn. | pending |
+| 2.7 | **k3s install defaults bind Traefik LoadBalancer to host :80/:443** | Hijacks Caddy's edge ports and breaks all Caddy-fronted domains. See [`INCIDENT-k3s-traefik-port-hijack.md`](./INCIDENT-k3s-traefik-port-hijack.md) and the interactive [`k3s-traefik-incident`](./CADDY-K3S-NETWORKING-PRIMER.md) guide. | Small — disable Traefik in `installK3s` bootstrap config and default k3s targets to expose via NodePort + Caddy. | **mitigated** — incident documented and interactive recovery guide shipped; bootstrap default still pending |
 
 ---
 
