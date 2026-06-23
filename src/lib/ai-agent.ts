@@ -30,6 +30,7 @@ import {
 } from "@/lib/bootstrap";
 import { isAllowedSystemPath, validateSafePath, validateSystemCommand } from "@/lib/host-safety";
 import { listPublishedGuides, getGuideBySlug, parseGuideSteps } from "@/lib/guides/loader";
+import { componentAction, getComponentStatus, type ComponentAction } from "@/lib/bootstrap";
 
 /**
  * GroundControl AI agent tool set.
@@ -961,6 +962,68 @@ export const AGENT_TOOLS: AgentTool[] = [
         if (!step.checkCommand) return `Step "${stepId}" has no verification command.`;
         const { stdout, stderr, code } = await execOnVps(step.checkCommand);
         return JSON.stringify({ ok: code === 0, stdout, stderr, code, expectedOutput: step.expectedOutput }, null, 2);
+      }),
+  },
+  // --- Bootstrap / component lifecycle tools ---------------------------------
+  {
+    name: "list_components",
+    description:
+      "List installable/manageable components on the active VPS and their current status (installed, running, version). Use when the user asks what is installed or what can be installed.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const tools = [
+          "docker",
+          "caddy",
+          "nginx",
+          "node",
+          "git",
+          "terraform",
+          "cloudflared",
+          "postgres",
+          "redis",
+          "traefik",
+          "certbot",
+          "k3s",
+          "kubectl",
+          "helm",
+        ];
+        const statuses = await Promise.all(tools.map((tool) => getComponentStatus(tool).then((s) => ({ tool, ...s }))));
+        return JSON.stringify(statuses, null, 2);
+      }),
+  },
+  {
+    name: "component_action",
+    description:
+      "Install, uninstall, start, stop, restart, reload, or check status of a host/container component on the active VPS. Use when the user asks to manage infrastructure (e.g. 'stop caddy', 'uninstall k3s', 'restart docker'). For destructive actions (uninstall, stop, restart) the UI will ask the user to confirm before executing.",
+    parameters: {
+      type: "object",
+      properties: {
+        tool: {
+          type: "string",
+          description:
+            "Component name: docker, caddy, nginx, node, git, terraform, cloudflared, postgres, redis, traefik, certbot, k3s, kubectl, helm.",
+        },
+        action: {
+          type: "string",
+          description: "Action: install, reinstall, uninstall, start, stop, restart, reload, status.",
+        },
+      },
+      required: ["tool", "action"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const tool = String(args?.tool || "").trim();
+        const action = String(args?.action || "").trim() as ComponentAction;
+        if (!tool) return "ERROR: tool is required.";
+        if (!action) return "ERROR: action is required.";
+        const valid: ComponentAction[] = ["install", "reinstall", "uninstall", "start", "stop", "restart", "reload", "status"];
+        if (!valid.includes(action)) return `ERROR: action must be one of ${valid.join(", ")}.`;
+        const result = await componentAction(tool, action);
+        return JSON.stringify(result, null, 2);
       }),
   },
 ];

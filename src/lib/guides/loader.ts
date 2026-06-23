@@ -11,6 +11,12 @@ export interface GuideStep {
   expectedOutput?: string;
   aiHint?: string;
   nextStepId?: string;
+  action?: {
+    tool: string;
+    action: string;
+    confirm?: boolean;
+    label?: string;
+  };
 }
 
 export interface GuideDefinition {

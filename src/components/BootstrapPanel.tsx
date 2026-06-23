@@ -14,25 +14,26 @@ import {
 
 interface Job {
   name: string;
+  action: string;
   running: boolean;
   output: string;
   error: string;
   success?: boolean;
 }
 
+interface ToolStatus {
+  installed: boolean;
+  running?: boolean;
+  version?: string;
+}
+
 interface ToolDef {
   key: string;
   label: string;
   desc: string;
-  route: string;
   icon: React.ReactNode;
   kind: "host" | "container";
-}
-
-interface K3sToolDef {
-  key: string;
-  label: string;
-  route: string;
+  lifecycle: ("start" | "stop" | "restart" | "reload")[];
 }
 
 const TOOLS: ToolDef[] = [
@@ -40,108 +41,116 @@ const TOOLS: ToolDef[] = [
     key: "docker",
     label: "Docker",
     desc: "Docker CE + compose plugin",
-    route: "/api/bootstrap/docker",
     icon: <ContainerIcon type={getContainerType("docker", "")} className="w-4 h-4 text-muted" />,
     kind: "host",
+    lifecycle: ["start", "stop", "restart"],
   },
   {
     key: "caddy",
     label: "Caddy",
     desc: "Caddy reverse proxy",
-    route: "/api/bootstrap/caddy",
     icon: <CaddyIcon className="w-4 h-4 text-muted" />,
     kind: "host",
+    lifecycle: ["start", "stop", "restart", "reload"],
   },
   {
     key: "nginx",
     label: "Nginx",
     desc: "Nginx reverse proxy",
-    route: "/api/bootstrap/nginx",
     icon: <NginxIcon className="w-4 h-4 text-muted" />,
     kind: "host",
+    lifecycle: ["start", "stop", "restart", "reload"],
   },
   {
     key: "node",
     label: "Node.js",
     desc: "Node.js 20 LTS + npm",
-    route: "/api/bootstrap/node",
     icon: <ServiceIcon className="w-4 h-4 text-muted" />,
     kind: "host",
+    lifecycle: [],
   },
   {
     key: "git",
     label: "Git",
     desc: "Git version control",
-    route: "/api/bootstrap/git",
     icon: <ServiceIcon className="w-4 h-4 text-muted" />,
     kind: "host",
-  },
-  {
-    key: "cloudflared",
-    label: "Cloudflared",
-    desc: "Pull the cloudflared connector image",
-    route: "/api/bootstrap/cloudflared",
-    icon: <ServiceIcon className="w-4 h-4 text-muted" />,
-    kind: "container",
+    lifecycle: [],
   },
   {
     key: "terraform",
     label: "Terraform",
     desc: "HashiCorp Terraform CLI",
-    route: "/api/bootstrap/terraform",
     icon: <ServiceIcon className="w-4 h-4 text-muted" />,
     kind: "host",
+    lifecycle: [],
+  },
+  {
+    key: "cloudflared",
+    label: "Cloudflared",
+    desc: "Cloudflare tunnel daemon image",
+    icon: <ServiceIcon className="w-4 h-4 text-muted" />,
+    kind: "container",
+    lifecycle: [],
   },
   {
     key: "postgres",
     label: "PostgreSQL",
-    desc: "Pull the PostgreSQL 16 image",
-    route: "/api/bootstrap/postgres",
+    desc: "PostgreSQL 16 image",
     icon: <DatabaseIcon className="w-4 h-4 text-muted" />,
     kind: "container",
+    lifecycle: [],
   },
   {
     key: "redis",
     label: "Redis",
-    desc: "Pull the Redis 7 image",
-    route: "/api/bootstrap/redis",
+    desc: "Redis 7 image",
     icon: <RedisIcon className="w-4 h-4 text-muted" />,
     kind: "container",
+    lifecycle: [],
   },
   {
     key: "traefik",
     label: "Traefik",
-    desc: "Pull the Traefik v3 image",
-    route: "/api/bootstrap/traefik",
+    desc: "Traefik v3 image",
     icon: <ServiceIcon className="w-4 h-4 text-muted" />,
     kind: "container",
+    lifecycle: [],
   },
   {
     key: "certbot",
     label: "Certbot",
-    desc: "Pull the Certbot image",
-    route: "/api/bootstrap/certbot",
+    desc: "Certbot image",
     icon: <ServiceIcon className="w-4 h-4 text-muted" />,
     kind: "container",
+    lifecycle: [],
   },
 ];
 
-const K3S_TOOLS: K3sToolDef[] = [
-  { key: "k3s", label: "k3s", route: "/api/bootstrap/k3s" },
-  { key: "kubectl", label: "kubectl", route: "/api/bootstrap/kubectl" },
-  { key: "helm", label: "Helm", route: "/api/bootstrap/helm" },
+const K3S_TOOLS = [
+  { key: "k3s", label: "k3s", lifecycle: ["start", "stop", "restart"] as ("start" | "stop" | "restart")[] },
+  { key: "kubectl", label: "kubectl", lifecycle: [] as ("start" | "stop" | "restart")[] },
+  { key: "helm", label: "Helm", lifecycle: [] as ("start" | "stop" | "restart")[] },
 ];
+
+interface ConfirmState {
+  open: boolean;
+  tool: string;
+  action: string;
+  label: string;
+}
 
 export function BootstrapPanel() {
   const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [status, setStatus] = useState<{
     inContainerLocalMode: boolean;
     hostPackagesAllowed: { ok: boolean; reason?: string };
-    installed: Record<string, boolean>;
+    components: Record<string, ToolStatus>;
   } | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [confirm, setConfirm] = useState<ConfirmState>({ open: false, tool: "", action: "", label: "" });
 
   const hostPackagesBlocked = status?.inContainerLocalMode && !status?.hostPackagesAllowed.ok;
-  const [statusLoading, setStatusLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/bootstrap/status")
@@ -153,36 +162,43 @@ export function BootstrapPanel() {
       .finally(() => setStatusLoading(false));
   }, []);
 
-  async function run(key: string, route: string) {
+  function refreshStatus() {
+    fetch("/api/bootstrap/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => s && setStatus(s))
+      .catch(() => {});
+  }
+
+  async function run(tool: string, action: string) {
     setJobs((prev) => ({
       ...prev,
-      [key]: { name: key, running: true, output: "", error: "" },
+      [tool]: { name: tool, action, running: true, output: "", error: "" },
     }));
     try {
-      const res = await fetch(route, { method: "POST" });
+      const res = await fetch("/api/bootstrap/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool, action }),
+      });
       const data = await res.json();
       setJobs((prev) => ({
         ...prev,
-        [key]: {
-          name: key,
+        [tool]: {
+          name: tool,
+          action,
           running: false,
           output: data.output || "",
           error: data.error || "",
           success: data.success,
         },
       }));
-      // Refresh installed status after a successful or failed attempt.
-      if (data.success) {
-        fetch("/api/bootstrap/status")
-          .then((r) => (r.ok ? r.json() : null))
-          .then((s) => s && setStatus(s))
-          .catch(() => {});
-      }
+      refreshStatus();
     } catch (err) {
       setJobs((prev) => ({
         ...prev,
-        [key]: {
-          name: key,
+        [tool]: {
+          name: tool,
+          action,
           running: false,
           output: "",
           error: err instanceof Error ? err.message : "Network error",
@@ -192,13 +208,144 @@ export function BootstrapPanel() {
     }
   }
 
-  const runningKey = Object.keys(jobs).find((k) => jobs[k].running);
-  const runningTool = runningKey
-    ? TOOLS.find((t) => t.key === runningKey) ?? K3S_TOOLS.find((t) => t.key === runningKey)
-    : undefined;
+  function requestAction(tool: string, action: string, label: string, destructive: boolean) {
+    if (destructive) {
+      setConfirm({ open: true, tool, action, label });
+      return;
+    }
+    run(tool, action);
+  }
 
-  const hostTools = TOOLS.filter((t) => t.kind === "host");
-  const containerTools = TOOLS.filter((t) => t.kind === "container");
+  function confirmAction() {
+    if (!confirm.open) return;
+    run(confirm.tool, confirm.action);
+    setConfirm({ open: false, tool: "", action: "", label: "" });
+  }
+
+  const runningJob = Object.values(jobs).find((j) => j.running);
+
+  function renderStatusBadge(toolKey: string) {
+    const state = status?.components[toolKey];
+    if (!state) return null;
+
+    if (state.installed && state.running === true) {
+      return (
+        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-success/10 text-success border border-success/30">
+          running
+        </span>
+      );
+    }
+    if (state.installed && state.running === false) {
+      return (
+        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/30">
+          stopped
+        </span>
+      );
+    }
+    if (state.installed) {
+      return (
+        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/30">
+          installed
+        </span>
+      );
+    }
+    return null;
+  }
+
+  function renderActionButtons(tool: ToolDef) {
+    const state = status?.components[tool.key];
+    const installed = state?.installed ?? false;
+    const hostDisabled = hostPackagesBlocked && tool.kind === "host";
+    const job = jobs[tool.key];
+
+    const buttons: React.ReactNode[] = [];
+
+    buttons.push(
+      <button
+        key={installed ? "reinstall" : "install"}
+        onClick={() => run(tool.key, installed ? "reinstall" : "install")}
+        disabled={job?.running || hostDisabled}
+        className="px-2.5 py-1 text-[10px] font-mono bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors disabled:opacity-50"
+      >
+        {job?.running && job.action === (installed ? "reinstall" : "install") ? "…" : installed ? "Re-install" : "Install"}
+      </button>
+    );
+
+    if (installed) {
+      buttons.push(
+        <button
+          key="uninstall"
+          onClick={() => requestAction(tool.key, "uninstall", tool.label, true)}
+          disabled={job?.running || hostDisabled}
+          className="px-2.5 py-1 text-[10px] font-mono bg-error/10 border border-error/30 text-error rounded hover:bg-error/20 transition-colors disabled:opacity-50"
+        >
+          {job?.running && job.action === "uninstall" ? "…" : "Uninstall"}
+        </button>
+      );
+
+      tool.lifecycle.forEach((action) => {
+        buttons.push(
+          <button
+            key={action}
+            onClick={() => run(tool.key, action)}
+            disabled={job?.running || hostDisabled}
+            className="px-2.5 py-1 text-[10px] font-mono bg-border/50 border border-border text-foreground rounded hover:bg-border transition-colors disabled:opacity-50"
+          >
+            {job?.running && job.action === action ? "…" : action}
+          </button>
+        );
+      });
+    }
+
+    return <div className="flex flex-wrap gap-2">{buttons}</div>;
+  }
+
+  function renderTool(tool: ToolDef) {
+    const job = jobs[tool.key];
+    const hostDisabled = hostPackagesBlocked && tool.kind === "host";
+
+    return (
+      <div
+        key={tool.key}
+        className={`border border-border rounded-xl p-4 bg-background/30 ${hostDisabled ? "opacity-70" : ""}`}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              {tool.icon}
+              <div className="font-medium text-sm">{tool.label}</div>
+              {renderStatusBadge(tool.key)}
+              {hostDisabled && (
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/30">
+                  disabled
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-muted mt-0.5">{tool.desc}</div>
+          </div>
+        </div>
+
+        <div className="mt-3">{renderActionButtons(tool)}</div>
+
+        {job && !job.running && (
+          <div className="mt-3">
+            {job.success === false && (
+              <div className="text-xs font-mono text-error mb-1">{job.action} failed: {job.error}</div>
+            )}
+            {job.success === true && (
+              <div className="text-xs font-mono text-success mb-1">{job.action} finished</div>
+            )}
+            {(job.output || job.error) && (
+              <pre className="max-h-40 overflow-auto rounded-lg bg-background border border-border p-2 text-[10px] font-mono whitespace-pre-wrap">
+                {job.output}
+                {job.error}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   function renderK3sCard() {
     const hostDisabled = hostPackagesBlocked;
@@ -208,39 +355,70 @@ export function BootstrapPanel() {
           <div>
             <div className="flex items-center gap-2">
               <ServiceIcon className="w-4 h-4 text-muted" />
-              <div className="font-medium text-sm">Install k3s</div>
+              <div className="font-medium text-sm">Kubernetes stack</div>
             </div>
             <div className="text-[11px] text-muted mt-0.5">
-              Lightweight Kubernetes stack: k3s server, kubectl CLI, and Helm package manager.
+              Lightweight Kubernetes: k3s server, kubectl CLI, and Helm package manager.
             </div>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
+
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
           {K3S_TOOLS.map((tool) => {
+            const state = status?.components[tool.key];
+            const installed = state?.installed ?? false;
             const job = jobs[tool.key];
-            const installed = status?.installed[tool.key];
+
             return (
-              <button
-                key={tool.key}
-                onClick={() => run(tool.key, tool.route)}
-                disabled={job?.running || hostDisabled}
-                className="px-3 py-1.5 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
-              >
-                {job?.running ? "Installing..." : installed ? `Re-install ${tool.label}` : `Install ${tool.label}`}
-              </button>
+              <div key={tool.key} className="border border-border rounded-lg p-3 bg-background/50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium">{tool.label}</span>
+                  {renderStatusBadge(tool.key)}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    onClick={() => run(tool.key, installed ? "reinstall" : "install")}
+                    disabled={job?.running || hostDisabled}
+                    className="px-2 py-1 text-[10px] font-mono bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors disabled:opacity-50"
+                  >
+                    {job?.running && job.action === (installed ? "reinstall" : "install") ? "…" : installed ? "Re-install" : "Install"}
+                  </button>
+                  {installed && (
+                    <button
+                      onClick={() => requestAction(tool.key, "uninstall", tool.label, true)}
+                      disabled={job?.running || hostDisabled}
+                      className="px-2 py-1 text-[10px] font-mono bg-error/10 border border-error/30 text-error rounded hover:bg-error/20 transition-colors disabled:opacity-50"
+                    >
+                      {job?.running && job.action === "uninstall" ? "…" : "Uninstall"}
+                    </button>
+                  )}
+                  {installed &&
+                    tool.lifecycle.map((action) => (
+                      <button
+                        key={action}
+                        onClick={() => run(tool.key, action)}
+                        disabled={job?.running || hostDisabled}
+                        className="px-2 py-1 text-[10px] font-mono bg-border/50 border border-border text-foreground rounded hover:bg-border transition-colors disabled:opacity-50"
+                      >
+                        {job?.running && job.action === action ? "…" : action}
+                      </button>
+                    ))}
+                </div>
+              </div>
             );
           })}
         </div>
+
         {K3S_TOOLS.map((tool) => {
           const job = jobs[tool.key];
           if (!job || job.running) return null;
           return (
             <div key={`${tool.key}-out`} className="mt-3">
               {job.success === false && (
-                <div className="text-xs font-mono text-error mb-1">{tool.label} failed: {job.error}</div>
+                <div className="text-xs font-mono text-error mb-1">{tool.label} {job.action} failed: {job.error}</div>
               )}
               {job.success === true && (
-                <div className="text-xs font-mono text-success mb-1">{tool.label} install finished</div>
+                <div className="text-xs font-mono text-success mb-1">{tool.label} {job.action} finished</div>
               )}
               {(job.output || job.error) && (
                 <pre className="max-h-40 overflow-auto rounded-lg bg-background border border-border p-2 text-[10px] font-mono whitespace-pre-wrap">
@@ -255,75 +433,46 @@ export function BootstrapPanel() {
     );
   }
 
-  function renderTool(tool: ToolDef) {
-    const job = jobs[tool.key];
-    const installed = status?.installed[tool.key];
-    const hostDisabled = hostPackagesBlocked && tool.kind === "host";
-
-    return (
-      <div
-        key={tool.key}
-        className={`border border-border rounded-xl p-4 bg-background/30 ${hostDisabled ? "opacity-70" : ""}`}
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              {tool.icon}
-              <div className="font-medium text-sm">{tool.label}</div>
-              {installed && (
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-success/10 text-success border border-success/30">
-                  installed
-                </span>
-              )}
-              {hostDisabled && (
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/30">
-                  disabled
-                </span>
-              )}
-            </div>
-            <div className="text-[11px] text-muted mt-0.5">{tool.desc}</div>
-          </div>
-          <button
-            onClick={() => run(tool.key, tool.route)}
-            disabled={job?.running || hostDisabled}
-            className="px-3 py-1.5 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
-          >
-            {job?.running ? "Installing..." : installed ? "Re-install" : "Install"}
-          </button>
-        </div>
-        {job && !job.running && (
-          <div className="mt-3">
-            {job.success === false && (
-              <div className="text-xs font-mono text-error mb-1">Failed: {job.error}</div>
-            )}
-            {job.success === true && (
-              <div className="text-xs font-mono text-success mb-1">Install finished</div>
-            )}
-            {(job.output || job.error) && (
-              <pre className="max-h-40 overflow-auto rounded-lg bg-background border border-border p-2 text-[10px] font-mono whitespace-pre-wrap">
-                {job.output}
-                {job.error}
-              </pre>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-8">
       <LoaderOverlay3D
-        open={!!runningKey}
-        variant={runningKey === "docker" ? "container" : runningKey === "caddy" || runningKey === "nginx" || runningKey === "traefik" ? "proxy" : "generic"}
-        title={runningTool ? `Installing ${runningTool.label}...` : undefined}
+        open={!!runningJob}
+        variant={runningJob?.name === "docker" ? "container" : ["caddy", "nginx", "traefik"].includes(runningJob?.name || "") ? "proxy" : "generic"}
+        title={runningJob ? `${runningJob.action}ing ${runningJob.name}...` : undefined}
       />
 
+      {confirm.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-card border border-error/30 rounded-xl p-5 max-w-md w-full shadow-xl">
+            <h3 className="text-sm font-semibold text-error mb-2">Confirm {confirm.action}</h3>
+            <p className="text-xs text-muted mb-4">
+              This will {confirm.action} <strong>{confirm.label}</strong>. This action is destructive and may interrupt
+              running services.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirm({ open: false, tool: "", action: "", label: "" })}
+                className="px-3 py-1.5 text-xs font-mono rounded border border-border hover:bg-border/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmAction}
+                className="px-3 py-1.5 text-xs font-mono rounded bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-card border border-border rounded-xl p-6">
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">One-Click Install</h2>
+        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">Component Lifecycle</h2>
         <p className="text-[11px] text-muted/70 mb-6 leading-relaxed">
-          Install common infrastructure on the active VPS. Host packages target the host OS. Container images are
-          pulled to the host Docker daemon and work even when GroundControl itself runs inside Docker.
+          Install, uninstall, start, stop, restart, and reload infrastructure on the active VPS. Host packages target
+          the host OS. Container images are pulled to the host Docker daemon and work even when GroundControl itself
+          runs inside Docker.
         </p>
 
         {statusLoading ? (
@@ -336,28 +485,27 @@ export function BootstrapPanel() {
           <>
             {hostPackagesBlocked && (
               <div className="mb-6 p-3 bg-warning/10 border border-warning/30 rounded-lg text-warning text-xs font-mono">
-                <strong>Host-package installs are disabled.</strong> GroundControl is running inside a Docker
-                container and cannot reach the host OS. Use SSH mode or run GroundControl directly on the host to
-                install Docker, Caddy, Nginx, Node.js, Git, Terraform, k3s, kubectl, and Helm. Container-image pulls
-                still work.
+                <strong>Host-package actions are disabled.</strong> GroundControl is running inside a Docker container
+                and cannot reach the host OS. Use SSH mode or run GroundControl directly on the host to manage Docker,
+                Caddy, Nginx, Node.js, Git, Terraform, k3s, kubectl, and Helm. Container-image actions still work.
               </div>
             )}
             {status?.inContainerLocalMode && !hostPackagesBlocked && (
               <div className="mb-6 p-3 bg-info/10 border border-info/30 rounded-lg text-info text-xs font-mono">
-                <strong>Running inside Docker.</strong> Host-level installs will be applied to the host operating
-                system via namespace access.
+                <strong>Running inside Docker.</strong> Host-level actions will be applied to the host operating system
+                via namespace access.
               </div>
             )}
 
             <div className="space-y-6">
               <section>
                 <h3 className="text-xs font-mono uppercase tracking-wider text-muted mb-3">Host Packages</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{hostTools.map(renderTool)}</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{TOOLS.filter((t) => t.kind === "host").map(renderTool)}</div>
               </section>
 
               <section>
                 <h3 className="text-xs font-mono uppercase tracking-wider text-muted mb-3">Container Images</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{containerTools.map(renderTool)}</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{TOOLS.filter((t) => t.kind === "container").map(renderTool)}</div>
               </section>
 
               <section>

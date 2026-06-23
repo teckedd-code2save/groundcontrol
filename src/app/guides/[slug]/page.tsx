@@ -13,6 +13,12 @@ interface GuideStep {
   checkCommand?: string;
   expectedOutput?: string;
   aiHint?: string;
+  action?: {
+    tool: string;
+    action: string;
+    confirm?: boolean;
+    label?: string;
+  };
 }
 
 interface GuideProgress {
@@ -63,6 +69,9 @@ export default function GuidePlayerPage() {
   const [checkLoading, setCheckLoading] = useState(false);
   const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
   const [markLoading, setMarkLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionResult, setActionResult] = useState<{ ok: boolean; output: string; error: string; action: string } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ open: boolean; label: string } | null>(null);
 
   useEffect(() => {
     if (!slug) return;
@@ -113,6 +122,38 @@ export default function GuidePlayerPage() {
     }
   }
 
+  async function runStepAction(tool: string, action: string) {
+    if (!guide || !currentStep) return;
+    setActionLoading(true);
+    setActionResult(null);
+    try {
+      const res = await fetch("/api/bootstrap/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool, action }),
+      });
+      const data = (await res.json()) as { success: boolean; output: string; error: string };
+      setActionResult({ ok: data.success, output: data.output, error: data.error, action: `${action} ${tool}` });
+      if (data.success) {
+        const progress = await fetch(`/api/guides/${guide.slug}/progress`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stepId: currentStep.id, markComplete: true }),
+        }).then((r) => r.json() as Promise<GuideProgress>);
+        setCompletedStepIds(new Set(progress.completedStepIds));
+      }
+    } catch (err: unknown) {
+      setActionResult({
+        ok: false,
+        output: "",
+        error: err instanceof Error ? err.message : String(err),
+        action: `${action} ${tool}`,
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   async function markComplete(advance = true) {
     if (!guide || !currentStep) return;
     setMarkLoading(true);
@@ -143,6 +184,7 @@ export default function GuidePlayerPage() {
       setCompletedStepIds(new Set());
       setCurrentStepId(steps[0]?.id || "");
       setCheckResult(null);
+      setActionResult(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -228,6 +270,7 @@ export default function GuidePlayerPage() {
                 onClick={() => {
                   setCurrentStepId(step.id);
                   setCheckResult(null);
+                  setActionResult(null);
                 }}
                 className={`w-full text-left px-4 py-3 rounded-lg border text-sm transition-colors ${
                   isCurrent
@@ -266,6 +309,36 @@ export default function GuidePlayerPage() {
             )}
           </div>
 
+          {/* Confirmation modal for guide step actions */}
+          {confirmAction?.open && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+              <div className="bg-card border border-error/30 rounded-xl p-5 max-w-md w-full shadow-xl">
+                <h3 className="text-sm font-semibold text-error mb-2">Confirm {confirmAction.label}</h3>
+                <p className="text-xs text-muted mb-4">
+                  This action will make changes on the active VPS. Continue only if you understand the impact.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setConfirmAction(null)}
+                    className="px-3 py-1.5 text-xs font-mono rounded border border-border hover:bg-border/50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      const action = currentStep?.action;
+                      if (action) runStepAction(action.tool, action.action);
+                      setConfirmAction(null);
+                    }}
+                    className="px-3 py-1.5 text-xs font-mono rounded bg-error/10 border border-error/30 text-error hover:bg-error/20 transition-colors"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-3">
             {currentStep?.checkCommand && (
@@ -275,6 +348,22 @@ export default function GuidePlayerPage() {
                 className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
               >
                 {checkLoading ? "Running check…" : "Run check"}
+              </button>
+            )}
+            {currentStep?.action && (
+              <button
+                onClick={() => {
+                  const action = currentStep.action!;
+                  if (action.confirm) {
+                    setConfirmAction({ open: true, label: action.label || `${action.action} ${action.tool}` });
+                  } else {
+                    runStepAction(action.tool, action.action);
+                  }
+                }}
+                disabled={actionLoading}
+                className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? "Running…" : currentStep.action.label || `${currentStep.action.action} ${currentStep.action.tool}`}
               </button>
             )}
             <button
@@ -297,6 +386,19 @@ export default function GuidePlayerPage() {
               Reset progress
             </button>
           </div>
+
+          {/* Action result */}
+          {actionResult && (
+            <div className={`rounded-xl border p-4 ${actionResult.ok ? "bg-success/5 border-success/30" : "bg-error/5 border-error/30"}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={actionResult.ok ? "text-success" : "text-error"}>{actionResult.ok ? "✓" : "✗"}</span>
+                <span className="text-sm font-medium">{actionResult.ok ? `${actionResult.action} succeeded` : `${actionResult.action} failed`}</span>
+              </div>
+              <pre className="text-xs font-mono bg-black/40 border border-border rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+                <strong>stdout:</strong>\n{actionResult.output || "(empty)"}\n\n<strong>stderr:</strong>\n{actionResult.error || "(empty)"}
+              </pre>
+            </div>
+          )}
 
           {/* Check result */}
           {checkResult && (

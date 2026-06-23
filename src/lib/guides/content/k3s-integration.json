@@ -17,7 +17,12 @@
       "content": "Go to **Services → Install** and click **k3s**. GroundControl will run the official installer on the active host and write a kubeconfig to `/etc/rancher/k3s/k3s.yaml`.\n\n> **Important on Caddy-first hosts:** k3s ships a bundled Traefik exposed as a LoadBalancer. Its ServiceLB (Klipper) pod will claim host ports `:80` and `:443` via iptables DNAT, which breaks Caddy. If you use Caddy as your edge proxy, disable Traefik during install or immediately after. See the *Recovering from a k3s Traefik port hijack* guide for the fix.",
       "checkCommand": "kubectl get nodes",
       "expectedOutput": "Ready",
-      "aiHint": "If this check fails, either k3s is not installed, the kubeconfig path is wrong, or kubectl is not in PATH. Start by verifying 'systemctl status k3s' and that /etc/rancher/k3s/k3s.yaml exists."
+      "aiHint": "If this check fails, either k3s is not installed, the kubeconfig path is wrong, or kubectl is not in PATH. Start by verifying 'systemctl status k3s' and that /etc/rancher/k3s/k3s.yaml exists.",
+      "action": {
+        "tool": "k3s",
+        "action": "install",
+        "label": "Install k3s"
+      }
     },
     {
       "id": "install-kubectl",
@@ -25,7 +30,25 @@
       "content": "In **Services → Install**, click **kubectl** and **Helm**. GroundControl downloads static binaries to `/usr/local/bin`. These tools run on the host and talk to the k3s API.",
       "checkCommand": "kubectl version --client && helm version",
       "expectedOutput": "Client Version",
-      "aiHint": "If either command is missing, the install did not place the binary in PATH. Check /usr/local/bin and the active VPS's SystemConfig paths."
+      "aiHint": "If either command is missing, the install did not place the binary in PATH. Check /usr/local/bin and the active VPS's SystemConfig paths.",
+      "action": {
+        "tool": "kubectl",
+        "action": "install",
+        "label": "Install kubectl"
+      }
+    },
+    {
+      "id": "install-helm",
+      "title": "Install Helm",
+      "content": "Helm is the Kubernetes package manager. It is optional for basic k3s usage, but many charts and operators use it. Click the button below to install the static binary to `/usr/local/bin/helm`.",
+      "checkCommand": "helm version",
+      "expectedOutput": "version",
+      "aiHint": "If helm is not installed, the kubectl step above only installed kubectl. Run this action to add helm.",
+      "action": {
+        "tool": "helm",
+        "action": "install",
+        "label": "Install Helm"
+      }
     },
     {
       "id": "verify-cluster",

@@ -518,3 +518,325 @@ export async function runCloudflaredConnector(
   const token = Buffer.from(JSON.stringify({ a: tunnelId, s: tunnelSecret, id: tunnelId })).toString("base64url");
   return startCloudflaredConnector(connectorName, token, vps);
 }
+
+// =============================================================================
+// Component lifecycle actions (install / uninstall / start / stop / restart)
+// =============================================================================
+
+export type ComponentAction =
+  | "install"
+  | "reinstall"
+  | "uninstall"
+  | "start"
+  | "stop"
+  | "restart"
+  | "reload"
+  | "status";
+
+export interface ComponentStatus {
+  installed: boolean;
+  running?: boolean;
+  version?: string;
+}
+
+async function detectInitSystem(vps?: VpsConnection | null): Promise<"systemd" | "openrc" | "sysvinit" | "unknown"> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return "unknown";
+
+  const checks = [
+    { cmd: "command -v systemctl >/dev/null 2>&1 && echo yes || echo no", name: "systemd" as const },
+    { cmd: "command -v rc-service >/dev/null 2>&1 && echo yes || echo no", name: "openrc" as const },
+    { cmd: "test -x /etc/init.d && echo yes || echo no", name: "sysvinit" as const },
+  ];
+
+  for (const { cmd, name } of checks) {
+    const res = await execOnTarget(cmd, conn);
+    if (res.stdout.trim() === "yes") return name;
+  }
+  return "unknown";
+}
+
+async function manageService(
+  serviceName: string,
+  action: "start" | "stop" | "restart" | "reload" | "status",
+  vps?: VpsConnection | null
+): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const init = await detectInitSystem(conn);
+  let cmd = "";
+
+  if (init === "systemd") {
+    const map: Record<string, string> = {
+      start: `systemctl start ${serviceName}`,
+      stop: `systemctl stop ${serviceName}`,
+      restart: `systemctl restart ${serviceName}`,
+      reload: `systemctl reload ${serviceName} || systemctl restart ${serviceName}`,
+      status: `systemctl is-active ${serviceName}`,
+    };
+    cmd = `${map[action]} 2>&1`;
+  } else if (init === "openrc") {
+    const map: Record<string, string> = {
+      start: `rc-service ${serviceName} start`,
+      stop: `rc-service ${serviceName} stop`,
+      restart: `rc-service ${serviceName} restart`,
+      reload: `rc-service ${serviceName} restart`,
+      status: `rc-service ${serviceName} status`,
+    };
+    cmd = `${map[action]} 2>&1`;
+  } else if (init === "sysvinit") {
+    const map: Record<string, string> = {
+      start: `/etc/init.d/${serviceName} start`,
+      stop: `/etc/init.d/${serviceName} stop`,
+      restart: `/etc/init.d/${serviceName} restart`,
+      reload: `/etc/init.d/${serviceName} reload || /etc/init.d/${serviceName} restart`,
+      status: `/etc/init.d/${serviceName} status`,
+    };
+    cmd = `${map[action]} 2>&1`;
+  } else {
+    return { success: false, output: "", error: `Unknown init system; cannot ${action} ${serviceName}` };
+  }
+
+  const result = await execOnTarget(cmd, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+async function getServiceStatus(serviceName: string, vps?: VpsConnection | null): Promise<boolean> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return false;
+
+  const init = await detectInitSystem(conn);
+  let cmd = "";
+  if (init === "systemd") {
+    cmd = `systemctl is-active ${serviceName} 2>&1`;
+  } else if (init === "openrc") {
+    cmd = `rc-service ${serviceName} status 2>&1 | grep -q started && echo active || echo inactive`;
+  } else if (init === "sysvinit") {
+    cmd = `/etc/init.d/${serviceName} status 2>&1 | grep -q running && echo active || echo inactive`;
+  } else {
+    return false;
+  }
+
+  const res = await execOnTarget(cmd, conn);
+  return res.stdout.trim() === "active";
+}
+
+async function removeBinary(path: string, vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+  const result = await execOnTarget(`rm -f ${shQuote(path)} 2>&1`, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+async function uninstallPackage(pkg: string, vps?: VpsConnection | null): Promise<BootstrapResult> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  const allowed = await canInstallHostPackages(conn);
+  if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
+
+  const os = await detectOsFamily(conn);
+  let cmd = "";
+  if (os === "debian") {
+    cmd = `apt-get remove -y ${pkg} 2>&1`;
+  } else if (os === "alpine") {
+    cmd = `apk del ${pkg} 2>&1`;
+  } else {
+    return { success: false, output: "", error: `Uninstall not supported for OS family: ${os}` };
+  }
+
+  const result = await execOnTarget(cmd, conn);
+  return { success: result.code === 0, output: result.stdout, error: result.stderr };
+}
+
+async function getBinaryVersion(command: string, vps?: VpsConnection | null): Promise<string | undefined> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return undefined;
+  const result = await execOnTarget(`${command} --version 2>&1 | head -n 1`, conn);
+  if (result.code === 0) return result.stdout.trim();
+  return undefined;
+}
+
+const HOST_COMPONENTS: Record<string, { service?: string; binaryPath?: string; packageName?: string }> = {
+  docker: { service: "docker", packageName: "docker" },
+  caddy: { service: "caddy", binaryPath: "/usr/local/bin/caddy", packageName: "caddy" },
+  nginx: { service: "nginx", binaryPath: "/usr/sbin/nginx", packageName: "nginx" },
+  k3s: { service: "k3s", binaryPath: "/usr/local/bin/k3s" },
+  cloudflared: { service: undefined, binaryPath: "/usr/local/bin/cloudflared" },
+  kubectl: { binaryPath: "/usr/local/bin/kubectl" },
+  helm: { binaryPath: "/usr/local/bin/helm" },
+  terraform: { binaryPath: "/usr/local/bin/terraform" },
+  node: { binaryPath: "/usr/bin/node" },
+  git: { binaryPath: "/usr/bin/git" },
+};
+
+const CONTAINER_IMAGES: Record<string, string> = {
+  cloudflared: "cloudflare/cloudflared:latest",
+  postgres: "postgres:16-alpine",
+  redis: "redis:7-alpine",
+  traefik: "traefik:v3",
+  certbot: "certbot/certbot:latest",
+};
+
+export async function getComponentStatus(
+  tool: string,
+  vps?: VpsConnection | null
+): Promise<ComponentStatus> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { installed: false };
+
+  if (HOST_COMPONENTS[tool]) {
+    const { service, binaryPath } = HOST_COMPONENTS[tool];
+    let installed = false;
+    if (binaryPath) {
+      const res = await execOnTarget(`test -x ${shQuote(binaryPath)} && echo yes || echo no`, conn);
+      installed = res.stdout.trim() === "yes";
+    } else {
+      // fallback to version command
+      const checks: Record<string, string> = {
+        docker: "docker --version",
+        k3s: "k3s --version",
+      };
+      const cmd = checks[tool];
+      if (cmd) {
+        const res = await execOnTarget(`${cmd} >/dev/null 2>&1 && echo yes || echo no`, conn);
+        installed = res.stdout.trim() === "yes";
+      }
+    }
+
+    const version = installed ? await getBinaryVersion(tool === "k3s" ? "k3s" : tool, conn) : undefined;
+    const running = service && installed ? await getServiceStatus(service, conn) : undefined;
+    return { installed, running, version };
+  }
+
+  if (CONTAINER_IMAGES[tool]) {
+    const installed = await isImagePulled(CONTAINER_IMAGES[tool], conn);
+    return { installed };
+  }
+
+  return { installed: false };
+}
+
+export async function componentAction(
+  tool: string,
+  action: ComponentAction,
+  vps?: VpsConnection | null
+): Promise<BootstrapResult & { requiresConfirmation?: boolean; warning?: string }> {
+  const conn = vps || (await getActiveVps().catch(() => null));
+  if (!conn) return { success: false, output: "", error: "No VPS configured" };
+
+  // Reinstall is just install forced.
+  if (action === "reinstall") {
+    if (CONTAINER_IMAGES[tool]) {
+      const result = await pullImage(CONTAINER_IMAGES[tool], conn);
+      return { ...result, warning: `Reinstalled ${tool} image` };
+    }
+    // For host packages, uninstall then install is risky; prefer install (idempotent where possible).
+    const result = await runInstall(tool, conn, true);
+    return { ...result, warning: `Reinstalled ${tool}` };
+  }
+
+  if (action === "uninstall") {
+    if (CONTAINER_IMAGES[tool]) {
+      const result = await execOnVps(`docker rmi -f ${CONTAINER_IMAGES[tool]} 2>&1`, conn);
+      return { success: result.code === 0, output: result.stdout, error: result.stderr };
+    }
+
+    const cfg = HOST_COMPONENTS[tool];
+    if (!cfg) return { success: false, output: "", error: `Unknown component: ${tool}` };
+
+    // Safety: refuse to uninstall Docker if other containers are running.
+    if (tool === "docker") {
+      const running = await execOnVps("docker ps -q 2>/dev/null | wc -l", conn);
+      const count = parseInt(running.stdout.trim(), 10);
+      if (count > 0) {
+        return {
+          success: false,
+          output: "",
+          error: `Cannot uninstall Docker while ${count} container(s) are running. Stop them first.`,
+          requiresConfirmation: true,
+        };
+      }
+    }
+
+    // Try service stop first if applicable.
+    if (cfg.service) {
+      await manageService(cfg.service, "stop", conn);
+    }
+
+    if (cfg.binaryPath) {
+      const result = await removeBinary(cfg.binaryPath, conn);
+      return result;
+    }
+
+    if (cfg.packageName) {
+      return uninstallPackage(cfg.packageName, conn);
+    }
+
+    return { success: false, output: "", error: `No uninstall path defined for ${tool}` };
+  }
+
+  if (action === "start" || action === "stop" || action === "restart" || action === "reload") {
+    const cfg = HOST_COMPONENTS[tool];
+    if (!cfg?.service) {
+      return { success: false, output: "", error: `${tool} does not support ${action}` };
+    }
+    return manageService(cfg.service, action, conn);
+  }
+
+  if (action === "install") {
+    return runInstall(tool, conn, false);
+  }
+
+  if (action === "status") {
+    const status = await getComponentStatus(tool, conn);
+    return {
+      success: true,
+      output: JSON.stringify(status, null, 2),
+      error: "",
+    };
+  }
+
+  return { success: false, output: "", error: `Unsupported action: ${action}` };
+}
+
+async function runInstall(tool: string, conn: VpsConnection, force: boolean): Promise<BootstrapResult> {
+  // For container images, pull always works idempotently.
+  if (CONTAINER_IMAGES[tool]) {
+    return pullImage(CONTAINER_IMAGES[tool], conn);
+  }
+
+  // If not forcing and already installed, skip.
+  if (!force) {
+    const status = await getComponentStatus(tool, conn);
+    if (status.installed) {
+      return { success: true, output: `${tool} is already installed`, error: "" };
+    }
+  }
+
+  switch (tool) {
+    case "docker":
+      return installDocker(conn);
+    case "caddy":
+      return installCaddy(conn);
+    case "nginx":
+      return installNginx(conn);
+    case "node":
+      return installNode(conn);
+    case "git":
+      return installGit(conn);
+    case "k3s":
+      return installK3s(conn);
+    case "kubectl":
+      return installKubectl(conn);
+    case "helm":
+      return installHelm(conn);
+    case "terraform":
+      return installTerraform(conn);
+    case "cloudflared":
+      return installCloudflared(conn);
+    default:
+      return { success: false, output: "", error: `Unknown component: ${tool}` };
+  }
+}

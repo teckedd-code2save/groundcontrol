@@ -41,7 +41,13 @@
       "content": "Create or edit `/etc/rancher/k3s/config.yaml`:\n\n```yaml\ndisable:\n  - traefik\n```\n\nThen restart k3s:\n\n```bash\nsudo systemctl restart k3s\n```",
       "checkCommand": "cat /etc/rancher/k3s/config.yaml",
       "expectedOutput": "traefik",
-      "aiHint": "If the config file does not exist or does not contain 'disable: [traefik]', the next k3s restart may re-enable Traefik."
+      "aiHint": "If the config file does not exist or does not contain 'disable: [traefik]', the next k3s restart may re-enable Traefik.",
+      "action": {
+        "tool": "k3s",
+        "action": "restart",
+        "confirm": true,
+        "label": "Restart k3s"
+      }
     },
     {
       "id": "remove-leftovers",
