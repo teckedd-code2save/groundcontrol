@@ -424,9 +424,30 @@ export default function GuidePlayerPage() {
                 </span>
               </div>
               {checkResult.skipped ? null : (
-                <pre className="text-xs font-mono bg-black/40 border border-border rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
-                  <strong>stdout:</strong>\n{checkResult.stdout || "(empty)"}\n\n<strong>stderr:</strong>\n{checkResult.stderr || "(empty)"}\n\n<strong>exit code:</strong> {checkResult.code}
+                <>
+                  {(checkResult.code === 127 ||
+                    /not found|command not found|No such file or directory/i.test(
+                      `${checkResult.stdout} ${checkResult.stderr}`
+                    )) && (
+                    <div className="mb-3 p-3 bg-warning/10 border border-warning/30 rounded-lg text-warning text-xs font-mono">
+                      <strong>This component is not installed or is not in PATH.</strong>
+                      {currentStep?.action ? (
+                        <span>
+                          {" "}
+                          Click <strong>{currentStep.action.label || `${currentStep.action.action} ${currentStep.action.tool}`}</strong> above to install it, then run the check again.
+                        </span>
+                      ) : (
+                        <span>
+                          {" "}
+                          Follow the step instructions to install it, then run the check again.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <pre className="text-xs font-mono bg-black/40 border border-border rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+                    <strong>stdout:</strong>\n{checkResult.stdout || "(empty)"}\n\n<strong>stderr:</strong>\n{checkResult.stderr || "(empty)"}\n\n<strong>exit code:</strong> {checkResult.code}
                 </pre>
+                </>
               )}
             </div>
           )}
