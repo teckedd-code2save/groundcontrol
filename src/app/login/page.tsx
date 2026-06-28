@@ -93,6 +93,18 @@ export default function LoginPage() {
 
         <aside className="gc-home__auth" aria-label="Sign in to GroundControl">
           <p className="gc-home__auth-kicker">Secure your fleet from a single pane of glass.</p>
+
+          {/* One-command install */}
+          <div className="bg-card/80 border border-border rounded-xl p-4 mb-4 max-w-sm">
+            <p className="text-[10px] font-mono text-muted mb-2 uppercase tracking-wider">One command to install</p>
+            <code className="block text-xs font-mono bg-background border border-border rounded-lg px-3 py-2.5 text-foreground/80">
+              npx groundcontrol bootstrap root@your-vps
+            </code>
+            <p className="text-[10px] text-muted mt-2">
+              Installs Docker, deploys GroundControl. Your VPS has an AI co-pilot in 60 seconds.
+            </p>
+          </div>
+
           <div className="gc-home__auth-card">
             <div className="gc-home__auth-brand">
               <BrandLogo size={58} stroke="#1b1916" />

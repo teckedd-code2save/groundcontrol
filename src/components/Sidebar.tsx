@@ -11,8 +11,9 @@ interface AlertItem {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: "◈" },
+  { href: "/ai", label: "AI Co-Pilot", icon: "◉" },
   { href: "/topology", label: "Topology", icon: "◐" },
-  { href: "/services", label: "Services", icon: "◉" },
+  { href: "/services", label: "Services", icon: "◎" },
   { href: "/guides", label: "Guides", icon: "▣" },
   { href: "/terminal", label: "Terminal", icon: "⌘" },
   { href: "/alerts", label: "Alerts", icon: "◑" },

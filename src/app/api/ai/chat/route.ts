@@ -139,12 +139,20 @@ export async function POST(req: NextRequest) {
         try {
           const caps = await getHostCapabilities().catch(() => null);
           const capabilityPreamble = caps ? formatCapabilitiesForPrompt(caps) : "";
+          // Inject live project/container state so the agent knows what's running
+          let runtimePreamble = "";
+          try {
+            const { buildProjectRuntime } = await import("@/lib/project-runtime");
+            const rt = await buildProjectRuntime();
+            if (rt.summary) runtimePreamble = `Current server state — ${rt.summary}`;
+          } catch { /* non-critical */ }
           const guidePreamble = guideContext
             ? await formatGuideContextForPrompt(user.id, guideContext).catch(() => "")
             : "";
 
           const parts = [SYSTEM_PROMPT];
           if (capabilityPreamble) parts.unshift(capabilityPreamble);
+          if (runtimePreamble) parts.unshift(runtimePreamble);
           if (guidePreamble) parts.unshift(guidePreamble);
           const systemPrompt = parts.join("\n\n");
 

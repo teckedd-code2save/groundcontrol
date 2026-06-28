@@ -9,6 +9,7 @@ import { linkSitesToContainers, buildProjectTopology } from "@/lib/topology";
 import type { ScannedProjectLite, Site } from "@/lib/topology";
 import type { TopoNodeData } from "@/components/TopoNode";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
+import type { ProjectRuntime, LiveContainer as RuntimeLiveContainer } from "@/lib/project-runtime";
 
 interface K8sPod {
   name: string;
@@ -93,6 +94,19 @@ export default function TopologyPage() {
     async (mode: ViewMode) => {
       setLoading(true);
       try {
+        if (mode === "projects") {
+          // Use the new unified ProjectRuntime endpoint
+          const rtRes = await fetch("/api/project-runtime");
+          if (rtRes.ok) {
+            const rt: ProjectRuntime = await rtRes.json();
+            buildProjectGraphFromRuntime(rt, setNodes, setEdges);
+            setScannedProjects(rt.projects.map(p => ({ slug: p.slug, name: p.name, dirName: p.slug, path: p.path, composePath: p.composePath, parent: p.parent, domain: p.domain, hasGit: p.hasGit, services: p.services.map(s => ({ name: s.name, image: s.image, build: s.build, ports: s.ports })) })));
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Fallback to old API for sites view or if new endpoint fails
         const [projectsRes, containersRes] = await Promise.all([
           fetch("/api/projects"),
           fetch("/api/containers"),
@@ -577,6 +591,165 @@ function buildProjectGraph(
       }
       edges.push({ id: `e-${groupId}-${id}`, source: groupId, target: id, type: "smoothstep" });
     });
+  }
+
+  setNodes(nodes);
+  setEdges(edges);
+}
+
+// ── New graph builder using unified ProjectRuntime ──────
+
+function buildProjectGraphFromRuntime(
+  rt: ProjectRuntime,
+  setNodes: (n: Node<TopoNodeData>[]) => void,
+  setEdges: (e: Edge[]) => void,
+) {
+  const nodes: Node<TopoNodeData>[] = [];
+  const edges: Edge[] = [];
+
+  // Root node
+  nodes.push({
+    id: "host",
+    type: "topoNode",
+    position: { x: 0, y: 0 },
+    data: {
+      label: "VPS",
+      type: "host",
+      health: "healthy",
+      sub: `${rt.projects.length} project${rt.projects.length === 1 ? "" : "s"}`,
+    },
+  });
+
+  for (const proj of rt.projects) {
+    const groupId = `proj-${proj.slug}`;
+
+    nodes.push({
+      id: groupId,
+      type: "group",
+      position: { x: 0, y: 0 },
+      data: {
+        label: proj.name,
+        type: "project",
+        health: proj.health,
+        projectSlug: proj.slug,
+        projectPath: proj.path,
+        serviceCount: proj.serviceCount,
+        hasGit: proj.hasGit,
+        childCount: proj.services.length + proj.extraContainers.length + proj.sites.length,
+      },
+    });
+    edges.push({ id: `e-host-${groupId}`, source: "host", target: groupId, type: "smoothstep" });
+
+    // Sites
+    for (const site of proj.sites) {
+      const sid = `site-${proj.slug}-${site.domain}`;
+      nodes.push({
+        id: sid,
+        type: "topoNode",
+        parentId: groupId,
+        position: { x: 0, y: 0 },
+        data: {
+          label: site.domain,
+          type: "site",
+          health: site.proxy ? "healthy" : "warning",
+          sub: site.proxy ? `→ ${site.proxy}` : site.root ? `root: ${site.root}` : "",
+        },
+      });
+      edges.push({ id: `e-${groupId}-${sid}`, source: groupId, target: sid, type: "smoothstep" });
+    }
+
+    // Services → Containers
+    for (const svc of proj.services) {
+      const svcId = `svc-${proj.slug}-${svc.name}`;
+      nodes.push({
+        id: svcId,
+        type: "topoNode",
+        parentId: groupId,
+        position: { x: 0, y: 0 },
+        data: {
+          label: svc.name,
+          type: "service",
+          health: svc.container ? "healthy" : "warning",
+          image: svc.image,
+          ports: svc.ports,
+          sub: svc.image || "build",
+        },
+      });
+      edges.push({ id: `e-${groupId}-${svcId}`, source: groupId, target: svcId, type: "smoothstep" });
+
+      if (svc.container) {
+        const cid = `ctr-${svc.container.name}`;
+        nodes.push({
+          id: cid,
+          type: "topoNode",
+          parentId: groupId,
+          position: { x: 0, y: 0 },
+          data: {
+            label: svc.container.name,
+            type: "container",
+            health: svc.container.state === "running" ? "healthy" : "critical",
+            stats: svc.container.stats,
+            state: svc.container.state,
+            sub: `${svc.container.state} · CPU ${svc.container.stats?.cpu || "—"}`,
+          },
+        });
+        edges.push({ id: `e-${svcId}-${cid}`, source: svcId, target: cid, type: "smoothstep" });
+      }
+    }
+
+    // Extra containers
+    for (const c of proj.extraContainers) {
+      const cid = `ctr-${c.name}`;
+      nodes.push({
+        id: cid,
+        type: "topoNode",
+        parentId: groupId,
+        position: { x: 0, y: 0 },
+        data: {
+          label: c.name,
+          type: "container",
+          health: c.state === "running" ? "healthy" : "critical",
+          stats: c.stats,
+          state: c.state,
+          sub: c.state,
+        },
+      });
+      edges.push({ id: `e-${groupId}-${cid}`, source: groupId, target: cid, type: "smoothstep" });
+    }
+  }
+
+  // Unclaimed containers
+  if (rt.unclaimedContainers.length > 0) {
+    const gid = "unclaimed";
+    nodes.push({
+      id: gid,
+      type: "group",
+      position: { x: 0, y: 0 },
+      data: {
+        label: "Unclaimed",
+        type: "container",
+        health: rt.unclaimedContainers.some(c => c.state !== "running") ? "warning" : "healthy",
+        childCount: rt.unclaimedContainers.length,
+      },
+    });
+    edges.push({ id: "e-host-unclaimed", source: "host", target: gid, type: "smoothstep" });
+
+    for (const c of rt.unclaimedContainers) {
+      const cid = `ctr-${c.name}`;
+      nodes.push({
+        id: cid,
+        type: "topoNode",
+        parentId: gid,
+        position: { x: 0, y: 0 },
+        data: {
+          label: c.name,
+          type: "container",
+          health: c.state === "running" ? "healthy" : "critical",
+          sub: c.state,
+        },
+      });
+      edges.push({ id: `e-${gid}-${cid}`, source: gid, target: cid, type: "smoothstep" });
+    }
   }
 
   setNodes(nodes);
