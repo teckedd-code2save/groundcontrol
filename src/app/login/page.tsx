@@ -1,38 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import BrandLogo from "@/components/BrandLogo";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
-
-const PREVIEW_STAGES = [
-  {
-    label: "Dashboard",
-    title: "Read the host",
-    sub: "Metrics, health score, alerts, and capacity in one loaded cockpit.",
-    image: "/login-previews/dashboard.png",
-  },
-  {
-    label: "Services",
-    title: "Run the stack",
-    sub: "Containers, reverse proxy, projects, and deployments in one place.",
-    image: "/login-previews/containers.png",
-  },
-  {
-    label: "Settings",
-    title: "Provision with code",
-    sub: "Terraform stacks, deploy targets, and cloud accounts wired in.",
-    image: "/login-previews/infrastructure.png",
-  },
-  {
-    label: "Terminal",
-    title: "Operate anywhere",
-    sub: "A host-aware shell with the commands your VPS actually supports.",
-    image: "/login-previews/terminal.png",
-  },
-];
-
-const PREVIEW_INTERVAL = 5000;
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -41,78 +13,133 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    fetch("/api/auth/setup")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.setupRequired) {
-          router.push("/setup");
-          return;
-        }
-        fetch("/api/auth/me")
-          .then((res) => {
-            if (res.ok) router.push("/dashboard");
-          })
-          .catch(() => {});
-      })
-      .catch(() => {});
-  }, [router]);
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       });
-      const data = await res.json();
-      if (res.ok) {
-        if (data.forcePasswordChange) {
-          router.push("/force-password-change");
-        } else {
-          router.push("/dashboard");
-        }
-      } else {
-        setError(data.error || "Login failed");
-      }
-    } catch {
-      setError("Network error");
-    } finally {
-      setLoading(false);
-    }
+      if (res.ok) router.push("/");
+      else { const d = await res.json().catch(() => ({})); setError(d.error || "Invalid credentials"); }
+    } catch { setError("Network error"); }
+    finally { setLoading(false); }
   }
 
   return (
-    <main className="gc-home sr-theme">
-      <div className="gc-home__ambient" />
-      <section className="gc-home__grid">
-        <GroundControlFlipPreview />
+    <div className="min-h-screen bg-background relative overflow-hidden flex">
+      {/* Animated geometric grid background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: `linear-gradient(rgba(34,211,238,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.3) 1px, transparent 1px)`,
+            backgroundSize: "60px 60px",
+            animation: "gridMove 20s linear infinite",
+          }} />
+        <style>{`
+          @keyframes gridMove { 0% { transform: translate(0,0); } 100% { transform: translate(60px,60px); } }
+        `}</style>
+        {/* Floating geometric shapes */}
+        <div className="absolute top-1/4 left-1/4 w-64 h-64 rounded-full bg-accent/5 blur-3xl animate-pulse" style={{animationDuration: "8s"}} />
+        <div className="absolute bottom-1/3 right-1/4 w-96 h-96 rounded-full bg-accent/3 blur-3xl animate-pulse" style={{animationDuration: "12s", animationDelay: "2s"}} />
+        <div className="absolute top-1/2 left-1/2 w-48 h-48 rounded-full bg-accent/5 blur-2xl animate-pulse" style={{animationDuration: "6s", animationDelay: "4s"}} />
+        {/* Animated nodes */}
+        {[
+          { x: "15%", y: "20%", d: "3s" },
+          { x: "75%", y: "15%", d: "4s" },
+          { x: "85%", y: "70%", d: "5s" },
+          { x: "20%", y: "80%", d: "3.5s" },
+          { x: "50%", y: "50%", d: "2.5s" },
+          { x: "60%", y: "85%", d: "4.5s" },
+        ].map((n, i) => (
+          <div key={i} className="absolute w-1.5 h-1.5 rounded-full bg-accent/30"
+            style={{
+              left: n.x, top: n.y,
+              animation: `nodePulse ${n.d} ease-in-out infinite`,
+              animationDelay: `${i * 0.5}s`,
+            }} />
+        ))}
+        <style>{`
+          @keyframes nodePulse { 0%,100% { opacity:0.2; transform:scale(1); } 50% { opacity:0.8; transform:scale(2.5); } }
+        `}</style>
+        {/* Connecting lines between nodes */}
+        <svg className="absolute inset-0 w-full h-full opacity-[0.06]">
+          {[
+            ["15%","20%","75%","15%"],
+            ["75%","15%","85%","70%"],
+            ["85%","70%","20%","80%"],
+            ["20%","80%","15%","20%"],
+            ["50%","50%","60%","85%"],
+            ["60%","85%","75%","15%"],
+          ].map(([x1,y1,x2,y2], i) => (
+            <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="currentColor" className="text-accent" strokeWidth="1"
+              style={{ animation: `lineFade ${3 + i * 0.5}s ease-in-out infinite`, animationDelay: `${i * 0.7}s` }} />
+          ))}
+        </svg>
+        <style>{`
+          @keyframes lineFade { 0%,100% { opacity:0.1; } 50% { opacity:0.5; } }
+        `}</style>
+      </div>
 
-        <aside className="gc-home__auth" aria-label="Sign in to GroundControl">
-          <p className="gc-home__auth-kicker">Secure your fleet from a single pane of glass.</p>
+      {/* Left: Value proposition */}
+      <div className="hidden lg:flex lg:w-1/2 relative items-center justify-center p-16">
+        <div className="max-w-md">
+          <div className="mb-8">
+            <BrandLogo size={48} stroke="#1b1916" />
+          </div>
+          <h1 className="text-4xl font-bold tracking-tight leading-tight mb-4">
+            Your VPS has an{" "}
+            <span className="text-accent">AI co-pilot</span>
+          </h1>
+          <p className="text-lg text-muted leading-relaxed mb-10">
+            Check metrics, read logs, restart services, configure DNS, deploy from templates — all from your browser. No SSH needed.
+          </p>
 
-          {/* One-command install */}
-          <div className="bg-card/80 border border-border rounded-xl p-4 mb-4 max-w-sm">
-            <p className="text-[10px] font-mono text-muted mb-2 uppercase tracking-wider">One command to install</p>
-            <code className="block text-xs font-mono bg-background border border-border rounded-lg px-3 py-2.5 text-foreground/80">
-              curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
-            </code>
-            <p className="text-[10px] text-muted mt-2">
-              Installs Docker, deploys GroundControl. Your VPS has an AI co-pilot in 60 seconds.
-            </p>
+          <div className="space-y-4">
+            {[
+              { icon: "◉", title: "AI Management", desc: "Ask the agent anything about your server" },
+              { icon: "▦", title: "Deployment Templates", desc: "Production stacks in one click" },
+              { icon: "◎", title: "Cloudflare DNS", desc: "Manage records from the same dashboard" },
+              { icon: "◑", title: "Self-Hosted & Private", desc: "Your data never leaves your server" },
+            ].map((f, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center text-accent text-sm shrink-0 mt-0.5">{f.icon}</div>
+                <div>
+                  <h3 className="text-sm font-medium">{f.title}</h3>
+                  <p className="text-xs text-muted">{f.desc}</p>
+                </div>
+              </div>
+            ))}
           </div>
 
-          <div className="gc-home__auth-card">
-            <div className="gc-home__auth-brand">
-              <BrandLogo size={58} stroke="#1b1916" />
-              <h1 className="sr-display">GroundControl</h1>
-              <p>Self-hosted VPS cockpit</p>
-            </div>
+          <div className="mt-10 p-4 bg-card/50 border border-border rounded-xl">
+            <p className="text-[10px] font-mono text-muted mb-2 uppercase tracking-wider">One command to install</p>
+            <code className="block text-[11px] font-mono text-foreground/60 leading-relaxed">
+              curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
+            </code>
+          </div>
+        </div>
+      </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+      {/* Right: Auth card */}
+      <div className="flex-1 flex items-center justify-center p-6 md:p-12 relative">
+        <div className="w-full max-w-sm">
+          {/* Mobile brand + tagline (hidden on desktop) */}
+          <div className="lg:hidden text-center mb-8">
+            <BrandLogo size={40} stroke="#1b1916" />
+            <h1 className="text-xl font-bold mt-4">GroundControl</h1>
+            <p className="text-sm text-muted mt-1">Self-hosted VPS cockpit</p>
+          </div>
+
+          <div className="bg-card border border-border rounded-2xl p-8 shadow-2xl shadow-black/20 relative">
+            <div className="absolute -top-px left-8 right-8 h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
+
+            <h2 className="text-lg font-bold mb-1">Sign in</h2>
+            <p className="text-xs text-muted mb-6">Access your GroundControl dashboard</p>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
               <AuthInput
                 label="Username"
                 type="text"
@@ -121,7 +148,6 @@ export default function LoginPage() {
                 placeholder="admin"
                 autoFocus
               />
-
               <AuthInput
                 label="Password"
                 type="password"
@@ -129,188 +155,24 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
               />
-
               <AuthError message={error} />
               <AuthButton loading={loading}>Sign In</AuthButton>
             </form>
+
+            <p className="text-[10px] text-muted text-center mt-6 font-mono">
+              New to GroundControl?{" "}
+              <Link href="/" className="text-accent hover:underline">Learn more →</Link>
+            </p>
           </div>
-        </aside>
-      </section>
-    </main>
-  );
-}
 
-function GroundControlFlipPreview() {
-  const sectionRef = useRef<HTMLElement>(null);
-  const stackRef = useRef<HTMLDivElement>(null);
-  const copyRef = useRef<HTMLDivElement>(null);
-  const kickerRef = useRef<HTMLParagraphElement>(null);
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  const subRef = useRef<HTMLParagraphElement>(null);
-  const gotoRef = useRef<(index: number, direction: number) => void>(() => {});
-  const [active, setActive] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    let cleanup: (() => void) | undefined;
-
-    async function init() {
-      const stack = stackRef.current;
-      const section = sectionRef.current;
-      if (!stack || !section) return;
-
-      const stages = Array.from(stack.querySelectorAll<HTMLElement>(".gc-stage"));
-      const bgs = stages.map((s) => s.querySelector<HTMLElement>(".gc-stage__img")!);
-
-      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-      const [{ gsap }, observerMod] = await Promise.all([
-        import("gsap"),
-        import("gsap/Observer").catch(() => null),
-      ]);
-      if (cancelled) return;
-
-      const Observer = observerMod?.Observer;
-      if (Observer) gsap.registerPlugin(Observer);
-
-      const wrap = gsap.utils.wrap(0, stages.length);
-      let current = -1;
-      let animating = false;
-
-      const setText = (index: number, animate: boolean) => {
-        const s = PREVIEW_STAGES[index];
-        if (kickerRef.current) kickerRef.current.textContent = s.label;
-        if (titleRef.current) titleRef.current.textContent = s.title;
-        if (subRef.current) subRef.current.textContent = s.sub;
-        if (copyRef.current && animate && !reduce) {
-          gsap.fromTo(
-            copyRef.current.children,
-            { autoAlpha: 0, y: 18 },
-            { autoAlpha: 1, y: 0, duration: 0.6, ease: "power2.out", stagger: 0.07, overwrite: true },
-          );
-        }
-      };
-
-      const goto = (index: number, direction: number) => {
-        index = wrap(index);
-        if (animating || index === current) return;
-        animating = true;
-        const dFactor = direction === -1 ? -1 : 1;
-        const prev = current;
-        const fromClip = dFactor === 1 ? "inset(100% 0% 0% 0%)" : "inset(0% 0% 100% 0%)";
-
-        const tl = gsap.timeline({
-          defaults: { duration: reduce ? 0.01 : 1, ease: "power3.inOut" },
-          onComplete: () => {
-            animating = false;
-          },
-        });
-
-        gsap.set(stages[index], { autoAlpha: 1, zIndex: 1, clipPath: fromClip });
-        if (prev >= 0) gsap.set(stages[prev], { zIndex: 0 });
-
-        tl.to(stages[index], { clipPath: "inset(0% 0% 0% 0%)" }, 0).fromTo(
-          bgs[index],
-          { yPercent: 6 * dFactor, scale: 1.06 },
-          { yPercent: 0, scale: 1, duration: reduce ? 0.01 : 1.15, ease: "power2.out" },
-          0,
-        );
-
-        if (prev >= 0) {
-          tl.to(bgs[prev], { yPercent: -5 * dFactor, duration: 1 }, 0).set(stages[prev], {
-            autoAlpha: 0,
-            clipPath: "inset(0% 0% 0% 0%)",
-          });
-        }
-
-        setText(index, prev >= 0);
-        current = index;
-        setActive(index);
-      };
-
-      gotoRef.current = goto;
-
-      gsap.set(stages, { autoAlpha: 0, clipPath: "inset(0% 0% 0% 0%)" });
-      goto(0, 1);
-
-      // Auto-advance, paused on hover/focus
-      let paused = false;
-      const timer = window.setInterval(() => {
-        if (!paused) goto(current + 1, 1);
-      }, PREVIEW_INTERVAL);
-      const onEnter = () => (paused = true);
-      const onLeave = () => (paused = false);
-      section.addEventListener("mouseenter", onEnter);
-      section.addEventListener("mouseleave", onLeave);
-      section.addEventListener("focusin", onEnter);
-      section.addEventListener("focusout", onLeave);
-
-      // Wheel / drag over the preview cycles screens (does not hijack the page)
-      let observer: { kill: () => void } | undefined;
-      if (Observer && !reduce) {
-        observer = Observer.create({
-          target: stack,
-          type: "wheel,touch",
-          tolerance: 60,
-          preventDefault: false,
-          onUp: () => goto(current + 1, 1),
-          onDown: () => goto(current - 1, -1),
-        }) as unknown as { kill: () => void };
-      }
-
-      cleanup = () => {
-        window.clearInterval(timer);
-        section.removeEventListener("mouseenter", onEnter);
-        section.removeEventListener("mouseleave", onLeave);
-        section.removeEventListener("focusin", onEnter);
-        section.removeEventListener("focusout", onLeave);
-        observer?.kill();
-        gsap.killTweensOf("*");
-      };
-    }
-
-    init();
-    return () => {
-      cancelled = true;
-      cleanup?.();
-    };
-  }, []);
-
-  return (
-    <section ref={sectionRef} className="gc-preview" aria-label="GroundControl product preview">
-      <header className="gc-preview__header">
-        <div className="gc-preview__brand">
-          <BrandLogo size={34} stroke="#1b1916" />
-          <span className="sr-display">GroundControl<span>.</span></span>
-        </div>
-        <div ref={copyRef} className="gc-preview__copy">
-          <p ref={kickerRef} className="gc-preview__kicker">{PREVIEW_STAGES[0].label}</p>
-          <h2 ref={titleRef} className="sr-display">{PREVIEW_STAGES[0].title}</h2>
-          <p ref={subRef} className="gc-preview__sub">{PREVIEW_STAGES[0].sub}</p>
-        </div>
-      </header>
-
-      <div ref={stackRef} className="gc-preview__stack">
-        {PREVIEW_STAGES.map((item) => (
-          <div key={item.label} className="gc-stage" aria-hidden="true">
-            <img className="gc-stage__img" src={item.image} alt="" draggable={false} />
+          {/* Bottom install hint for mobile */}
+          <div className="lg:hidden mt-6 p-4 bg-card/50 border border-border rounded-xl text-center">
+            <code className="text-[10px] font-mono text-foreground/50 break-all">
+              curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
+            </code>
           </div>
-        ))}
+        </div>
       </div>
-
-      <nav className="gc-preview__nav" aria-label="Preview screens">
-        {PREVIEW_STAGES.map((item, index) => (
-          <button
-            key={item.label}
-            type="button"
-            aria-current={active === index}
-            className={`gc-preview__nav-item ${active === index ? "is-active" : ""}`}
-            onClick={() => gotoRef.current(index, index >= active ? 1 : -1)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
-    </section>
+    </div>
   );
 }
