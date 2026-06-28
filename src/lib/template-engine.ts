@@ -119,18 +119,22 @@ function parseTemplateYaml(content: string): TemplateDefinition {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
-    // Top-level key
+    // Top-level scalar: key: "value" (name, description, category, version)
+    const topScalar = trimmed.match(/^(\w[\w_]*):\s*"?(.+?)"?\s*$/);
+    if (topScalar && !line.startsWith(" ")) {
+      const key = topScalar[1];
+      const val = topScalar[2];
+      if (["name", "description", "category", "version"].includes(key)) {
+        root[key] = val;
+      }
+      continue;
+    }
+
+    // Top-level key that opens a section (no value on same line)
     const topMatch = trimmed.match(/^(\w[\w_]*):\s*$/);
     if (topMatch && !line.startsWith(" ")) {
       currentSection = topMatch[1];
       currentService = null;
-      continue;
-    }
-
-    // Scalar value
-    const scalarMatch = trimmed.match(/^(\w[\w_]*):\s*"?(.+?)"?\s*$/);
-    if (scalarMatch && !line.startsWith("  ") && currentSection) {
-      root[currentSection] = scalarMatch[2];
       continue;
     }
 

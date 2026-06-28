@@ -300,6 +300,175 @@ export default function CloudflareSettingsTab() {
           {result.message}
         </div>
       )}
+
+      {/* DNS Records panel — shown when an active account exists */}
+      <DnsRecordsPanel />
+    </div>
+  );
+}
+
+function DnsRecordsPanel() {
+  const [zones, setZones] = useState<{ id: string; name: string; status: string }[]>([]);
+  const [selectedZone, setSelectedZone] = useState<string>("");
+  const [records, setRecords] = useState<{ id: string; type: string; name: string; content: string; ttl: number; proxied: boolean }[]>([]);
+  const [loadingZones, setLoadingZones] = useState(false);
+  const [loadingRecords, setLoadingRecords] = useState(false);
+  const [zoneError, setZoneError] = useState("");
+  const [newRecord, setNewRecord] = useState({ type: "A", name: "", content: "", ttl: 1, proxied: true });
+  const [adding, setAdding] = useState(false);
+  const [addResult, setAddResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadZones();
+  }, []);
+
+  async function loadZones() {
+    setLoadingZones(true); setZoneError("");
+    try {
+      const res = await fetch("/api/cloudflare/zones");
+      const data = await res.json();
+      if (res.ok && data.zones) {
+        setZones(data.zones);
+        if (data.zones.length > 0 && !selectedZone) setSelectedZone(data.zones[0].id);
+      } else {
+        setZoneError(data.error || "Failed to load zones. Is Cloudflare configured?");
+      }
+    } catch { setZoneError("Failed to load zones"); }
+    finally { setLoadingZones(false); }
+  }
+
+  useEffect(() => {
+    if (!selectedZone) return;
+    loadRecords(selectedZone);
+  }, [selectedZone]);
+
+  async function loadRecords(zoneId: string) {
+    setLoadingRecords(true);
+    try {
+      const res = await fetch(`/api/cloudflare/zones/${zoneId}/dns`);
+      const data = await res.json();
+      if (res.ok && data.records) setRecords(data.records);
+      else setRecords([]);
+    } catch { setRecords([]); }
+    finally { setLoadingRecords(false); }
+  }
+
+  async function handleAddRecord(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedZone || !newRecord.name || !newRecord.content) return;
+    setAdding(true); setAddResult(null);
+    try {
+      const res = await fetch(`/api/cloudflare/zones/${selectedZone}/dns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newRecord),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAddResult({ ok: true, msg: `Record ${newRecord.name} created` });
+        setNewRecord({ type: "A", name: "", content: "", ttl: 1, proxied: true });
+        await loadRecords(selectedZone);
+      } else {
+        setAddResult({ ok: false, msg: data.error || "Failed" });
+      }
+    } catch { setAddResult({ ok: false, msg: "Network error" }); }
+    finally { setAdding(false); }
+  }
+
+  async function handleDelete(recordId: string) {
+    if (!selectedZone) return;
+    setDeleting(recordId);
+    try {
+      await fetch(`/api/cloudflare/zones/${selectedZone}/dns/${recordId}`, { method: "DELETE" });
+      await loadRecords(selectedZone);
+    } catch {} finally { setDeleting(null); }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-card border border-border rounded-xl p-6">
+        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">DNS Records</h2>
+        
+        {loadingZones && <p className="text-xs text-muted font-mono">Loading zones...</p>}
+        {zoneError && <p className="text-xs text-muted font-mono">{zoneError}</p>}
+
+        {zones.length > 0 && (
+          <>
+            <div className="mb-4">
+              <label className="block text-xs font-mono text-muted mb-1.5">Zone</label>
+              <select value={selectedZone} onChange={e => setSelectedZone(e.target.value)}
+                className="bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent">
+                {zones.map(z => <option key={z.id} value={z.id}>{z.name} ({z.status})</option>)}
+              </select>
+            </div>
+
+            {/* Add record form */}
+            <form onSubmit={handleAddRecord} className="mb-4 p-4 bg-background/50 rounded-lg border border-border">
+              <p className="text-xs font-mono text-muted mb-3">Add Record</p>
+              <div className="flex flex-wrap gap-2 items-end">
+                <select value={newRecord.type} onChange={e => setNewRecord({...newRecord, type: e.target.value})}
+                  className="bg-card border border-border rounded px-2 py-1.5 text-xs font-mono outline-none">
+                  {["A","CNAME","MX","TXT","AAAA"].map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input type="text" placeholder="name (@ for root)" value={newRecord.name} onChange={e => setNewRecord({...newRecord, name: e.target.value})}
+                  className="bg-card border border-border rounded px-2 py-1.5 text-xs font-mono outline-none focus:border-accent w-40"/>
+                <input type="text" placeholder="content" value={newRecord.content} onChange={e => setNewRecord({...newRecord, content: e.target.value})}
+                  className="bg-card border border-border rounded px-2 py-1.5 text-xs font-mono outline-none focus:border-accent flex-1 min-w-[120px]"/>
+                <label className="flex items-center gap-1 text-[10px] text-muted font-mono">
+                  <input type="checkbox" checked={newRecord.proxied} onChange={e => setNewRecord({...newRecord, proxied: e.target.checked})} className="accent-accent"/> Proxy
+                </label>
+                <button type="submit" disabled={adding}
+                  className="px-3 py-1.5 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 disabled:opacity-50">
+                  {adding ? "..." : "Add"}
+                </button>
+              </div>
+              {addResult && (
+                <p className={`text-[10px] mt-2 font-mono ${addResult.ok ? "text-success" : "text-error"}`}>{addResult.msg}</p>
+              )}
+            </form>
+
+            {/* Records table */}
+            {loadingRecords && <p className="text-xs text-muted font-mono">Loading records...</p>}
+            {!loadingRecords && records.length === 0 && (
+              <p className="text-xs text-muted font-mono">No DNS records found for this zone.</p>
+            )}
+            {records.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-border text-muted">
+                      <th className="text-left py-2 px-2">Type</th>
+                      <th className="text-left py-2 px-2">Name</th>
+                      <th className="text-left py-2 px-2">Content</th>
+                      <th className="text-left py-2 px-2">TTL</th>
+                      <th className="text-left py-2 px-2">Proxy</th>
+                      <th className="text-right py-2 px-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {records.map(r => (
+                      <tr key={r.id} className="border-b border-border/50 hover:bg-background/50">
+                        <td className="py-1.5 px-2"><span className="px-1 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 text-[10px]">{r.type}</span></td>
+                        <td className="py-1.5 px-2">{r.name}</td>
+                        <td className="py-1.5 px-2 truncate max-w-[200px]">{r.content}</td>
+                        <td className="py-1.5 px-2 text-muted">{r.ttl === 1 ? "Auto" : r.ttl}</td>
+                        <td className="py-1.5 px-2">{r.proxied ? "🟠" : "⚪"}</td>
+                        <td className="py-1.5 px-2 text-right">
+                          <button onClick={() => handleDelete(r.id)} disabled={deleting === r.id}
+                            className="text-[10px] text-error/70 hover:text-error font-mono disabled:opacity-50">
+                            {deleting === r.id ? "..." : "del"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

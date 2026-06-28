@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Infrastructure — Full Stack</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#020617;color:#e2e8f0;font-family:'JetBrains Mono',monospace;padding:2rem}
+.container{max-width:1400px;margin:0 auto}
+.header{display:flex;align-items:center;gap:1rem;margin-bottom:2rem}
+.pulse{width:12px;height:12px;background:#22d3ee;border-radius:50%;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+h1{font-size:1.5rem;font-weight:700}
+.subtitle{color:#64748b;font-size:.75rem;margin-top:.25rem}
+.diagram-card{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1.5rem;margin-bottom:2rem;overflow-x:auto}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:2rem}
+.card{background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:1.25rem}
+.card-header{display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem}
+.card-dot{width:8px;height:8px;border-radius:50%}
+.card-dot.cyan{background:#22d3ee}.card-dot.green{background:#34d399}.card-dot.rose{background:#fb7185}
+.card h3{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.card ul{list-style:none;font-size:.65rem;color:#94a3b8;line-height:1.8}
+footer{text-align:center;color:#475569;font-size:.6rem;margin-top:2rem}
+@media(max-width:768px){.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<div class="pulse"></div>
+<div><h1>Production Infrastructure Stack</h1><p class="subtitle">All layers a team shipping real code needs — security, resilience, observability, deployment</p></div>
+</div>
+
+<div class="diagram-card">
+<svg viewBox="0 0 1400 1100" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/></pattern>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#64748b"/></marker>
+<marker id="arrow-rose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#fb7185"/></marker>
+<marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#34d399"/></marker>
+</defs>
+
+<rect width="1400" height="1100" fill="url(#grid)"/>
+
+<!-- ===== LAYER 1: INTERNET EDGE ==== -->
+<rect x="20" y="10" width="1360" height="150" rx="12" fill="none" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4" opacity="0.5"/>
+<text x="40" y="35" fill="#fbbf24" font-size="10" font-weight="700">LAYER 1 — INTERNET EDGE</text>
+
+<g transform="translate(60,55)"><rect x="0" y="0" width="220" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="220" height="50" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/><text x="110" y="20" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700">DNS (Cloudflare / Route53)</text><text x="110" y="36" text-anchor="middle" fill="#fcd34d" font-size="8">A/AAAA · CNAME · NS · health checks</text></g>
+<g transform="translate(310,55)"><rect x="0" y="0" width="220" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="220" height="50" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/><text x="110" y="20" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700">CDN / Edge Cache</text><text x="110" y="36" text-anchor="middle" fill="#fcd34d" font-size="8">Cloudflare CDN · CloudFront · Fastly</text></g>
+<g transform="translate(560,55)"><rect x="0" y="0" width="260" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="260" height="50" rx="6" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/><text x="130" y="20" text-anchor="middle" fill="#fb7185" font-size="11" font-weight="700">WAF + DDoS Protection</text><text x="130" y="36" text-anchor="middle" fill="#fda4af" font-size="8">Cloudflare WAF · AWS Shield · rate limiting</text></g>
+<g transform="translate(850,55)"><rect x="0" y="0" width="240" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="240" height="50" rx="6" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/><text x="120" y="20" text-anchor="middle" fill="#fb7185" font-size="11" font-weight="700">TLS Termination</text><text x="120" y="36" text-anchor="middle" fill="#fda4af" font-size="8">Let's Encrypt · cert-manager · mTLS</text></g>
+
+<!-- Edge → Security Group arrow -->
+<line x1="700" y1="105" x2="700" y2="180" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-rose)"/>
+
+<!-- ===== LAYER 2: SECURITY LAYER ==== -->
+<rect x="20" y="175" width="1360" height="120" rx="12" fill="none" stroke="#fb7185" stroke-width="1" stroke-dasharray="4,4" opacity="0.4"/>
+<text x="40" y="200" fill="#fb7185" font-size="10" font-weight="700">LAYER 2 — SECURITY</text>
+
+<g transform="translate(60,215)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#fb7185" font-size="10" font-weight="700">Auth / Identity</text><text x="100" y="36" text-anchor="middle" fill="#fda4af" font-size="8">OAuth2 · JWT · API keys · SSO</text><text x="100" y="48" text-anchor="middle" fill="#fda4af" font-size="7">Auth0 · Clerk · Keycloak</text></g>
+<g transform="translate(290,215)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#fb7185" font-size="10" font-weight="700">Secrets Management</text><text x="100" y="36" text-anchor="middle" fill="#fda4af" font-size="8">Vault · Infisical · Doppler</text><text x="100" y="48" text-anchor="middle" fill="#fda4af" font-size="7">AWS Secrets Mgr · env encryption</text></g>
+<g transform="translate(520,215)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#fb7185" font-size="10" font-weight="700">Network Security</text><text x="100" y="36" text-anchor="middle" fill="#fda4af" font-size="8">iptables · ufw · VPC · VPN</text><text x="100" y="48" text-anchor="middle" fill="#fda4af" font-size="7">WireGuard · bastion hosts · SSH</text></g>
+<g transform="translate(750,215)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#fb7185" font-size="10" font-weight="700">Container Security</text><text x="100" y="36" text-anchor="middle" fill="#fda4af" font-size="8">Trivy · Snyk · Falco runtime</text><text x="100" y="48" text-anchor="middle" fill="#fda4af" font-size="7">Image scanning · SBOM · CVE</text></g>
+<g transform="translate(980,215)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#fb7185" font-size="10" font-weight="700">Audit & Compliance</text><text x="100" y="36" text-anchor="middle" fill="#fda4af" font-size="8">Audit logs · SOC2 · GDPR</text><text x="100" y="48" text-anchor="middle" fill="#fda4af" font-size="7">Access reviews · change tracking</text></g>
+
+<!-- Security → Traffic arrow -->
+<line x1="700" y1="270" x2="700" y2="325" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- ===== LAYER 3: TRAFFIC MANAGEMENT ==== -->
+<rect x="20" y="320" width="1360" height="130" rx="12" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="6,3" opacity="0.4"/>
+<text x="40" y="345" fill="#22d3ee" font-size="10" font-weight="700">LAYER 3 — TRAFFIC MANAGEMENT</text>
+
+<g transform="translate(60,360)"><rect x="0" y="0" width="260" height="65" rx="6" fill="#0f172a"/><rect x="0" y="0" width="260" height="65" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="130" y="20" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="700">Reverse Proxy</text><text x="130" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">Caddy · Nginx · Traefik · HAProxy · Envoy</text><text x="130" y="50" text-anchor="middle" fill="#67e8f9" font-size="7">SSL · routing · headers · compression</text></g>
+<g transform="translate(350,360)"><rect x="0" y="0" width="240" height="65" rx="6" fill="#0f172a"/><rect x="0" y="0" width="240" height="65" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="120" y="20" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="700">Load Balancer</text><text x="120" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">HAProxy · Traefik LB · ALB</text><text x="120" y="50" text-anchor="middle" fill="#67e8f9" font-size="7">Round-robin · least-conn · sticky</text></g>
+<g transform="translate(620,360)"><rect x="0" y="0" width="200" height="65" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="65" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="700">API Gateway</text><text x="100" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">Kong · KrakenD · Tyk</text><text x="100" y="50" text-anchor="middle" fill="#67e8f9" font-size="7">Rate limiting · auth · versioning</text></g>
+<g transform="translate(850,360)"><rect x="0" y="0" width="200" height="65" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="65" rx="6" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#fb7185" font-size="11" font-weight="700">Circuit Breaker</text><text x="100" y="36" text-anchor="middle" fill="#fda4af" font-size="8">Service mesh · retry logic</text><text x="100" y="50" text-anchor="middle" fill="#fda4af" font-size="7">Failure isolation · fallback</text></g>
+
+<line x1="700" y1="425" x2="700" y2="480" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- ===== LAYER 4: APPLICATION + DATA ==== -->
+<rect x="20" y="475" width="1360" height="180" rx="12" fill="none" stroke="#34d399" stroke-width="1" stroke-dasharray="6,3" opacity="0.4"/>
+<text x="40" y="500" fill="#34d399" font-size="10" font-weight="700">LAYER 4 — APPLICATION + DATA</text>
+
+<g transform="translate(60,515)"><rect x="0" y="0" width="220" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="220" height="55" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/><text x="110" y="22" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">App Containers</text><text x="110" y="38" text-anchor="middle" fill="#6ee7b7" font-size="8">Docker Compose · K8s Pods · PM2</text></g>
+<g transform="translate(310,515)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/><text x="100" y="22" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="700">Database</text><text x="100" y="38" text-anchor="middle" fill="#c4b5fd" font-size="8">PostgreSQL · MySQL · Mongo</text></g>
+<g transform="translate(540,515)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/><text x="100" y="22" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="700">Cache / Queue</text><text x="100" y="38" text-anchor="middle" fill="#fdba74" font-size="8">Redis · BullMQ · RabbitMQ</text></g>
+<g transform="translate(770,515)"><rect x="0" y="0" width="200" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="55" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/><text x="100" y="22" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="700">Object Storage</text><text x="100" y="38" text-anchor="middle" fill="#c4b5fd" font-size="8">S3 · MinIO · Cloudflare R2</text></g>
+<g transform="translate(1000,515)"><rect x="0" y="0" width="180" height="55" rx="6" fill="#0f172a"/><rect x="0" y="0" width="180" height="55" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/><text x="90" y="22" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">Email</text><text x="90" y="38" text-anchor="middle" fill="#6ee7b7" font-size="8">SMTP · SendGrid · Resend</text></g>
+
+<!-- DB sub-layer -->
+<g transform="translate(310,585)"><rect x="0" y="0" width="200" height="40" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="40" rx="6" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1"/><text x="100" y="16" text-anchor="middle" fill="#c4b5fd" font-size="9" font-weight="700">Connection Pooler</text><text x="100" y="30" text-anchor="middle" fill="#c4b5fd" font-size="7">PgBouncer · Pgpool-II</text></g>
+<g transform="translate(540,585)"><rect x="0" y="0" width="200" height="40" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="40" rx="6" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1"/><text x="100" y="16" text-anchor="middle" fill="#c4b5fd" font-size="9" font-weight="700">DB Replicas</text><text x="100" y="30" text-anchor="middle" fill="#c4b5fd" font-size="7">Read replicas · streaming replication</text></g>
+
+<line x1="700" y1="630" x2="700" y2="690" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- ===== LAYER 5: RESILIENCE ==== -->
+<rect x="20" y="685" width="1360" height="120" rx="12" fill="none" stroke="#22d3ee" stroke-width="1" stroke-dasharray="6,3" opacity="0.4"/>
+<text x="40" y="710" fill="#22d3ee" font-size="10" font-weight="700">LAYER 5 — RESILIENCE</text>
+
+<g transform="translate(60,728)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="700">Backups</text><text x="100" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">DB dumps · volume snapshots · S3</text></g>
+<g transform="translate(290,728)"><rect x="0" y="0" width="220" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="220" height="50" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="110" y="20" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="700">Auto-Restart / Self-Healing</text><text x="110" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">Docker restart · systemd · K8s health</text></g>
+<g transform="translate(540,728)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="700">Blue-Green / Canary</text><text x="100" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">Zero-downtime deploys</text></g>
+<g transform="translate(770,728)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="700">Resource Limits</text><text x="100" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">CPU/mem quotas · OOM protection</text></g>
+<g transform="translate(1000,728)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="700">Disaster Recovery</text><text x="100" y="36" text-anchor="middle" fill="#67e8f9" font-size="8">Multi-region · failover · RTO/RPO</text></g>
+
+<line x1="700" y1="778" x2="700" y2="835" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- ===== LAYER 6: OBSERVABILITY ==== -->
+<rect x="20" y="828" width="1360" height="120" rx="12" fill="none" stroke="#34d399" stroke-width="1" stroke-dasharray="6,3" opacity="0.4"/>
+<text x="40" y="853" fill="#34d399" font-size="10" font-weight="700">LAYER 6 — OBSERVABILITY</text>
+
+<g transform="translate(60,870)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">Metrics</text><text x="100" y="36" text-anchor="middle" fill="#6ee7b7" font-size="8">Prometheus · Grafana · Datadog</text></g>
+<g transform="translate(290,870)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">Logs</text><text x="100" y="36" text-anchor="middle" fill="#6ee7b7" font-size="8">Loki · ELK · journald forward</text></g>
+<g transform="translate(520,870)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">Alerting</text><text x="100" y="36" text-anchor="middle" fill="#6ee7b7" font-size="8">Alertmanager · PagerDuty · Slack</text></g>
+<g transform="translate(750,870)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">Uptime / Health Checks</text><text x="100" y="36" text-anchor="middle" fill="#6ee7b7" font-size="8">External probes · endpoint checks</text></g>
+<g transform="translate(980,870)"><rect x="0" y="0" width="200" height="50" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="50" rx="6" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/><text x="100" y="20" text-anchor="middle" fill="#fb7185" font-size="10" font-weight="700">Error Tracking</text><text x="100" y="36" text-anchor="middle" fill="#fda4af" font-size="8">Sentry · error aggregation</text></g>
+
+<line x1="700" y1="920" x2="700" y2="975" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- ===== LAYER 7: CI/CD + DEPLOY ==== -->
+<rect x="20" y="970" width="1360" height="110" rx="12" fill="none" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4" opacity="0.4"/>
+<text x="40" y="995" fill="#fbbf24" font-size="10" font-weight="700">LAYER 7 — CI/CD + DEPLOYMENT</text>
+
+<g transform="translate(60,1010)"><rect x="0" y="0" width="220" height="45" rx="6" fill="#0f172a"/><rect x="0" y="0" width="220" height="45" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/><text x="110" y="18" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">CI/CD Pipeline</text><text x="110" y="33" text-anchor="middle" fill="#fcd34d" font-size="8">GitHub Actions · GitLab CI · Buildkite</text></g>
+<g transform="translate(310,1010)"><rect x="0" y="0" width="220" height="45" rx="6" fill="#0f172a"/><rect x="0" y="0" width="220" height="45" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/><text x="110" y="18" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">Container Registry</text><text x="110" y="33" text-anchor="middle" fill="#fcd34d" font-size="8">GHCR · Docker Hub · ECR · GCR</text></g>
+<g transform="translate(560,1010)"><rect x="0" y="0" width="200" height="45" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="45" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/><text x="100" y="18" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">DB Migrations</text><text x="100" y="33" text-anchor="middle" fill="#fcd34d" font-size="8">Prisma · Flyway · Alembic</text></g>
+<g transform="translate(790,1010)"><rect x="0" y="0" width="200" height="45" rx="6" fill="#0f172a"/><rect x="0" y="0" width="200" height="45" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/><text x="100" y="18" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">Environments</text><text x="100" y="33" text-anchor="middle" fill="#fcd34d" font-size="8">dev · staging · production</text></g>
+
+</svg>
+</div>
+
+<div class="cards">
+<div class="card">
+<div class="card-header"><div class="card-dot rose"></div><h3>Security — 6 Components GC Can Target</h3></div>
+<ul>
+<li>• Secrets management (Infisical/Doppler integration)</li>
+<li>• Container image scanning (Trivy hook on deploy)</li>
+<li>• Firewall rules (iptables/ufw management via agent)</li>
+<li>• SSH hardening (key-only, disable password)</li>
+<li>• TLS cert automation (Caddy/Let's Encrypt)</li>
+<li>• Security header injection (CSP, HSTS via proxy)</li>
+</ul>
+</div>
+
+<div class="card">
+<div class="card-header"><div class="card-dot green"></div><h3>Resilience — 6 Components GC Can Target</h3></div>
+<ul>
+<li>• Auto-restart (Docker restart policies, healthchecks)</li>
+<li>• Resource limits (CPU/memory quotas on containers)</li>
+<li>• Backups (automated DB dump + S3/MinIO push)</li>
+<li>• Load balancing (Traefik/HAProxy config)</li>
+<li>• Connection pooling (PgBouncer setup)</li>
+<li>• Blue-green / canary deploys (via Convoy)</li>
+</ul>
+</div>
+
+<div class="card">
+<div class="card-header"><div class="card-dot cyan"></div><h3>Observability — 5 Components GC Already Has or Can Add</h3></div>
+<ul>
+<li>• ✓ Metrics dashboard (GC Dashboard)</li>
+<li>• ✓ Container logs (GC AI agent reads logs)</li>
+<li>• ✓ Alerting (GC Alerts tab)</li>
+<li>• Health checks (add external probe endpoint)</li>
+<li>• Error aggregation (integrate Sentry webhook)</li>
+</ul>
+</div>
+</div>
+
+<footer>Production Infrastructure Stack · GroundControl Target Surface · June 2026</footer>
+</div>
+</body>
+</html>
