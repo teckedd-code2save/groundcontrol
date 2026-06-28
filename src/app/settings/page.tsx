@@ -27,6 +27,20 @@ interface VpsConfig {
 
 type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "cloud-accounts" | "deploy-targets" | "infrastructure";
 
+function Badge({ type }: { type: "prod" | "experimental" | "planned" }) {
+  const styles = {
+    prod: "bg-success/10 text-success border-success/20",
+    experimental: "bg-accent/10 text-accent border-accent/20",
+    planned: "bg-muted/10 text-muted border-muted/20",
+  };
+  const labels = { prod: "Production", experimental: "Experimental", planned: "Planned" };
+  return (
+    <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${styles[type]}`}>
+      {labels[type]}
+    </span>
+  );
+}
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>(() => {
     if (typeof window === "undefined") return "connections";
@@ -50,26 +64,27 @@ export default function SettingsPage() {
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border mb-8 overflow-x-auto">
         {[
-          { key: "connections", label: "Connections" },
-          { key: "layout", label: "Server Layout" },
-          { key: "ai", label: "AI" },
-          { key: "security", label: "Security" },
-          { key: "cloudflare", label: "Cloudflare" },
-          { key: "cloud-accounts", label: "Cloud Accounts" },
-          { key: "alerts", label: "Alerts" },
-          { key: "deploy-targets", label: "Deploy Targets" },
-          { key: "infrastructure", label: "Infrastructure" },
+          { key: "connections", label: "VPS", badge: "prod" as const },
+          { key: "layout", label: "Layout", badge: "prod" as const },
+          { key: "ai", label: "AI", badge: "prod" as const },
+          { key: "security", label: "Security", badge: "prod" as const },
+          { key: "cloudflare", label: "Cloudflare", badge: "prod" as const },
+          { key: "alerts", label: "Alerts", badge: "prod" as const },
+          { key: "cloud-accounts", label: "Cloud Accounts", badge: "experimental" as const },
+          { key: "deploy-targets", label: "Deploy Targets", badge: "experimental" as const },
+          { key: "infrastructure", label: "Infrastructure", badge: "experimental" as const },
         ].map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as TabKey)}
-            className={`px-5 py-2.5 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap ${
+            className={`px-5 py-2.5 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${
               activeTab === tab.key
                 ? "border-accent text-accent"
                 : "border-transparent text-muted hover:text-foreground"
             }`}
           >
-            {tab.label}
+            <span>{tab.label}</span>
+            <Badge type={tab.badge} />
           </button>
         ))}
       </div>
@@ -79,10 +94,40 @@ export default function SettingsPage() {
       {activeTab === "ai" && <AIConfigTab />}
       {activeTab === "security" && <SecurityTab />}
       {activeTab === "cloudflare" && <CloudflareSettingsTab />}
-      {activeTab === "cloud-accounts" && <CloudAccountsTab />}
       {activeTab === "alerts" && <AlertSettingsTab />}
-      {activeTab === "deploy-targets" && <DeployTargetsTab />}
-      {activeTab === "infrastructure" && <TerraformStacksTab />}
+      {activeTab === "cloud-accounts" && (
+        <div>
+          <div className="flex items-center gap-2 mb-6">
+            <Badge type="experimental" />
+            <p className="text-xs text-muted">
+              Cloud account features are part of GC&apos;s cloud development lab — actively researched, not production-hardened.
+            </p>
+          </div>
+          <CloudAccountsTab />
+        </div>
+      )}
+      {activeTab === "deploy-targets" && (
+        <div>
+          <div className="flex items-center gap-2 mb-6">
+            <Badge type="experimental" />
+            <p className="text-xs text-muted">
+              Deploy targets are part of GC&apos;s cloud development lab. Production deployment is handled by Convoy.
+            </p>
+          </div>
+          <DeployTargetsTab />
+        </div>
+      )}
+      {activeTab === "infrastructure" && (
+        <div>
+          <div className="flex items-center gap-2 mb-6">
+            <Badge type="experimental" />
+            <p className="text-xs text-muted">
+              Terraform infrastructure management is part of GC&apos;s cloud development lab — actively researched.
+            </p>
+          </div>
+          <TerraformStacksTab />
+        </div>
+      )}
     </div>
   );
 }
