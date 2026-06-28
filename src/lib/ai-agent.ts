@@ -1026,6 +1026,159 @@ export const AGENT_TOOLS: AgentTool[] = [
         return JSON.stringify(result, null, 2);
       }),
   },
+  // ── Cloudflare DNS tools ─────────────────────────────
+  {
+    name: "list_dns_zones",
+    description: "List all Cloudflare DNS zones in your account. Use this to find available domains.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const zones = await (await import("./cloudflare")).listZones();
+        return JSON.stringify(zones, null, 2);
+      }),
+  },
+  {
+    name: "list_dns_records",
+    description: "List DNS records for a Cloudflare zone. Returns A, CNAME, MX, TXT, etc. records with their current values.",
+    parameters: {
+      type: "object",
+      properties: {
+        zone_id: { type: "string", description: "Cloudflare zone ID (find with list_dns_zones)." },
+      },
+      required: ["zone_id"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const zoneId = String(args?.zone_id || "").trim();
+        if (!zoneId) return "ERROR: zone_id is required.";
+        const records = await (await import("./cloudflare")).listDnsRecords(zoneId);
+        return JSON.stringify(records, null, 2);
+      }),
+  },
+  {
+    name: "create_dns_record",
+    description: "Create a new DNS record in Cloudflare. MUTATING — requires confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        zone_id: { type: "string", description: "Cloudflare zone ID." },
+        type: { type: "string", description: "Record type: A, CNAME, MX, TXT, etc.", enum: ["A", "CNAME", "MX", "TXT", "AAAA"] },
+        name: { type: "string", description: "Record name (e.g. 'app' for app.example.com, or '@' for root)." },
+        content: { type: "string", description: "Record value. For A records: IP address. For CNAME: target domain." },
+        ttl: { type: "integer", description: "TTL in seconds (default 1 = auto).", default: 1 },
+        proxied: { type: "boolean", description: "Route through Cloudflare proxy (orange cloud). Default true.", default: true },
+      },
+      required: ["zone_id", "type", "name", "content"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const zoneId = String(args?.zone_id || "").trim();
+        const type = String(args?.type || "A").trim();
+        const name = String(args?.name || "").trim();
+        const content = String(args?.content || "").trim();
+        if (!zoneId || !name || !content) return "ERROR: zone_id, name, and content are required.";
+        const result = await (await import("./cloudflare")).createDnsRecord(zoneId, {
+          type: type as "A" | "CNAME",
+          name,
+          content,
+          ttl: Number(args?.ttl) || 1,
+          proxied: args?.proxied !== false,
+        });
+        return `DNS record created: ${JSON.stringify(result)}`;
+      }),
+  },
+  {
+    name: "delete_dns_record",
+    description: "Delete a DNS record from Cloudflare. MUTATING — requires confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        zone_id: { type: "string", description: "Cloudflare zone ID." },
+        record_id: { type: "string", description: "DNS record ID (find with list_dns_records)." },
+      },
+      required: ["zone_id", "record_id"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const zoneId = String(args?.zone_id || "").trim();
+        const recordId = String(args?.record_id || "").trim();
+        if (!zoneId || !recordId) return "ERROR: zone_id and record_id are required.";
+        await (await import("./cloudflare")).deleteDnsRecord(zoneId, recordId);
+        return `DNS record ${recordId} deleted.`;
+      }),
+  },
+  {
+    name: "list_cloudflare_tunnels",
+    description: "List Cloudflare Tunnels (Cloudflare Tunnel / Argo) for your account. Tunnels let you expose services without opening firewall ports.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const tunnels = await (await import("./cloudflare")).listTunnels();
+        return JSON.stringify(tunnels, null, 2);
+      }),
+  },
+  // ── Template tools ───────────────────────────────────
+  {
+    name: "list_templates",
+    description: "List available deployment templates. Templates are pre-built production stacks (Caddy+App+DB, Traefik+Multi-App, etc.) that you can apply to deploy apps with best practices.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const { listTemplates } = await import("./template-engine");
+        const templates = listTemplates();
+        return JSON.stringify(templates.map(t => ({
+          name: t.name,
+          description: t.description,
+          category: t.category,
+          version: t.version,
+          requires: t.requires,
+          inputs: t.inputs.map(i => ({ name: i.name, prompt: i.prompt, default: i.default, generate: i.generate })),
+        })), null, 2);
+      }),
+  },
+  {
+    name: "preview_template",
+    description: "Preview what a template will generate — docker-compose.yml, proxy config, env schema — before applying it. Shows services, volumes, and configuration files.",
+    parameters: {
+      type: "object",
+      properties: {
+        template_name: { type: "string", description: "Template name (use list_templates to see available names)." },
+        domain: { type: "string", description: "Domain for the app (e.g. app.example.com)." },
+        app_port: { type: "string", description: "Port your app listens on (default 3000)." },
+        app_container: { type: "string", description: "Container name (default 'app')." },
+        db_user: { type: "string", description: "Database username." },
+        db_name: { type: "string", description: "Database name." },
+      },
+      required: ["template_name"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const name = String(args?.template_name || "").trim();
+        if (!name) return "ERROR: template_name is required.";
+        const { loadTemplate, resolveTemplate, generatePreview } = await import("./template-engine");
+        const template = loadTemplate(`${name}.yml`);
+        if (!template) return `ERROR: template "${name}" not found. Use list_templates to see available templates.`;
+        const inputs: Record<string, string> = {};
+        if (args?.domain) inputs["domain"] = String(args.domain);
+        if (args?.app_port) inputs["app_port"] = String(args.app_port);
+        if (args?.app_container) inputs["app_container"] = String(args.app_container);
+        if (args?.db_user) inputs["db_user"] = String(args.db_user);
+        if (args?.db_name) inputs["db_name"] = String(args.db_name);
+        const resolved = resolveTemplate(template, inputs);
+        return generatePreview(resolved);
+      }),
+  },
 ];
 
 const TOOL_MAP = new Map(AGENT_TOOLS.map((t) => [t.name, t]));

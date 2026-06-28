@@ -192,6 +192,47 @@ export async function createDnsRecord(
   );
 }
 
+export async function deleteDnsRecord(
+  zoneId: string,
+  recordId: string,
+  account?: CloudflareAccountRecord | null
+) {
+  return cfRequest<Record<string, unknown>>(
+    `/zones/${zoneId}/dns_records/${recordId}`,
+    { method: "DELETE" },
+    account
+  );
+}
+
+export async function setZoneSslMode(
+  zoneId: string,
+  mode: "off" | "flexible" | "full" | "strict",
+  account?: CloudflareAccountRecord | null
+) {
+  return cfRequest<Record<string, unknown>>(
+    `/zones/${zoneId}/settings/ssl`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ value: mode }),
+    },
+    account
+  );
+}
+
+export async function purgeCache(
+  zoneId: string,
+  account?: CloudflareAccountRecord | null
+) {
+  return cfRequest<Record<string, unknown>>(
+    `/zones/${zoneId}/purge_cache`,
+    {
+      method: "POST",
+      body: JSON.stringify({ purge_everything: true }),
+    },
+    account
+  );
+}
+
 export async function verifyToken(account?: CloudflareAccountRecord | null) {
   return cfRequest<Record<string, unknown>>("/user/tokens/verify", { method: "GET" }, account);
 }

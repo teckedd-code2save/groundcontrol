@@ -1,0 +1,64 @@
+name: "Caddy + App + PostgreSQL"
+description: "Production-ready web app with Caddy reverse proxy, your application, and PostgreSQL database. Healthchecks, persistent volumes, security headers, auto-restart."
+category: "web-app"
+version: "1.0"
+requires:
+  docker: true
+  caddy: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "{{app_container}}:{{app_port}}"
+services:
+  - name: app
+    build: true
+    ports:
+      - "{{app_port}}"
+    env:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://{{db_user}}:{{db_password}}@db:5432/{{db_name}}
+      - PORT={{app_port}}
+    depends_on:
+      - db
+    restart: unless-stopped
+    healthcheck:
+      test: "curl -f http://localhost:{{app_port}}/health || exit 1"
+      interval: "30s"
+      timeout: "5s"
+      retries: 3
+  - name: db
+    image: "postgres:16-alpine"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    env:
+      - POSTGRES_USER={{db_user}}
+      - POSTGRES_PASSWORD={{db_password}}
+      - POSTGRES_DB={{db_name}}
+    restart: unless-stopped
+    healthcheck:
+      test: "pg_isready -U {{db_user}} -d {{db_name}}"
+      interval: "10s"
+      timeout: "3s"
+      retries: 3
+volumes:
+  - db_data
+inputs:
+  - name: domain
+    prompt: "Domain name for your app"
+    example: "app.example.com"
+  - name: app_port
+    prompt: "Port your application listens on"
+    default: "3000"
+  - name: app_container
+    prompt: "Container name for your app"
+    default: "app"
+  - name: db_user
+    prompt: "Database username"
+    default: "app"
+  - name: db_password
+    prompt: "Database password"
+    generate: true
+  - name: db_name
+    prompt: "Database name"
+    default: "app"
