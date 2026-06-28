@@ -45,15 +45,24 @@ export default function HomePage() {
             <p className="text-lg text-muted leading-relaxed mb-8 max-w-lg">
               GroundControl gives you an AI agent that manages your server — check metrics, read logs, restart services, configure DNS, deploy apps from templates. All from your browser. No SSH needed.
             </p>
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-col gap-3">
               <Link href="/login"
-                className="px-6 py-3 bg-accent text-white rounded-xl hover:bg-accent/90 transition-colors text-sm font-mono font-medium">
+                className="px-6 py-3 bg-accent text-white rounded-xl hover:bg-accent/90 transition-colors text-sm font-mono font-medium inline-block w-fit">
                 Get Started →
               </Link>
-              <div className="flex items-center gap-2">
-                <code className="px-4 py-3 bg-card border border-border rounded-xl text-xs font-mono text-foreground/80">
-                  curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
-                </code>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted font-mono w-16 shrink-0">Local:</span>
+                  <code className="px-3 py-2 bg-card border border-border rounded-lg text-[11px] font-mono text-foreground/70">
+                    curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
+                  </code>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted font-mono w-16 shrink-0">Remote:</span>
+                  <code className="px-3 py-2 bg-card border border-border rounded-lg text-[11px] font-mono text-foreground/70">
+                    curl -fsSL https://.../bootstrap | bash -s root@your-vps
+                  </code>
+                </div>
               </div>
             </div>
             <p className="text-[10px] text-muted mt-3 font-mono">
@@ -127,8 +136,11 @@ export default function HomePage() {
         <div className="bg-card border border-border rounded-2xl p-10 max-w-2xl mx-auto">
           <h2 className="text-xl font-bold tracking-tight mb-3">One command to get started</h2>
           <p className="text-sm text-muted mb-6">Free. Open source. Self-hosted. No credit card.</p>
-          <code className="block bg-background border border-border rounded-xl px-5 py-4 text-sm font-mono text-foreground/80 mb-4 max-w-md mx-auto">
-            curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
+          <code className="block bg-background border border-border rounded-xl px-5 py-4 text-sm font-mono text-foreground/80 mb-2 max-w-md mx-auto text-left">
+            <div><span className="text-muted"># Local install</span></div>
+            <div>curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash</div>
+            <div className="mt-2"><span className="text-muted"># Remote VPS</span></div>
+            <div>curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s root@your-vps</div>
           </code>
           <div className="flex gap-4 justify-center">
             <Link href="/login" className="px-5 py-2.5 bg-accent text-white rounded-xl hover:bg-accent/90 transition-colors text-sm font-mono">
