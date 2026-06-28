@@ -15,6 +15,7 @@ const navItems = [
   { href: "/topology", label: "Topology", icon: "◐" },
   { href: "/services", label: "Services", icon: "◎" },
   { href: "/guides", label: "Guides", icon: "▣" },
+  { href: "/templates", label: "Templates", icon: "▦" },
   { href: "/terminal", label: "Terminal", icon: "⌘" },
   { href: "/alerts", label: "Alerts", icon: "◑" },
   { href: "/settings", label: "Settings", icon: "⚙" },
