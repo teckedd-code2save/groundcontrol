@@ -1,18 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
-import { listZones } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { listZones, getActiveCloudflareAccount } from "@/lib/cloudflare";
 
-function errorResponse(err: unknown, status = 500) {
-  const message = err instanceof Error ? err.message : "Server error";
-  return NextResponse.json({ error: message }, { status });
-}
-
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    await requireAuth(req);
-    const zones = await listZones();
-    return NextResponse.json(zones);
-  } catch (err: unknown) {
-    return errorResponse(err);
+    const account = await getActiveCloudflareAccount();
+    if (!account) return NextResponse.json({ error: "No active Cloudflare account. Add one in Settings → Cloudflare." }, { status: 400 });
+    const zones = await listZones(account);
+    const simplified = (zones as any[]).map((z: any) => ({
+      id: z.id,
+      name: z.name,
+      status: z.status,
+    }));
+    return NextResponse.json({ zones: simplified });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to list zones" }, { status: 500 });
   }
 }
