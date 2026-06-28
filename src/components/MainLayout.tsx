@@ -7,7 +7,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <main
-      className={`min-h-screen pt-16 md:pt-0 transition-all duration-200 ${
+      className={`min-h-screen transition-all duration-200 pb-20 md:pb-0 ${
         collapsed ? "md:ml-16" : "md:ml-64"
       }`}
     >
