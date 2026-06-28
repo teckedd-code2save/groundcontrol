@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# scripts/bootstrap — one-command GroundControl installer
+# Usage: npx groundcontrol bootstrap user@host
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+HOST="${1:-}"
+if [ -z "$HOST" ]; then
+  echo ""
+  echo -e "${CYAN}◉ GroundControl Bootstrap${NC}"
+  echo ""
+  echo -e "  ${BLUE}Usage:${NC} npx groundcontrol bootstrap user@host"
+  echo "  user@host  — SSH destination for your VPS (e.g. root@198.51.100.12)"
+  echo ""
+  echo "  Your VPS will get Docker + GroundControl installed in one shot."
+  exit 1
+fi
+
+echo ""
+echo -e "${CYAN}◉ GroundControl Bootstrap${NC}"
+echo -e "  Target: ${BLUE}${HOST}${NC}"
+echo ""
+
+# Step 1: Test SSH connection
+echo -e "${BLUE}→ Testing SSH connection...${NC}"
+if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST" "echo ok" > /dev/null 2>&1; then
+  echo -e "${RED}✗ Cannot SSH to ${HOST}${NC}"
+  echo ""
+  echo "  Make sure:"
+  echo "  1. The host is reachable"
+  echo "  2. Your SSH key is authorized"
+  echo "  3. Try: ssh-copy-id ${HOST}"
+  exit 1
+fi
+echo -e "${GREEN}✓ SSH connection working${NC}"
+
+# Step 2: Detect OS
+echo -e "${BLUE}→ Detecting OS...${NC}"
+OS_ID=$(ssh "$HOST" "cat /etc/os-release 2>/dev/null | grep ^ID= | cut -d= -f2 | tr -d '\"' || echo 'unknown'")
+echo -e "${GREEN}✓ OS: ${OS_ID}${NC}"
+
+# Step 3: Install Docker if missing
+echo -e "${BLUE}→ Checking Docker...${NC}"
+if ssh "$HOST" "docker --version >/dev/null 2>&1"; then
+  DOCKER_VER=$(ssh "$HOST" "docker --version 2>&1 | head -1")
+  echo -e "${GREEN}✓ Docker already installed — ${DOCKER_VER}${NC}"
+else
+  echo -e "${BLUE}→ Installing Docker...${NC}"
+  ssh "$HOST" "curl -fsSL https://get.docker.com | sh" || {
+    echo -e "${RED}✗ Docker install failed${NC}"
+    echo "  Try installing Docker manually: https://docs.docker.com/engine/install/"
+    exit 1
+  }
+  echo -e "${GREEN}✓ Docker installed${NC}"
+fi
+
+# Step 4: Deploy GroundControl
+echo -e "${BLUE}→ Deploying GroundControl...${NC}"
+ssh "$HOST" "mkdir -p /opt/groundcontrol"
+
+ssh "$HOST" "cat > /opt/groundcontrol/docker-compose.yml << 'EOF'
+version: '3.8'
+services:
+  groundcontrol:
+    image: ghcr.io/teckedd-code2save/groundcontrol:latest
+    container_name: groundcontrol
+    restart: unless-stopped
+    ports:
+      - '3737:3737'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gc-data:/app/data
+      - /:/host:ro
+    environment:
+      - DATABASE_URL=file:/app/data/gc.db
+      - NODE_ENV=production
+    pid: host
+volumes:
+  gc-data:
+EOF"
+
+ssh "$HOST" "cd /opt/groundcontrol && docker compose up -d"
+
+echo ""
+echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   GroundControl is running!             ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "  Open:     ${CYAN}http://${HOST}:3737${NC}"
+echo -e "  Setup:    ${CYAN}http://${HOST}:3737/onboarding${NC}"
+echo ""
+echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
+echo ""
