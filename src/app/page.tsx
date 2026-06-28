@@ -52,12 +52,12 @@ export default function HomePage() {
               </Link>
               <div className="flex items-center gap-2">
                 <code className="px-4 py-3 bg-card border border-border rounded-xl text-xs font-mono text-foreground/80">
-                  npx groundcontrol bootstrap root@your-vps
+                  curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
                 </code>
               </div>
             </div>
             <p className="text-[10px] text-muted mt-3 font-mono">
-              One command. Installs Docker + GroundControl in under 60 seconds.
+              One command. Installs Docker + GroundControl in under 60 seconds. Pipe to bash on your VPS, or run locally.
             </p>
           </div>
         </div>
@@ -128,7 +128,7 @@ export default function HomePage() {
           <h2 className="text-xl font-bold tracking-tight mb-3">One command to get started</h2>
           <p className="text-sm text-muted mb-6">Free. Open source. Self-hosted. No credit card.</p>
           <code className="block bg-background border border-border rounded-xl px-5 py-4 text-sm font-mono text-foreground/80 mb-4 max-w-md mx-auto">
-            npx groundcontrol bootstrap root@your-vps
+            curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
           </code>
           <div className="flex gap-4 justify-center">
             <Link href="/login" className="px-5 py-2.5 bg-accent text-white rounded-xl hover:bg-accent/90 transition-colors text-sm font-mono">

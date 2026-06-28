@@ -98,7 +98,7 @@ export default function LoginPage() {
           <div className="bg-card/80 border border-border rounded-xl p-4 mb-4 max-w-sm">
             <p className="text-[10px] font-mono text-muted mb-2 uppercase tracking-wider">One command to install</p>
             <code className="block text-xs font-mono bg-background border border-border rounded-lg px-3 py-2.5 text-foreground/80">
-              npx groundcontrol bootstrap root@your-vps
+              curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
             </code>
             <p className="text-[10px] text-muted mt-2">
               Installs Docker, deploys GroundControl. Your VPS has an AI co-pilot in 60 seconds.
