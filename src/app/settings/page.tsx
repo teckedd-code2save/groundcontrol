@@ -724,7 +724,7 @@ function AIConfigTab() {
   const isAnthropic = provider === "anthropic";
   const active = isAnthropic ? status?.anthropic : status?.openai;
   const envVar = isAnthropic ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-  const placeholder = isAnthropic ? "sk-ant-..." : "sk-...";
+  const placeholder = isAnthropic ? "sk-ant-api03-your-key-here" : "sk-your-openai-key-here";
   const providerLabel = isAnthropic ? "Anthropic (Claude)" : "OpenAI";
 
   return (
