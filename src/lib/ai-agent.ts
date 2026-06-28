@@ -1125,6 +1125,60 @@ export const AGENT_TOOLS: AgentTool[] = [
         return JSON.stringify(tunnels, null, 2);
       }),
   },
+  // ── Template tools ───────────────────────────────────
+  {
+    name: "list_templates",
+    description: "List available deployment templates. Templates are pre-built production stacks (Caddy+App+DB, Traefik+Multi-App, etc.) that you can apply to deploy apps with best practices.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const { listTemplates } = await import("./template-engine");
+        const templates = listTemplates();
+        return JSON.stringify(templates.map(t => ({
+          name: t.name,
+          description: t.description,
+          category: t.category,
+          version: t.version,
+          requires: t.requires,
+          inputs: t.inputs.map(i => ({ name: i.name, prompt: i.prompt, default: i.default, generate: i.generate })),
+        })), null, 2);
+      }),
+  },
+  {
+    name: "preview_template",
+    description: "Preview what a template will generate — docker-compose.yml, proxy config, env schema — before applying it. Shows services, volumes, and configuration files.",
+    parameters: {
+      type: "object",
+      properties: {
+        template_name: { type: "string", description: "Template name (use list_templates to see available names)." },
+        domain: { type: "string", description: "Domain for the app (e.g. app.example.com)." },
+        app_port: { type: "string", description: "Port your app listens on (default 3000)." },
+        app_container: { type: "string", description: "Container name (default 'app')." },
+        db_user: { type: "string", description: "Database username." },
+        db_name: { type: "string", description: "Database name." },
+      },
+      required: ["template_name"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const name = String(args?.template_name || "").trim();
+        if (!name) return "ERROR: template_name is required.";
+        const { loadTemplate, resolveTemplate, generatePreview } = await import("./template-engine");
+        const template = loadTemplate(`${name}.yml`);
+        if (!template) return `ERROR: template "${name}" not found. Use list_templates to see available templates.`;
+        const inputs: Record<string, string> = {};
+        if (args?.domain) inputs["domain"] = String(args.domain);
+        if (args?.app_port) inputs["app_port"] = String(args.app_port);
+        if (args?.app_container) inputs["app_container"] = String(args.app_container);
+        if (args?.db_user) inputs["db_user"] = String(args.db_user);
+        if (args?.db_name) inputs["db_name"] = String(args.db_name);
+        const resolved = resolveTemplate(template, inputs);
+        return generatePreview(resolved);
+      }),
+  },
 ];
 
 const TOOL_MAP = new Map(AGENT_TOOLS.map((t) => [t.name, t]));
