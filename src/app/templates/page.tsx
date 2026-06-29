@@ -39,9 +39,7 @@ export default function TemplatesPage() {
   useEffect(() => {
     fetch("/api/templates")
       .then(r => r.json())
-      .then(d => setTemplates((d.templates || []).map((t: any, i: number) => ({
-        ...t, _filename: (t.name || `t-${i}`).toLowerCase().replace(/\s+/g, "-"),
-      })))).catch(() => {});
+      .then(d => setTemplates((d.templates || []).map((t: any) => ({ ...t })))).catch(() => {});
   }, []);
 
   function selectTemplate(t: TemplateWithId) {
@@ -290,7 +288,7 @@ export default function TemplatesPage() {
             <h3 className="text-sm font-medium mb-3">Cloudflare DNS</h3>
             <label className="flex items-center gap-3">
               <input type="checkbox" checked={createDns} onChange={e => setCreateDns(e.target.checked)} className="accent-accent w-4 h-4"/>
-              <span className="text-sm">Auto-create A record for {inputs.domain || "my domain"} pointing to this VPS</span>
+              <span className="text-sm">Auto-create A record for {inputs.domain || "your domain"} pointing to this VPS</span>
             </label>
             <p className="text-[10px] text-muted mt-2 ml-7">Requires Cloudflare API token configured in Settings.</p>
           </div>

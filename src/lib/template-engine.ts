@@ -41,6 +41,7 @@ export interface ProxySite {
 }
 
 export interface TemplateDefinition {
+  _filename?: string;
   name: string;
   description: string;
   category: string;
@@ -79,7 +80,12 @@ const TEMPLATES_DIR = join(process.cwd(), "templates");
 export function listTemplates(): TemplateDefinition[] {
   try {
     const files = readdirSync(TEMPLATES_DIR).filter(f => f.endsWith(".yml") || f.endsWith(".yaml"));
-    return files.map(f => loadTemplate(f)).filter(Boolean) as TemplateDefinition[];
+    return files.map(f => {
+      const t = loadTemplate(f);
+      if (!t) return null;
+      t._filename = f.replace(/\.(yml|yaml)$/, "");
+      return t;
+    }).filter(Boolean) as TemplateDefinition[];
   } catch {
     return [];
   }
