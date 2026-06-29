@@ -141,7 +141,8 @@ export default function LoginPage() {
           }
         });
 
-        tl.to(".page2-copy-cell", { opacity: 1, y: 0, duration: 0.2, ease: "power2.out" }, 0.22)
+        tl.to(".page2-copy-cell", { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 0.22)
+          .to(".page2-copy-line", { opacity: 1, y: 0, duration: 0.5, stagger: 0.12, ease: "power3.out" }, 0.24)
           .to(".page2-image-shell", {
             ...PAGE2_CELLS.rightImage,
             duration: 0.28,
@@ -182,7 +183,10 @@ export default function LoginPage() {
 
         tl.to(".page2-image-vignette", { opacity: 0.55, duration: 0.16, ease: "power2.out" }, 0.64);
         tl.to(".page2-full-copy", { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" }, 0.72)
-          .to(".page2-metric", { opacity: 1, y: 0, duration: 0.22, stagger: 0.04, ease: "power2.out" }, 0.78);
+          .to(".page2-metric", { opacity: 1, y: 0, duration: 0.22, stagger: 0.04, ease: "power2.out" }, 0.78)
+          // Fade out expanded content before next section
+          .to(".page2-full-copy, .page2-metric, .page2-image-vignette", { opacity: 0, duration: 0.2 }, 0.92)
+          .to(".page2-image", { opacity: 0.45, duration: 0.2 }, 0.92);
       });
     }
     init();
@@ -356,7 +360,9 @@ export default function LoginPage() {
               Command Center
             </p>
             <h2 style={{ fontSize: "clamp(28px, 4.6vw, 58px)", fontWeight: 300, lineHeight: 1.03, margin: 0 }}>
-              Every command.<br />Every log.<br />One cockpit.
+              <span className="page2-copy-line" style={{ display: "block", opacity: 0, transform: "translateY(12px)" }}>Every command.</span>
+              <span className="page2-copy-line" style={{ display: "block", opacity: 0, transform: "translateY(12px)" }}>Every log.</span>
+              <span className="page2-copy-line" style={{ display: "block", opacity: 0, transform: "translateY(12px)" }}>One cockpit.</span>
             </h2>
           </div>
 
@@ -452,11 +458,8 @@ export default function LoginPage() {
         </div>
       </section>
 
-      {/* Spacer — gives breathing room after transition */}
-      <div style={{ height: "30vh", background: C.dark }} />
-
       {/* METRICS */}
-      <section className="met-s" style={{ padding: "60px 0 100px", background: C.dark, position: "relative", zIndex: 2 }}>
+      <section className="met-s" style={{ padding: "100px 0", background: C.dark, position: "relative", zIndex: 2 }}>
         <div className="max-w-5xl mx-auto px-6 md:px-12">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
