@@ -244,7 +244,15 @@ export default function TemplatesPage() {
           <div className="bg-card border border-border rounded-xl p-5">
             <h3 className="text-sm font-medium mb-4">Deployment Settings</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-lg">
-              {(selected.inputs || []).filter(i => !["app_container", "db_password", "db_user", "db_name"].includes(i.name) || !i.generate).map(inp => (
+              {/* Domain - always shown */}
+              <div className="md:col-span-2">
+                <label className="block text-xs font-mono text-muted mb-1">Domain <span className="text-accent">*</span></label>
+                <input type="text" value={inputs["domain"] || ""}
+                  onChange={e => setInputs({...inputs, domain: e.target.value})}
+                  placeholder="app.example.com"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+              </div>
+              {(selected.inputs || []).filter(i => i.name !== "domain" && (!["app_container", "db_password", "db_user", "db_name"].includes(i.name) || !i.generate)).map(inp => (
                 <div key={inp.name} className={inp.name === "domain" ? "md:col-span-2" : ""}>
                   <label className="block text-xs font-mono text-muted mb-1">
                     {inp.prompt || inp.name}
