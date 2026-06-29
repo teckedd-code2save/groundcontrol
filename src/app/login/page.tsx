@@ -141,7 +141,7 @@ export default function LoginPage() {
           }
         });
 
-        tl.to(".page2-copy-cell", { opacity: 1, y: 0, duration: 0.2, ease: "power2.out" }, 0.12)
+        tl.to(".page2-copy-cell", { opacity: 1, y: 0, duration: 0.2, ease: "power2.out" }, 0.22)
           .to(".page2-image-shell", {
             ...PAGE2_CELLS.rightImage,
             duration: 0.28,
@@ -453,7 +453,7 @@ export default function LoginPage() {
       </section>
 
       {/* METRICS */}
-      <section className="met-s" style={{ padding: "100px 0", background: C.dark, position: "relative", zIndex: 1 }}>
+      <section className="met-s" style={{ padding: "100px 0", background: C.dark, position: "relative", zIndex: 2 }}>
         <div className="max-w-5xl mx-auto px-6 md:px-12">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
