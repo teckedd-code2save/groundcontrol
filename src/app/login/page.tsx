@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 
-const INK = "#0B0B0C"; const WARM = "#16150F"; const CORAL = "#E8542A"; const CORAL_B = "#FF6A40"; const PAPER = "#F5F4F0"; const MUTED = "rgba(245,244,240,0.45)"; const FAINT = "rgba(245,244,240,0.12)";
+// Cipher Digital palette
+const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mute: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", line: "rgba(245,246,247,0.08)" };
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -15,18 +16,16 @@ export default function LoginPage() {
   const [showLogin, setShowLogin] = useState(false);
   const [copied, setCopied] = useState(false);
   const router = useRouter();
-  const installCmd = "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s root@your-vps";
-  async function copyCmd() { await navigator.clipboard.writeText(installCmd); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+  const cmd = "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s root@your-vps";
+  async function copyCmd() { await navigator.clipboard.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 2000); }
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setLoading(true); setError("");
     try {
       const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
-      if (res.ok) router.push("/");
-      else { const d = await res.json().catch(() => ({})); setError(d.error || "Invalid credentials"); }
+      if (res.ok) router.push("/"); else { const d = await res.json().catch(() => ({})); setError(d.error || "Invalid credentials"); }
     } catch { setError("Network error"); } finally { setLoading(false); }
   }
 
-  // ── Handoff animation patterns ─────────────
   useEffect(() => {
     let ctx: any;
     async function init() {
@@ -35,41 +34,27 @@ export default function LoginPage() {
       gsap.registerPlugin(ScrollTrigger);
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
       ctx = gsap.context(() => {
-        // Hero sequence (data-sr-hero)
-        gsap.fromTo(".hero-word", { y: 80, opacity: 0 },
-          { y: 0, opacity: 1, duration: 0.9, stagger: 0.07, ease: "power3.out" });
-        gsap.fromTo(".hero-desc", { y: 24, opacity: 0 },
-          { y: 0, opacity: 1, duration: 0.7, delay: 0.6, ease: "power2.out" });
-        gsap.fromTo(".hero-cta", { y: 20, opacity: 0 },
-          { y: 0, opacity: 1, duration: 0.5, delay: 0.9, ease: "power2.out" });
-        // Stats count-up
-        gsap.fromTo(".hero-stat", { opacity: 0, y: 12 },
-          { opacity: 1, y: 0, duration: 0.6, stagger: 0.12, delay: 0.7 });
+        // Split-text style headline reveal
+        gsap.fromTo(".line-mask .line-inner",
+          { y: "100%" }, { y: "0%", duration: 1.4, stagger: 0.18, ease: "power3.inOut", delay: 0.5 });
 
-        // Screenshot clip reveal (data-sr-reveal="clip")
-        gsap.utils.toArray<HTMLElement>(".clip-reveal").forEach((el) => {
-          const img = el.querySelector("img");
-          if (!img) return;
-          gsap.set(img, { clipPath: "inset(0 100% 0 0)" });
-          gsap.to(img, { clipPath: "inset(0 0% 0 0)", duration: 1.3, ease: "power3.inOut",
-            scrollTrigger: { trigger: el, start: "top 78%", once: true } });
-        });
+        // Fade up elements after headline
+        gsap.fromTo(".fade-up", { y: 30, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.8, stagger: 0.1, delay: 1.2, ease: "power2.out" });
 
-        // Feature cards reveal
-        gsap.utils.toArray<HTMLElement>(".card-reveal").forEach((el, i) => {
-          gsap.fromTo(el, { y: 48, opacity: 0 },
-            { y: 0, opacity: 1, duration: 0.65, delay: i * 0.08, ease: "power2.out",
-              scrollTrigger: { trigger: el, start: "top 88%" } });
-        });
+        // Parallax background
+        gsap.to(".bg-parallax", { y: "15%", ease: "none",
+          scrollTrigger: { trigger: ".hero-section", start: "top top", end: "bottom top", scrub: 1 } });
 
-        // SVG draw (data-sr-draw)
-        gsap.fromTo(".draw-svg line, .draw-svg path",
-          { strokeDashoffset: 600, strokeDasharray: 600 },
-          { strokeDashoffset: 0, duration: 1.8, delay: 0.3, ease: "power2.inOut" });
+        // Horizontal scroll cards reveal
+        gsap.fromTo(".h-card", { y: 40, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.7, stagger: 0.1, ease: "power2.out",
+            scrollTrigger: { trigger: ".features-section", start: "top 80%" } });
 
-        // Parallax orbs
-        gsap.to(".orb-1", { y: -60, scrollTrigger: { trigger: "body", start: "top top", end: "bottom bottom", scrub: 0.8 } });
-        gsap.to(".orb-2", { y: 60, scrollTrigger: { trigger: "body", start: "top top", end: "bottom bottom", scrub: 1 } });
+        // Metrics count
+        gsap.fromTo(".metric-val", { opacity: 0, scale: 0.9 },
+          { opacity: 1, scale: 1, duration: 0.8, stagger: 0.12, ease: "power2.out",
+            scrollTrigger: { trigger: ".metrics-section", start: "top 80%" } });
       });
     }
     init();
@@ -77,273 +62,158 @@ export default function LoginPage() {
   }, []);
 
   return (
-    <div className="min-h-screen overflow-x-hidden" style={{ background: INK, color: PAPER, fontFamily: "'Schibsted Grotesk', system-ui, sans-serif" }}>
+    <div style={{ background: C.bg, color: C.text, fontFamily: "articulat-cf, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", minHeight: "100vh" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
-        .bg-dots { background-image: radial-gradient(circle, rgba(232,84,42,0.07) 1px, transparent 1px); background-size: 36px 36px; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap');
+        body { margin: 0; }
       `}</style>
 
-      {/* Background orbs */}
-      <div className="orb-1 fixed top-1/3 -right-60 w-[700px] h-[700px] rounded-full opacity-[0.10] pointer-events-none z-0" style={{ background: `radial-gradient(circle, ${CORAL}44 0%, transparent 70%)` }} />
-      <div className="orb-2 fixed -bottom-40 -left-20 w-[500px] h-[500px] rounded-full opacity-[0.08] pointer-events-none z-0" style={{ background: `radial-gradient(circle, ${CORAL_B}33 0%, transparent 70%)` }} />
+      {/* ── HERO ── */}
+      <section className="hero-section relative h-screen flex items-center overflow-hidden" style={{ background: C.dark }}>
+        {/* Background gradient (simulating cipherdigital's video bg) */}
+        <div className="bg-parallax absolute inset-0" style={{ background: `radial-gradient(ellipse 80% 60% at 50% 40%, ${C.dark} 0%, ${C.bg} 60%, ${C.darker} 100%)` }} />
+        <div className="absolute inset-0 opacity-30" style={{
+          backgroundImage: `linear-gradient(${C.line} 1px, transparent 1px), linear-gradient(90deg, ${C.line} 1px, transparent 1px)`,
+          backgroundSize: "80px 80px",
+        }} />
 
-      {/* ═══ HERO — handoff pattern: data-sr-hero ═══ */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
-        <div className="absolute inset-0 bg-dots opacity-50 z-0" style={{ maskImage: "linear-gradient(180deg, #000 0%, transparent 85%)", WebkitMaskImage: "linear-gradient(180deg, #000 0%, transparent 85%)" }} />
-
-        <div className="relative z-10 max-w-6xl mx-auto px-6 py-24 w-full">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full mb-10"
-                style={{ background: `${CORAL}15`, border: `1px solid ${CORAL}30`, color: CORAL, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-                <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: CORAL }} /> Open source · Self-hosted
-              </div>
-
-              <h1 className="text-5xl md:text-6xl lg:text-7xl font-extrabold leading-none tracking-[-0.04em] mb-6" style={{ color: PAPER }}>
-                <span className="hero-word inline-block">Your </span>
-                <span className="hero-word inline-block">VPS </span>
-                <span className="hero-word inline-block">has </span>
-                <span className="hero-word inline-block">an </span>
-                <span className="hero-word inline-block" style={{ color: CORAL }}>AI </span>
-                <span className="hero-word inline-block">co-pilot</span>
+        <div className="relative z-10 w-full max-w-7xl mx-auto px-6 md:px-12">
+          <div style={{ maxWidth: 700 }}>
+            {/* Headline — split text */}
+            <div className="mb-10">
+              <h1 style={{ fontSize: "clamp(42px, 6.5vw, 72px)", fontWeight: 300, lineHeight: 1.06, letterSpacing: "-0.02em", margin: 0 }}>
+                <div className="line-mask" style={{ overflow: "hidden" }}>
+                  <div className="line-inner">Your VPS has an</div>
+                </div>
+                <div className="line-mask" style={{ overflow: "hidden" }}>
+                  <div className="line-inner" style={{ color: "#E8542A" }}>AI co-pilot</div>
+                </div>
               </h1>
-
-              <p className="hero-desc text-lg leading-relaxed mb-8 max-w-xl" style={{ color: MUTED, fontWeight: 500 }}>
-                GroundControl gives you an AI agent that manages your server — metrics, logs, DNS, deployments. No SSH needed.
-              </p>
-
-              <div className="hero-cta flex flex-col sm:flex-row gap-3">
-                <button onClick={() => setShowLogin(true)}
-                  className="px-8 py-3.5 rounded-xl text-sm font-bold transition-all duration-200"
-                  style={{ background: CORAL, color: "#fff", fontFamily: "'JetBrains Mono', monospace" }}>
-                  Open Dashboard →
-                </button>
-                <div className="flex items-center gap-2">
-                  <code className="hidden lg:block px-4 py-3 rounded-xl text-xs truncate max-w-sm"
-                    style={{ background: `${PAPER}05`, border: `1px solid ${FAINT}`, color: MUTED, fontFamily: "'JetBrains Mono', monospace" }}>
-                    {installCmd}
-                  </code>
-                  <button onClick={copyCmd}
-                    className="px-3 py-3 rounded-xl text-xs transition-all shrink-0"
-                    style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}`, color: copied ? CORAL : MUTED, fontFamily: "'JetBrains Mono', monospace" }}>
-                    {copied ? "Copied" : "Copy"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Stats row */}
-              <div className="hero-stat flex gap-12 mt-12">
-                <div>
-                  <div className="text-3xl font-extrabold tracking-[-0.03em]" style={{ color: PAPER }}>5</div>
-                  <div className="text-xs font-semibold mt-0.5" style={{ color: MUTED }}>cloud platforms</div>
-                </div>
-                <div>
-                  <div className="text-3xl font-extrabold tracking-[-0.03em]" style={{ color: PAPER }}>3</div>
-                  <div className="text-xs font-semibold mt-0.5" style={{ color: MUTED }}>deploy templates</div>
-                </div>
-                <div>
-                  <div className="text-3xl font-extrabold tracking-[-0.03em]" style={{ color: PAPER }}>22</div>
-                  <div className="text-xs font-semibold mt-0.5" style={{ color: MUTED }}>AI agent tools</div>
-                </div>
-              </div>
             </div>
 
-            {/* Screenshot — clip reveal */}
-            <div className="clip-reveal hidden lg:block rounded-2xl overflow-hidden" style={{ boxShadow: "0 26px 60px rgba(0,0,0,0.4)" }}>
-              <img src="/login-previews/dashboard.png" alt="GroundControl Dashboard" className="w-full" loading="lazy" />
+            <p className="fade-up" style={{ fontSize: 18, color: C.mute, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>
+              Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server. No SSH needed.
+            </p>
+
+            <div className="fade-up flex items-center gap-4 flex-wrap">
+              <button onClick={() => setShowLogin(true)}
+                style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", letterSpacing: "0.01em" }}>
+                Open Dashboard →
+              </button>
+              <button onClick={copyCmd}
+                style={{ padding: "14px 32px", background: "transparent", color: C.mute, border: `1px solid ${C.line}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer" }}>
+                {copied ? "Copied" : "Copy install command"}
+              </button>
             </div>
           </div>
         </div>
-      </section>
 
-      {/* ═══ HOW IT WORKS — handoff two-column pattern ═══ */}
-      <section className="relative py-28" style={{ borderTop: `1px solid ${FAINT}` }}>
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
-            <div className="clip-reveal order-2 lg:order-1 rounded-2xl overflow-hidden" style={{ boxShadow: "0 26px 60px rgba(0,0,0,0.4)" }}>
-              <img src="/login-previews/containers.png" alt="Services" className="w-full" loading="lazy" />
-            </div>
-            <div className="order-1 lg:order-2">
-              <div className="flex items-baseline gap-4 mb-4">
-                <span style={{ fontSize: 20, fontWeight: 700, color: MUTED, fontFamily: "'Schibsted Grotesk', sans-serif" }}>01</span>
-                <h2 className="text-4xl md:text-5xl font-extrabold tracking-[-0.035em]" style={{ color: PAPER }}>Connect your server.</h2>
-              </div>
-              <p style={{ color: CORAL, fontWeight: 600, fontSize: 19, marginBottom: 14, fontFamily: "'Schibsted Grotesk', sans-serif" }}>
-                One command. Full visibility.
-              </p>
-              <p className="text-base leading-relaxed max-w-lg" style={{ color: MUTED }}>
-                Run one curl command on your VPS. Docker and GroundControl install automatically.
-                The AI agent scans your server — OS, containers, reverse proxy, projects — and maps
-                your entire stack in seconds.
-              </p>
-            </div>
-          </div>
+        {/* Scroll indicator */}
+        <div className="fade-up absolute bottom-10 left-1/2 -translate-x-1/2" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>
+          Scroll
         </div>
       </section>
 
-      {/* ═══ FEATURES ═══ */}
-      <section className="relative py-28" style={{ borderTop: `1px solid ${FAINT}` }}>
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-16">
-            <p className="uppercase tracking-[0.2em] text-xs mb-4" style={{ color: CORAL, fontFamily: "'JetBrains Mono', monospace" }}>Features</p>
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-[-0.035em]" style={{ color: PAPER }}>
-              Everything you need to run production.
-            </h2>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
+      {/* ── FEATURES (cipherdigital horiz-scroll style — cards grid) ── */}
+      <section className="features-section" style={{ padding: "120px 0", background: C.darker }}>
+        <div className="max-w-7xl mx-auto px-6 md:px-12">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-px" style={{ background: C.line }}>
             {[
-              { icon: "◉", title: "AI Co-Pilot", desc: "Ask anything — check CPU, read logs, restart services. It knows your server's actual state." },
-              { icon: "▦", title: "Deploy Templates", desc: "Caddy + App + DB, Traefik + microservices. GitHub, GHCR, or local code." },
-              { icon: "◎", title: "Cloudflare DNS", desc: "Manage records, zones, tunnels. Auto-create A records when you deploy." },
-              { icon: "◈", title: "Live Dashboard", desc: "Real-time metrics, container health, disk usage. Alerts when something breaks." },
-              { icon: "⌘", title: "Web Terminal", desc: "Full terminal access from your browser. The AI agent can run commands for you." },
-              { icon: "◑", title: "Self-Hosted", desc: "Runs on your VPS. Your data stays yours. Open source. No credit card." },
+              { icon: "◉", title: "AI Co-Pilot", desc: "Ask anything about your server. The agent reads your actual infrastructure." },
+              { icon: "▦", title: "Deploy Templates", desc: "Caddy + App + DB, Traefik + microservices. One click to production." },
+              { icon: "◎", title: "Cloudflare DNS", desc: "Manage records, zones, tunnels. Auto-create records on deploy." },
+              { icon: "◈", title: "Live Dashboard", desc: "Real-time metrics, container health, alerts when something breaks." },
+              { icon: "⌘", title: "Web Terminal", desc: "Full terminal access. The AI agent runs commands for you." },
+              { icon: "◑", title: "Self-Hosted", desc: "Your VPS, your data. Open source. No vendor lock-in." },
             ].map((f, i) => (
-              <div key={i} className="card-reveal rounded-2xl p-8 transition-colors duration-300"
-                style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}` }}>
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl mb-5"
-                  style={{ background: `${CORAL}15`, color: CORAL }}>{f.icon}</div>
-                <h3 className="font-bold text-base mb-2">{f.title}</h3>
-                <p className="text-sm leading-relaxed" style={{ color: MUTED, fontWeight: 500 }}>{f.desc}</p>
+              <div key={i} className="h-card" style={{ background: C.darker, padding: 48 }}>
+                <div style={{ color: C.dim, fontSize: 24, marginBottom: 20 }}>{f.icon}</div>
+                <h3 style={{ fontSize: 18, fontWeight: 400, margin: "0 0 8px" }}>{f.title}</h3>
+                <p style={{ fontSize: 14, color: C.mute, lineHeight: 1.6, margin: 0 }}>{f.desc}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ═══ SECOND SCREENSHOT ═══ */}
-      <section className="relative py-28" style={{ borderTop: `1px solid ${FAINT}` }}>
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
-            <div>
-              <div className="flex items-baseline gap-4 mb-4">
-                <span style={{ fontSize: 20, fontWeight: 700, color: MUTED, fontFamily: "'Schibsted Grotesk', sans-serif" }}>02</span>
-                <h2 className="text-4xl md:text-5xl font-extrabold tracking-[-0.035em]" style={{ color: PAPER }}>Deploy with confidence.</h2>
+      {/* ── METRICS ── */}
+      <section className="metrics-section" style={{ padding: "100px 0", background: C.bg }}>
+        <div className="max-w-5xl mx-auto px-6 md:px-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+            {[
+              { val: "5", label: "Cloud Platforms" },
+              { val: "3", label: "Deploy Templates" },
+              { val: "22", label: "AI Agent Tools" },
+              { val: "1", label: "Command to Install" },
+            ].map((m, i) => (
+              <div key={i} className="metric-val text-center">
+                <div style={{ fontSize: "clamp(36px, 5vw, 56px)", fontWeight: 300, lineHeight: 1, marginBottom: 8 }}>
+                  {m.val}
+                </div>
+                <div style={{ fontSize: 12, color: C.mute, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                  {m.label}
+                </div>
               </div>
-              <p style={{ color: CORAL, fontWeight: 600, fontSize: 19, marginBottom: 14, fontFamily: "'Schibsted Grotesk', sans-serif" }}>
-                Pick a template. It ships.
-              </p>
-              <p className="text-base leading-relaxed max-w-lg" style={{ color: MUTED }}>
-                Choose from pre-built production templates. Connect your GitHub repo, GHCR image,
-                or local code. Configure environment variables, set up Cloudflare DNS, and deploy —
-                all from one interface.
-              </p>
-            </div>
-            <div className="clip-reveal rounded-2xl overflow-hidden" style={{ boxShadow: "0 26px 60px rgba(0,0,0,0.4)" }}>
-              <img src="/login-previews/terminal.png" alt="Terminal" className="w-full" loading="lazy" />
-            </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ═══ AI AGENT SECTION (dark accent, like handoff "agents" section) ═══ */}
-      <section className="relative py-28 overflow-hidden" style={{ background: WARM }}>
-        <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[70%] aspect-[2/1] pointer-events-none"
-          style={{ background: `radial-gradient(ellipse at 50% 50%, ${CORAL_B}22, transparent 65%)` }} />
-        <div className="relative max-w-3xl mx-auto px-6 text-center">
-          <p className="uppercase tracking-[0.2em] text-xs mb-5" style={{ color: CORAL_B, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
-            Built for agents
-          </p>
-          <h2 className="text-4xl md:text-6xl font-extrabold tracking-[-0.04em] leading-none mb-6" style={{ color: PAPER }}>
-            The AI co-pilot that knows your server.
-          </h2>
-          <p className="text-lg leading-relaxed max-w-xl mx-auto" style={{ color: `${PAPER}99`, fontWeight: 500 }}>
-            Ask it to check CPU usage, read error logs, restart a container, configure DNS, or deploy from a template.
-            It understands your actual infrastructure — not a generic playbook.
-          </p>
-        </div>
-      </section>
-
-      {/* ═══ THIRD SCREENSHOT ═══ */}
-      <section className="relative py-28" style={{ borderTop: `1px solid ${FAINT}` }}>
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
-            <div className="clip-reveal order-2 lg:order-1 rounded-2xl overflow-hidden" style={{ boxShadow: "0 26px 60px rgba(0,0,0,0.4)" }}>
-              <img src="/login-previews/infrastructure.png" alt="Infrastructure" className="w-full" loading="lazy" />
-            </div>
-            <div className="order-1 lg:order-2">
-              <div className="flex items-baseline gap-4 mb-4">
-                <span style={{ fontSize: 20, fontWeight: 700, color: MUTED, fontFamily: "'Schibsted Grotesk', sans-serif" }}>03</span>
-                <h2 className="text-4xl md:text-5xl font-extrabold tracking-[-0.035em]" style={{ color: PAPER }}>Eyes on production.</h2>
-              </div>
-              <p style={{ color: CORAL, fontWeight: 600, fontSize: 19, marginBottom: 14, fontFamily: "'Schibsted Grotesk', sans-serif" }}>
-                Always watching. Never sleeping.
-              </p>
-              <p className="text-base leading-relaxed max-w-lg" style={{ color: MUTED }}>
-                Live metrics, container health, reverse proxy status, and DNS records in one place.
-                The AI agent monitors your stack and alerts you when something needs attention.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ═══ CTA ═══ */}
-      <section className="relative py-28" style={{ borderTop: `1px solid ${FAINT}` }}>
+      {/* ── CTA ── */}
+      <section style={{ padding: "120px 0", background: C.dark }}>
         <div className="max-w-2xl mx-auto px-6 text-center">
-          <div className="rounded-3xl p-12"
-            style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}`, boxShadow: `0 0 120px ${CORAL}15` }}>
-            <h2 className="text-3xl md:text-4xl font-extrabold tracking-[-0.03em] mb-4" style={{ color: PAPER }}>
-              Ready to give your VPS an AI co-pilot?
-            </h2>
-            <p className="mb-8" style={{ color: MUTED, fontWeight: 500 }}>Free. Open source. Self-hosted.</p>
-            <div className="flex items-center gap-2 justify-center mb-6">
-              <code className="px-5 py-3 rounded-xl text-xs max-w-lg truncate"
-                style={{ background: "#00000055", border: `1px solid ${FAINT}`, color: MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{installCmd}</code>
-              <button onClick={copyCmd} className="px-4 py-3 rounded-xl text-xs transition-all shrink-0"
-                style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}`, color: copied ? CORAL : MUTED, fontFamily: "'JetBrains Mono', monospace" }}>
-                {copied ? "✓" : "Copy"}
-              </button>
-            </div>
-            <div className="flex gap-4 justify-center">
-              <button onClick={() => setShowLogin(true)}
-                className="px-6 py-3 rounded-xl text-sm font-bold transition-all shadow-lg"
-                style={{ background: CORAL, color: "#fff", fontFamily: "'JetBrains Mono', monospace", boxShadow: `0 12px 32px ${CORAL}33` }}>
-                Open Dashboard
-              </button>
-              <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener"
-                className="px-6 py-3 rounded-xl text-sm font-bold transition-all"
-                style={{ border: `1px solid ${FAINT}`, color: MUTED, fontFamily: "'JetBrains Mono', monospace" }}>
-                GitHub →
-              </a>
-            </div>
+          <h2 style={{ fontSize: "clamp(28px, 4vw, 42px)", fontWeight: 300, lineHeight: 1.15, marginBottom: 24 }}>
+            Ready to give your VPS an AI co-pilot?
+          </h2>
+          <p style={{ color: C.mute, fontSize: 16, marginBottom: 40 }}>Free. Open source. Self-hosted.</p>
+          <div className="flex gap-4 justify-center flex-wrap">
+            <button onClick={() => setShowLogin(true)}
+              style={{ padding: "16px 36px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}>
+              Open Dashboard
+            </button>
+            <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener"
+              style={{ padding: "16px 36px", background: "transparent", color: C.mute, border: `1px solid ${C.line}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>
+              GitHub
+            </a>
+          </div>
+          <div style={{ marginTop: 32 }}>
+            <code style={{ background: C.darker, padding: "12px 20px", borderRadius: 0, fontSize: 11, color: C.mute, fontFamily: "monospace" }}>
+              {cmd}
+            </code>
           </div>
         </div>
       </section>
 
-      {/* ═══ FOOTER ═══ */}
-      <footer className="py-10" style={{ borderTop: `1px solid ${FAINT}` }}>
-        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <span className="text-sm font-semibold" style={{ color: `${PAPER}55` }}>GroundControl</span>
-          <div className="flex items-center gap-5">
-            <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener"
-              className="text-xs transition-colors" style={{ color: `${PAPER}22`, fontFamily: "'JetBrains Mono', monospace" }}>GitHub</a>
-            <a href="https://github.com/teckedd-code2save/convoy" target="_blank" rel="noopener"
-              className="text-xs transition-colors" style={{ color: `${PAPER}22`, fontFamily: "'JetBrains Mono', monospace" }}>Convoy</a>
-            <a href="https://www.serendepify.com" target="_blank" rel="noopener"
-              className="text-xs transition-colors" style={{ color: `${PAPER}22`, fontFamily: "'JetBrains Mono', monospace" }}>Serendepify</a>
+      {/* ── FOOTER ── */}
+      <footer style={{ padding: "48px 0", background: C.dark, borderTop: `1px solid ${C.line}` }}>
+        <div className="max-w-7xl mx-auto px-6 md:px-12 flex flex-col md:flex-row items-center justify-between gap-4">
+          <span style={{ fontSize: 13, color: C.dim }}>GroundControl</span>
+          <div style={{ display: "flex", gap: 24 }}>
+            <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ color: C.dim, fontSize: 12, textDecoration: "none", fontFamily: "monospace" }}>GitHub</a>
+            <a href="https://github.com/teckedd-code2save/convoy" target="_blank" rel="noopener" style={{ color: C.dim, fontSize: 12, textDecoration: "none", fontFamily: "monospace" }}>Convoy</a>
+            <a href="https://www.serendepify.com" target="_blank" rel="noopener" style={{ color: C.dim, fontSize: 12, textDecoration: "none", fontFamily: "monospace" }}>Serendepify</a>
           </div>
-          <span className="text-xs" style={{ color: `${PAPER}12`, fontFamily: "'JetBrains Mono', monospace" }}>Open source · Self-hosted</span>
+          <span style={{ color: C.dim, fontSize: 11, fontFamily: "monospace" }}>© 2026</span>
         </div>
       </footer>
 
-      {/* ═══ LOGIN MODAL ═══ */}
+      {/* ── LOGIN MODAL ── */}
       {showLogin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLogin(false)} />
-          <div className="relative rounded-2xl p-8 w-full max-w-sm"
-            style={{ background: INK, border: `1px solid ${FAINT}`, boxShadow: `0 0 120px ${CORAL}12` }}>
-            <div className="absolute -top-px left-8 right-8 h-px"
-              style={{ background: `linear-gradient(90deg, transparent, ${CORAL}44, transparent)` }} />
-            <h2 className="text-xl font-bold mb-1" style={{ color: PAPER }}>Sign in</h2>
-            <p className="text-xs mb-6" style={{ color: MUTED }}>Access your dashboard</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}>
+          <div className="absolute inset-0" onClick={() => setShowLogin(false)} />
+          <div className="relative w-full max-w-sm" style={{ background: C.dark, border: `1px solid ${C.line}`, padding: 40 }}>
+            <h2 style={{ fontSize: 22, fontWeight: 300, marginBottom: 24 }}>Sign in</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <AuthInput label="Username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" autoFocus />
               <AuthInput label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
               <AuthError message={error} />
               <AuthButton loading={loading}>Sign In</AuthButton>
             </form>
-            <button onClick={() => setShowLogin(false)} className="mt-4 w-full text-center text-xs transition-colors" style={{ color: `${PAPER}18`, fontFamily: "'JetBrains Mono', monospace" }}>Cancel</button>
+            <button onClick={() => setShowLogin(false)}
+              style={{ marginTop: 16, width: "100%", background: "transparent", border: "none", color: C.dim, fontSize: 12, cursor: "pointer", fontFamily: "monospace" }}>
+              Cancel
+            </button>
           </div>
         </div>
       )}
