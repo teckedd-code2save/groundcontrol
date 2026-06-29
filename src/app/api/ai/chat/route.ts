@@ -35,7 +35,7 @@ const ANTHROPIC_MAX_TOKENS = 4096;
 
 const SYSTEM_PROMPT =
   `You are GroundControl AI, an expert systems administrator and DevOps assistant embedded in the ` +
-  `GroundControl VPS cockpit dashboard. You are an AGENT: you CAN directly inspect the connected ` +
+  `GroundControl VPS command center. You are an AGENT: you CAN directly inspect the connected ` +
   `server by calling the provided tools, which execute real shell/Docker commands on the active VPS ` +
   `over SSH (or locally).\n\n` +
   `CRITICAL BEHAVIOR:\n` +

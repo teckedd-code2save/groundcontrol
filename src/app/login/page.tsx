@@ -65,6 +65,7 @@ export default function LoginPage() {
         gsap.fromTo(".fade-up", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, stagger: 0.1, delay: 1.2, ease: "power2.out" });
         gsap.to(".bg-parallax", { y: "15%", ease: "none", scrollTrigger: { trigger: ".hero-s", start: "top top", end: "bottom top", scrub: 1 } });
         gsap.fromTo(".h-card", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, stagger: 0.1, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
+        gsap.fromTo(".h-card h3", { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.1, delay: 0.25, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
         gsap.fromTo(".m-val", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.8, stagger: 0.12, ease: "power2.out", scrollTrigger: { trigger: ".met-s", start: "top 80%" } });
 
         // Screenshot reveals — cipherdigital expanding-on-scroll pattern
@@ -183,10 +184,7 @@ export default function LoginPage() {
 
         tl.to(".page2-image-vignette", { opacity: 0.55, duration: 0.16, ease: "power2.out" }, 0.64);
         tl.to(".page2-full-copy", { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" }, 0.72)
-          .to(".page2-metric", { opacity: 1, y: 0, duration: 0.22, stagger: 0.04, ease: "power2.out" }, 0.78)
-          // Fade out expanded content before next section
-          .to(".page2-full-copy, .page2-metric, .page2-image-vignette", { opacity: 0, duration: 0.2 }, 0.92)
-          .to(".page2-image", { opacity: 0.45, duration: 0.2 }, 0.92);
+          .to(".page2-metric", { opacity: 1, y: 0, duration: 0.22, stagger: 0.04, ease: "power2.out" }, 0.78);
       });
     }
     init();
@@ -362,7 +360,7 @@ export default function LoginPage() {
             <h2 style={{ fontSize: "clamp(28px, 4.6vw, 58px)", fontWeight: 300, lineHeight: 1.03, margin: 0 }}>
               <span className="page2-copy-line" style={{ display: "block", opacity: 0, transform: "translateY(12px)" }}>Every command.</span>
               <span className="page2-copy-line" style={{ display: "block", opacity: 0, transform: "translateY(12px)" }}>Every log.</span>
-              <span className="page2-copy-line" style={{ display: "block", opacity: 0, transform: "translateY(12px)" }}>One cockpit.</span>
+              <span className="page2-copy-line" style={{ display: "block", opacity: 0, transform: "translateY(12px)" }}>One interface.</span>
             </h2>
           </div>
 
@@ -431,7 +429,7 @@ export default function LoginPage() {
             {[
               ["Live", "logs"],
               ["AI", "commands"],
-              ["One", "cockpit"],
+              ["One", "pane"],
             ].map(([value, label], index) => (
               <div
                 key={label}

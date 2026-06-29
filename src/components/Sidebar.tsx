@@ -117,7 +117,7 @@ export function Sidebar() {
             {!collapsed && (
               <div>
                 <h1 className="font-bold text-sm tracking-tight">GroundControl</h1>
-                <p className="text-[10px] text-muted font-mono">VPS Cockpit</p>
+                <p className="text-[10px] text-muted font-mono">VPS Command</p>
               </div>
             )}
           </Link>

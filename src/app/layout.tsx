@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GroundControl — VPS Cockpit",
-  description: "The self-hosted cockpit for your VPS fleet.",
+  title: "GroundControl — VPS Command Center",
+  description: "The self-hosted command center for your VPS fleet.",
 };
 
 export default function RootLayout({

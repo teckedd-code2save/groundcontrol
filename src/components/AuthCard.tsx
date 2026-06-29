@@ -59,7 +59,7 @@ export default function AuthCard({
               className="sr-mono text-[11px] uppercase tracking-widest"
               style={{ color: "var(--sr-text-35)" }}
             >
-              Self-hosted VPS cockpit
+              Self-hosted VPS management
             </p>
           </div>
 
