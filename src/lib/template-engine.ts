@@ -156,6 +156,13 @@ function parseTemplateYaml(content: string): TemplateDefinition {
       requires[indentedScalar[1]] = indentedScalar[2] === "true";
       continue;
     }
+    if (indentedScalar && currentSection === "services" && currentService) {
+      const key = indentedScalar[1];
+      const val = indentedScalar[2];
+      if (key === "restart") currentService["restart"] = val;
+      else if (key === "image") currentService["image"] = val;
+      continue;
+    }
 
     // Array item
     const arrayItem = trimmed.match(/^  -\s*"?(.+)"?$/);
@@ -185,6 +192,22 @@ function parseTemplateYaml(content: string): TemplateDefinition {
     }
 
     // Service name
+    // Service item creation: "- name: value"
+    if (currentSection === "services" && trimmed.startsWith("- ")) {
+      const nameMatch = trimmed.match(/^-\s+name:\s*"?(.+?)\"?\s*$/);
+      if (nameMatch) {
+        if (currentService) {
+          if (envVars.length) currentService["env"] = envVars;
+          if (volumes.length) currentService["volumes"] = volumes;
+          if (dependsOn.length) currentService["depends_on"] = dependsOn;
+          services.push(currentService);
+        }
+        currentService = { name: nameMatch[1] };
+        envVars = []; volumes = []; dependsOn = []; currentArrayKey = "";
+        continue;
+      }
+    }
+
     if (currentSection === "services" && trimmed.match(/^  (\w[\w-]*):\s*$/)) {
       if (currentService) {
         if (envVars.length) currentService["env"] = envVars;
