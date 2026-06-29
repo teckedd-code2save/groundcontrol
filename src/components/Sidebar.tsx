@@ -73,7 +73,7 @@ export function Sidebar() {
           <div className="relative w-64 bg-card border-r border-border h-full overflow-y-auto animate-slide-in">
             <div className="p-4 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-xs">GC</div>
+                <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-xs"><svg width="16" height="16" viewBox="0 0 64 64" fill="none"><g transform="rotate(118 32 32)"><circle cx="32" cy="32" r="21" stroke="#fff" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="74 58"/><circle cx="32" cy="32" r="21" stroke="#E8542A" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="24 200" strokeDashoffset="-80"/></g></svg></div>
                 <span className="font-bold text-sm">GroundControl</span>
               </div>
               <button onClick={() => setMobileMenu(false)} className="p-1.5 rounded-lg hover:bg-border/50 text-muted hover:text-foreground transition-colors">
@@ -113,7 +113,7 @@ export function Sidebar() {
       <aside className={`hidden md:flex fixed left-0 top-0 h-screen bg-card border-r border-border flex-col z-40 transition-all duration-200 ${collapsed ? "w-16" : "w-64"}`}>
         <div className={`p-4 border-b border-border flex items-center ${collapsed ? "flex-col gap-2 justify-center" : "justify-between"}`}>
           <Link href="/dashboard" className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
-            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-sm shrink-0">GC</div>
+            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-sm shrink-0"><svg width="16" height="16" viewBox="0 0 64 64" fill="none"><g transform="rotate(118 32 32)"><circle cx="32" cy="32" r="21" stroke="#fff" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="74 58"/><circle cx="32" cy="32" r="21" stroke="#E8542A" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="24 200" strokeDashoffset="-80"/></g></svg></div>
             {!collapsed && (
               <div>
                 <h1 className="font-bold text-sm tracking-tight">GroundControl</h1>
