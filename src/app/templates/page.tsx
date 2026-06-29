@@ -15,31 +15,28 @@ export default function TemplatesPage() {
   const [templates, setTemplates] = useState<TemplateWithId[]>([]);
   const [selected, setSelected] = useState<TemplateWithId | null>(null);
   const [step, setStep] = useState<Step>("browse");
-  const [applying, setApplying] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; msg: string; dns?: string } | null>(null);
 
-  // Source connection
   const [sourceType, setSourceType] = useState<"github" | "ghcr" | "local">("github");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
   const [ghcrImage, setGhcrImage] = useState("");
   const [localPath, setLocalPath] = useState("");
+  const [repoValidating, setRepoValidating] = useState(false);
 
-  // Configuration
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([]);
-  const [cloudflareZone, setCloudflareZone] = useState("");
-  const [createDns, setCreateDns] = useState(true);
+  const [createDns, setCreateDns] = useState(false);
 
-  // Preview
-  const [preview, setPreview] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState("");
   const [composeYml, setComposeYml] = useState("");
   const [proxyConfig, setProxyConfig] = useState("");
+  const [deployResult, setDeployResult] = useState<any>(null);
 
   useEffect(() => {
-    fetch("/api/templates")
-      .then(r => r.json())
-      .then(d => setTemplates((d.templates || []).map((t: any) => ({ ...t })))).catch(() => {});
+    fetch("/api/templates").then(r => r.json())
+      .then(d => setTemplates(d.templates || [])).catch(() => {});
   }, []);
 
   function selectTemplate(t: TemplateWithId) {
@@ -50,55 +47,71 @@ export default function TemplatesPage() {
     setEnvVars([]);
     setStep("source");
     setResult(null);
-    setPreview(null);
+    setPreviewText("");
+    setDeployResult(null);
+  }
+
+  async function validateRepo() {
+    if (!repoUrl) return;
+    setRepoValidating(true);
+    try {
+      const r = await fetch(`/api/github/validate?url=${encodeURIComponent(repoUrl)}`);
+      const d = await r.json();
+      if (d.valid) setResult({ ok: true, msg: `✓ Repo found: ${d.name || repoUrl}` });
+      else setResult({ ok: false, msg: `Repo not accessible: ${d.error}` });
+    } catch { setResult({ ok: false, msg: "Could not validate repo URL" }); }
+    finally { setRepoValidating(false); }
+  }
+
+  function updateInput(name: string, value: string) {
+    setInputs(prev => ({ ...prev, [name]: value }));
   }
 
   function addEnvVar() { setEnvVars([...envVars, { key: "", value: "" }]); }
-  function updateEnvVar(i: number, field: "key" | "value", val: string) {
-    const updated = [...envVars]; updated[i][field] = val; setEnvVars(updated);
+  function updateEnvVar(i: number, f: "key" | "value", v: string) {
+    const u = [...envVars]; u[i][f] = v; setEnvVars(u);
   }
   function removeEnvVar(i: number) { setEnvVars(envVars.filter((_, idx) => idx !== i)); }
 
   async function handlePreview() {
     if (!selected) return;
-    setApplying(true);
+    setLoading(true); setResult(null);
     try {
-      const allInputs: Record<string, string> = { ...inputs };
-      // Add source info
-      if (sourceType === "github") allInputs["repo_url"] = repoUrl;
-      else if (sourceType === "ghcr") allInputs["ghcr_image"] = ghcrImage;
-      else allInputs["repo_dir"] = localPath || ".";
-
-      const params = new URLSearchParams({ name: selected._filename, preview: "true", ...allInputs });
-      const res = await fetch(`/api/templates?${params}`);
+      const res = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: selected._filename,
+          preview: true,
+          inputs,
+          repoUrl: sourceType === "github" ? repoUrl : undefined,
+          ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
+          localPath: sourceType === "local" ? localPath : undefined,
+        }),
+      });
       const data = await res.json();
-      if (data.preview) {
-        setPreview(data.preview);
-        setComposeYml(data.resolved?.dockerCompose || "");
-        setProxyConfig(data.resolved?.proxyConfig || "");
-        setStep("preview");
+      if (data.error) {
+        setResult({ ok: false, msg: data.error });
       } else {
-        setResult({ ok: false, msg: data.error || "Failed to generate preview" });
+        setPreviewText(data.preview || "");
+        setComposeYml(data.dockerCompose || "");
+        setProxyConfig(data.proxyConfig || "");
+        setStep("preview");
       }
-    } catch { setResult({ ok: false, msg: "Network error" }); }
-    finally { setApplying(false); }
+    } catch { setResult({ ok: false, msg: "Preview failed — check your connection" }); }
+    finally { setLoading(false); }
   }
 
   async function handleDeploy() {
     if (!selected) return;
-    setApplying(true); setResult(null);
+    setLoading(true); setResult(null);
     try {
-      const allInputs: Record<string, string> = { ...inputs };
-      if (sourceType === "github") allInputs["repo_url"] = repoUrl;
-      else if (sourceType === "ghcr") allInputs["ghcr_image"] = ghcrImage;
-      else allInputs["repo_dir"] = localPath || ".";
-
       const res = await fetch("/api/templates/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           templateName: selected._filename,
-          inputs: allInputs,
+          inputs,
           envVars: envVars.filter(e => e.key),
           repoUrl: sourceType === "github" ? repoUrl : undefined,
           domain: inputs.domain || undefined,
@@ -107,46 +120,46 @@ export default function TemplatesPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setResult({ ok: true, msg: data.message || "Deployed successfully" });
+        setDeployResult(data);
+        const msg = data.dns?.result
+          ? `Deployed! DNS record ${data.dns.result.name || inputs.domain} → ${data.deployPath}`
+          : data.message || "Deployed successfully";
+        setResult({ ok: true, msg, dns: data.dns ? "DNS record created" : undefined });
         setStep("deploy");
-        setPreview(data.composeYml || "");
-        setProxyConfig(data.proxyConfig || "");
+        setPreviewText(data.composeYml || data.message || "");
       } else {
         setResult({ ok: false, msg: data.error || "Deploy failed" });
       }
     } catch (err) {
-      setResult({ ok: false, msg: err instanceof Error ? err.message : "Failed" });
-    } finally { setApplying(false); }
+      setResult({ ok: false, msg: err instanceof Error ? err.message : "Deploy failed — check VPS connection" });
+    } finally { setLoading(false); }
   }
 
-  function steps(): { id: Step; label: string }[] {
-    return [
-      { id: "browse", label: "Choose" },
-      { id: "source", label: "Source" },
-      { id: "configure", label: "Config" },
-      { id: "preview", label: "Review" },
-      { id: "deploy", label: "Deploy" },
-    ];
-  }
+  const steps = [
+    { id: "browse" as Step, label: "Choose" },
+    { id: "source" as Step, label: "Source" },
+    { id: "configure" as Step, label: "Config" },
+    { id: "preview" as Step, label: "Review" },
+    { id: "deploy" as Step, label: "Deploy" },
+  ];
+
+  const currentStepIdx = steps.findIndex(s => s.id === step);
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Deployment Templates</h1>
-        <p className="text-muted mt-1 text-sm">Production stacks. Pick → connect source → configure → deploy.</p>
-      </div>
+      <h1 className="text-2xl font-bold tracking-tight mb-1">Deployment Templates</h1>
+      <p className="text-muted text-sm mb-8">Pick a template, connect your code, configure, deploy.</p>
 
-      {/* Steps */}
+      {/* Step indicator */}
       <div className="flex items-center gap-2 mb-8 flex-wrap">
-        {steps().map((s, i) => (
+        {steps.map((s, i) => (
           <div key={s.id} className="flex items-center gap-2">
-            <button onClick={() => (i <= steps().findIndex(x => x.id === step) ? setStep(s.id) : null)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono transition-colors ${
-                step === s.id ? "bg-accent/10 text-accent border border-accent/30" :
-                i < steps().findIndex(x => x.id === step) ? "text-muted hover:text-foreground" :
-                "text-muted/40"
+            <button onClick={() => i <= currentStepIdx && setStep(s.id)}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-mono transition-colors ${
+                step === s.id ? "border border-accent text-accent" :
+                i < currentStepIdx ? "text-muted hover:text-foreground" : "text-muted/40"
               }`}>
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+              <span className={`w-5 h-5 flex items-center justify-center text-[10px] ${
                 step === s.id ? "bg-accent text-white" : "bg-card border border-border"
               }`}>{i + 1}</span>
               {s.label}
@@ -156,22 +169,29 @@ export default function TemplatesPage() {
         ))}
       </div>
 
+      {result && (
+        <div className={`mb-6 p-3 rounded text-sm font-mono ${result.ok ? "bg-success/10 border border-success/30 text-success" : "bg-error/10 border border-error/30 text-error"}`}>
+          {result.msg}
+          {result.dns && <span className="block text-[10px] mt-1 opacity-75">{result.dns}</span>}
+        </div>
+      )}
+
       {/* Step 1: Browse */}
       {step === "browse" && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {templates.map(t => (
             <button key={t._filename} onClick={() => selectTemplate(t)}
-              className="text-left p-5 bg-card border border-border rounded-xl hover:border-accent hover:bg-accent/5 transition-colors">
+              className="text-left p-5 bg-card border border-border hover:border-accent/30 hover:bg-accent/5 transition-colors">
               <div className="flex items-start justify-between mb-2">
-                <h3 className="font-medium text-sm">{t.name || "Unnamed"}</h3>
-                <span className="text-lg">{t.category === "static" ? "◈" : t.category === "microservices" ? "◐" : "◉"}</span>
+                <h3 className="font-medium text-sm">{t.name}</h3>
+                <span className="text-lg">{t.category === "static" ? "◈" : "◉"}</span>
               </div>
               <p className="text-xs text-muted leading-relaxed mb-3">{t.description}</p>
               <div className="flex flex-wrap gap-1.5">
-                {t.requires?.docker && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 font-mono">Docker</span>}
-                {t.requires?.caddy && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 font-mono">Caddy</span>}
-                {t.requires?.traefik && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 font-mono">Traefik</span>}
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/10 text-muted border border-muted/20 font-mono">v{t.version}</span>
+                {t.requires?.docker && <Tag>Docker</Tag>}
+                {t.requires?.caddy && <Tag>Caddy</Tag>}
+                {t.requires?.traefik && <Tag>Traefik</Tag>}
+                <span className="text-[9px] px-1.5 py-0.5 bg-muted/10 text-muted border border-muted/20 font-mono">v{t.version}</span>
               </div>
             </button>
           ))}
@@ -181,57 +201,50 @@ export default function TemplatesPage() {
       {/* Step 2: Source */}
       {step === "source" && selected && (
         <div className="space-y-6">
-          <div className="bg-card border border-border rounded-xl p-5">
-            <h2 className="text-sm font-medium mb-1">{selected.name}</h2>
-            <p className="text-xs text-muted">{selected.description}</p>
-          </div>
-
-          <div className="bg-card border border-border rounded-xl p-5">
+          <SelectedTemplateCard selected={selected} />
+          <div className="bg-card border border-border p-5">
             <h3 className="text-sm font-medium mb-4">Where is your code?</h3>
             <div className="flex gap-2 mb-6">
               {(["github", "ghcr", "local"] as const).map(t => (
-                <button key={t} onClick={() => setSourceType(t)}
-                  className={`px-4 py-2 text-xs font-mono rounded-lg border transition-colors ${
-                    sourceType === t ? "border-accent bg-accent/10 text-accent" : "border-border hover:border-accent/50"
-                  }`}>
-                  {t === "github" ? "GitHub Repo" : t === "ghcr" ? "GHCR Image" : "Local Path"}
-                </button>
+                <button key={t} onClick={() => { setSourceType(t); setResult(null); }}
+                  className={`px-4 py-2 text-xs font-mono border ${sourceType === t ? "border-accent text-accent" : "border-border hover:border-accent/50"}`}>{t === "github" ? "GitHub" : t === "ghcr" ? "GHCR" : "Local"}</button>
               ))}
             </div>
-
             {sourceType === "github" && (
               <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-mono text-muted mb-1">Repository URL</label>
+                <label className="block text-xs font-mono text-muted">Repo URL</label>
+                <div className="flex gap-2">
                   <input type="text" value={repoUrl} onChange={e => setRepoUrl(e.target.value)}
-                    placeholder="https://github.com/you/repo" className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                    placeholder="https://github.com/you/repo" className="flex-1 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                  <button onClick={validateRepo} disabled={repoValidating || !repoUrl}
+                    className="px-3 py-2 text-xs font-mono border border-border hover:border-accent disabled:opacity-50">
+                    {repoValidating ? "..." : "Validate"}
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-xs font-mono text-muted mb-1">Branch</label>
-                  <input type="text" value={branch} onChange={e => setBranch(e.target.value)}
-                    className="w-48 bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
-                </div>
+                <label className="block text-xs font-mono text-muted mt-3">Branch</label>
+                <input type="text" value={branch} onChange={e => setBranch(e.target.value)}
+                  className="w-40 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
               </div>
             )}
             {sourceType === "ghcr" && (
               <div>
                 <label className="block text-xs font-mono text-muted mb-1">GHCR Image</label>
                 <input type="text" value={ghcrImage} onChange={e => setGhcrImage(e.target.value)}
-                  placeholder="ghcr.io/you/app:latest" className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                  placeholder="ghcr.io/you/app:latest" className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
               </div>
             )}
             {sourceType === "local" && (
               <div>
-                <label className="block text-xs font-mono text-muted mb-1">Project path on VPS</label>
+                <label className="block text-xs font-mono text-muted mb-1">Path on VPS</label>
                 <input type="text" value={localPath} onChange={e => setLocalPath(e.target.value)}
-                  placeholder="/opt/myapp" className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                  placeholder="/opt/myapp" className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
               </div>
             )}
           </div>
-
           <div className="flex gap-3">
-            <button onClick={() => setStep("browse")} className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent transition-colors">← Back</button>
-            <button onClick={() => setStep("configure")} className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors">Next: Configure →</button>
+            <BackBtn onClick={() => setStep("browse")} />
+            <button onClick={() => setStep("configure")}
+              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-colors">Next →</button>
           </div>
         </div>
       )}
@@ -239,115 +252,132 @@ export default function TemplatesPage() {
       {/* Step 3: Configure */}
       {step === "configure" && selected && (
         <div className="space-y-6">
-          <div className="bg-card border border-border rounded-xl p-5">
+          <div className="bg-card border border-border p-5">
             <h3 className="text-sm font-medium mb-4">Deployment Settings</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-lg">
-              {/* Domain - always shown */}
-              <div className="md:col-span-2">
+            <div className="space-y-4 max-w-lg">
+              <div>
                 <label className="block text-xs font-mono text-muted mb-1">Domain <span className="text-accent">*</span></label>
-                <input type="text" value={inputs["domain"] || ""}
-                  onChange={e => setInputs({...inputs, domain: e.target.value})}
+                <input type="text" value={inputs.domain || ""}
+                  onChange={e => updateInput("domain", e.target.value)}
                   placeholder="app.example.com"
-                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
               </div>
-              {(selected.inputs || []).filter(i => i.name !== "domain" && (!["app_container", "db_password", "db_user", "db_name"].includes(i.name) || !i.generate)).map(inp => (
-                <div key={inp.name} className={inp.name === "domain" ? "md:col-span-2" : ""}>
+              {(selected.inputs || []).filter(i => i.name !== "domain").map(inp => (
+                <div key={inp.name}>
                   <label className="block text-xs font-mono text-muted mb-1">
                     {inp.prompt || inp.name}
                     {inp.generate && <span className="text-accent ml-1">(auto)</span>}
                   </label>
                   <input type="text" value={inputs[inp.name] || ""}
-                    onChange={e => setInputs({...inputs, [inp.name]: e.target.value})}
+                    onChange={e => updateInput(inp.name, e.target.value)}
                     placeholder={inp.example || inp.default || ""}
-                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                    className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Environment Variables */}
-          <div className="bg-card border border-border rounded-xl p-5">
+          <div className="bg-card border border-border p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-medium">Environment Variables</h3>
               <button onClick={addEnvVar} className="text-xs font-mono text-accent hover:underline">+ Add</button>
             </div>
-            {envVars.length === 0 && <p className="text-xs text-muted font-mono">No custom environment variables. Add secrets, API keys, etc.</p>}
+            {envVars.length === 0 && <p className="text-xs text-muted font-mono">None added. Add database URLs, API keys, etc.</p>}
             {envVars.map((ev, i) => (
               <div key={i} className="flex gap-2 mb-2">
                 <input type="text" value={ev.key} onChange={e => updateEnvVar(i, "key", e.target.value)}
-                  placeholder="KEY" className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent uppercase"/>
+                  placeholder="KEY" className="flex-1 bg-background border border-border px-3 py-2 text-xs font-mono outline-none focus:border-accent"/>
                 <input type="text" value={ev.value} onChange={e => updateEnvVar(i, "value", e.target.value)}
-                  placeholder="value" className="flex-[2] bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent"/>
+                  placeholder="value" className="flex-[2] bg-background border border-border px-3 py-2 text-xs font-mono outline-none focus:border-accent"/>
                 <button onClick={() => removeEnvVar(i)} className="text-xs text-error/70 hover:text-error font-mono px-2">×</button>
               </div>
             ))}
           </div>
 
-          {/* Cloudflare DNS */}
-          <div className="bg-card border border-border rounded-xl p-5">
+          <div className="bg-card border border-border p-5">
             <h3 className="text-sm font-medium mb-3">Cloudflare DNS</h3>
             <label className="flex items-center gap-3">
               <input type="checkbox" checked={createDns} onChange={e => setCreateDns(e.target.checked)} className="accent-accent w-4 h-4"/>
-              <span className="text-sm">Auto-create A record for {inputs.domain || "your domain"} pointing to this VPS</span>
+              <span className="text-sm">Auto-create A record for {inputs.domain || "your domain"} → this VPS</span>
             </label>
-            <p className="text-[10px] text-muted mt-2 ml-7">Requires Cloudflare API token configured in Settings.</p>
+            <p className="text-[10px] text-muted mt-2 ml-7">Cloudflare token required in Settings.</p>
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => setStep("source")} className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent transition-colors">← Back</button>
-            <button onClick={handlePreview} disabled={applying}
-              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50">
-              {applying ? "Generating..." : "Preview →"}
+            <BackBtn onClick={() => setStep("source")} />
+            <button onClick={handlePreview} disabled={loading || !inputs.domain}
+              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 disabled:opacity-40 transition-colors">
+              {loading ? "Generating..." : "Preview →"}
             </button>
           </div>
         </div>
       )}
 
       {/* Step 4 & 5: Preview / Deploy */}
-      {(step === "preview" || step === "deploy") && preview && (
+      {(step === "preview" || step === "deploy") && (
         <div className="space-y-6">
-          {result && (
-            <div className={`p-3 rounded-lg text-sm ${result.ok ? "bg-success/10 border border-success/30 text-success" : "bg-error/10 border border-error/30 text-error"}`}>{result.msg}</div>
+          {previewText && (
+            <div className="bg-card border border-accent/30 p-5">
+              <h3 className="text-sm font-medium mb-3">Generated Configuration</h3>
+              <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background p-4 max-h-[50vh] overflow-y-auto leading-relaxed">{previewText}</pre>
+            </div>
           )}
-
-          <div className="bg-card border border-accent/30 rounded-xl p-5">
-            <h3 className="text-sm font-medium mb-3">Generated Configuration</h3>
-            <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background rounded-lg p-4 max-h-[50vh] overflow-y-auto leading-relaxed">
-              {preview}
-            </pre>
-          </div>
-
           {composeYml && (
-            <details className="bg-card border border-border rounded-xl p-5">
+            <details className="bg-card border border-border p-5">
               <summary className="text-sm font-medium cursor-pointer">docker-compose.yml</summary>
-              <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background rounded-lg p-4 mt-3 max-h-60 overflow-y-auto">{composeYml}</pre>
+              <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background p-4 mt-3 max-h-60 overflow-y-auto">{composeYml}</pre>
             </details>
           )}
-
           {proxyConfig && (
-            <details className="bg-card border border-border rounded-xl p-5">
+            <details className="bg-card border border-border p-5">
               <summary className="text-sm font-medium cursor-pointer">Reverse Proxy Config</summary>
-              <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background rounded-lg p-4 mt-3 max-h-60 overflow-y-auto">{proxyConfig}</pre>
+              <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background p-4 mt-3 max-h-60 overflow-y-auto">{proxyConfig}</pre>
             </details>
           )}
-
+          {deployResult && (
+            <div className="bg-success/5 border border-success/20 p-5">
+              <h3 className="text-sm font-medium text-success mb-2">Deploy Result</h3>
+              <p className="text-xs text-muted font-mono">Path: {deployResult.deployPath}</p>
+              {deployResult.dns && <p className="text-xs text-muted font-mono mt-1">DNS: record created</p>}
+              {deployResult.upOutput && <p className="text-xs text-muted font-mono mt-1 break-all">Output: {deployResult.upOutput.slice(0, 200)}</p>}
+            </div>
+          )}
           <div className="flex gap-3">
-            <button onClick={() => setStep("configure")} className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent transition-colors">← Edit</button>
+            <BackBtn onClick={() => setStep("configure")} />
             {step === "preview" && (
-              <button onClick={handleDeploy} disabled={applying}
-                className="px-4 py-2 text-xs font-mono bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50">
-                {applying ? "Deploying..." : "Deploy"}
+              <button onClick={handleDeploy} disabled={loading}
+                className="px-4 py-2 text-xs font-mono bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors">
+                {loading ? "Deploying..." : "Deploy"}
               </button>
             )}
             {step === "deploy" && (
               <button onClick={() => router.push("/dashboard")}
-                className="px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded-lg hover:bg-success/20 transition-colors">
+                className="px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success hover:bg-success/20 transition-colors">
                 Done → Dashboard
               </button>
             )}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Sub-components ──────────────────────────────────────
+
+function Tag({ children }: { children: React.ReactNode }) {
+  return <span className="text-[9px] px-1.5 py-0.5 bg-accent/10 text-accent border border-accent/20 font-mono">{children}</span>;
+}
+
+function BackBtn({ onClick }: { onClick: () => void }) {
+  return <button onClick={onClick} className="px-4 py-2 text-xs font-mono border border-border hover:border-accent transition-colors">← Back</button>;
+}
+
+function SelectedTemplateCard({ selected }: { selected: TemplateWithId }) {
+  return (
+    <div className="bg-card border border-border p-5">
+      <h2 className="text-sm font-medium mb-1">{selected.name}</h2>
+      <p className="text-xs text-muted">{selected.description}</p>
     </div>
   );
 }
