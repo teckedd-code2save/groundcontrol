@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 
-const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)" };
+const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -66,7 +66,7 @@ export default function LoginPage() {
     return () => ctx?.revert();
   }, []);
 
-  // ── Grid-expand animation: cells scale up, labels fade on scroll ──
+  // ── Grid-to-fullscreen transition (cipherdigital page 2) ──
   useEffect(() => {
     let ctx: any;
     async function init() {
@@ -75,23 +75,32 @@ export default function LoginPage() {
       gsap.registerPlugin(ScrollTrigger);
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
       ctx = gsap.context(() => {
-        gsap.utils.toArray<HTMLElement>(".grid-cell").forEach((cell) => {
-          const img = cell.querySelector(".cell-img") as HTMLElement;
-          const label = cell.querySelector(".cell-label") as HTMLElement;
-          if (!img) return;
-          gsap.set(img, { scale: 1 });
-          gsap.to(img, {
-            scale: 1.25,
-            ease: "none",
-            scrollTrigger: { trigger: cell, start: "top 95%", end: "top 25%", scrub: 0.6 }
-          });
-          if (label) {
-            gsap.to(label, {
-              opacity: 0, y: 8,
-              scrollTrigger: { trigger: cell, start: "top 70%", end: "top 35%", scrub: 0.4 }
-            });
+        const tl = gsap.timeline({
+          scrollTrigger: {
+            trigger: ".grid-transition",
+            start: "top top",
+            end: "+=250%",
+            pin: ".grid-pin",
+            scrub: 1,
           }
         });
+
+        // Phase 1: text fades in on left grid cell (0-30%)
+        tl.to(".grid-text", { opacity: 1, duration: 0.3 }, 0);
+
+        // Phase 2: image cell shrinks right slightly (20-50%)
+        tl.to(".grid-image-cell", { flex: "0.6", duration: 0.3 }, 0.2);
+
+        // Phase 3: grid lines fade out (40-60%)
+        tl.to(".grid-lines", { opacity: 0, duration: 0.2 }, 0.4);
+
+        // Phase 4: image expands fullscreen, grid container fades (50-80%)
+        tl.to([".grid-slot:not(.grid-image-cell)", ".grid-slot"], { opacity: 0, duration: 0.25 }, 0.5)
+          .to(".grid-fullscreen", { opacity: 1, pointerEvents: "auto", duration: 0.3 }, 0.55)
+          .to(".grid-image", { scale: 2.5, duration: 0.3 }, 0.55);
+
+        // Phase 5: fullscreen text fades in (65-90%)
+        tl.to(".fullscreen-text", { opacity: 1, y: 0, duration: 0.3 }, 0.65);
       });
     }
     init();
@@ -174,28 +183,48 @@ export default function LoginPage() {
         </div>
       </section>
 
-      {/* GRID EXPAND — cipherdigital horiz-scroll pattern */}
-      <section className="grid-expand-s" style={{ padding: "60px 0", background: C.darker }}>
-        <div className="max-w-6xl mx-auto px-4 md:px-8">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-px" style={{ background: C.lin }}>
-            {[
-              { img: "/login-previews/dashboard.png", label: "Dashboard — Real-time metrics" },
-              { img: "/login-previews/containers.png", label: "Services — Container management" },
-              { img: "/login-previews/terminal.png", label: "Terminal — Host-aware shell" },
-              { img: "/login-previews/topology.png", label: "Topology — Service graph" },
-              { img: "/login-previews/infrastructure.png", label: "Infrastructure — Terraform stacks" },
-              { img: "/login-previews/dashboard.png", label: "AI Co-Pilot — Ask anything" },
-            ].map((item, i) => (
-              <div key={i} className="grid-cell" style={{ background: C.darker, overflow: "hidden", position: "relative" }}>
-                <div style={{ overflow: "hidden", aspectRatio: "4/3" }}>
-                  <img src={item.img} alt={item.label} className="cell-img"
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} loading="lazy" />
-                </div>
-                <div className="cell-label" style={{ padding: "14px 18px", fontSize: 13, color: C.mut }}>
-                  {item.label}
-                </div>
+      {/* GRID-TO-FULLSCREEN — cipherdigital page 2 transition */}
+      <section className="grid-transition" style={{ height: "300vh", position: "relative", background: C.darker }}>
+        <div className="grid-pin" style={{ position: "sticky", top: 0, height: "100vh", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {/* Ruled grid lines */}
+          <div className="grid-lines" style={{ position: "absolute", inset: 0, opacity: 0.06,
+            backgroundImage: `linear-gradient(${C.text} 1px, transparent 1px), linear-gradient(90deg, ${C.text} 1px, transparent 1px)`,
+            backgroundSize: "120px 120px" }} />
+
+          {/* Grid container — 2 rows × 3 cols */}
+          <div style={{ position: "relative", width: "min(90vw, 1000px)", maxHeight: "80vh", display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr", gridTemplateRows: "1fr 1fr", gap: "1px", background: C.lin }}>
+            {/* Row 1 */}
+            <div className="grid-slot" />
+            <div className="grid-slot" />
+            <div className="grid-slot" />
+            {/* Row 2 */}
+            <div className="grid-slot grid-left" style={{ position: "relative", overflow: "hidden" }}>
+              {/* Text revealed on scroll */}
+              <div className="grid-text" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "center", padding: "clamp(20px, 4vw, 48px)", opacity: 0 }}>
+                <p style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 12 }}>Your Data Center</p>
+                <h2 style={{ fontSize: "clamp(18px, 2.5vw, 28px)", fontWeight: 300, lineHeight: 1.2, margin: 0 }}>Every container.<br/>Every service.<br/>One cockpit.</h2>
               </div>
-            ))}
+            </div>
+            <div className="grid-slot" />
+            {/* Image cell — second row, right */}
+            <div className="grid-slot grid-image-cell" style={{ overflow: "hidden", position: "relative" }}>
+              <img src="/login-previews/dashboard.png" alt="Dashboard" className="grid-image"
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                loading="lazy" />
+            </div>
+          </div>
+
+          {/* Fullscreen overlay — image expands to fill viewport */}
+          <div className="grid-fullscreen" style={{ position: "absolute", inset: 0, opacity: 0, pointerEvents: "none", overflow: "hidden" }}>
+            <img src="/login-previews/dashboard.png" alt="GroundControl Dashboard"
+              style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <div className="fullscreen-text" style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "clamp(32px, 6vw, 80px)", opacity: 0 }}>
+              <p style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 8 }}>GroundControl</p>
+              <h2 style={{ fontSize: "clamp(28px, 5vw, 52px)", fontWeight: 300, lineHeight: 1.1, margin: 0 }}>
+                Your VPS has an <span style={{ color: C.accent }}>AI co-pilot</span>
+              </h2>
+            </div>
           </div>
         </div>
       </section>
