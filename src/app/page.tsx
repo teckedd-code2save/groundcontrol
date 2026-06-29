@@ -1,14 +1,10 @@
 "use client";
 
-const CORAL = "#E8542A";
-const CORAL_B = "#FF6A40";
-const PAPER = "#F5F4F0";
-const MUTED = "rgba(245,244,240,0.45)";
-const FAINT = "rgba(245,244,240,0.12)";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)" };
 
 export default function HomePage() {
   const router = useRouter();
@@ -35,81 +31,95 @@ export default function HomePage() {
       gsap.registerPlugin(ScrollTrigger);
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
       ctx = gsap.context(() => {
-        gsap.fromTo(".hw", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.9, stagger: 0.07, ease: "power3.out" });
-        gsap.fromTo(".hd", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, delay: 0.6 });
-        gsap.fromTo(".hc", { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, delay: 0.9 });
-        gsap.fromTo(".hs", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.12, delay: 0.7 });
-        gsap.utils.toArray<HTMLElement>(".cr").forEach((el, i) => {
-          gsap.fromTo(el, { y: 48, opacity: 0 }, { y: 0, opacity: 1, duration: 0.65, delay: i * 0.08, ease: "power2.out", scrollTrigger: { trigger: el, start: "top 88%" } });
-        });
-        gsap.to(".o1", { y: -60, scrollTrigger: { trigger: "body", start: "top top", end: "bottom bottom", scrub: 0.8 } });
-        gsap.to(".o2", { y: 60, scrollTrigger: { trigger: "body", start: "top top", end: "bottom bottom", scrub: 1 } });
+        gsap.fromTo(".line-mask .line-inner", { y: "100%" }, { y: "0%", duration: 1.4, stagger: 0.18, ease: "power3.inOut", delay: 0.5 });
+        gsap.fromTo(".fade-up", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, stagger: 0.1, delay: 1.2, ease: "power2.out" });
+        gsap.to(".bg-parallax", { y: "15%", ease: "none", scrollTrigger: { trigger: ".hero-s", start: "top top", end: "bottom top", scrub: 1 } });
+        gsap.fromTo(".h-card", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, stagger: 0.1, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
+        gsap.fromTo(".m-val", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.8, stagger: 0.12, ease: "power2.out", scrollTrigger: { trigger: ".met-s", start: "top 80%" } });
       });
     }
     init();
     return () => ctx?.revert();
   }, [checking]);
 
-  if (checking) return <div className="min-h-screen flex items-center justify-center" style={{ background: "#0B0B0C" }}><div className="w-8 h-8 rounded-lg animate-pulse" style={{ background: CORAL }} /></div>;
+  if (checking) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.bg }}><div className="w-8 h-8" style={{ border: `2px solid ${C.dim}`, borderTopColor: C.text, borderRadius: "50%", animation: "spin 1s linear infinite" }} /></div>;
 
   return (
-    <div className="min-h-screen overflow-x-hidden" style={{ background: "#0B0B0C", color: PAPER, fontFamily: "'Schibsted Grotesk', system-ui, sans-serif" }}>
+    <div style={{ background: C.bg, color: C.text, fontFamily: "articulat-cf, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", minHeight: "100vh" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
-        .dots { background-image: radial-gradient(circle, rgba(232,84,42,0.07) 1px, transparent 1px); background-size: 36px 36px; }
-      `}</style>
-      <div className="o1 fixed top-1/3 -right-60 w-[700px] h-[700px] rounded-full opacity-[0.10] pointer-events-none z-0" style={{ background: `radial-gradient(circle, ${CORAL}44 0%, transparent 70%)` }} />
-      <div className="o2 fixed -bottom-40 -left-20 w-[500px] h-[500px] rounded-full opacity-[0.08] pointer-events-none z-0" style={{ background: `radial-gradient(circle, ${CORAL_B}33 0%, transparent 70%)` }} />
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap');
+        @keyframes spin { to { transform: rotate(360deg); } }
+       `}</style>
 
       {/* HERO */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
-        <div className="absolute inset-0 dots opacity-50 z-0" style={{ maskImage: "linear-gradient(180deg, #000 0%, transparent 85%)", WebkitMaskImage: "linear-gradient(180deg, #000 0%, transparent 85%)" }} />
-        <div className="relative z-10 max-w-6xl mx-auto px-6 text-center py-24">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full mb-10" style={{ background: `${CORAL}15`, border: `1px solid ${CORAL}30`, color: CORAL, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: CORAL }} /> Open source · Self-hosted
-          </div>
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold leading-none tracking-[-0.04em] mb-6 max-w-4xl mx-auto">
-            <span className="hw inline-block">Your </span><span className="hw inline-block">VPS </span><span className="hw inline-block">has </span><span className="hw inline-block">an </span>
-            <span className="hw inline-block" style={{ color: CORAL }}>AI </span><span className="hw inline-block">co-pilot</span>
-          </h1>
-          <p className="hd text-lg md:text-xl leading-relaxed mb-10 max-w-lg mx-auto" style={{ color: MUTED, fontWeight: 500 }}>
-            GroundControl gives you an AI agent that manages your server — metrics, logs, DNS, deployments. No SSH needed.
-          </p>
-          <div className="hc flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link href="/login" className="px-8 py-3.5 rounded-xl text-sm font-bold transition-all duration-200" style={{ background: CORAL, color: "#fff", fontFamily: "'JetBrains Mono', monospace" }}>Get Started →</Link>
-            <div className="flex items-center gap-2">
-              <code className="hidden lg:block px-4 py-3 rounded-xl text-xs truncate max-w-sm" style={{ background: `${PAPER}05`, border: `1px solid ${FAINT}`, color: MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{cmd}</code>
-              <button onClick={copyCmd} className="px-3 py-3 rounded-xl text-xs transition-all shrink-0" style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}`, color: copied ? CORAL : MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{copied ? "Copied" : "Copy"}</button>
+      <section className="hero-s relative h-screen flex items-center overflow-hidden" style={{ background: C.dark }}>
+        <div className="bg-parallax absolute inset-0" style={{ background: `radial-gradient(ellipse 80% 60% at 50% 40%, ${C.dark} 0%, ${C.bg} 60%, ${C.darker} 100%)` }} />
+        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: `linear-gradient(${C.lin} 1px, transparent 1px), linear-gradient(90deg, ${C.lin} 1px, transparent 1px)`, backgroundSize: "80px 80px" }} />
+        <div className="relative z-10 w-full max-w-7xl mx-auto px-6 md:px-12">
+          <div style={{ maxWidth: 700 }}>
+            <div className="mb-10">
+              <h1 style={{ fontSize: "clamp(42px, 6.5vw, 72px)", fontWeight: 300, lineHeight: 1.06, letterSpacing: "-0.02em", margin: 0 }}>
+                <div className="line-mask" style={{ overflow: "hidden" }}>
+                  <div className="line-inner">Your VPS has an</div>
+                </div>
+                <div className="line-mask" style={{ overflow: "hidden" }}>
+                  <div className="line-inner" style={{ color: "#E8542A" }}>AI co-pilot</div>
+                </div>
+              </h1>
+            </div>
+            <p className="fade-up" style={{ fontSize: 18, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>
+              Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server. No SSH needed.
+            </p>
+            <div className="fade-up flex items-center gap-4 flex-wrap">
+              <Link href="/login"
+                style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none", letterSpacing: "0.01em", display: "inline-block" }}>
+                Get Started →
+              </Link>
+              <button onClick={copyCmd}
+                style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer" }}>
+                {copied ? "Copied" : "Copy command"}
+              </button>
             </div>
           </div>
-          <div className="hs flex gap-12 justify-center mt-14">
-            <div><div className="text-3xl font-extrabold tracking-[-0.03em]">5</div><div className="text-xs font-semibold mt-0.5" style={{ color: MUTED }}>cloud platforms</div></div>
-            <div><div className="text-3xl font-extrabold tracking-[-0.03em]">3</div><div className="text-xs font-semibold mt-0.5" style={{ color: MUTED }}>deploy templates</div></div>
-            <div><div className="text-3xl font-extrabold tracking-[-0.03em]">22</div><div className="text-xs font-semibold mt-0.5" style={{ color: MUTED }}>AI agent tools</div></div>
+        </div>
+        <div className="fade-up absolute bottom-10 left-1/2 -translate-x-1/2" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>Scroll</div>
+      </section>
+
+      {/* FEATURES */}
+      <section className="feat-s" style={{ padding: "120px 0", background: C.darker }}>
+        <div className="max-w-7xl mx-auto px-6 md:px-12">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-px" style={{ background: C.lin }}>
+            {[
+              { icon: "◉", title: "AI Co-Pilot", desc: "Ask anything about your server. The agent reads your actual infrastructure." },
+              { icon: "▦", title: "Deploy Templates", desc: "Caddy + App + DB, Traefik + microservices. One click to production." },
+              { icon: "◎", title: "Cloudflare DNS", desc: "Manage records, zones, tunnels. Auto-create records on deploy." },
+              { icon: "◈", title: "Live Dashboard", desc: "Real-time metrics, container health, alerts when something breaks." },
+              { icon: "⌘", title: "Web Terminal", desc: "Full terminal access. The AI agent runs commands for you." },
+              { icon: "◑", title: "Self-Hosted", desc: "Your VPS, your data. Open source. No vendor lock-in." },
+            ].map((f, i) => (
+              <div key={i} className="h-card" style={{ background: C.darker, padding: 48 }}>
+                <div style={{ color: C.dim, fontSize: 24, marginBottom: 20 }}>{f.icon}</div>
+                <h3 style={{ fontSize: 18, fontWeight: 400, margin: "0 0 8px" }}>{f.title}</h3>
+                <p style={{ fontSize: 14, color: C.mut, lineHeight: 1.6, margin: 0 }}>{f.desc}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* FEATURES */}
-      <section className="relative py-28" style={{ borderTop: `1px solid ${FAINT}` }}>
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-16">
-            <p className="uppercase tracking-[0.2em] text-xs mb-4" style={{ color: CORAL, fontFamily: "'JetBrains Mono', monospace" }}>Features</p>
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-[-0.035em]">Everything you need to run production.</h2>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
+      {/* METRICS */}
+      <section className="met-s" style={{ padding: "100px 0", background: C.bg }}>
+        <div className="max-w-5xl mx-auto px-6 md:px-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
-              { icon: "◉", title: "AI Co-Pilot", desc: "Ask anything — check CPU, read logs, restart services. It knows your server." },
-              { icon: "▦", title: "Deploy Templates", desc: "Caddy + App + DB, Traefik + microservices. GitHub, GHCR, or local code." },
-              { icon: "◎", title: "Cloudflare DNS", desc: "Manage records, zones, tunnels. Auto-create A records when you deploy." },
-              { icon: "◈", title: "Live Dashboard", desc: "Real-time metrics, container health, disk usage. Alerts when something breaks." },
-              { icon: "⌘", title: "Web Terminal", desc: "Full terminal access from your browser. The AI agent runs commands for you." },
-              { icon: "◑", title: "Self-Hosted", desc: "Runs on your VPS. Your data stays yours. Open source. No credit card." },
-            ].map((f, i) => (
-              <div key={i} className="cr rounded-2xl p-8 transition-colors duration-300" style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}` }}>
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl mb-5" style={{ background: `${CORAL}15`, color: CORAL }}>{f.icon}</div>
-                <h3 className="font-bold text-base mb-2">{f.title}</h3>
-                <p className="text-sm leading-relaxed" style={{ color: MUTED, fontWeight: 500 }}>{f.desc}</p>
+              { val: "5", label: "Cloud Platforms" },
+              { val: "3", label: "Deploy Templates" },
+              { val: "22", label: "AI Agent Tools" },
+              { val: "1", label: "Command to Install" },
+            ].map((m, i) => (
+              <div key={i} className="m-val text-center">
+                <div style={{ fontSize: "clamp(36px, 5vw, 56px)", fontWeight: 300, lineHeight: 1, marginBottom: 8 }}>{m.val}</div>
+                <div style={{ fontSize: 12, color: C.mut, textTransform: "uppercase", letterSpacing: "0.1em" }}>{m.label}</div>
               </div>
             ))}
           </div>
@@ -117,33 +127,30 @@ export default function HomePage() {
       </section>
 
       {/* CTA */}
-      <section className="relative py-28" style={{ borderTop: `1px solid ${FAINT}` }}>
+      <section style={{ padding: "120px 0", background: C.dark }}>
         <div className="max-w-2xl mx-auto px-6 text-center">
-          <div className="rounded-3xl p-12" style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}`, boxShadow: `0 0 120px ${CORAL}15` }}>
-            <h2 className="text-3xl md:text-4xl font-extrabold tracking-[-0.03em] mb-4">Ready to give your VPS an AI co-pilot?</h2>
-            <p className="mb-8" style={{ color: MUTED, fontWeight: 500 }}>Free. Open source. Self-hosted.</p>
-            <div className="flex items-center gap-2 justify-center mb-6">
-              <code className="px-5 py-3 rounded-xl text-xs max-w-lg truncate" style={{ background: "#00000055", border: `1px solid ${FAINT}`, color: MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{cmd}</code>
-              <button onClick={copyCmd} className="px-4 py-3 rounded-xl text-xs transition-all shrink-0" style={{ background: `${PAPER}03`, border: `1px solid ${FAINT}`, color: copied ? CORAL : MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{copied ? "✓" : "Copy"}</button>
-            </div>
-            <div className="flex gap-4 justify-center">
-              <Link href="/login" className="px-6 py-3 rounded-xl text-sm font-bold transition-all shadow-lg" style={{ background: CORAL, color: "#fff", fontFamily: "'JetBrains Mono', monospace", boxShadow: `0 12px 32px ${CORAL}33` }}>Open Dashboard</Link>
-              <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" className="px-6 py-3 rounded-xl text-sm font-bold transition-all" style={{ border: `1px solid ${FAINT}`, color: MUTED, fontFamily: "'JetBrains Mono', monospace" }}>GitHub →</a>
-            </div>
+          <h2 style={{ fontSize: "clamp(28px, 4vw, 42px)", fontWeight: 300, lineHeight: 1.15, marginBottom: 24 }}>Ready to give your VPS an AI co-pilot?</h2>
+          <p style={{ color: C.mut, fontSize: 16, marginBottom: 40 }}>Free. Open source. Self-hosted.</p>
+          <div className="flex gap-4 justify-center flex-wrap">
+            <Link href="/login" style={{ padding: "16px 36px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>Open Dashboard</Link>
+            <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ padding: "16px 36px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>GitHub</a>
+          </div>
+          <div style={{ marginTop: 32 }}>
+            <code style={{ background: C.darker, padding: "12px 20px", borderRadius: 0, fontSize: 11, color: C.mut, fontFamily: "monospace" }}>{cmd}</code>
           </div>
         </div>
       </section>
 
       {/* FOOTER */}
-      <footer className="py-10" style={{ borderTop: `1px solid ${FAINT}` }}>
-        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <span className="text-sm font-semibold" style={{ color: `${PAPER}55` }}>GroundControl</span>
-          <div className="flex items-center gap-5">
-            <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" className="text-xs transition-colors" style={{ color: `${PAPER}22`, fontFamily: "'JetBrains Mono', monospace" }}>GitHub</a>
-            <a href="https://github.com/teckedd-code2save/convoy" target="_blank" rel="noopener" className="text-xs transition-colors" style={{ color: `${PAPER}22`, fontFamily: "'JetBrains Mono', monospace" }}>Convoy</a>
-            <a href="https://www.serendepify.com" target="_blank" rel="noopener" className="text-xs transition-colors" style={{ color: `${PAPER}22`, fontFamily: "'JetBrains Mono', monospace" }}>Serendepify</a>
+      <footer style={{ padding: "48px 0", background: C.dark, borderTop: `1px solid ${C.lin}` }}>
+        <div className="max-w-7xl mx-auto px-6 md:px-12 flex flex-col md:flex-row items-center justify-between gap-4">
+          <span style={{ fontSize: 13, color: C.dim }}>GroundControl</span>
+          <div style={{ display: "flex", gap: 24 }}>
+            <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ color: C.dim, fontSize: 12, textDecoration: "none", fontFamily: "monospace" }}>GitHub</a>
+            <a href="https://github.com/teckedd-code2save/convoy" target="_blank" rel="noopener" style={{ color: C.dim, fontSize: 12, textDecoration: "none", fontFamily: "monospace" }}>Convoy</a>
+            <a href="https://www.serendepify.com" target="_blank" rel="noopener" style={{ color: C.dim, fontSize: 12, textDecoration: "none", fontFamily: "monospace" }}>Serendepify</a>
           </div>
-          <span className="text-xs" style={{ color: `${PAPER}12`, fontFamily: "'JetBrains Mono', monospace" }}>Open source · Self-hosted</span>
+          <span style={{ color: C.dim, fontSize: 11, fontFamily: "monospace" }}>© 2026</span>
         </div>
       </footer>
     </div>
