@@ -36,7 +36,7 @@ export default function ServicesPage() {
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as TabKey)}
-            className={`px-5 py-2.5 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap ${
+            className={`px-5 py-2.5 text-xs font-mono  border-b-2 transition-colors whitespace-nowrap ${
               activeTab === tab.key
                 ? "border-accent text-accent"
                 : "border-transparent text-muted hover:text-foreground"

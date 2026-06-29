@@ -331,7 +331,7 @@ export default function AiCoPilotPage() {
             <div className="max-w-[85%] rounded-xl border-2 border-accent/40 bg-accent/5 p-4 animate-in">
               <div className="flex items-center gap-2 mb-3">
                 <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-                <span className="text-xs font-mono uppercase tracking-wider text-accent">Approval Required</span>
+                <span className="text-xs font-mono  text-accent">Approval Required</span>
               </div>
               <p className="text-sm font-medium mb-1">{pendingConfirm.name}</p>
               <p className="text-xs text-muted mb-3">{pendingConfirm.description}</p>

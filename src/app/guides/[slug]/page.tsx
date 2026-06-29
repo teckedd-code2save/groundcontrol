@@ -233,7 +233,7 @@ export default function GuidePlayerPage() {
 
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">
-          <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border bg-border/30 text-foreground border-border">
+          <span className="text-[10px] font-mono  px-2 py-1 rounded border bg-border/30 text-foreground border-border">
             {categoryLabels[guide.category] || guide.category}
           </span>
           {isCompleted && <span className="text-xs text-success font-mono">✓ Completed</span>}
