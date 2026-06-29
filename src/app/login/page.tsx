@@ -229,7 +229,7 @@ export default function LoginPage() {
       </section>
 
       {/* SCREENSHOT 1 — Dashboard */}
-      <section className="shot-reveal" style={{ padding: "120px 0 60px", background: C.bg }}>
+      <section className="shot-reveal" style={{ padding: "120px 0 60px", background: C.darker }}>
         <div className="max-w-6xl mx-auto px-6 md:px-12">
           <div className="text-center mb-12">
             <p className="shot-label" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 16 }}>01 — Dashboard</p>
@@ -243,7 +243,7 @@ export default function LoginPage() {
       </section>
 
       {/* SCREENSHOT 2 — Services */}
-      <section className="shot-reveal" style={{ padding: "60px 0", background: C.bg }}>
+      <section className="shot-reveal" style={{ padding: "60px 0", background: C.dark }}>
         <div className="max-w-6xl mx-auto px-6 md:px-12">
           <div className="text-center mb-12">
             <p className="shot-label" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 16 }}>02 — Services</p>
@@ -259,6 +259,10 @@ export default function LoginPage() {
       {/* FEATURES */}
       <section className="feat-s" style={{ padding: "120px 0", background: C.darker }}>
         <div className="max-w-7xl mx-auto px-6 md:px-12">
+          <div className="text-center mb-14">
+            <p className="uppercase tracking-[0.2em] text-xs mb-3" style={{ color: C.dim, fontFamily: "'JetBrains Mono', monospace" }}>Included</p>
+            <h2 style={{ fontSize: "clamp(28px, 4vw, 42px)", fontWeight: 300, lineHeight: 1.15 }}>Everything your VPS needs.</h2>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-px" style={{ background: C.lin }}>
             {[
               { icon: "◉", title: "AI Co-Pilot", desc: "Ask anything about your server. The agent reads your actual infrastructure." },
@@ -279,7 +283,7 @@ export default function LoginPage() {
       </section>
 
       {/* GRID-TO-BAND — cipherdigital page 2 transition */}
-      <section className="page2-transition" style={{ position: "relative", background: C.darker }}>
+      <section className="page2-transition" style={{ position: "relative", background: C.dark }}>
         <div className="page2-pin" style={{ position: "sticky", top: 0, height: "100vh", overflow: "hidden", background: "#0f1112" }}>
           <div className="page2-grid" style={{ position: "absolute", inset: 0, background: "#0f1112" }} />
           {PAGE2_X_LINES.map((x) => (
