@@ -281,7 +281,7 @@ export default function LoginPage() {
       </section>
 
       {/* GRID-TO-BAND — cipherdigital page 2 transition */}
-      <section className="page2-transition" style={{ height: "100vh", position: "relative", background: C.darker }}>
+      <section className="page2-transition" style={{ position: "relative", background: C.darker }}>
         <div className="page2-pin" style={{ position: "sticky", top: 0, height: "100vh", overflow: "hidden", background: "#0f1112" }}>
           <div className="page2-grid" style={{ position: "absolute", inset: 0, background: "#0f1112" }} />
           {PAGE2_X_LINES.map((x) => (
