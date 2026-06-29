@@ -411,16 +411,8 @@ export default function LoginPage() {
               padding: "0 min(8vw, 92px)",
               textAlign: "center",
               pointerEvents: "none",
-              textShadow: "0 2px 24px rgba(0,0,0,0.65)",
             }}
-          >
-            <p style={{ color: "rgba(245,246,247,0.72)", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 14 }}>
-              GroundControl
-            </p>
-            <h2 style={{ fontSize: "clamp(30px, 5vw, 64px)", fontWeight: 300, lineHeight: 1.04, margin: 0 }}>
-              Your VPS has an <span style={{ color: C.accent }}>AI co-pilot</span>
-            </h2>
-          </div>
+          />
 
           <div
             className="page2-metric-shell"
