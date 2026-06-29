@@ -67,6 +67,11 @@ export default function LoginPage() {
         gsap.fromTo(".h-card", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, stagger: 0.1, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
         gsap.fromTo(".h-card h3", { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.1, delay: 0.25, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
         gsap.fromTo(".m-val", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.8, stagger: 0.12, ease: "power2.out", scrollTrigger: { trigger: ".met-s", start: "top 80%" } });
+        // Counter animation — count up from 0
+        document.querySelectorAll(".m-val [data-count]").forEach((el) => {
+          const target = parseInt(el.getAttribute("data-count") || "0");
+          gsap.fromTo(el, { innerText: 0 }, { innerText: target, duration: 1.5, snap: { innerText: 1 }, ease: "power2.out", scrollTrigger: { trigger: ".met-s", start: "top 80%" } });
+        });
 
         // Screenshot reveals — cipherdigital expanding-on-scroll pattern
         gsap.utils.toArray<HTMLElement>(".shot-reveal").forEach((el) => {
@@ -463,7 +468,7 @@ export default function LoginPage() {
               { val: "1", label: "Command to Install" },
             ].map((m, i) => (
               <div key={i} className="m-val text-center">
-                <div style={{ fontSize: "clamp(36px, 5vw, 56px)", fontWeight: 300, lineHeight: 1, marginBottom: 8 }}>{m.val}</div>
+                <div data-count={m.val} style={{ fontSize: "clamp(36px, 5vw, 56px)", fontWeight: 300, lineHeight: 1, marginBottom: 8, color: C.accent }}>0</div>
                 <div style={{ fontSize: 12, color: C.mut, textTransform: "uppercase", letterSpacing: "0.1em" }}>{m.label}</div>
               </div>
             ))}
