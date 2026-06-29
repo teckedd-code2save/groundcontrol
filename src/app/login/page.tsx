@@ -452,8 +452,11 @@ export default function LoginPage() {
         </div>
       </section>
 
+      {/* Spacer — gives breathing room after transition */}
+      <div style={{ height: "30vh", background: C.dark }} />
+
       {/* METRICS */}
-      <section className="met-s" style={{ padding: "100px 0", background: C.dark, position: "relative", zIndex: 2 }}>
+      <section className="met-s" style={{ padding: "60px 0 100px", background: C.dark, position: "relative", zIndex: 2 }}>
         <div className="max-w-5xl mx-auto px-6 md:px-12">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
