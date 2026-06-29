@@ -118,7 +118,7 @@ export default function LoginPage() {
 
         gsap.set(".page2-copy-cell", { opacity: 0, y: 20 });
         gsap.set(".page2-image-shell", { ...PAGE2_CELLS.compactImage, borderColor: "rgba(245,246,247,0.16)" });
-        gsap.set(".page2-image", { scale: 1.04, filter: "brightness(0.82)" });
+        gsap.set(".page2-image", { scale: 1.04 });
         gsap.set(".page2-full-copy, .page2-metric", { opacity: 0, y: 22 });
         gsap.set(".page2-image-vignette", { opacity: 0 });
         gsap.set(".page2-base-line", { opacity: 0.55 });
@@ -176,12 +176,11 @@ export default function LoginPage() {
           .to(".page2-frame-dot-br", { ...expandedFrame.dotBottomRight, duration: 0.34, ease: "power3.inOut" }, 0.52)
           .to(".page2-image", {
             scale: 1.06,
-            filter: "brightness(0.62) saturate(0.95)",
             duration: 0.34,
             ease: "power2.out",
           }, 0.52);
 
-        tl.to(".page2-image-vignette", { opacity: 1, duration: 0.16, ease: "power2.out" }, 0.64);
+        tl.to(".page2-image-vignette", { opacity: 0.55, duration: 0.16, ease: "power2.out" }, 0.64);
         tl.to(".page2-full-copy", { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" }, 0.72)
           .to(".page2-metric", { opacity: 1, y: 0, duration: 0.22, stagger: 0.04, ease: "power2.out" }, 0.78);
       });
@@ -454,7 +453,7 @@ export default function LoginPage() {
       </section>
 
       {/* METRICS */}
-      <section className="met-s" style={{ padding: "100px 0", background: C.dark }}>
+      <section className="met-s" style={{ padding: "100px 0", background: C.dark, position: "relative", zIndex: 1 }}>
         <div className="max-w-5xl mx-auto px-6 md:px-12">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
