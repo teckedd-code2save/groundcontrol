@@ -66,6 +66,38 @@ export default function LoginPage() {
     return () => ctx?.revert();
   }, []);
 
+  // ── Grid-expand animation: cells scale up, labels fade on scroll ──
+  useEffect(() => {
+    let ctx: any;
+    async function init() {
+      const { gsap } = await import("gsap");
+      const { ScrollTrigger } = await import("gsap/ScrollTrigger");
+      gsap.registerPlugin(ScrollTrigger);
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      ctx = gsap.context(() => {
+        gsap.utils.toArray<HTMLElement>(".grid-cell").forEach((cell) => {
+          const img = cell.querySelector(".cell-img") as HTMLElement;
+          const label = cell.querySelector(".cell-label") as HTMLElement;
+          if (!img) return;
+          gsap.set(img, { scale: 1 });
+          gsap.to(img, {
+            scale: 1.25,
+            ease: "none",
+            scrollTrigger: { trigger: cell, start: "top 95%", end: "top 25%", scrub: 0.6 }
+          });
+          if (label) {
+            gsap.to(label, {
+              opacity: 0, y: 8,
+              scrollTrigger: { trigger: cell, start: "top 70%", end: "top 35%", scrub: 0.4 }
+            });
+          }
+        });
+      });
+    }
+    init();
+    return () => ctx?.revert();
+  }, []);
+
   return (
     <div style={{ background: C.bg, color: C.text, fontFamily: "articulat-cf, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", minHeight: "100vh", overflowX: "hidden" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap'); body{margin:0;}`}</style>
@@ -142,7 +174,33 @@ export default function LoginPage() {
         </div>
       </section>
 
-      {/* SCREENSHOT 3 — Terminal */}
+      {/* GRID EXPAND — cipherdigital horiz-scroll pattern */}
+      <section className="grid-expand-s" style={{ padding: "60px 0", background: C.darker }}>
+        <div className="max-w-6xl mx-auto px-4 md:px-8">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-px" style={{ background: C.lin }}>
+            {[
+              { img: "/login-previews/dashboard.png", label: "Dashboard — Real-time metrics" },
+              { img: "/login-previews/containers.png", label: "Services — Container management" },
+              { img: "/login-previews/terminal.png", label: "Terminal — Host-aware shell" },
+              { img: "/login-previews/topology.png", label: "Topology — Service graph" },
+              { img: "/login-previews/infrastructure.png", label: "Infrastructure — Terraform stacks" },
+              { img: "/login-previews/dashboard.png", label: "AI Co-Pilot — Ask anything" },
+            ].map((item, i) => (
+              <div key={i} className="grid-cell" style={{ background: C.darker, overflow: "hidden", position: "relative" }}>
+                <div style={{ overflow: "hidden", aspectRatio: "4/3" }}>
+                  <img src={item.img} alt={item.label} className="cell-img"
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} loading="lazy" />
+                </div>
+                <div className="cell-label" style={{ padding: "14px 18px", fontSize: 13, color: C.mut }}>
+                  {item.label}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* SCREENSHOT — Terminal */}
       <section className="shot-reveal" style={{ padding: "60px 0 120px", background: C.bg }}>
         <div className="max-w-6xl mx-auto px-6 md:px-12">
           <div className="text-center mb-12">
