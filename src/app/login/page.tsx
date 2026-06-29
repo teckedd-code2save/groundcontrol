@@ -137,7 +137,7 @@ export default function LoginPage() {
             start: "top top",
             end: "+=250%",
             pin: ".page2-pin",
-            scrub: 1,
+            scrub: 1.5,
           }
         });
 
@@ -281,7 +281,7 @@ export default function LoginPage() {
       </section>
 
       {/* GRID-TO-BAND — cipherdigital page 2 transition */}
-      <section className="page2-transition" style={{ height: "320vh", position: "relative", background: C.darker }}>
+      <section className="page2-transition" style={{ height: "260vh", position: "relative", background: C.darker }}>
         <div className="page2-pin" style={{ position: "sticky", top: 0, height: "100vh", overflow: "hidden", background: "#0f1112" }}>
           <div className="page2-grid" style={{ position: "absolute", inset: 0, background: "#0f1112" }} />
           {PAGE2_X_LINES.map((x) => (
@@ -415,10 +415,10 @@ export default function LoginPage() {
             }}
           >
             <p style={{ color: "rgba(245,246,247,0.72)", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 14 }}>
-              Command Center
+              GroundControl
             </p>
             <h2 style={{ fontSize: "clamp(30px, 5vw, 64px)", fontWeight: 300, lineHeight: 1.04, margin: 0 }}>
-              Every command.<br />Every log.<br />One cockpit.
+              Your VPS has an <span style={{ color: C.accent }}>AI co-pilot</span>
             </h2>
           </div>
 
