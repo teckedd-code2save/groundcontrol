@@ -95,27 +95,26 @@ export default function TemplatesPage() {
       else if (sourceType === "ghcr") allInputs["ghcr_image"] = ghcrImage;
       else allInputs["repo_dir"] = localPath || ".";
 
-      // Add env vars as inputs
-      for (const ev of envVars) {
-        if (ev.key) allInputs[`env_${ev.key}`] = ev.value;
-      }
-
-      const res = await fetch("/api/templates/apply", {
+      const res = await fetch("/api/templates/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ templateName: selected._filename, inputs: allInputs }),
+        body: JSON.stringify({
+          templateName: selected._filename,
+          inputs: allInputs,
+          envVars: envVars.filter(e => e.key),
+          repoUrl: sourceType === "github" ? repoUrl : undefined,
+          domain: inputs.domain || undefined,
+          createDns,
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        // Create Cloudflare DNS record if requested
-        if (createDns && inputs.domain) {
-          // The DNS record creation happens via API
-        }
-        setResult({ ok: true, msg: "Configuration generated! Copy the docker-compose.yml and proxy config below to deploy." });
+        setResult({ ok: true, msg: data.message || "Deployed successfully" });
         setStep("deploy");
-        setPreview(data.preview || data.composeYml);
+        setPreview(data.composeYml || "");
+        setProxyConfig(data.proxyConfig || "");
       } else {
-        setResult({ ok: false, msg: data.error || "Failed" });
+        setResult({ ok: false, msg: data.error || "Deploy failed" });
       }
     } catch (err) {
       setResult({ ok: false, msg: err instanceof Error ? err.message : "Failed" });
@@ -331,7 +330,7 @@ export default function TemplatesPage() {
             {step === "preview" && (
               <button onClick={handleDeploy} disabled={applying}
                 className="px-4 py-2 text-xs font-mono bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50">
-                {applying ? "Deploying..." : "Generate & Deploy"}
+                {applying ? "Deploying..." : "Deploy"}
               </button>
             )}
             {step === "deploy" && (
