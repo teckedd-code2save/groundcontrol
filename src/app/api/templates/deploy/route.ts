@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "templateName is required" }, { status: 400 });
     }
 
-    const template = await loadTemplate(templateName);
+    const template = await loadTemplate(`${templateName}.yml`);
     if (!template) {
       return NextResponse.json({ success: false, error: `Template "${templateName}" not found` }, { status: 404 });
     }
