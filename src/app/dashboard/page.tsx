@@ -266,7 +266,7 @@ export default function DashboardPage() {
                   <path d="M12 2a10 10 0 0 1 10 10" />
                   <path d="M12 12L2.5 8.5" />
                 </svg>
-                <h2 className="text-sm font-mono uppercase tracking-wider text-muted">AI Summary</h2>
+                <h2 className="text-sm font-mono text-muted">AI Summary</h2>
               </div>
               <button
                 onClick={investigateWithAi}
@@ -287,7 +287,7 @@ export default function DashboardPage() {
                   <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                     {synthesis.rootCauses.length > 0 && (
                       <div>
-                        <p className="font-mono text-muted mb-1 uppercase tracking-wider">Root Causes</p>
+                        <p className="font-mono text-muted mb-1 ">Root Causes</p>
                         <ul className="space-y-1 list-disc list-inside text-muted">
                           {synthesis.rootCauses.map((c, i) => (
                             <li key={i}>{c}</li>
@@ -297,7 +297,7 @@ export default function DashboardPage() {
                     )}
                     {synthesis.actions.length > 0 && (
                       <div>
-                        <p className="font-mono text-muted mb-1 uppercase tracking-wider">Recommended Actions</p>
+                        <p className="font-mono text-muted mb-1 ">Recommended Actions</p>
                         <ul className="space-y-1 list-disc list-inside text-muted">
                           {synthesis.actions.map((a, i) => (
                             <li key={i}>{a}</li>
@@ -319,7 +319,7 @@ export default function DashboardPage() {
                 <path d="M12 2a10 10 0 0 1 10 10" />
                 <path d="M12 12L2.5 8.5" />
               </svg>
-              <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Intelligence Overview</h2>
+              <h2 className="text-sm font-mono text-muted">Intelligence Overview</h2>
               <a
                 href="/settings?tab=alerts"
                 className="ml-auto text-[11px] font-mono text-accent hover:text-accent/80 transition-colors"
@@ -404,7 +404,7 @@ export default function DashboardPage() {
           {metrics.length > 1 && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
               <div className="bg-card border border-border rounded-xl p-5">
-                <h3 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">
+                <h3 className="text-sm font-mono text-muted mb-4">
                   CPU Load (1m) · Last hour
                 </h3>
                 <ResponsiveContainer width="100%" height={200}>
@@ -433,7 +433,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="bg-card border border-border rounded-xl p-5">
-                <h3 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">
+                <h3 className="text-sm font-mono text-muted mb-4">
                   Memory % · Last hour
                 </h3>
                 <ResponsiveContainer width="100%" height={200}>
@@ -466,7 +466,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Load Average */}
             <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">Load Average</h3>
+              <h3 className="text-sm font-mono text-muted mb-4">Load Average</h3>
               <div className="flex gap-4">
                 {stats?.load.map((load, i) => (
                   <div key={i} className="flex-1">
@@ -488,7 +488,7 @@ export default function DashboardPage() {
             {/* Container Quick View */}
             <div className="bg-card border border-border rounded-xl p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-mono uppercase tracking-wider text-muted">Container Health</h3>
+                <h3 className="text-sm font-mono text-muted">Container Health</h3>
                 <div className="flex items-center gap-2 text-[10px] font-mono">
                   <span className="text-success">{counts.running} up</span>
                   {counts.stopped > 0 && <span className="text-error">{counts.stopped} down</span>}

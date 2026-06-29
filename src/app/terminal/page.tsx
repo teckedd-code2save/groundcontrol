@@ -438,7 +438,7 @@ export default function TerminalPage() {
       {!fullscreen && (
         <div className="mb-4 space-y-2">
           <div className="flex items-center gap-2 text-[10px] font-mono text-muted">
-            <span className="uppercase tracking-wider">Capabilities</span>
+            <span className="">Capabilities</span>
             {capabilitiesLoading ? (
               <span className="animate-pulse">detecting…</span>
             ) : summary ? (

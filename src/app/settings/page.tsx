@@ -77,7 +77,7 @@ export default function SettingsPage() {
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as TabKey)}
-            className={`px-5 py-2.5 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${
+            className={`px-5 py-2.5 text-xs font-mono  border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${
               activeTab === tab.key
                 ? "border-accent text-accent"
                 : "border-transparent text-muted hover:text-foreground"
@@ -235,7 +235,7 @@ function ConnectionsTab() {
     <div className="space-y-8">
       <LoaderOverlay3D open={testing || submitting || actionLoading} variant="generic" title={testing ? "Testing connection..." : submitting ? "Saving connection..." : "Updating connections..."} />
       <div className="bg-card border border-border rounded-xl p-6">
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Add VPS Connection</h2>
+        <h2 className="text-sm font-mono text-muted mb-6">Add VPS Connection</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -351,7 +351,7 @@ function ConnectionsTab() {
 
       {configs.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-6">
-          <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">Saved Connections</h2>
+          <h2 className="text-sm font-mono text-muted mb-2">Saved Connections</h2>
           <p className="text-[11px] text-muted/70 mb-4 leading-relaxed">
             These are servers you <strong>switch between</strong> — not separate accounts. Exactly one connection is{" "}
             <span className="text-accent font-mono">active</span> at a time, and every page targets whichever server is
@@ -561,7 +561,7 @@ function ServerLayoutTab() {
     <div className="bg-card border border-border rounded-xl p-6">
       <LoaderOverlay3D open={detecting || saving} variant="generic" title={detecting ? "Detecting server layout..." : "Saving paths..."} />
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
+        <h2 className="text-sm font-mono text-muted">
           System Paths <span className="text-accent normal-case">(for the active VPS)</span>
         </h2>
         <button
@@ -730,7 +730,7 @@ function AIConfigTab() {
   return (
     <div className="bg-card border border-border rounded-xl p-6">
       <LoaderOverlay3D open={saving} variant="generic" title="Saving AI configuration..." />
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">AI Configuration</h2>
+      <h2 className="text-sm font-mono text-muted mb-2">AI Configuration</h2>
       <p className="text-[11px] text-muted/60 mb-6 leading-relaxed">
         Choose the model provider that powers the GroundControl AI assistant and configure its API key. Keys are
         encrypted at rest server-side. A matching environment variable ({envVar}) takes priority.
@@ -892,7 +892,7 @@ function BackupRestoreSection() {
   return (
     <div className="bg-card border border-border rounded-xl p-6">
       <LoaderOverlay3D open={loading || backingUp} variant="generic" title={backingUp ? "Creating backup..." : "Restoring database..."} />
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Database Backup & Restore</h2>
+      <h2 className="text-sm font-mono text-muted mb-6">Database Backup & Restore</h2>
       <div className="space-y-4 max-w-md">
         <button
           onClick={handleBackup}
@@ -1022,7 +1022,7 @@ function UserManagementSection() {
   return (
     <div className="bg-card border border-border rounded-xl p-6">
       <LoaderOverlay3D open={loading || deleteLoading} variant="generic" title={deleteLoading ? "Deleting user..." : "Creating user..."} />
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">User Management</h2>
+      <h2 className="text-sm font-mono text-muted mb-6">User Management</h2>
       <form onSubmit={handleCreate} className="space-y-4 max-w-md mb-6">
         <div className="grid grid-cols-2 gap-4">
           <input
@@ -1135,7 +1135,7 @@ function AuditLogSection() {
     <div className="bg-card border border-border rounded-xl p-6">
       <LoaderOverlay3D open={loading} variant="generic" title="Loading audit log..." />
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Authentication Audit Log</h2>
+        <h2 className="text-sm font-mono text-muted">Authentication Audit Log</h2>
         <select
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -1240,7 +1240,7 @@ function ChangePasswordSection() {
   return (
     <div className="bg-card border border-border rounded-xl p-6">
       <LoaderOverlay3D open={loading} variant="generic" title="Updating password..." />
-      <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-6">Change Password</h2>
+      <h2 className="text-sm font-mono text-muted mb-6">Change Password</h2>
       <form onSubmit={handleChange} className="space-y-4 max-w-md">
         <SensitiveInput
           label="Current Password"

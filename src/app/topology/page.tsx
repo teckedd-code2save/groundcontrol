@@ -308,7 +308,7 @@ export default function TopologyPage() {
 
             <div className="space-y-6">
               <section>
-                <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-3">Pods</h2>
+                <h2 className="text-sm font-mono text-muted mb-3">Pods</h2>
                 {k8sPods.length === 0 && !k8sLoading ? (
                   <div className="text-xs text-muted font-mono">No pods found in this namespace.</div>
                 ) : (
@@ -352,7 +352,7 @@ export default function TopologyPage() {
               </section>
 
               <section>
-                <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-3">Services</h2>
+                <h2 className="text-sm font-mono text-muted mb-3">Services</h2>
                 {k8sServices.length === 0 && !k8sLoading ? (
                   <div className="text-xs text-muted font-mono">No services found in this namespace.</div>
                 ) : (

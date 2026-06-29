@@ -104,7 +104,7 @@ export default function GuidesPage() {
             >
               <div className="flex items-start justify-between mb-3">
                 <span
-                  className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
+                  className={`text-[10px] font-mono  px-2 py-1 rounded border ${
                     categoryColors[guide.category] || "bg-border/50 text-foreground border-border"
                   }`}
                 >
