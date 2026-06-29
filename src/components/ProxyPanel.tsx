@@ -94,7 +94,7 @@ export function ProxyPanel() {
 
       {/* Caddy Section */}
       <section>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <CaddyIcon className="w-5 h-5 text-muted" />
             <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Caddy</h2>
@@ -108,7 +108,7 @@ export function ProxyPanel() {
               {data?.caddy.active ? "active" : "inactive"}
             </span>
           </div>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:justify-end">
             <button
               onClick={() => handleAction("test", "caddy")}
               disabled={actionLoading === "caddy-test"}
@@ -168,7 +168,7 @@ export function ProxyPanel() {
 
       {/* Nginx Section */}
       <section>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <NginxIcon className="w-5 h-5 text-muted" />
             <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Nginx</h2>
@@ -182,7 +182,7 @@ export function ProxyPanel() {
               {data?.nginx.active ? "active" : "inactive"}
             </span>
           </div>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:justify-end">
             <button
               onClick={() => handleAction("test", "nginx")}
               disabled={actionLoading === "nginx-test"}

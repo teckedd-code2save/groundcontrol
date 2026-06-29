@@ -269,7 +269,7 @@ export function DeploymentsPanel() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[11px] text-muted/70 leading-relaxed">
           Recent deployments across all projects and targets.
         </p>
@@ -370,11 +370,11 @@ export function DeploymentsPanel() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:w-auto md:shrink-0 md:items-center">
                   {d.target.type === "k3s" && (
                     <a
                       href={`/topology?k8sNamespace=${encodeURIComponent(getK3sNamespace(d.target, d.project.slug))}`}
-                      className="px-3 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+                      className="px-3 py-2 text-center text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
                     >
                       View in k8s
                     </a>

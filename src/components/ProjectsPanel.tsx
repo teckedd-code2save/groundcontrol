@@ -625,7 +625,7 @@ export function ProjectsPanel() {
                     key={project.slug}
                     className="bg-card border border-border rounded-xl p-5 hover:border-border-hover transition-colors"
                   >
-                    <div className="flex items-start justify-between mb-4">
+                    <div className="flex flex-col gap-4 mb-4 md:flex-row md:items-start md:justify-between">
                       <div className="min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
                           <h3 className="font-medium text-lg">{project.name}</h3>
@@ -689,7 +689,7 @@ export function ProjectsPanel() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                      <div className="grid w-full grid-cols-3 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:justify-end">
                         <button
                           onClick={() => setConfirmCompose({ slug: project.slug, type: "up" })}
                           disabled={!!composeAction}
@@ -943,12 +943,12 @@ export function ProjectsPanel() {
                     {/* Compose Services */}
                     {project.services.length > 0 ? (
                       <div className="mb-4 space-y-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">
                             Compose Services ({project.services.length})
                           </h4>
                           {selected.length > 0 && (
-                            <div className="flex items-center gap-2">
+                            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
                               <button
                                 onClick={() => setConfirmCompose({ slug: project.slug, type: "up-selected" })}
                                 disabled={!!composeAction}
@@ -978,7 +978,7 @@ export function ProjectsPanel() {
                             return (
                               <div
                                 key={svc.name}
-                                className={`flex items-center justify-between p-2 rounded-lg border ${
+                                className={`flex items-center justify-between gap-2 p-2 rounded-lg border ${
                                   isRunning ? "bg-background/50 border-border/50" : "bg-warning/5 border-warning/10"
                                 }`}
                               >
@@ -1004,7 +1004,7 @@ export function ProjectsPanel() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 shrink-0 ml-2">
+                                <div className="flex items-center gap-2 shrink-0">
                                   {existing ? (
                                     <div
                                       className={`w-2 h-2 rounded-full ${isRunning ? "bg-success" : "bg-error"}`}

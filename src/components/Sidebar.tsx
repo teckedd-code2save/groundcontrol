@@ -46,23 +46,23 @@ export function Sidebar() {
   return (
     <>
       {/* ── Mobile: bottom tab bar ── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur border-t border-border flex items-center justify-around py-1.5 safe-area-bottom">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 grid grid-cols-6 bg-card/95 backdrop-blur border-t border-border py-1.5 safe-area-bottom">
         {primaryItems.map(item => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link key={item.href} href={item.href}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg min-w-[56px] transition-colors ${
+              className={`min-w-0 flex flex-col items-center gap-0.5 px-1 py-1 rounded-lg transition-colors ${
                 active ? "text-accent" : "text-muted hover:text-foreground"
               }`}>
               <span className="text-lg">{item.icon}</span>
-              <span className="text-[9px] font-mono leading-none">{item.label}</span>
+              <span className="w-full truncate text-center text-[8px] font-mono leading-none min-[370px]:text-[9px]">{item.label}</span>
             </Link>
           );
         })}
         <button onClick={() => setMobileMenu(true)}
-          className="flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg min-w-[56px] text-muted hover:text-foreground transition-colors">
+          className="min-w-0 flex flex-col items-center gap-0.5 px-1 py-1 rounded-lg text-muted hover:text-foreground transition-colors">
           <span className="text-lg">☰</span>
-          <span className="text-[9px] font-mono leading-none">More</span>
+          <span className="w-full truncate text-center text-[8px] font-mono leading-none min-[370px]:text-[9px]">More</span>
         </button>
       </nav>
 

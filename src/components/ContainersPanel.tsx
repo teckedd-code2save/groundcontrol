@@ -676,12 +676,12 @@ export function ContainersPanel() {
               placeholder="Filter by name..."
               value={nameFilter}
               onChange={(e) => setNameFilter(e.target.value)}
-              className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent w-48"
+              className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent sm:w-48"
             />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent"
+              className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent sm:w-auto"
             >
               <option value="">All ({counts.all})</option>
               <option value="running">Running ({counts.running})</option>
@@ -699,9 +699,9 @@ export function ContainersPanel() {
           </div>
 
           {selected.size > 0 && (
-            <div className="mb-4 flex flex-wrap items-center gap-3 p-3 bg-accent/5 border border-accent/20 rounded-xl">
+            <div className="mb-4 flex flex-col gap-3 p-3 bg-accent/5 border border-accent/20 rounded-xl sm:flex-row sm:items-center">
               <span className="text-xs font-mono text-accent">{selected.size} selected</span>
-              <div className="flex gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 <button
                   onClick={() => runBulkAction("start")}
                   disabled={bulkActionLoading}
@@ -731,7 +731,7 @@ export function ContainersPanel() {
                   Remove
                 </button>
               </div>
-              <div className="ml-auto flex gap-2">
+              <div className="flex gap-2 sm:ml-auto">
                 <button
                   onClick={selectAll}
                   className="text-xs text-muted hover:text-foreground transition-colors"
@@ -759,8 +759,8 @@ export function ContainersPanel() {
                     container.state !== "running" ? "border-error/20" : "border-border"
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
                       <input
                         type="checkbox"
                         checked={selected.has(container.name)}
@@ -774,19 +774,19 @@ export function ContainersPanel() {
                             ? container.status.includes("unhealthy")
                               ? "bg-warning"
                               : "bg-success"
-                            : "bg-error"
+                          : "bg-error"
                         }`}
                       />
-                      <div>
-                        <div className="font-medium flex items-center gap-2">
+                      <div className="min-w-0">
+                        <div className="font-medium flex min-w-0 items-center gap-2">
                           <ContainerIcon type={getContainerType(container.name, container.image)} className="w-4 h-4 text-muted" />
-                          {container.name}
+                          <span className="truncate">{container.name}</span>
                         </div>
-                        <div className="text-xs text-muted font-mono mt-0.5">
+                        <div className="text-xs text-muted font-mono mt-0.5 truncate">
                           {container.image} · {container.status}
                         </div>
                         {(container.composeProject || container.composeWorkingDir) && (
-                          <div className="text-[10px] text-muted font-mono mt-1">
+                          <div className="text-[10px] text-muted font-mono mt-1 truncate">
                             {container.composeProject && (
                               <span>compose {container.composeProject}</span>
                             )}
@@ -801,7 +801,7 @@ export function ContainersPanel() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-4">
                       {container.stats && container.state === "running" && (
                         <div className="hidden md:flex gap-4 text-xs font-mono text-muted">
                           <span>CPU {container.stats.cpu}</span>
@@ -810,7 +810,7 @@ export function ContainersPanel() {
                         </div>
                       )}
 
-                      <div className="flex gap-2">
+                      <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
                         <button
                           onClick={() => viewLogs(container.name)}
                           className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors"
@@ -907,7 +907,7 @@ export function ContainersPanel() {
                   : `${(totalSize / 1024).toFixed(0)}KB`;
                 return (
                   <div key={group.repository} className="bg-card border border-border rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-3">
+                    <div className="flex flex-col gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <div className="text-sm font-mono font-medium truncate flex items-center gap-2">
                           <ContainerIcon type={getContainerType(group.repository, "")} className="w-4 h-4 text-muted" />
@@ -917,7 +917,7 @@ export function ContainersPanel() {
                           {group.images.length} tag{group.images.length > 1 ? "s" : ""} · {totalSizeStr} total
                         </div>
                       </div>
-                      <div className="flex gap-2 shrink-0 ml-4">
+                      <div className="flex gap-2 sm:ml-4 sm:shrink-0">
                         {group.images.length > 1 && (
                           <button
                             onClick={() => setPruneRepoTarget(group.repository)}
@@ -937,7 +937,7 @@ export function ContainersPanel() {
                         return (
                           <div
                             key={img.id}
-                            className={`flex items-center justify-between p-2 rounded-lg border ${
+                            className={`flex flex-col gap-2 p-2 rounded-lg border sm:flex-row sm:items-center sm:justify-between ${
                               idx === 0 ? "bg-accent/5 border-accent/10" : "bg-background/30 border-border/30"
                             }`}
                           >
@@ -962,7 +962,7 @@ export function ContainersPanel() {
                                 </div>
                               </div>
                             </div>
-                            <div className="flex items-center gap-3 shrink-0 ml-4">
+                            <div className="flex w-full items-center justify-between gap-3 sm:ml-4 sm:w-auto sm:justify-end sm:shrink-0">
                               <span className={`text-xs font-mono ${isLarge ? "text-warning" : "text-muted"}`}>
                                 {img.size}
                               </span>

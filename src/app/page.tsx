@@ -11,7 +11,22 @@ export default function HomePage() {
   const [checking, setChecking] = useState(true);
   const [copied, setCopied] = useState(false);
   const cmd = "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s root@your-vps";
-  async function copyCmd() { await navigator.clipboard.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+  async function copyCmd() {
+    try {
+      await navigator.clipboard.writeText(cmd);
+    } catch {
+      const textArea = document.createElement("textarea");
+      textArea.value = cmd;
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   useEffect(() => {
     fetch("/api/auth/me").then(async (res) => {
@@ -120,7 +135,12 @@ export default function HomePage() {
             <Link href="/login" style={{ padding: "16px 36px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>Open Dashboard</Link>
             <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ padding: "16px 36px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>GitHub</a>
           </div>
-          <code style={{ background: C.darker, padding: "12px 16px", fontSize: 11, color: C.mut, fontFamily: "monospace", wordBreak: "break-all", display: "inline-block", maxWidth: "100%" }}>{cmd}</code>
+          <div className="flex flex-wrap items-stretch justify-center gap-2">
+            <code style={{ background: C.darker, padding: "12px 16px", fontSize: 11, color: C.mut, fontFamily: "monospace", overflowWrap: "anywhere", display: "inline-block", maxWidth: "100%", textAlign: "left" }}>{cmd}</code>
+            <button onClick={copyCmd} style={{ padding: "12px 16px", background: "transparent", color: C.text, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 11, cursor: "pointer" }}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
         </div>
       </section>
 

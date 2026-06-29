@@ -28,8 +28,21 @@ export default function ServicesPage() {
     <div className="p-4 md:p-8 max-w-7xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Services</h1>
-        {/* Tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 -mx-2 px-2">
+        <label className="mt-4 block md:hidden">
+          <span className="mb-1 block text-[10px] font-mono uppercase tracking-wider text-muted">Section</span>
+          <select
+            value={activeTab}
+            onChange={(event) => setActiveTab(event.target.value as TabKey)}
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-foreground outline-none focus:border-accent"
+          >
+            {tabs.map((tab) => (
+              <option key={tab.key} value={tab.key}>
+                {tab.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="mt-4 hidden flex-wrap items-center gap-1 pb-1 md:flex">
           {tabs.map((tab) => {
             const active = activeTab === tab.key;
             return (

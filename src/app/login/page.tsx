@@ -1,11 +1,23 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 
 const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
+const PAGE2_X_LINES = [1.5, 17, 55, 84, 98.5];
+const PAGE2_Y_LINES = [13, 33.5, 38, 78, 84.5, 100];
+const PAGE2_DOTS = PAGE2_X_LINES.flatMap((x) => PAGE2_Y_LINES.map((y) => ({ x, y })));
+const PAGE2_CELLS = {
+  compactImage: { left: "17%", top: "38%", width: "38%", height: "46.5%" },
+  rightImage: { left: "55%", top: "33.5%", width: "29%", height: "51%" },
+  expandedImage: { left: "1.5%", top: "13%", width: "97%", height: "71.5%" },
+};
+const PAGE2_IMAGE_FRAME = {
+  compact: { left: "17%", right: "55%", top: "38%", bottom: "84.5%" },
+  right: { left: "55%", right: "84%", top: "33.5%", bottom: "84.5%" },
+  expanded: { left: "1.5%", right: "98.5%", top: "13%", bottom: "84.5%" },
+};
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -16,7 +28,22 @@ export default function LoginPage() {
   const [copied, setCopied] = useState(false);
   const router = useRouter();
   const cmd = "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s root@your-vps";
-  async function copyCmd() { await navigator.clipboard.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+  async function copyCmd() {
+    try {
+      await navigator.clipboard.writeText(cmd);
+    } catch {
+      const textArea = document.createElement("textarea");
+      textArea.value = cmd;
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setLoading(true); setError("");
     try {
@@ -26,7 +53,7 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
-    let ctx: any;
+    let ctx: { revert: () => void } | undefined;
     async function init() {
       const { gsap } = await import("gsap");
       const { ScrollTrigger } = await import("gsap/ScrollTrigger");
@@ -68,39 +95,95 @@ export default function LoginPage() {
 
   // ── Grid-to-fullscreen transition (cipherdigital page 2) ──
   useEffect(() => {
-    let ctx: any;
+    let ctx: { revert: () => void } | undefined;
     async function init() {
       const { gsap } = await import("gsap");
       const { ScrollTrigger } = await import("gsap/ScrollTrigger");
       gsap.registerPlugin(ScrollTrigger);
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || window.matchMedia("(max-width: 767px)").matches) return;
       ctx = gsap.context(() => {
+        const frameTo = (frame: typeof PAGE2_IMAGE_FRAME.compact) => ({
+          xLeft: { left: frame.left },
+          xRight: { left: frame.right },
+          yTop: { top: frame.top },
+          yBottom: { top: frame.bottom },
+          dotTopLeft: { left: frame.left, top: frame.top },
+          dotTopRight: { left: frame.right, top: frame.top },
+          dotBottomLeft: { left: frame.left, top: frame.bottom },
+          dotBottomRight: { left: frame.right, top: frame.bottom },
+        });
+        const compactFrame = frameTo(PAGE2_IMAGE_FRAME.compact);
+        const rightFrame = frameTo(PAGE2_IMAGE_FRAME.right);
+        const expandedFrame = frameTo(PAGE2_IMAGE_FRAME.expanded);
+
+        gsap.set(".page2-copy-cell", { opacity: 0, y: 20 });
+        gsap.set(".page2-image-shell", { ...PAGE2_CELLS.compactImage, borderColor: "rgba(245,246,247,0.16)" });
+        gsap.set(".page2-image", { scale: 1.04, filter: "brightness(0.82)" });
+        gsap.set(".page2-full-copy, .page2-metric", { opacity: 0, y: 22 });
+        gsap.set(".page2-image-vignette", { opacity: 0 });
+        gsap.set(".page2-base-line", { opacity: 0.55 });
+        gsap.set(".page2-frame-x-left", compactFrame.xLeft);
+        gsap.set(".page2-frame-x-right", compactFrame.xRight);
+        gsap.set(".page2-frame-y-top", compactFrame.yTop);
+        gsap.set(".page2-frame-y-bottom", compactFrame.yBottom);
+        gsap.set(".page2-frame-dot-tl", compactFrame.dotTopLeft);
+        gsap.set(".page2-frame-dot-tr", compactFrame.dotTopRight);
+        gsap.set(".page2-frame-dot-bl", compactFrame.dotBottomLeft);
+        gsap.set(".page2-frame-dot-br", compactFrame.dotBottomRight);
+
         const tl = gsap.timeline({
           scrollTrigger: {
-            trigger: ".grid-transition",
+            trigger: ".page2-transition",
             start: "top top",
             end: "+=250%",
-            pin: ".grid-pin",
+            pin: ".page2-pin",
             scrub: 1,
           }
         });
 
-        // Phase 1: text fades in on left grid cell (0-30%)
-        tl.to(".grid-text", { opacity: 1, duration: 0.3 }, 0);
+        tl.to(".page2-copy-cell", { opacity: 1, y: 0, duration: 0.2, ease: "power2.out" }, 0.12)
+          .to(".page2-image-shell", {
+            ...PAGE2_CELLS.rightImage,
+            duration: 0.28,
+            ease: "power3.inOut",
+          }, 0.16)
+          .to(".page2-frame-x-left", { ...rightFrame.xLeft, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-frame-x-right", { ...rightFrame.xRight, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-frame-y-top", { ...rightFrame.yTop, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-frame-y-bottom", { ...rightFrame.yBottom, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-frame-dot-tl", { ...rightFrame.dotTopLeft, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-frame-dot-tr", { ...rightFrame.dotTopRight, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-frame-dot-bl", { ...rightFrame.dotBottomLeft, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-frame-dot-br", { ...rightFrame.dotBottomRight, duration: 0.28, ease: "power3.inOut" }, 0.16)
+          .to(".page2-image", { scale: 1, duration: 0.28, ease: "power2.out" }, 0.16);
 
-        // Phase 2: image cell shrinks right slightly (20-50%)
-        tl.to(".grid-image-cell", { flex: "0.6", duration: 0.3 }, 0.2);
+        tl.to(".page2-copy-cell", { opacity: 0, y: -16, duration: 0.16, ease: "power2.in" }, 0.48)
+          .to(".page2-base-line", { opacity: 0.22, duration: 0.2 }, 0.48)
+          .to(".page2-dot", { opacity: 0.16, scale: 0.78, duration: 0.18 }, 0.5)
+          .to(".page2-image-shell", {
+            ...PAGE2_CELLS.expandedImage,
+            borderColor: "rgba(245,246,247,0.34)",
+            duration: 0.34,
+            ease: "power3.inOut",
+          }, 0.52)
+          .to(".page2-frame-x-left", { ...expandedFrame.xLeft, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-frame-x-right", { ...expandedFrame.xRight, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-frame-y-top", { ...expandedFrame.yTop, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-frame-y-bottom", { ...expandedFrame.yBottom, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-frame-dot-tl", { ...expandedFrame.dotTopLeft, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-frame-dot-tr", { ...expandedFrame.dotTopRight, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-frame-dot-bl", { ...expandedFrame.dotBottomLeft, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-frame-dot-br", { ...expandedFrame.dotBottomRight, duration: 0.34, ease: "power3.inOut" }, 0.52)
+          .to(".page2-image", {
+            scale: 1.06,
+            filter: "brightness(0.62) saturate(0.95)",
+            duration: 0.34,
+            ease: "power2.out",
+          }, 0.52);
 
-        // Phase 3: grid lines fade out (40-60%)
-        tl.to(".grid-lines", { opacity: 0, duration: 0.2 }, 0.4);
-
-        // Phase 4: image expands fullscreen, grid container fades (50-80%)
-        tl.to([".grid-slot:not(.grid-image-cell)", ".grid-slot"], { opacity: 0, duration: 0.25 }, 0.5)
-          .to(".grid-fullscreen", { opacity: 1, pointerEvents: "auto", duration: 0.3 }, 0.55)
-          .to(".grid-image", { scale: 2.5, duration: 0.3 }, 0.55);
-
-        // Phase 5: fullscreen text fades in (65-90%)
-        tl.to(".fullscreen-text", { opacity: 1, y: 0, duration: 0.3 }, 0.65);
+        tl.to(".page2-image-vignette", { opacity: 1, duration: 0.16, ease: "power2.out" }, 0.64);
+        tl.to(".page2-full-copy", { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" }, 0.72)
+          .to(".page2-metric", { opacity: 1, y: 0, duration: 0.22, stagger: 0.04, ease: "power2.out" }, 0.78);
       });
     }
     init();
@@ -109,7 +192,18 @@ export default function LoginPage() {
 
   return (
     <div style={{ background: C.bg, color: C.text, fontFamily: "articulat-cf, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", minHeight: "100vh", overflowX: "hidden" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap'); body{margin:0;}`}</style>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap');
+        body{margin:0;}
+        @media (max-width: 767px){
+          .page2-transition{height:auto!important;}
+          .page2-pin{position:relative!important;height:auto!important;min-height:720px;padding:72px 0 0;}
+          .page2-copy-cell{left:7%!important;top:12%!important;width:86%!important;height:auto!important;padding:0!important;opacity:1!important;transform:none!important;}
+          .page2-image-shell{left:7%!important;top:36%!important;width:86%!important;height:38%!important;}
+          .page2-full-copy{left:7%!important;right:7%!important;top:78%!important;width:auto!important;transform:none!important;text-align:left!important;opacity:1!important;}
+          .page2-metric-shell{left:7%!important;right:7%!important;grid-template-columns:1fr!important;bottom:auto!important;top:88%!important;border-top:0!important;}
+        }
+      `}</style>
 
       {/* HERO */}
       <section className="hero-s relative min-h-screen flex items-center overflow-hidden" style={{ background: C.dark }}>
@@ -183,62 +277,178 @@ export default function LoginPage() {
         </div>
       </section>
 
-      {/* GRID-TO-FULLSCREEN — cipherdigital page 2 transition */}
-      <section className="grid-transition" style={{ height: "300vh", position: "relative", background: C.darker }}>
-        <div className="grid-pin" style={{ position: "sticky", top: 0, height: "100vh", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {/* Ruled grid lines */}
-          <div className="grid-lines" style={{ position: "absolute", inset: 0, opacity: 0.06,
-            backgroundImage: `linear-gradient(${C.text} 1px, transparent 1px), linear-gradient(90deg, ${C.text} 1px, transparent 1px)`,
-            backgroundSize: "120px 120px" }} />
+      {/* GRID-TO-BAND — cipherdigital page 2 transition */}
+      <section className="page2-transition" style={{ height: "320vh", position: "relative", background: C.darker }}>
+        <div className="page2-pin" style={{ position: "sticky", top: 0, height: "100vh", overflow: "hidden", background: "#0f1112" }}>
+          <div className="page2-grid" style={{ position: "absolute", inset: 0, background: "#0f1112" }} />
+          {PAGE2_X_LINES.map((x) => (
+            <span
+              key={`x-${x}`}
+              className="page2-base-line"
+              style={{ position: "absolute", left: `${x}%`, top: 0, bottom: 0, width: 1, background: "rgba(245,246,247,0.1)", pointerEvents: "none" }}
+            />
+          ))}
+          {PAGE2_Y_LINES.map((y) => (
+            <span
+              key={`y-${y}`}
+              className="page2-base-line"
+              style={{ position: "absolute", left: 0, right: 0, top: `${y}%`, height: 1, background: "rgba(245,246,247,0.1)", pointerEvents: "none" }}
+            />
+          ))}
+          {PAGE2_DOTS.map((dot) => (
+            <span
+              key={`${dot.x}-${dot.y}`}
+              className="page2-dot"
+              style={{
+                position: "absolute",
+                left: `${dot.x}%`,
+                top: `${dot.y}%`,
+                width: 9,
+                height: 9,
+                background: "rgba(126,138,145,0.56)",
+                transform: "translate(-50%, -50%)",
+                pointerEvents: "none",
+              }}
+            />
+          ))}
+          <span className="page2-frame-x-left" style={{ position: "absolute", left: PAGE2_IMAGE_FRAME.compact.left, top: 0, bottom: 0, width: 1, zIndex: 5, background: "rgba(245,246,247,0.34)", pointerEvents: "none" }} />
+          <span className="page2-frame-x-right" style={{ position: "absolute", left: PAGE2_IMAGE_FRAME.compact.right, top: 0, bottom: 0, width: 1, zIndex: 5, background: "rgba(245,246,247,0.34)", pointerEvents: "none" }} />
+          <span className="page2-frame-y-top" style={{ position: "absolute", left: 0, right: 0, top: PAGE2_IMAGE_FRAME.compact.top, height: 1, zIndex: 5, background: "rgba(245,246,247,0.34)", pointerEvents: "none" }} />
+          <span className="page2-frame-y-bottom" style={{ position: "absolute", left: 0, right: 0, top: PAGE2_IMAGE_FRAME.compact.bottom, height: 1, zIndex: 5, background: "rgba(245,246,247,0.34)", pointerEvents: "none" }} />
+          {[
+            ["tl", PAGE2_IMAGE_FRAME.compact.left, PAGE2_IMAGE_FRAME.compact.top],
+            ["tr", PAGE2_IMAGE_FRAME.compact.right, PAGE2_IMAGE_FRAME.compact.top],
+            ["bl", PAGE2_IMAGE_FRAME.compact.left, PAGE2_IMAGE_FRAME.compact.bottom],
+            ["br", PAGE2_IMAGE_FRAME.compact.right, PAGE2_IMAGE_FRAME.compact.bottom],
+          ].map(([corner, left, top]) => (
+            <span
+              key={corner}
+              className={`page2-frame-dot page2-frame-dot-${corner}`}
+              style={{
+                position: "absolute",
+                left,
+                top,
+                width: 10,
+                height: 10,
+                zIndex: 6,
+                background: "rgba(164,173,178,0.95)",
+                transform: "translate(-50%, -50%)",
+                pointerEvents: "none",
+              }}
+            />
+          ))}
 
-          {/* Grid container — 2 rows × 3 cols */}
-          <div style={{ position: "relative", width: "min(90vw, 1000px)", maxHeight: "80vh", display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr", gridTemplateRows: "1fr 1fr", gap: "1px", background: C.lin }}>
-            {/* Row 1 */}
-            <div className="grid-slot" />
-            <div className="grid-slot" />
-            <div className="grid-slot" />
-            {/* Row 2 */}
-            <div className="grid-slot grid-left" style={{ position: "relative", overflow: "hidden" }}>
-              {/* Text revealed on scroll */}
-              <div className="grid-text" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "center", padding: "clamp(20px, 4vw, 48px)", opacity: 0 }}>
-                <p style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 12 }}>Your Data Center</p>
-                <h2 style={{ fontSize: "clamp(18px, 2.5vw, 28px)", fontWeight: 300, lineHeight: 1.2, margin: 0 }}>Every container.<br/>Every service.<br/>One cockpit.</h2>
+          <div
+            className="page2-copy-cell"
+            style={{
+              position: "absolute",
+              left: "1.5%",
+              top: "38%",
+              width: "53.5%",
+              height: "46.5%",
+              zIndex: 3,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              padding: "0 7.5vw 0 8vw",
+            }}
+          >
+            <p style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 14 }}>
+              Command Center
+            </p>
+            <h2 style={{ fontSize: "clamp(28px, 4.6vw, 58px)", fontWeight: 300, lineHeight: 1.03, margin: 0 }}>
+              Every command.<br />Every log.<br />One cockpit.
+            </h2>
+          </div>
+
+          <div
+            className="page2-image-shell"
+            style={{
+              position: "absolute",
+              ...PAGE2_CELLS.compactImage,
+              zIndex: 2,
+              overflow: "hidden",
+              border: `1px solid ${C.lin}`,
+              background: C.dark,
+              boxShadow: "0 36px 90px rgba(0,0,0,0.38)",
+            }}
+          >
+            <img
+              src="/login-previews/terminal.png"
+              alt="GroundControl terminal"
+              className="page2-image"
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transformOrigin: "center center" }}
+              loading="lazy"
+            />
+            <div
+              className="page2-image-vignette"
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "linear-gradient(180deg, rgba(15,17,18,0.58) 0%, rgba(15,17,18,0.26) 42%, rgba(15,17,18,0.72) 100%)",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+
+          <div
+            className="page2-full-copy"
+            style={{
+              position: "absolute",
+              zIndex: 4,
+              left: "17%",
+              top: "33.5%",
+              width: "67%",
+              height: "51%",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              padding: "0 min(8vw, 92px)",
+              textAlign: "center",
+              pointerEvents: "none",
+              textShadow: "0 2px 24px rgba(0,0,0,0.65)",
+            }}
+          >
+            <p style={{ color: "rgba(245,246,247,0.72)", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 14 }}>
+              Command Center
+            </p>
+            <h2 style={{ fontSize: "clamp(30px, 5vw, 64px)", fontWeight: 300, lineHeight: 1.04, margin: 0 }}>
+              Every command.<br />Every log.<br />One cockpit.
+            </h2>
+          </div>
+
+          <div
+            className="page2-metric-shell"
+            style={{
+              position: "absolute",
+              zIndex: 4,
+              left: "1.5%",
+              right: "1.5%",
+              bottom: 0,
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              borderTop: `1px solid rgba(245,246,247,0.24)`,
+              pointerEvents: "none",
+            }}
+          >
+            {[
+              ["Live", "logs"],
+              ["AI", "commands"],
+              ["One", "cockpit"],
+            ].map(([value, label], index) => (
+              <div
+                key={label}
+                className="page2-metric"
+                style={{
+                  minHeight: 118,
+                  padding: "clamp(18px, 3vw, 36px)",
+                  borderRight: index === 2 ? "none" : `1px solid rgba(245,246,247,0.16)`,
+                }}
+              >
+                <strong style={{ display: "block", fontSize: "clamp(34px, 6vw, 82px)", fontWeight: 300, lineHeight: 0.9 }}>{value}</strong>
+                <span style={{ display: "block", marginTop: 10, color: C.mut, fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase" }}>{label}</span>
               </div>
-            </div>
-            <div className="grid-slot" />
-            {/* Image cell — second row, right */}
-            <div className="grid-slot grid-image-cell" style={{ overflow: "hidden", position: "relative" }}>
-              <img src="/login-previews/dashboard.png" alt="Dashboard" className="grid-image"
-                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                loading="lazy" />
-            </div>
-          </div>
-
-          {/* Fullscreen overlay — image expands to fill viewport */}
-          <div className="grid-fullscreen" style={{ position: "absolute", inset: 0, opacity: 0, pointerEvents: "none", overflow: "hidden" }}>
-            <img src="/login-previews/dashboard.png" alt="GroundControl Dashboard"
-              style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <div className="fullscreen-text" style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "clamp(32px, 6vw, 80px)", opacity: 0 }}>
-              <p style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 8 }}>GroundControl</p>
-              <h2 style={{ fontSize: "clamp(28px, 5vw, 52px)", fontWeight: 300, lineHeight: 1.1, margin: 0 }}>
-                Your VPS has an <span style={{ color: C.accent }}>AI co-pilot</span>
-              </h2>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* SCREENSHOT — Terminal */}
-      <section className="shot-reveal" style={{ padding: "60px 0 120px", background: C.bg }}>
-        <div className="max-w-6xl mx-auto px-6 md:px-12">
-          <div className="text-center mb-12">
-            <p className="shot-label" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 16 }}>03 — Terminal</p>
-            <h2 className="shot-label" style={{ fontSize: "clamp(28px, 4vw, 42px)", fontWeight: 300, lineHeight: 1.15, margin: "0 0 12px" }}>Full terminal access.</h2>
-            <p className="shot-label" style={{ color: C.mut, fontSize: 16, maxWidth: 480, margin: "0 auto" }}>Web-based shell for direct access. Or let the AI agent run commands — you type English, it executes.</p>
-          </div>
-          <div style={{ overflow: "hidden", maxWidth: 900, margin: "0 auto" }}>
-            <img src="/login-previews/terminal.png" alt="Terminal" style={{ width: "100%", display: "block" }} loading="lazy" />
+            ))}
           </div>
         </div>
       </section>
@@ -272,7 +482,20 @@ export default function LoginPage() {
             <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ padding: "16px 36px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>GitHub</a>
           </div>
           <div style={{ marginTop: 32 }}>
-            <code style={{ background: C.darker, padding: "12px 16px", fontSize: 11, color: C.mut, fontFamily: "monospace", wordBreak: "break-all", display: "inline-block", maxWidth: "100%" }}>{cmd}</code>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "stretch",
+                justifyContent: "center",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <code style={{ background: C.darker, padding: "12px 16px", fontSize: 11, color: C.mut, fontFamily: "monospace", overflowWrap: "anywhere", display: "inline-block", maxWidth: "100%", textAlign: "left" }}>{cmd}</code>
+              <button onClick={copyCmd} style={{ padding: "12px 16px", background: "transparent", color: C.text, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 11, cursor: "pointer" }}>
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
           </div>
         </div>
       </section>

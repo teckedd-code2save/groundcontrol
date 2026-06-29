@@ -217,7 +217,7 @@ export default function CloudflarePanel() {
             placeholder="Tunnel name"
             value={newTunnelName}
             onChange={(e) => setNewTunnelName(e.target.value)}
-            className="bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent w-64"
+            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent sm:w-64"
           />
           <button
             onClick={createTunnel}
@@ -240,14 +240,14 @@ export default function CloudflarePanel() {
             {tunnels.map((tunnel) => (
               <div
                 key={tunnel.id}
-                className="flex items-center justify-between py-3 px-4 rounded-lg border border-border bg-background/50"
+                className="flex flex-col gap-3 py-3 px-4 rounded-lg border border-border bg-background/50 sm:flex-row sm:items-center sm:justify-between"
               >
-                <div>
+                <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <ContainerIcon type="proxy" className="w-4 h-4 text-muted" />
                     <div className="font-medium text-sm">{tunnel.name}</div>
                   </div>
-                  <div className="text-xs text-muted font-mono mt-0.5">
+                  <div className="text-xs text-muted font-mono mt-0.5 truncate">
                     {tunnel.id} · connector {tunnel.connectorStatus || "unknown"}
                   </div>
                 </div>
@@ -272,7 +272,7 @@ export default function CloudflarePanel() {
           <select
             value={selectedZone}
             onChange={(e) => setSelectedZone(e.target.value)}
-            className="bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent w-64"
+            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent sm:w-64"
           >
             <option value="">Select a zone</option>
             {zones.map((z) => (
@@ -289,13 +289,13 @@ export default function CloudflarePanel() {
                   key={record.id}
                   className="flex flex-col md:flex-row md:items-center justify-between gap-3 py-3 px-4 rounded-lg border border-border bg-background/50"
                 >
-                  <div>
+                  <div className="min-w-0">
                     <div className="font-medium text-sm">{record.name}</div>
-                    <div className="text-xs text-muted font-mono mt-0.5">
+                    <div className="text-xs text-muted font-mono mt-0.5 truncate">
                       {record.type} · {record.content} · TTL {record.ttl} · {record.proxied ? "proxied" : "DNS only"}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto">
                     <button
                       onClick={() => pointToTunnel(record)}
                       disabled={tunnels.length === 0}

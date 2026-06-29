@@ -460,7 +460,7 @@ export default function TerraformStacksTab() {
                       <div className="text-[10px] text-muted font-mono mt-0.5">state: {stack.statePath}</div>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:justify-end">
                     <button
                       onClick={() => runAction(stack, "generate")}
                       disabled={actionLoading}
