@@ -28,6 +28,7 @@ export default function TemplatesPage() {
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([]);
   const [createDns, setCreateDns] = useState(false);
+  const [autoDomain, setAutoDomain] = useState(false);
 
   const [previewText, setPreviewText] = useState("");
   const [composeYml, setComposeYml] = useState("");
@@ -115,23 +116,23 @@ export default function TemplatesPage() {
           envVars: envVars.filter(e => e.key),
           repoUrl: sourceType === "github" ? repoUrl : undefined,
           domain: inputs.domain || undefined,
-          createDns,
+          createDns: createDns && !!inputs.domain,
         }),
       });
       const data = await res.json();
       if (data.success) {
         setDeployResult(data);
-        const msg = data.dns?.result
-          ? `Deployed! DNS record ${data.dns.result.name || inputs.domain} → ${data.deployPath}`
-          : data.message || "Deployed successfully";
-        setResult({ ok: true, msg, dns: data.dns ? "DNS record created" : undefined });
+        const parts = [data.message];
+        if (data.dns) parts.push("DNS: record created");
+        setResult({ ok: true, msg: parts.join(" — ") });
         setStep("deploy");
-        setPreviewText(data.composeYml || data.message || "");
+        setPreviewText(data.composeYml || "");
+        setComposeYml(data.composeYml || "");
       } else {
-        setResult({ ok: false, msg: data.error || "Deploy failed" });
+        setResult({ ok: false, msg: data.error || "Deploy failed — check VPS connection" });
       }
     } catch (err) {
-      setResult({ ok: false, msg: err instanceof Error ? err.message : "Deploy failed — check VPS connection" });
+      setResult({ ok: false, msg: "Connection error" });
     } finally { setLoading(false); }
   }
 
@@ -256,11 +257,16 @@ export default function TemplatesPage() {
             <h3 className="text-sm font-medium mb-4">Deployment Settings</h3>
             <div className="space-y-4 max-w-lg">
               <div>
-                <label className="block text-xs font-mono text-muted mb-1">Domain <span className="text-accent">*</span></label>
+                <label className="block text-xs font-mono text-muted mb-1">Domain</label>
                 <input type="text" value={inputs.domain || ""}
-                  onChange={e => updateInput("domain", e.target.value)}
-                  placeholder="app.example.com"
-                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                  onChange={e => { updateInput("domain", e.target.value); setAutoDomain(false); }}
+                  placeholder="app.example.com" disabled={autoDomain}
+                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent disabled:opacity-40"/>
+                <label className="flex items-center gap-2 mt-2">
+                  <input type="checkbox" checked={autoDomain} onChange={e => { setAutoDomain(e.target.checked); if (e.target.checked) updateInput("domain", `${(Math.random()*9999|0)}.groundcontrol.run`); }}
+                    className="accent-accent"/>
+                  <span className="text-xs text-muted font-mono">Auto-generate subdomain</span>
+                </label>
               </div>
               {(selected.inputs || []).filter(i => i.name !== "domain").map(inp => (
                 <div key={inp.name}>
@@ -305,7 +311,7 @@ export default function TemplatesPage() {
 
           <div className="flex gap-3">
             <BackBtn onClick={() => setStep("source")} />
-            <button onClick={handlePreview} disabled={loading || !inputs.domain}
+            <button onClick={handlePreview} disabled={loading}
               className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 disabled:opacity-40 transition-colors">
               {loading ? "Generating..." : "Preview →"}
             </button>
