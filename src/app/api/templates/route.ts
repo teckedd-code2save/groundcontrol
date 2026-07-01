@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import { listTemplates, loadTemplate, resolveTemplate, generatePreview } from "@/lib/template-engine";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  await requireAuth(req);
   const url = new URL(req.url);
   const name = url.searchParams.get("name");
 
@@ -17,6 +19,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireAuth(req);
     const body = await req.json();
     const { name, preview, inputs = {}, repoUrl, ghcrImage, localPath } = body;
 

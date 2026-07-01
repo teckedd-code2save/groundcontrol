@@ -1,0 +1,97 @@
+name: "Rails + Sidekiq + PostgreSQL + Redis"
+description: "Production Rails deployment with Puma, Sidekiq, PostgreSQL, Redis, Caddy TLS, persistent storage, and healthchecks."
+category: "saas"
+version: "1.0"
+requires:
+  docker: true
+  caddy: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "web:{{app_port}}"
+services:
+  - name: web
+    build: true
+    command: "bundle exec puma -C config/puma.rb"
+    ports:
+      - "{{app_port}}"
+    volumes:
+      - storage_data:/rails/storage
+    env:
+      - RAILS_ENV=production
+      - RAILS_MASTER_KEY={{rails_master_key}}
+      - PORT={{app_port}}
+      - DATABASE_URL=postgresql://{{db_user}}:{{db_password}}@postgres:5432/{{db_name}}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: "wget -qO- http://localhost:{{app_port}}/up || exit 1"
+      interval: "30s"
+      timeout: "5s"
+      retries: 5
+  - name: worker
+    build: true
+    command: "bundle exec sidekiq"
+    volumes:
+      - storage_data:/rails/storage
+    env:
+      - RAILS_ENV=production
+      - RAILS_MASTER_KEY={{rails_master_key}}
+      - DATABASE_URL=postgresql://{{db_user}}:{{db_password}}@postgres:5432/{{db_name}}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+  - name: postgres
+    image: "postgres:16-alpine"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env:
+      - POSTGRES_USER={{db_user}}
+      - POSTGRES_PASSWORD={{db_password}}
+      - POSTGRES_DB={{db_name}}
+    restart: unless-stopped
+    healthcheck:
+      test: "pg_isready -U {{db_user}} -d {{db_name}}"
+      interval: "10s"
+      timeout: "3s"
+      retries: 5
+  - name: redis
+    image: "redis:7-alpine"
+    command: "redis-server --appendonly yes"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: "redis-cli ping | grep PONG"
+      interval: "10s"
+      timeout: "3s"
+      retries: 5
+volumes:
+  - postgres_data
+  - redis_data
+  - storage_data
+inputs:
+  - name: domain
+    prompt: "Domain for your Rails app"
+    example: "app.example.com"
+  - name: app_port
+    prompt: "Internal Puma port"
+    default: "3000"
+  - name: rails_master_key
+    prompt: "RAILS_MASTER_KEY"
+    generate: true
+  - name: db_user
+    prompt: "Database username"
+    default: "app"
+  - name: db_password
+    prompt: "Database password"
+    generate: true
+  - name: db_name
+    prompt: "Database name"
+    default: "app"

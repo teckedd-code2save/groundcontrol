@@ -1,0 +1,231 @@
+name: "Caddy Secure Microservices + Observability"
+description: "Caddy-first production microservices stack with web, API, worker, PostgreSQL, Redis, MinIO object storage, Dozzle logs, Uptime Kuma checks, and security headers."
+category: "microservices"
+version: "1.0"
+
+requires:
+  docker: true
+  caddy: true
+
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{web_domain}}"
+      proxy_to: "web:{{web_port}}"
+    - domain: "{{api_domain}}"
+      proxy_to: "api:{{api_port}}"
+    - domain: "{{logs_domain}}"
+      proxy_to: "dozzle:8080"
+    - domain: "{{uptime_domain}}"
+      proxy_to: "uptime:3001"
+    - domain: "{{storage_domain}}"
+      proxy_to: "minio:9001"
+
+services:
+  - name: web
+    build: true
+    command: "{{web_command}}"
+    ports:
+      - "{{web_port}}"
+    env:
+      - NODE_ENV=production
+      - PORT={{web_port}}
+      - API_URL=https://{{api_domain}}
+      - NEXT_PUBLIC_API_URL=https://{{api_domain}}
+      - APP_SECRET={{app_secret}}
+    depends_on:
+      - api
+    healthcheck:
+      test: "wget -qO- http://localhost:{{web_port}}/health || exit 1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  - name: api
+    build: true
+    command: "{{api_command}}"
+    ports:
+      - "{{api_port}}"
+    env:
+      - NODE_ENV=production
+      - PORT={{api_port}}
+      - DATABASE_URL=postgresql://{{db_user}}:{{db_password}}@postgres:5432/{{db_name}}
+      - REDIS_URL=redis://redis:6379
+      - S3_ENDPOINT=http://minio:9000
+      - S3_PUBLIC_ENDPOINT=https://{{storage_domain}}
+      - S3_BUCKET={{s3_bucket}}
+      - S3_ACCESS_KEY={{s3_access_key}}
+      - S3_SECRET_KEY={{s3_secret_key}}
+      - JWT_SECRET={{jwt_secret}}
+      - APP_SECRET={{app_secret}}
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    healthcheck:
+      test: "wget -qO- http://localhost:{{api_port}}/health || exit 1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  - name: worker
+    build: true
+    command: "{{worker_command}}"
+    env:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://{{db_user}}:{{db_password}}@postgres:5432/{{db_name}}
+      - REDIS_URL=redis://redis:6379
+      - S3_ENDPOINT=http://minio:9000
+      - S3_BUCKET={{s3_bucket}}
+      - S3_ACCESS_KEY={{s3_access_key}}
+      - S3_SECRET_KEY={{s3_secret_key}}
+      - APP_SECRET={{app_secret}}
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    restart: unless-stopped
+
+  - name: postgres
+    image: "postgres:16-alpine"
+    env:
+      - POSTGRES_USER={{db_user}}
+      - POSTGRES_PASSWORD={{db_password}}
+      - POSTGRES_DB={{db_name}}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: "pg_isready -U {{db_user}} -d {{db_name}}"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  - name: redis
+    image: "redis:7-alpine"
+    command: "redis-server --appendonly yes --requirepass {{redis_password}}"
+    env:
+      - REDIS_PASSWORD={{redis_password}}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: "redis-cli -a {{redis_password}} ping | grep PONG"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  - name: minio
+    image: "minio/minio:RELEASE.2025-04-22T22-12-26Z"
+    command: "server /data --console-address :9001"
+    ports:
+      - "9000"
+      - "9001"
+    env:
+      - MINIO_ROOT_USER={{s3_access_key}}
+      - MINIO_ROOT_PASSWORD={{s3_secret_key}}
+      - MINIO_BROWSER_REDIRECT_URL=https://{{storage_domain}}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: "wget -qO- http://localhost:9000/minio/health/live || exit 1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  - name: dozzle
+    image: "amir20/dozzle:v8.12.0"
+    ports:
+      - "8080"
+    env:
+      - DOZZLE_AUTH_PROVIDER=simple
+      - DOZZLE_USERNAME={{ops_user}}
+      - DOZZLE_PASSWORD={{ops_password}}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  - name: uptime
+    image: "louislam/uptime-kuma:1"
+    ports:
+      - "3001"
+    volumes:
+      - uptime_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  - postgres_data
+  - redis_data
+  - minio_data
+  - uptime_data
+
+networks:
+  - app_network
+
+inputs:
+  - name: web_domain
+    prompt: "Web app domain"
+    example: "app.example.com"
+  - name: api_domain
+    prompt: "API domain"
+    example: "api.example.com"
+  - name: logs_domain
+    prompt: "Dozzle logs domain"
+    example: "logs.example.com"
+  - name: uptime_domain
+    prompt: "Uptime Kuma domain"
+    example: "uptime.example.com"
+  - name: storage_domain
+    prompt: "MinIO console domain"
+    example: "storage.example.com"
+  - name: web_port
+    prompt: "Internal web port"
+    default: "3000"
+  - name: api_port
+    prompt: "Internal API port"
+    default: "4000"
+  - name: web_command
+    prompt: "Web service command"
+    default: "npm run start:web"
+  - name: api_command
+    prompt: "API service command"
+    default: "npm run start:api"
+  - name: worker_command
+    prompt: "Worker service command"
+    default: "npm run worker"
+  - name: db_user
+    prompt: "Database user"
+    default: "app"
+  - name: db_password
+    prompt: "Database password"
+    generate: true
+  - name: db_name
+    prompt: "Database name"
+    default: "app"
+  - name: redis_password
+    prompt: "Redis password"
+    generate: true
+  - name: s3_bucket
+    prompt: "Object storage bucket"
+    default: "uploads"
+  - name: s3_access_key
+    prompt: "Object storage access key"
+    default: "groundcontrol"
+  - name: s3_secret_key
+    prompt: "Object storage secret key"
+    generate: true
+  - name: jwt_secret
+    prompt: "JWT signing secret"
+    generate: true
+  - name: app_secret
+    prompt: "Application secret"
+    generate: true
+  - name: ops_user
+    prompt: "Operations dashboard username"
+    default: "admin"
+  - name: ops_password
+    prompt: "Operations dashboard password"
+    generate: true

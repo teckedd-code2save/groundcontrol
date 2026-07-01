@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
 
     const allInputs: Record<string, string> = { ...inputs };
     if (repoUrl) allInputs["repo_url"] = repoUrl;
+    if (domain) allInputs["domain"] = domain;
     for (const ev of (envVars || [])) {
       if (ev.key) allInputs[`env_${ev.key}`] = ev.value || "";
     }
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
     const resolved = resolveTemplate(template, allInputs);
 
     // Deploy to VPS
-    const deployPath = `/opt/${templateName}`;
+    const deployPath = `/opt/${String(inputs.app_slug || domain || templateName).replace(/[^a-zA-Z0-9._-]/g, "-")}`;
     const vps = await getActiveVps();
 
     if (!vps) {
@@ -46,7 +47,6 @@ export async function POST(req: NextRequest) {
     }
 
     // Write docker-compose.yml
-    const escapedCompose = resolved.dockerCompose.replace(/'/g, "'\\''");
     await execOnVps(`cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${resolved.dockerCompose}\nGCEOF`, vps);
 
     // Write .env
@@ -58,7 +58,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Deploy
-    const upResult = await execOnVps(`cd ${shQuote(deployPath)} && docker compose up -d --build 2>&1`, vps);
+    const composeCmd = `if docker compose version >/dev/null 2>&1; then printf 'docker compose'; elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'; else printf ''; fi`;
+    const upResult = await execOnVps(`cd ${shQuote(deployPath)} && compose_cmd=$(${composeCmd}) && if [ -z "$compose_cmd" ]; then echo "docker compose plugin or docker-compose is required" >&2; exit 127; fi && $compose_cmd up -d --build 2>&1`, vps);
 
     // Cloudflare DNS
     let dnsResult: unknown = null;
@@ -80,6 +81,9 @@ export async function POST(req: NextRequest) {
       deployPath,
       upOutput: upResult,
       dns: dnsResult,
+      composeYml: resolved.dockerCompose,
+      proxyConfig: resolved.proxyConfig,
+      proxyConfigPath: resolved.proxyConfigPath,
       message: `Deployed to ${deployPath}. ${domain ? `Served at https://${domain}` : ""}`,
     });
   } catch (err) {

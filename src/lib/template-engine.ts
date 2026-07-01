@@ -4,8 +4,9 @@
 // and generates docker-compose.yml + reverse proxy configuration.
 
 import { readFileSync, readdirSync } from "fs";
-import { join } from "path";
+import { basename, join } from "path";
 import { randomBytes } from "crypto";
+import { parse } from "yaml";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -21,8 +22,10 @@ export interface TemplateService {
   name: string;
   image?: string;
   build?: boolean;
+  command?: string;
   ports?: string[];
   env?: string[];
+  labels?: string[];
   volumes?: string[];
   depends_on?: string[];
   restart?: string;
@@ -93,7 +96,9 @@ export function listTemplates(): TemplateDefinition[] {
 
 export function loadTemplate(filename: string): TemplateDefinition | null {
   try {
-    const path = join(TEMPLATES_DIR, filename);
+    const safeFilename = basename(filename);
+    if (!safeFilename.endsWith(".yml") && !safeFilename.endsWith(".yaml")) return null;
+    const path = join(TEMPLATES_DIR, safeFilename);
     const content = readFileSync(path, "utf-8");
     return parseTemplateYaml(content);
   } catch {
@@ -101,195 +106,58 @@ export function loadTemplate(filename: string): TemplateDefinition | null {
   }
 }
 
-// Simple YAML parser for our template format (no external deps)
+// YAML parser + schema normalization for our template format.
 function parseTemplateYaml(content: string): TemplateDefinition {
-  const lines = content.split("\n");
-  const root: Record<string, unknown> = {};
-  let currentSection: string | null = null;
-  let currentArray: unknown[] = [];
-  let currentArrayKey = "";
-  let currentService: Record<string, unknown> | null = null;
-  let currentInput: Record<string, unknown> | null = null;
-  let currentSite: Record<string, unknown> | null = null;
-  let services: Record<string, unknown>[] = [];
-  let inputs: Record<string, unknown>[] = [];
-  let sites: Record<string, unknown>[] = [];
-  let requires: Record<string, unknown> = {};
-  let envVars: string[] = [];
-  let volumes: string[] = [];
-  let networks: string[] = [];
-  let dependsOn: string[] = [];
-  let proxyType = "caddy";
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    // Top-level scalar: key: "value" (name, description, category, version)
-    const topScalar = trimmed.match(/^(\w[\w_]*):\s*"?(.+?)"?\s*$/);
-    if (topScalar && !line.startsWith(" ")) {
-      const key = topScalar[1];
-      const val = topScalar[2];
-      if (["name", "description", "category", "version"].includes(key)) {
-        root[key] = val;
-      }
-      continue;
-    }
-
-    // Top-level key that opens a section (no value on same line)
-    const topMatch = trimmed.match(/^(\w[\w_]*):\s*$/);
-    if (topMatch && !line.startsWith(" ")) {
-      currentSection = topMatch[1];
-      currentService = null;
-      continue;
-    }
-
-    // Indented scalar
-    const indentedScalar = trimmed.match(/^  (\w[\w_]*):\s*"?(.+)"?\s*$/);
-    if (indentedScalar && currentSection === "reverse_proxy") {
-      const key = indentedScalar[1];
-      const val = indentedScalar[2];
-      if (key === "type") proxyType = val;
-      continue;
-    }
-    if (indentedScalar && currentSection === "requires") {
-      requires[indentedScalar[1]] = indentedScalar[2] === "true";
-      continue;
-    }
-    if (indentedScalar && currentSection === "services" && currentService) {
-      const key = indentedScalar[1];
-      const val = indentedScalar[2];
-      if (key === "restart") currentService["restart"] = val;
-      else if (key === "image") currentService["image"] = val;
-      continue;
-    }
-
-    // Array item
-    const arrayItem = trimmed.match(/^  -\s*"?(.+)"?$/);
-    if (arrayItem && currentSection === "services" && currentService) {
-      const val = arrayItem[1];
-      if (trimmed.includes("depends_on") || currentArrayKey === "depends_on") {
-        dependsOn.push(val);
-        currentArrayKey = "depends_on";
-      } else if (currentArrayKey === "env" || trimmed.includes("env:")) {
-        if (trimmed.startsWith("  - ")) envVars.push(val);
-        currentArrayKey = "env";
-      } else if (currentArrayKey === "volumes" || trimmed.includes("volumes:")) {
-        if (trimmed.startsWith("  - ")) volumes.push(val);
-        currentArrayKey = "volumes";
-      } else if (currentArrayKey === "ports" || trimmed.includes("ports:")) {
-        currentArray.push(val);
-      }
-      continue;
-    }
-    if (arrayItem && currentSection === "volumes") {
-      volumes.push(arrayItem[1]);
-      continue;
-    }
-    if (arrayItem && currentSection === "networks") {
-      networks.push(arrayItem[1]);
-      continue;
-    }
-
-    // Service name
-    // Service item creation: "- name: value"
-    if (currentSection === "services" && trimmed.startsWith("- ")) {
-      const nameMatch = trimmed.match(/^-\s+name:\s*"?(.+?)\"?\s*$/);
-      if (nameMatch) {
-        if (currentService) {
-          if (envVars.length) currentService["env"] = envVars;
-          if (volumes.length) currentService["volumes"] = volumes;
-          if (dependsOn.length) currentService["depends_on"] = dependsOn;
-          services.push(currentService);
-        }
-        currentService = { name: nameMatch[1] };
-        envVars = []; volumes = []; dependsOn = []; currentArrayKey = "";
-        continue;
-      }
-    }
-
-    if (currentSection === "services" && trimmed.match(/^  (\w[\w-]*):\s*$/)) {
-      if (currentService) {
-        if (envVars.length) currentService["env"] = envVars;
-        if (volumes.length) currentService["volumes"] = volumes;
-        if (dependsOn.length) currentService["depends_on"] = dependsOn;
-        services.push(currentService);
-      }
-      currentService = { name: trimmed.replace(/:$/, "").trim() };
-      envVars = [];
-      volumes = [];
-      dependsOn = [];
-      currentArrayKey = "";
-      continue;
-    }
-
-    // Input name
-    if (currentSection === "inputs" && trimmed.match(/^  (\w[\w-]*):\s*$/)) {
-      if (currentInput) inputs.push(currentInput);
-      currentInput = { name: trimmed.replace(/:$/, "").trim() };
-      continue;
-    }
-
-    // Site entry
-    if (currentSection === "reverse_proxy" && trimmed.match(/^    -\s*$/)) {
-      currentSite = {};
-      continue;
-    }
-
-    // Input property
-    if (currentInput) {
-      const propMatch = trimmed.match(/^    (\w+):\s*"?(.+)"?\s*$/);
-      if (propMatch) currentInput[propMatch[1]] = propMatch[2];
-      continue;
-    }
-
-    // Service property
-    if (currentService) {
-      const sProp = trimmed.match(/^    (\w[\w_]*):\s*"?(.+)"?\s*$/);
-      if (sProp) {
-        const key = sProp[1];
-        const val = sProp[2];
-        if (key === "build") currentService[key] = val === "true";
-        else if (key === "restart" || key === "image") currentService[key] = val;
-        continue;
-      }
-      // Array key
-      const arrKey = trimmed.match(/^    (\w+):\s*$/);
-      if (arrKey) { currentArrayKey = arrKey[1]; currentArray = []; continue; }
-      // Ports array item
-      if (currentArrayKey === "ports" && arrayItem) {
-        currentArray.push(arrayItem[1]);
-        continue;
-      }
-      continue;
-    }
-
-    // Site properties
-    if (currentSite) {
-      const siteProp = trimmed.match(/^      (\w+):\s*"?(.+)"?\s*$/);
-      if (siteProp) currentSite[siteProp[1]] = siteProp[2];
-      continue;
-    }
+  const doc = parse(content) as Record<string, unknown> | null;
+  if (!doc || typeof doc !== "object") {
+    throw new Error("Template YAML must contain an object");
   }
 
-  // Finalize
-  if (currentService) {
-    if (envVars.length) currentService["env"] = envVars;
-    if (volumes.length) currentService["volumes"] = volumes;
-    if (dependsOn.length) currentService["depends_on"] = dependsOn;
-    if (currentArray.length) (currentService as any)[currentArrayKey || "ports"] = currentArray;
-    services.push(currentService);
-  }
-  if (currentInput) inputs.push(currentInput);
+  const requires = asRecord(doc.requires);
+  const reverseProxy = asRecord(doc.reverse_proxy);
+  const proxyType = String(reverseProxy.type || "caddy");
+  const sites = asArray(reverseProxy.sites).map((site) => {
+    const s = asRecord(site);
+    return {
+      domain: String(s.domain || ""),
+      proxy_to: String(s.proxy_to || ""),
+      root: s.root == null ? undefined : String(s.root),
+    };
+  }).filter((site) => site.domain);
 
-  const svcs = services.map(s => ({ name: (s.name || "") as string, ...s } as TemplateService));
-  const inps = inputs.map(i => ({ name: (i.name || "") as string, ...i } as TemplateInput));
+  const svcs = asArray(doc.services).map((service) => {
+    const s = asRecord(service);
+    return {
+      name: String(s.name || ""),
+      image: s.image == null ? undefined : String(s.image),
+      build: s.build === true,
+      command: s.command == null ? undefined : String(s.command),
+      ports: asStringArray(s.ports),
+      env: asStringArray(s.env ?? s.environment),
+      labels: asStringArray(s.labels),
+      volumes: asStringArray(s.volumes),
+      depends_on: asStringArray(s.depends_on),
+      restart: s.restart == null ? undefined : String(s.restart),
+      healthcheck: normalizeHealthcheck(s.healthcheck),
+    } satisfies TemplateService;
+  }).filter((svc) => svc.name);
+
+  const inps = asArray(doc.inputs).map((input) => {
+    const i = asRecord(input);
+    return {
+      name: String(i.name || ""),
+      prompt: i.prompt == null ? undefined : String(i.prompt),
+      example: i.example == null ? undefined : String(i.example),
+      default: i.default == null ? undefined : String(i.default),
+      generate: i.generate === true,
+    } satisfies TemplateInput;
+  }).filter((input) => input.name);
 
   return {
-    name: (root.name as string) || "Unnamed",
-    description: (root.description as string) || "",
-    category: (root.category as string) || "general",
-    version: (root.version as string) || "1.0",
+    name: String(doc.name || "Unnamed"),
+    description: String(doc.description || ""),
+    category: String(doc.category || "general"),
+    version: String(doc.version || "1.0"),
     requires: {
       docker: requires.docker !== false,
       caddy: proxyType === "caddy",
@@ -297,11 +165,39 @@ function parseTemplateYaml(content: string): TemplateDefinition {
       nginx: proxyType === "nginx",
       k3s: requires.k3s === true,
     },
-    reverse_proxy: { type: proxyType as "caddy" | "traefik" | "nginx", sites: sites as any, global_config: requires.global_config as string },
+    reverse_proxy: {
+      type: proxyType as "caddy" | "traefik" | "nginx",
+      sites,
+      global_config: reverseProxy.global_config == null ? undefined : String(reverseProxy.global_config),
+    },
     services: svcs,
-    volumes,
-    networks,
+    volumes: asStringArray(doc.volumes),
+    networks: asStringArray(doc.networks),
     inputs: inps,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item)).filter(Boolean);
+}
+
+function normalizeHealthcheck(value: unknown): TemplateService["healthcheck"] | undefined {
+  const h = asRecord(value);
+  if (!Object.keys(h).length) return undefined;
+  return {
+    test: String(h.test || ""),
+    interval: String(h.interval || "30s"),
+    timeout: String(h.timeout || "5s"),
+    retries: Number(h.retries || 3),
   };
 }
 
@@ -369,6 +265,9 @@ function generateDockerCompose(
       lines.push(`    build:`);
       lines.push(`      context: ${context}`);
     }
+    if (svc.command) {
+      lines.push(`    command: ${resolveTemplateString(svc.command, resolved)}`);
+    }
     if (svc.restart) {
       lines.push(`    restart: ${svc.restart}`);
     } else {
@@ -382,21 +281,31 @@ function generateDockerCompose(
       lines.push(`    environment:`);
       for (const e of svc.env) lines.push(`      - ${resolveTemplateString(e, resolved)}`);
     }
+    if (svc.labels && svc.labels.length > 0) {
+      lines.push(`    labels:`);
+      for (const label of svc.labels) lines.push(`      - ${JSON.stringify(resolveTemplateString(label, resolved))}`);
+    }
     if (svc.volumes && svc.volumes.length > 0) {
       lines.push(`    volumes:`);
       for (const v of svc.volumes) lines.push(`      - ${resolveTemplateString(v, resolved)}`);
     }
     if (svc.depends_on && svc.depends_on.length > 0) {
       lines.push(`    depends_on:`);
-      for (const d of svc.depends_on) lines.push(`      ${resolveTemplateString(d, resolved)}:`);
-      lines.push(`        condition: service_started`);
+      for (const d of svc.depends_on) {
+        lines.push(`      ${resolveTemplateString(d, resolved)}:`);
+        lines.push(`        condition: service_started`);
+      }
     }
     if (svc.healthcheck) {
       lines.push(`    healthcheck:`);
-      lines.push(`      test: ${JSON.stringify(svc.healthcheck.test.split(" "))}`);
+      lines.push(`      test: ${JSON.stringify(["CMD-SHELL", resolveTemplateString(svc.healthcheck.test, resolved)])}`);
       lines.push(`      interval: ${svc.healthcheck.interval}`);
       lines.push(`      timeout: ${svc.healthcheck.timeout}`);
       lines.push(`      retries: ${svc.healthcheck.retries}`);
+    }
+    if (template.networks && template.networks.length > 0) {
+      lines.push(`    networks:`);
+      for (const n of template.networks) lines.push(`      - ${resolveTemplateString(n, resolved)}`);
     }
     lines.push("");
   }
@@ -408,8 +317,10 @@ function generateDockerCompose(
   }
   if (template.networks && template.networks.length > 0) {
     lines.push("networks:");
-    for (const n of template.networks) lines.push(`  ${resolveTemplateString(n, resolved)}:`);
-    lines.push("  driver: bridge");
+    for (const n of template.networks) {
+      lines.push(`  ${resolveTemplateString(n, resolved)}:`);
+      lines.push("    driver: bridge");
+    }
     lines.push("");
   }
 

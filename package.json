@@ -39,7 +39,8 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "ssh2": "^1.17.0",
-    "three": "^0.184.0"
+    "three": "^0.184.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
