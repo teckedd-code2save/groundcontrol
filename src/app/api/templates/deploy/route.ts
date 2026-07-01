@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
 import { getActiveVps, execOnVps, getSystemConfig, shQuote } from "@/lib/vps";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
+import { prisma } from "@/lib/prisma";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -152,7 +153,18 @@ export async function POST(req: NextRequest) {
     }
 
     // Write docker-compose.yml
-    await execOnVps(`mkdir -p ${shQuote(deployPath)}/.groundcontrol && cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${resolved.dockerCompose}\nGCEOF\ncat > ${shQuote(deployPath)}/.env.schema << 'GCEOF'\n${resolved.envSchema}\nGCEOF\ncat > ${shQuote(deployPath)}/.groundcontrol/manifest.json << 'GCEOF'\n${manifest}\nGCEOF`, vps);
+    // Auto-inject tunnel tokens from Settings if template references {{tunnel_token}}
+    let composeContent = resolved.dockerCompose;
+    if (composeContent.includes("{{tunnel_token}}")) {
+      try {
+        const tunnel = await (prisma as any).cloudflareTunnel.findFirst({ orderBy: { createdAt: "desc" } });
+        if (tunnel) {
+          composeContent = composeContent.replace(/\{\{tunnel_token\}\}/g, tunnel.token);
+        }
+      } catch {}
+    }
+
+    await execOnVps(`mkdir -p ${shQuote(deployPath)}/.groundcontrol && cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${composeContent}\nGCEOF\ncat > ${shQuote(deployPath)}/.env.schema << 'GCEOF'\n${resolved.envSchema}\nGCEOF\ncat > ${shQuote(deployPath)}/.groundcontrol/manifest.json << 'GCEOF'\n${manifest}\nGCEOF`, vps);
 
     // Write .env
     if (envVars && envVars.length > 0) {

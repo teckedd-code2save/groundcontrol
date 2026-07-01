@@ -27,6 +27,37 @@ export default function CloudflareSettingsTab() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<number | null>(null);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const loadTunnels = async () => {
+    try {
+      const res = await fetch("/api/cloudflare/tunnels");
+      const data = await res.json();
+      const list = document.getElementById("tunnel-list");
+      if (!list) return;
+      if (!data.tunnels || data.tunnels.length === 0) {
+        list.innerHTML = '<p class="text-xs text-muted font-mono">No tunnels saved.</p>';
+        return;
+      }
+      list.innerHTML = data.tunnels.map((t: any) => `
+        <div class="flex items-center justify-between p-3 bg-background border border-border rounded-lg">
+          <div>
+            <span class="text-sm font-mono">${t.name}</span>
+            <span class="text-[10px] text-muted ml-2">${t.token.slice(0, 8)}...</span>
+          </div>
+          <button onclick="deleteTunnel(${t.id})" class="text-xs text-error/70 hover:text-error font-mono">del</button>
+        </div>
+      `).join("");
+    } catch {}
+  }
+
+  useEffect(() => {
+    loadTunnels();
+    (window as any).deleteTunnel = async (id: number) => {
+      await fetch("/api/cloudflare/tunnels", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      loadTunnels();
+    };
+  }, []);
+
   const [deleteTarget, setDeleteTarget] = useState<CloudflareAccount | null>(null);
 
   async function loadAccounts() {
@@ -468,6 +499,33 @@ function DnsRecordsPanel() {
             )}
           </>
         )}
+      </div>
+
+      {/* Tunnels */}
+      <div className="mt-8 p-5 bg-card border border-border rounded-xl">
+        <h3 className="text-sm font-medium mb-2">Cloudflare Tunnels</h3>
+        <p className="text-xs text-muted mb-4">Store tunnel tokens for templates that use Cloudflare Tunnel. Deployed automatically — no manual env vars needed.</p>
+        <div className="flex gap-2">
+          <input type="text" placeholder="Tunnel name (e.g. production-tunnel)" id="tunnel-name"
+            className="flex-1 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+          <input type="password" placeholder="Tunnel token" id="tunnel-token"
+            className="flex-1 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+          <button onClick={async () => {
+            const name = (document.getElementById("tunnel-name") as HTMLInputElement)?.value;
+            const token = (document.getElementById("tunnel-token") as HTMLInputElement)?.value;
+            if (!name || !token) return;
+            const res = await fetch("/api/cloudflare/tunnels", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, token }),
+            });
+            if (res.ok) {
+              (document.getElementById("tunnel-name") as HTMLInputElement).value = "";
+              (document.getElementById("tunnel-token") as HTMLInputElement).value = "";
+              loadTunnels();
+            }
+          }} className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-colors">Save</button>
+        </div>
+        <div id="tunnel-list" className="mt-4 space-y-2"></div>
       </div>
     </div>
   );
