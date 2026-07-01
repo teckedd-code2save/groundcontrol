@@ -1,0 +1,78 @@
+name: "Cloudflare Tunnel Private Apps"
+description: "Private/admin app stack routed through a Cloudflare Tunnel connector with no public host app ports."
+category: "private"
+version: "2.0"
+requires:
+  docker: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "127.0.0.1:{{app_host_port}}"
+components:
+  - id: cloudflare
+    label: Cloudflare Tunnel and DNS
+    layer: edge
+    kind: tunnel
+  - id: access
+    label: Cloudflare Access policy metadata
+    layer: security
+    kind: access
+  - id: app
+    label: Private application
+    layer: application
+    kind: service
+    service: app
+  - id: tunnel
+    label: cloudflared connector
+    layer: traffic
+    kind: connector
+    service: cloudflared
+services:
+  - name: app
+    image: "{{app_image}}"
+    ports:
+      - "127.0.0.1:{{app_host_port}}:{{app_port}}"
+    env:
+      - PORT={{app_port}}
+      - APP_SECRET={{app_secret}}
+    restart: unless-stopped
+    healthcheck:
+      test: "wget -qO- http://localhost:{{app_port}}{{health_path}} || exit 1"
+      interval: "30s"
+      timeout: "5s"
+      retries: 5
+  - name: cloudflared
+    image: "cloudflare/cloudflared:latest"
+    command: "tunnel --no-autoupdate run --token {{tunnel_token}}"
+    depends_on:
+      - app
+    restart: unless-stopped
+volumes: []
+networks:
+  - app_network
+inputs:
+  - name: app_slug
+    prompt: "Deployment slug"
+    default: "private-app"
+  - name: domain
+    prompt: "Private app domain"
+    example: "admin.example.com"
+  - name: app_image
+    prompt: "App image"
+    default: "nginxdemos/hello:latest"
+  - name: app_port
+    prompt: "App container port"
+    default: "80"
+  - name: app_host_port
+    prompt: "Local diagnostic host port"
+    default: "13040"
+  - name: health_path
+    prompt: "Health path"
+    default: "/"
+  - name: tunnel_token
+    prompt: "Cloudflare tunnel token"
+    example: "eyJhIj..."
+  - name: app_secret
+    prompt: "Application secret"
+    generate: true

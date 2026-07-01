@@ -322,6 +322,7 @@ export async function getContainerLogs(
 const DEFAULT_SYSTEM_CONFIG = {
   id: 0,
   projectRoot: "/opt",
+  templateDeploymentRoot: "/srv/groundcontrol/deployments",
   caddySitesDir: "/etc/caddy/sites",
   caddyFile: "/etc/caddy/Caddyfile",
   nginxSitesDir: "/etc/nginx/sites-available",

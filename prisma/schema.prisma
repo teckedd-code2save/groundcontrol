@@ -196,6 +196,7 @@ model SystemConfig {
   id             Int    @id @default(autoincrement())
   vpsConfigId    Int?   @unique // links this filesystem layout to a specific VPS; null = global/legacy default
   projectRoot    String @default("/opt")
+  templateDeploymentRoot String @default("/srv/groundcontrol/deployments")
   caddySitesDir  String @default("/etc/caddy/sites")
   caddyFile      String @default("/etc/caddy/Caddyfile")
   nginxSitesDir  String @default("/etc/nginx/sites-available")

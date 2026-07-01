@@ -9,7 +9,7 @@ import CloudflarePanel from "@/components/CloudflarePanel";
 import { BootstrapPanel } from "@/components/BootstrapPanel";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
 
-type TabKey = "containers" | "proxy" | "projects" | "deployments" | "cloudflare" | "bootstrap" | "infrastructure";
+type TabKey = "containers" | "proxy" | "deployments" | "cloudflare" | "bootstrap" | "infrastructure";
 
 export default function ServicesPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("containers");
@@ -17,7 +17,6 @@ export default function ServicesPage() {
   const tabs = [
     { key: "containers", label: "Containers" },
     { key: "proxy", label: "Proxy" },
-    { key: "projects", label: "Projects" },
     { key: "deployments", label: "Deployments" },
     { key: "cloudflare", label: "Cloudflare" },
     { key: "bootstrap", label: "Install" },
@@ -64,8 +63,12 @@ export default function ServicesPage() {
 
       {activeTab === "containers" && <ContainersPanel />}
       {activeTab === "proxy" && <ProxyPanel />}
-      {activeTab === "projects" && <ProjectsPanel />}
-      {activeTab === "deployments" && <DeploymentsPanel />}
+      {activeTab === "deployments" && (
+        <div className="space-y-8">
+          <ProjectsPanel />
+          <DeploymentsPanel />
+        </div>
+      )}
       {activeTab === "cloudflare" && <CloudflarePanel />}
       {activeTab === "bootstrap" && <BootstrapPanel />}
       {activeTab === "infrastructure" && <TerraformStacksTab />}

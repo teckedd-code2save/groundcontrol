@@ -51,6 +51,9 @@ interface ScannedProject {
   services: ComposeServiceInfo[];
   domain?: string;
   hasGit: boolean;
+  valid?: boolean;
+  parseError?: string;
+  managed?: boolean;
 }
 
 interface ProjectData {
@@ -194,6 +197,7 @@ export function ProjectsPanel() {
   const [deploying, setDeploying] = useState<string | null>(null);
   const [confirmDeploy, setConfirmDeploy] = useState<string | null>(null);
   const [projectRoot, setProjectRoot] = useState("/opt");
+  const [templateDeploymentRoot, setTemplateDeploymentRoot] = useState("/srv/groundcontrol/deployments");
   const [error, setError] = useState("");
   const [composeAction, setComposeAction] = useState<ComposeActionState | null>(null);
   const [composeOutput, setComposeOutput] = useState<{ slug: string; output: string; error?: string } | null>(null);
@@ -238,6 +242,7 @@ export function ProjectsPanel() {
         setContainers(Array.isArray(containersRes.data) ? containersRes.data : []);
         setImages(Array.isArray(imagesRes.data) ? imagesRes.data : []);
         if (configRes.data?.projectRoot) setProjectRoot(configRes.data.projectRoot);
+        if (configRes.data?.templateDeploymentRoot) setTemplateDeploymentRoot(configRes.data.templateDeploymentRoot);
         if (projectsRes.data?.scanError) setError(`Scan warning: ${projectsRes.data.scanError}`);
 
         const loadedTargets: DeploymentTarget[] = Array.isArray(targetsRes.data) ? targetsRes.data : [];
@@ -469,6 +474,70 @@ export function ProjectsPanel() {
     }
   }
 
+  async function replicateDeployment(project: ScannedProject) {
+    const suggested = `${project.slug}-copy`;
+    const newSlug = window.prompt("New deployment slug", suggested);
+    if (!newSlug) return;
+    const copyEnv = window.confirm("Copy .env values into the replica? Cancel leaves a blank .env with 600 permissions.");
+    setComposeOutput({ slug: project.slug, output: "Creating isolated deployment copy..." });
+    try {
+      const res = await fetch("/api/deployments/replicate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourcePath: project.path,
+          sourceSlug: project.slug,
+          newSlug,
+          envStrategy: copyEnv ? "copy" : "blank",
+        }),
+      });
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error) {
+        setComposeOutput({ slug: project.slug, output: "", error: data.error || "Replication failed" });
+        setError(`Replication failed: ${data.error || "Unknown error"}`);
+      } else {
+        setError("");
+        setComposeOutput({ slug: project.slug, output: data.message || `Created ${data.targetPath}` });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setComposeOutput({ slug: project.slug, output: "", error: message });
+      setError(`Replication failed: ${message}`);
+    }
+  }
+
+  async function deleteManagedDeployment(project: ScannedProject) {
+    if (!project.managed) {
+      setError(`Delete is only enabled for managed deployments under ${templateDeploymentRoot}. Replicate or adopt this app first.`);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete managed deployment?\n\nRoot: ${project.path}\nContainers: docker compose down\nVolumes: kept by default\nNetworks: compose-managed networks removed\nProxy/DNS: review manifest before deleting external records`
+    );
+    if (!confirmed) return;
+    const deleteVolumes = window.confirm("Also delete compose volumes? Cancel keeps data volumes.");
+    setComposeOutput({ slug: project.slug, output: "Deleting managed deployment..." });
+    try {
+      const res = await fetch("/api/deployments/delete-managed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: project.path, deleteVolumes }),
+      });
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error) {
+        setComposeOutput({ slug: project.slug, output: "", error: data.error || "Delete failed" });
+        setError(`Delete failed: ${data.error || "Unknown error"}`);
+      } else {
+        setError("");
+        setComposeOutput({ slug: project.slug, output: data.output || `Deleted ${project.path}` });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setComposeOutput({ slug: project.slug, output: "", error: message });
+      setError(`Delete failed: ${message}`);
+    }
+  }
+
   function isServiceSelected(slug: string, service: string): boolean {
     return selectedServices[slug]?.has(service) ?? false;
   }
@@ -573,7 +642,7 @@ export function ProjectsPanel() {
       )}
 
       <p className="text-[11px] text-muted/70 leading-relaxed">
-        Compose-bearing projects discovered under {projectRoot} — nested projects shown separately
+        Deployments discovered under {projectRoot}; managed template deployments live under {templateDeploymentRoot}.
       </p>
 
       {projects.length === 0 ? (
@@ -619,6 +688,7 @@ export function ProjectsPanel() {
                 const isCloudRun = selectedTarget?.type === "cloudrun";
                 const isTerraform = selectedTarget?.type === "terraform";
                 const selectedTargetName = selectedTarget?.name || "default";
+                const isInvalid = project.valid === false || !!project.parseError;
 
                 return (
                   <div
@@ -634,7 +704,17 @@ export function ProjectsPanel() {
                           </span>
                           {project.hasGit && (
                             <span className="text-[10px] font-mono text-accent bg-accent/10 px-1.5 py-0.5 rounded">
-                              git
+                              branch
+                            </span>
+                          )}
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                            project.managed ? "text-success bg-success/10" : "text-muted bg-border/50"
+                          }`}>
+                            {project.managed ? "managed" : "discovered"}
+                          </span>
+                          {isInvalid && (
+                            <span className="text-[10px] font-mono text-warning bg-warning/10 px-1.5 py-0.5 rounded">
+                              invalid compose
                             </span>
                           )}
                           {meta.containers.length > 0 && (
@@ -689,33 +769,56 @@ export function ProjectsPanel() {
                           </div>
                         )}
                       </div>
-                      <div className="grid w-full grid-cols-3 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:justify-end">
+                      <div className="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:justify-end">
+                        {!isInvalid && (
+                          <>
+                            <button
+                              onClick={() => setConfirmCompose({ slug: project.slug, type: "up" })}
+                              disabled={!!composeAction}
+                              className="px-3 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded-lg hover:bg-success/20 transition-colors disabled:opacity-50"
+                              title="Start deployment services"
+                            >
+                              Box Up
+                            </button>
+                            <button
+                              onClick={() => setConfirmCompose({ slug: project.slug, type: "down" })}
+                              disabled={!!composeAction}
+                              className="px-3 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded-lg hover:bg-warning/20 transition-colors disabled:opacity-50"
+                              title="Stop deployment services"
+                            >
+                              Box Down
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeploy(project.slug)}
+                              disabled={deploying === project.slug}
+                              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
+                              title="Redeploy through configured target"
+                            >
+                              Branch Redeploy
+                            </button>
+                          </>
+                        )}
                         <button
-                          onClick={() => setConfirmCompose({ slug: project.slug, type: "up" })}
+                          onClick={() => replicateDeployment(project)}
                           disabled={!!composeAction}
-                          className="px-3 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded-lg hover:bg-success/20 transition-colors disabled:opacity-50"
+                          className="px-3 py-2 text-xs font-mono border border-border text-muted rounded-lg hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
+                          title="Replicate deployment"
                         >
-                          Up
+                          Copy Replicate
                         </button>
                         <button
-                          onClick={() => setConfirmCompose({ slug: project.slug, type: "down" })}
-                          disabled={!!composeAction}
-                          className="px-3 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded-lg hover:bg-warning/20 transition-colors disabled:opacity-50"
+                          onClick={() => deleteManagedDeployment(project)}
+                          disabled={!project.managed || !!composeAction}
+                          className="px-3 py-2 text-xs font-mono border border-error/30 text-error rounded-lg hover:bg-error/10 transition-colors disabled:opacity-40"
+                          title={project.managed ? "Delete managed deployment" : "Only managed deployments can be deleted here"}
                         >
-                          Down
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeploy(project.slug)}
-                          disabled={deploying === project.slug}
-                          className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
-                        >
-                          Redeploy
+                          Trash Delete
                         </button>
                       </div>
                     </div>
 
                     {/* Deploy options */}
-                    <div className="mb-4 p-3 bg-background/50 border border-border rounded-lg space-y-3">
+                    {!isInvalid && <div className="mb-4 p-3 bg-background/50 border border-border rounded-lg space-y-3">
                       <div className="flex flex-wrap items-end gap-3">
                         <div>
                           <label className="block text-[10px] font-mono text-muted mb-1">Target</label>
@@ -938,10 +1041,14 @@ export function ProjectsPanel() {
                         {opts.generatePreviewUrl && " · quick tunnel preview"}
                         {opts.subdomain && opts.zoneId && ` · ${opts.subdomain} → ${zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId}`}
                       </div>
-                    </div>
+                    </div>}
 
                     {/* Compose Services */}
-                    {project.services.length > 0 ? (
+                    {isInvalid ? (
+                      <div className="mb-4 text-[10px] text-warning font-mono bg-warning/5 border border-warning/20 p-2 rounded-lg">
+                        Compose file at {project.composePath} is invalid: {project.parseError || "services must be a mapping"}
+                      </div>
+                    ) : project.services.length > 0 ? (
                       <div className="mb-4 space-y-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">

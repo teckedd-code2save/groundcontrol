@@ -108,7 +108,7 @@ export default function OnboardingPage() {
     if (c.length > 0) { const manual = c.filter((x: any) => !x.composeProject).length; if (manual > 0) lines.push(`${manual} container(s) not managed by Compose.\n`); }
     if (p.type !== "none") lines.push(`**Reverse Proxy:** ${p.type}${p.configPaths?.length ? " at " + p.configPaths[0] : ""}`);
     else lines.push("**Reverse Proxy:** None detected — I can help set one up");
-    if (pr.length > 0) { const names = pr.map((x: any) => x.path.split("/").pop()).slice(0, 4).join(", "); lines.push(`**Projects:** ${pr.length} found (${names}${pr.length > 4 ? "..." : ""})`); }
+    if (pr.length > 0) { const names = pr.map((x: any) => x.path.split("/").pop()).slice(0, 4).join(", "); lines.push(`**Deployments:** ${pr.length} found (${names}${pr.length > 4 ? "..." : ""})`); }
     lines.push(data.questions?.length ? "\nLet me confirm a few things:" : "\nEverything looks clear! What would you like to do next?");
     return lines.join("\n");
   }

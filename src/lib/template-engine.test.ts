@@ -1,20 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { generatePreview, listTemplates, resolveTemplate } from "./template-engine";
+import { generatePreview, listTemplates, resolveTemplate, validateComposeDocument } from "./template-engine";
 
 function inputsFor(names: string[]): Record<string, string> {
   const values: Record<string, string> = {
     domain: "app.example.com",
     web_domain: "app.example.com",
     api_domain: "api.example.com",
+    dashboard_domain: "dash.example.com",
+    admin_domain: "admin.example.com",
     app_slug: "app",
     app_container: "app",
     app_port: "3000",
+    app_host_port: "13000",
+    frontend_host_port: "13001",
+    backend_host_port: "13002",
+    web_host_port: "13003",
+    api_host_port: "13004",
+    minio_host_port: "19000",
+    node_port: "30080",
     web_port: "3000",
     api_port: "4000",
+    web_image: "nginxdemos/hello:latest",
+    api_image: "nginxdemos/hello:latest",
+    worker_image: "alpine:3.20",
+    frontend_image: "nginxdemos/hello:latest",
+    backend_image: "nginxdemos/hello:latest",
+    app_image: "nginxdemos/hello:latest",
+    postgres_image: "postgres:16-alpine",
+    mysql_image: "mysql:8.4",
+    redis_image: "redis:7-alpine",
+    minio_image: "minio/minio:latest",
+    cloudflared_image: "cloudflare/cloudflared:latest",
+    caddy_image: "caddy:2-alpine",
+    traefik_image: "traefik:v3.3",
     db_user: "app",
     db_password: "secret",
     db_name: "app",
+    minio_root_user: "minio",
+    minio_root_password: "minio-secret",
     app_secret: "secret",
+    tunnel_token: "token",
+    namespace: "app",
+    replicas: "2",
     rails_master_key: "secret",
     django_project: "config",
     web_workers: "3",
@@ -34,12 +61,20 @@ describe("template engine", () => {
   it("loads every template with services and inputs", () => {
     const templates = listTemplates();
 
-    expect(templates.length).toBeGreaterThanOrEqual(8);
+    expect(templates.map((template) => template._filename).sort()).toEqual([
+      "cloudflare-tunnel-private-apps",
+      "k3s-caddy-nodeport-platform",
+      "vps-caddy-commerce-secure",
+      "vps-nginx-polyglot-secure",
+      "vps-traefik-scaled-services",
+    ]);
     for (const template of templates) {
       expect(template._filename).toBeTruthy();
       expect(template.name).toBeTruthy();
       expect(template.services.length).toBeGreaterThan(0);
       expect(template.inputs.length).toBeGreaterThan(0);
+      expect(template.components?.length).toBeGreaterThan(0);
+      expect(template.components?.every((component) => component.layer && component.kind)).toBe(true);
     }
   });
 
@@ -51,22 +86,31 @@ describe("template engine", () => {
       expect(resolved.dockerCompose).toContain("services:");
       expect(resolved.dockerCompose).not.toContain("{{");
       expect(resolved.proxyConfig).not.toContain("{{");
+      expect(resolved.manifest).toContain('"managedBy": "groundcontrol"');
       expect(preview).toContain("## Services");
+      expect(preview).toContain("## Layers");
+      expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(true);
     }
   });
 
   it("preserves production compose fields from templates", () => {
-    const traefik = listTemplates().find((template) => template._filename === "traefik-multi-app");
-    const next = listTemplates().find((template) => template._filename === "nextjs-saas-postgres-redis");
+    const traefik = listTemplates().find((template) => template._filename === "vps-traefik-scaled-services");
+    const caddy = listTemplates().find((template) => template._filename === "vps-caddy-commerce-secure");
     expect(traefik).toBeTruthy();
-    expect(next).toBeTruthy();
+    expect(caddy).toBeTruthy();
 
     const traefikResolved = resolveTemplate(traefik!, inputsFor(traefik!.inputs.map((input) => input.name)));
     expect(traefikResolved.dockerCompose).toContain("labels:");
-    expect(traefikResolved.dockerCompose).toContain("traefik.http.routers.app.rule");
+    expect(traefikResolved.dockerCompose).toContain("traefik.http.routers.web.rule");
 
-    const nextResolved = resolveTemplate(next!, inputsFor(next!.inputs.map((input) => input.name)));
-    expect(nextResolved.dockerCompose).toContain("command: redis-server --appendonly yes");
-    expect(nextResolved.dockerCompose).toContain('test: ["CMD-SHELL"');
+    const caddyResolved = resolveTemplate(caddy!, inputsFor(caddy!.inputs.map((input) => input.name)));
+    expect(caddyResolved.dockerCompose).toContain("redis-server --appendonly yes");
+    expect(caddyResolved.dockerCompose).toContain('test: ["CMD-SHELL"');
+  });
+
+  it("rejects invalid compose service shapes", () => {
+    expect(validateComposeDocument("name: bad\nservices: []").ok).toBe(false);
+    expect(validateComposeDocument("name: bad\nservices:\n").ok).toBe(false);
+    expect(validateComposeDocument("services:\n  app:\n    image: nginx").ok).toBe(true);
   });
 });

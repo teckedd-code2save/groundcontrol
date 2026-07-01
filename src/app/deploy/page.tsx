@@ -11,7 +11,7 @@ export default function DeployRedirectPage() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
-      <p className="text-muted text-sm">Deploy has moved to Projects. Redirecting...</p>
+      <p className="text-muted text-sm">Deploy has moved to Deployments. Redirecting...</p>
     </div>
   );
 }

@@ -68,6 +68,17 @@ export default function TemplatesPage() {
     setInputs(prev => ({ ...prev, [name]: value }));
   }
 
+  function deploymentInputs(): Record<string, string> {
+    if (!selected || sourceType !== "ghcr" || !ghcrImage) return inputs;
+    const merged = { ...inputs };
+    for (const input of selected.inputs || []) {
+      if (input.name.endsWith("_image") || input.name === "app_image") {
+        merged[input.name] = ghcrImage;
+      }
+    }
+    return merged;
+  }
+
   function addEnvVar() { setEnvVars([...envVars, { key: "", value: "" }]); }
   function updateEnvVar(i: number, f: "key" | "value", v: string) {
     const u = [...envVars]; u[i][f] = v; setEnvVars(u);
@@ -84,8 +95,9 @@ export default function TemplatesPage() {
         body: JSON.stringify({
           name: selected._filename,
           preview: true,
-          inputs,
+          inputs: deploymentInputs(),
           repoUrl: sourceType === "github" ? repoUrl : undefined,
+          branch: sourceType === "github" ? branch : undefined,
           ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
           localPath: sourceType === "local" ? localPath : undefined,
         }),
@@ -112,9 +124,12 @@ export default function TemplatesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           templateName: selected._filename,
-          inputs,
+          inputs: deploymentInputs(),
           envVars: envVars.filter(e => e.key),
           repoUrl: sourceType === "github" ? repoUrl : undefined,
+          branch: sourceType === "github" ? branch : undefined,
+          ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
+          localPath: sourceType === "local" ? localPath : undefined,
           domain: inputs.domain || undefined,
           createDns: createDns && !!inputs.domain,
         }),
@@ -192,6 +207,8 @@ export default function TemplatesPage() {
                 {t.requires?.docker && <Tag>Docker</Tag>}
                 {t.requires?.caddy && <Tag>Caddy</Tag>}
                 {t.requires?.traefik && <Tag>Traefik</Tag>}
+                {t.requires?.nginx && <Tag>Nginx</Tag>}
+                {t.requires?.k3s && <Tag>k3s</Tag>}
                 <span className="text-[9px] px-1.5 py-0.5 bg-muted/10 text-muted border border-muted/20 font-mono">v{t.version}</span>
               </div>
             </button>
@@ -344,8 +361,24 @@ export default function TemplatesPage() {
             <div className="bg-success/5 border border-success/20 p-5">
               <h3 className="text-sm font-medium text-success mb-2">Deploy Result</h3>
               <p className="text-xs text-muted font-mono">Path: {deployResult.deployPath}</p>
+              {deployResult.composeProject && <p className="text-xs text-muted font-mono mt-1">Compose project: {deployResult.composeProject}</p>}
               {deployResult.dns && <p className="text-xs text-muted font-mono mt-1">DNS: record created</p>}
-              {deployResult.upOutput && <p className="text-xs text-muted font-mono mt-1 break-all">Output: {deployResult.upOutput.slice(0, 200)}</p>}
+              {Array.isArray(deployResult.health) && deployResult.health.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {deployResult.health.map((h: { domain: string; result: string }) => (
+                    <p key={h.domain} className="text-xs text-muted font-mono break-all">
+                      Health {h.domain}: {h.result || "not checked"}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {deployResult.upOutput && (
+                <p className="text-xs text-muted font-mono mt-1 break-all">
+                  Output: {typeof deployResult.upOutput === "string"
+                    ? deployResult.upOutput.slice(0, 200)
+                    : String(deployResult.upOutput.stdout || deployResult.upOutput.stderr || "").slice(0, 200)}
+                </p>
+              )}
             </div>
           )}
           <div className="flex gap-3">
@@ -380,10 +413,34 @@ function BackBtn({ onClick }: { onClick: () => void }) {
 }
 
 function SelectedTemplateCard({ selected }: { selected: TemplateWithId }) {
+  const grouped = (selected.components || []).reduce<Record<string, NonNullable<TemplateWithId["components"]>>>((acc, component) => {
+    const key = component.layer || "application";
+    acc[key] = acc[key] || [];
+    acc[key].push(component);
+    return acc;
+  }, {});
+
   return (
-    <div className="bg-card border border-border p-5">
+    <div className="bg-card border border-border p-5 space-y-4">
       <h2 className="text-sm font-medium mb-1">{selected.name}</h2>
       <p className="text-xs text-muted">{selected.description}</p>
+      {Object.keys(grouped).length > 0 && (
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          {Object.entries(grouped).map(([layer, components]) => (
+            <div key={layer} className="border border-border bg-background/40 p-3">
+              <div className="mb-2 text-[10px] font-mono uppercase tracking-wider text-accent">{layer}</div>
+              <div className="space-y-1">
+                {components.map((component) => (
+                  <div key={component.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate">{component.label}</span>
+                    <span className="shrink-0 font-mono text-[10px] text-muted">{component.kind}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -291,7 +291,7 @@ export function DeploymentsPanel() {
 
       {deployments.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-6 text-muted text-sm">
-          No deployments yet. Use the Projects tab to deploy a project.
+          No deployments yet. Use Services → Deployments to deploy an app.
         </div>
       ) : (
         <div className="space-y-3">

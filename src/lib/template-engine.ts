@@ -18,6 +18,26 @@ export interface TemplateInput {
   generate?: boolean;  // Auto-generate a secure value
 }
 
+export type TemplateLayer =
+  | "edge"
+  | "security"
+  | "traffic"
+  | "application"
+  | "data"
+  | "resilience"
+  | "observability"
+  | "cicd";
+
+export interface TemplateComponent {
+  id: string;
+  label: string;
+  layer: TemplateLayer;
+  kind: string;
+  service?: string;
+  description?: string;
+  replicable?: boolean;
+}
+
 export interface TemplateService {
   name: string;
   image?: string;
@@ -62,6 +82,7 @@ export interface TemplateDefinition {
     global_config?: string;
   };
   services: TemplateService[];
+  components?: TemplateComponent[];
   volumes?: string[];
   networks?: string[];
   inputs: TemplateInput[];
@@ -74,6 +95,7 @@ export interface ResolvedTemplate {
   proxyConfig: string;
   proxyConfigPath: string;
   envSchema: string;
+  manifest: string;
 }
 
 // ── Template loading ──────────────────────────────────
@@ -142,6 +164,19 @@ function parseTemplateYaml(content: string): TemplateDefinition {
     } satisfies TemplateService;
   }).filter((svc) => svc.name);
 
+  const components = asArray(doc.components).map((component) => {
+    const c = asRecord(component);
+    return {
+      id: String(c.id || ""),
+      label: String(c.label || c.id || ""),
+      layer: String(c.layer || "application") as TemplateLayer,
+      kind: String(c.kind || "service"),
+      service: c.service == null ? undefined : String(c.service),
+      description: c.description == null ? undefined : String(c.description),
+      replicable: c.replicable !== false,
+    } satisfies TemplateComponent;
+  }).filter((component) => component.id && component.label);
+
   const inps = asArray(doc.inputs).map((input) => {
     const i = asRecord(input);
     return {
@@ -171,6 +206,7 @@ function parseTemplateYaml(content: string): TemplateDefinition {
       global_config: reverseProxy.global_config == null ? undefined : String(reverseProxy.global_config),
     },
     services: svcs,
+    components,
     volumes: asStringArray(doc.volumes),
     networks: asStringArray(doc.networks),
     inputs: inps,
@@ -211,6 +247,7 @@ export function resolveTemplate(
   const dockerCompose = generateDockerCompose(template, resolvedInputs, userInputs);
   const proxyConfig = generateProxyConfig(template, resolvedInputs);
   const envSchema = generateEnvSchema(template, resolvedInputs);
+  const manifest = generateOwnershipManifest(template, resolvedInputs, dockerCompose);
 
   return {
     definition: template,
@@ -223,6 +260,7 @@ export function resolveTemplate(
       ? `/etc/traefik/dynamic/${resolvedInputs.domain || "app"}.yml`
       : `/etc/nginx/sites-available/${resolvedInputs.domain || "app"}`,
     envSchema,
+    manifest,
   };
 }
 
@@ -410,6 +448,60 @@ function generateEnvSchema(
   return lines.join("\n");
 }
 
+function generateOwnershipManifest(
+  template: TemplateDefinition,
+  resolved: Record<string, string>,
+  dockerCompose: string
+): string {
+  const domains = (template.reverse_proxy.sites || [])
+    .map((site) => resolveTemplateString(site.domain, resolved))
+    .filter(Boolean);
+  return JSON.stringify({
+    managedBy: "groundcontrol",
+    template: {
+      name: template.name,
+      version: template.version,
+      category: template.category,
+    },
+    slug: resolved.app_slug || resolved.domain || template._filename || template.name,
+    components: template.components || [],
+    domains,
+    services: template.services.map((service) => ({
+      name: resolveTemplateString(service.name, resolved),
+      image: service.image ? resolveTemplateString(service.image, resolved) : undefined,
+      build: service.build,
+      ports: service.ports?.map((port) => resolveTemplateString(port, resolved)) || [],
+    })),
+    artifacts: ["docker-compose.yml", ".env.schema", ".groundcontrol/manifest.json"],
+    composeSha256: createSimpleHash(dockerCompose),
+    createdAt: new Date().toISOString(),
+  }, null, 2);
+}
+
+function createSimpleHash(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  return (hash >>> 0).toString(16);
+}
+
+export function validateComposeDocument(content: string): { ok: true; services: string[] } | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = parse(content);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Compose YAML is invalid" };
+  }
+  const doc = asRecord(parsed);
+  const services = asRecord(doc.services);
+  const names = Object.keys(services);
+  if (!Object.keys(doc).length) return { ok: false, error: "Compose file is empty" };
+  if (!doc.services || Array.isArray(doc.services) || typeof doc.services !== "object") {
+    return { ok: false, error: "Compose file services must be a mapping" };
+  }
+  if (names.length === 0) return { ok: false, error: "Compose file declared no services" };
+  return { ok: true, services: names };
+}
+
 // ── Template string resolution ─────────────────────────
 
 function resolveTemplateString(template: string, vars: Record<string, string>): string {
@@ -452,6 +544,13 @@ export function generatePreview(resolved: ResolvedTemplate): string {
     for (const site of t.reverse_proxy.sites) {
       const domain = resolveTemplateString(site.domain, resolved.inputs);
       lines.push(`  • Reverse proxy site: ${domain}`);
+    }
+  }
+  if (t.components?.length) {
+    lines.push("");
+    lines.push("## Layers");
+    for (const component of t.components) {
+      lines.push(`  • ${component.layer}: ${component.label} (${component.kind})`);
     }
   }
   lines.push("");

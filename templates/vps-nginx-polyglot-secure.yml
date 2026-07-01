@@ -1,0 +1,125 @@
+name: "VPS Nginx Polyglot Secure"
+description: "Nginx-fronted polyglot stack for mixed frontend/API services with PostgreSQL, Redis, strict proxy validation, and loopback-only app ports."
+category: "polyglot"
+version: "2.0"
+requires:
+  docker: true
+  nginx: true
+reverse_proxy:
+  type: nginx
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "127.0.0.1:{{web_host_port}}"
+components:
+  - id: nginx
+    label: Nginx reverse proxy
+    layer: traffic
+    kind: proxy
+  - id: frontend
+    label: Frontend/static service
+    layer: application
+    kind: service
+    service: frontend
+  - id: backend
+    label: Backend API service
+    layer: application
+    kind: service
+    service: backend
+  - id: postgres
+    label: PostgreSQL database
+    layer: data
+    kind: database
+    service: postgres
+  - id: redis
+    label: Redis cache
+    layer: data
+    kind: cache
+    service: redis
+services:
+  - name: frontend
+    image: "{{frontend_image}}"
+    ports:
+      - "127.0.0.1:{{web_host_port}}:{{frontend_port}}"
+    env:
+      - API_URL=http://backend:{{backend_port}}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: "wget -qO- http://localhost:{{frontend_port}}{{frontend_health_path}} || exit 1"
+      interval: "30s"
+      timeout: "5s"
+      retries: 5
+  - name: backend
+    image: "{{backend_image}}"
+    env:
+      - PORT={{backend_port}}
+      - DATABASE_URL=postgresql://{{db_user}}:{{db_password}}@postgres:5432/{{db_name}}
+      - REDIS_URL=redis://redis:6379
+      - APP_SECRET={{app_secret}}
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+  - name: postgres
+    image: "postgres:16-alpine"
+    env:
+      - POSTGRES_USER={{db_user}}
+      - POSTGRES_PASSWORD={{db_password}}
+      - POSTGRES_DB={{db_name}}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: "pg_isready -U {{db_user}} -d {{db_name}}"
+      interval: "10s"
+      timeout: "5s"
+      retries: 10
+  - name: redis
+    image: "redis:7-alpine"
+    command: "redis-server --appendonly yes"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+volumes:
+  - postgres_data
+  - redis_data
+networks:
+  - app_network
+inputs:
+  - name: app_slug
+    prompt: "Deployment slug"
+    default: "polyglot-app"
+  - name: domain
+    prompt: "Public domain"
+    example: "app.example.com"
+  - name: frontend_image
+    prompt: "Frontend image"
+    default: "nginxdemos/hello:latest"
+  - name: backend_image
+    prompt: "Backend image"
+    default: "nginxdemos/hello:latest"
+  - name: frontend_port
+    prompt: "Frontend container port"
+    default: "80"
+  - name: backend_port
+    prompt: "Backend container port"
+    default: "80"
+  - name: web_host_port
+    prompt: "Host loopback port"
+    default: "13030"
+  - name: frontend_health_path
+    prompt: "Frontend health path"
+    default: "/"
+  - name: db_user
+    prompt: "Database user"
+    default: "app"
+  - name: db_password
+    prompt: "Database password"
+    generate: true
+  - name: db_name
+    prompt: "Database name"
+    default: "app"
+  - name: app_secret
+    prompt: "Application secret"
+    generate: true

@@ -5,6 +5,7 @@ import { getActiveVps, getSystemConfig, invalidateSystemConfigCache, execOnVps }
 // Whitelist of editable path fields so a request can't set vpsConfigId/id directly.
 const PATH_FIELDS = [
   "projectRoot",
+  "templateDeploymentRoot",
   "caddySitesDir",
   "caddyFile",
   "nginxSitesDir",
@@ -20,6 +21,10 @@ type PathData = Partial<Record<(typeof PATH_FIELDS)[number], string | null>>;
 type SystemConfigInput = {
   [K in (typeof PATH_FIELDS)[number]]: K extends "composeCommand" ? string | null : string | undefined;
 };
+
+function shQuoteLocal(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 function pickPathFields(data: unknown): PathData {
   const out: PathData = {};
@@ -49,6 +54,7 @@ function toPrismaData(data: PathData): SystemConfigInput {
 // Directories that should exist on the active VPS for the layout to be valid.
 const DIR_FIELDS = [
   "projectRoot",
+  "templateDeploymentRoot",
   "caddySitesDir",
   "nginxSitesDir",
   "staticRoot",
@@ -69,12 +75,15 @@ async function validateDirectories(data: PathData): Promise<string[]> {
     const path = data[key];
     if (!path || typeof path !== "string") continue;
     try {
-      const result = await execOnVps(
-        `test -d '${path.replace(/'/g, `'\\''`)}' && echo yes || echo no`,
-        conn
-      );
+      const quoted = shQuoteLocal(path);
+      const result = await execOnVps(`test -d ${quoted} && echo yes || echo no`, conn);
       if (result.stdout.trim() !== "yes") {
-        warnings.push(`${key}: ${path} does not exist on the active VPS`);
+        if (key === "templateDeploymentRoot") {
+          const mkdir = await execOnVps(`mkdir -p ${quoted} && chmod 755 ${quoted} && echo yes || echo no`, conn);
+          if (mkdir.stdout.trim() !== "yes") warnings.push(`${key}: ${path} does not exist and could not be created on the active VPS`);
+        } else {
+          warnings.push(`${key}: ${path} does not exist on the active VPS`);
+        }
       }
     } catch {
       warnings.push(`${key}: could not verify ${path}`);

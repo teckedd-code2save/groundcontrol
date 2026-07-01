@@ -1,0 +1,77 @@
+name: "K3s Caddy NodePort Platform"
+description: "Kubernetes-friendly template that keeps Caddy/Nginx on the host edge and routes to k3s NodePort services instead of allowing Traefik/ServiceLB to hijack host ports."
+category: "kubernetes"
+version: "2.0"
+requires:
+  docker: true
+  caddy: true
+  k3s: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "127.0.0.1:{{node_port}}"
+components:
+  - id: caddy
+    label: Host edge proxy
+    layer: traffic
+    kind: proxy
+  - id: k3s
+    label: k3s namespace/workload
+    layer: application
+    kind: orchestration
+  - id: app
+    label: Kubernetes app service
+    layer: application
+    kind: service
+  - id: nodeport
+    label: NodePort exposure
+    layer: traffic
+    kind: ingress
+  - id: rollout
+    label: Kubernetes rollout checks
+    layer: resilience
+    kind: health
+services:
+  - name: nodeport-smoke
+    image: "{{app_image}}"
+    ports:
+      - "127.0.0.1:{{node_port}}:{{app_port}}"
+    env:
+      - PORT={{app_port}}
+      - K3S_NAMESPACE={{namespace}}
+      - K3S_REPLICAS={{replicas}}
+    restart: unless-stopped
+    healthcheck:
+      test: "wget -qO- http://localhost:{{app_port}}{{health_path}} || exit 1"
+      interval: "30s"
+      timeout: "5s"
+      retries: 5
+volumes: []
+networks:
+  - app_network
+inputs:
+  - name: app_slug
+    prompt: "Deployment slug"
+    default: "k3s-nodeport-app"
+  - name: domain
+    prompt: "Public domain"
+    example: "app.example.com"
+  - name: namespace
+    prompt: "k3s namespace"
+    default: "gc-app"
+  - name: app_image
+    prompt: "App image"
+    default: "nginxdemos/hello:latest"
+  - name: app_port
+    prompt: "Container port"
+    default: "80"
+  - name: node_port
+    prompt: "Host NodePort"
+    default: "30080"
+  - name: replicas
+    prompt: "Replica count"
+    default: "2"
+  - name: health_path
+    prompt: "Health path"
+    default: "/"

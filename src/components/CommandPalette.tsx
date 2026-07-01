@@ -23,7 +23,7 @@ export default function CommandPalette() {
   const staticItems: CommandItem[] = [
     { id: "page-dashboard", label: "Dashboard", href: "/dashboard", category: "Pages" },
     { id: "page-containers", label: "Containers", href: "/containers", category: "Pages" },
-    { id: "page-projects", label: "Projects", href: "/projects", category: "Pages" },
+    { id: "page-projects", label: "Deployments", href: "/projects", category: "Pages" },
     { id: "page-processes", label: "Processes", href: "/processes", category: "Pages" },
     { id: "page-files", label: "Files", href: "/files", category: "Pages" },
     { id: "page-deploy", label: "Deploy", href: "/deploy", category: "Pages" },
@@ -86,7 +86,7 @@ export default function CommandPalette() {
         label: p.name,
         sublabel: `/opt/${p.slug}`,
         href: "/deploy",
-        category: "Projects",
+        category: "Deployments",
       })),
     ];
     const all = [...staticItems, ...dynamic];

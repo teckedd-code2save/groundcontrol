@@ -1056,7 +1056,7 @@ export function ContainersPanel() {
             <div className="p-4 space-y-3">
               <div className="p-2 bg-warning/5 border border-warning/10 rounded-lg text-[10px] text-warning font-mono">
                 Warning: this creates a standalone container outside of docker compose.
-                For compose-managed services, use Projects or start the existing container instead.
+                For compose-managed services, use Deployments or start the existing container instead.
               </div>
               <div>
                 <label className="text-[10px] font-mono uppercase text-muted block mb-1">Container Name</label>

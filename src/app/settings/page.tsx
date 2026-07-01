@@ -419,6 +419,7 @@ function ConnectionsTab() {
 
 interface SystemConfig {
   projectRoot: string;
+  templateDeploymentRoot: string;
   caddySitesDir: string;
   caddyFile: string;
   nginxSitesDir: string;
@@ -481,6 +482,7 @@ function ServerLayoutTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectRoot: config.projectRoot,
+          templateDeploymentRoot: config.templateDeploymentRoot,
           caddySitesDir: config.caddySitesDir,
           caddyFile: config.caddyFile,
           nginxSitesDir: config.nginxSitesDir,
@@ -546,7 +548,8 @@ function ServerLayoutTab() {
   }
 
   const fields: { key: keyof SystemConfig; label: string; placeholder: string; desc: string }[] = [
-    { key: "projectRoot", label: "Project Root", placeholder: "/opt", desc: "Base directory where your apps and projects are deployed" },
+    { key: "projectRoot", label: "Legacy Project Root", placeholder: "/opt", desc: "Base directory scanned for existing/manual apps. Templates do not deploy here by default." },
+    { key: "templateDeploymentRoot", label: "Template Deployment Root", placeholder: "/srv/groundcontrol/deployments", desc: "Managed root where new template deployments are created" },
     { key: "caddySitesDir", label: "Caddy Sites Directory", placeholder: "/etc/caddy/sites", desc: "Directory containing individual Caddy site config files" },
     { key: "caddyFile", label: "Caddy Main Config", placeholder: "/etc/caddy/Caddyfile", desc: "Path to the main Caddyfile if sites are defined there instead of separate files" },
     { key: "nginxSitesDir", label: "Nginx Sites Directory", placeholder: "/etc/nginx/sites-available", desc: "Directory containing Nginx virtual host configs" },

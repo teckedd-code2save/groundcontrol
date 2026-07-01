@@ -249,7 +249,7 @@ export default function TopologyPage() {
                 onClick={() => setView("projects")}
                 className={`px-3 py-1.5 transition-colors ${view === "projects" ? "bg-accent/20 text-accent" : "text-muted hover:text-foreground"}`}
               >
-                Projects
+                Deployments
               </button>
               <button
                 onClick={() => setView("sites")}
@@ -274,7 +274,7 @@ export default function TopologyPage() {
               value={filters.projectSlug || ""}
               onChange={(e) => setFilters((f) => ({ ...f, projectSlug: e.target.value || undefined }))}
             >
-              <option value="">All Projects</option>
+              <option value="">All Deployments</option>
               {filterProjects.map((p) => (
                 <option key={p.slug} value={p.slug}>{p.name || p.slug}</option>
               ))}

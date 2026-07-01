@@ -61,7 +61,7 @@
     {
       "id": "deploy-project",
       "title": "Deploy a project to k3s",
-      "content": "1. Go to **Services → Projects**.\n2. Create or edit a project.\n3. Set **Deploy target** to `k3s`.\n4. GroundControl builds a Docker image, imports it into the k3s container runtime, generates Kubernetes manifests (Deployment, Service, Ingress), and applies them.\n5. Open **Services → Projects → Deployments** to watch status.",
+      "content": "1. Go to **Services → Deployments**.\n2. Create or edit a deployment.\n3. Set **Deploy target** to `k3s`.\n4. GroundControl builds a Docker image, imports it into the k3s container runtime, generates Kubernetes manifests (Deployment, Service, Ingress), and applies them.\n5. Open **Services → Deployments** to watch status.",
       "checkCommand": "kubectl get pods -n default",
       "expectedOutput": "Running",
       "aiHint": "If pods are in ImagePullBackOff, the image was not imported successfully. Run 'k3s ctr images ls | grep <image-name>' to verify. If CrashLoopBackOff, check the pod logs with 'kubectl logs -n default <pod-name>'."

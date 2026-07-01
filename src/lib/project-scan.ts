@@ -4,6 +4,7 @@ import {
   shQuote,
   type VpsConnection,
 } from "@/lib/vps";
+import { parse } from "yaml";
 
 /**
  * A single service declared inside a compose file.
@@ -35,6 +36,9 @@ export interface ScannedProject {
   /** Parent directory name if this project is nested under a container dir. */
   parent: string | null;
   services: ComposeServiceInfo[];
+  valid: boolean;
+  parseError?: string;
+  managed: boolean;
   /** Best-guess domain from the compose (label/env), if discoverable. */
   domain?: string;
   hasGit: boolean;
@@ -129,7 +133,24 @@ function deriveName(dirName: string): string {
 export function parseComposeServices(content: string): {
   services: ComposeServiceInfo[];
   domain?: string;
+  valid: boolean;
+  error?: string;
 } {
+  try {
+    const doc = parse(content) as Record<string, unknown> | null;
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+      return { services: [], valid: false, error: "Compose YAML must be an object" };
+    }
+    if (!doc.services || typeof doc.services !== "object" || Array.isArray(doc.services)) {
+      return { services: [], valid: false, error: "Compose file services must be a mapping" };
+    }
+    if (Object.keys(doc.services as Record<string, unknown>).length === 0) {
+      return { services: [], valid: false, error: "Compose file declared no services" };
+    }
+  } catch (err) {
+    return { services: [], valid: false, error: err instanceof Error ? err.message : "Compose YAML parse failed" };
+  }
+
   const services: ComposeServiceInfo[] = [];
   const lines = content.split("\n");
   let inServices = false;
@@ -237,7 +258,12 @@ export function parseComposeServices(content: string): {
   }
 
   finalize();
-  return { services, domain };
+  return {
+    services,
+    domain,
+    valid: services.length > 0,
+    error: services.length > 0 ? undefined : "Compose file declared no parseable services",
+  };
 }
 
 /**
@@ -262,16 +288,27 @@ export async function scanProjectsTree(
     return { projects: [], plainDirs: [], error: err?.message || "config error" };
   }
   const root = normalizeRoot(config.projectRoot);
+  const managedRoot = normalizeRoot(config.templateDeploymentRoot || "/srv/groundcontrol/deployments");
+  const scanRoots = Array.from(new Set([root, managedRoot].filter(Boolean)));
 
   // --- 1 & 2: locate compose files ---
   let rows: { composePath: string; hasGit: boolean }[] = [];
   let scanError: string | undefined;
   try {
-    let out = await execOnVps(buildFindCommand(root), vps);
-    if (!out.stdout.trim()) {
-      out = await execOnVps(buildFallbackCommand(root), vps);
+    const outputs = [];
+    for (const scanRoot of scanRoots) {
+      let out = await execOnVps(buildFindCommand(scanRoot), vps);
+      if (!out.stdout.trim()) {
+        out = await execOnVps(buildFallbackCommand(scanRoot), vps);
+      }
+      outputs.push(out);
+      if (out.code !== 0 && !out.stdout.trim() && !scanError) {
+        scanError = out.stderr?.trim() || `scan exited ${out.code} for ${scanRoot}`;
+      }
     }
-    rows = out.stdout
+    rows = outputs
+      .map((out) => out.stdout)
+      .join("\n")
       .trim()
       .split("\n")
       .map((l) => l.trim())
@@ -281,9 +318,6 @@ export async function scanProjectsTree(
         return { composePath: (composePath || "").trim(), hasGit: git?.trim() === "1" };
       })
       .filter((r) => r.composePath.startsWith("/"));
-    if (out.code !== 0 && rows.length === 0) {
-      scanError = out.stderr?.trim() || `scan exited ${out.code}`;
-    }
   } catch (err: any) {
     return { projects: [], plainDirs: [], error: err?.message || "scan failed" };
   }
@@ -336,7 +370,8 @@ export async function scanProjectsTree(
 
   for (const dir of dirs) {
     const meta = byDir.get(dir)!;
-    const rel = dir.startsWith(root + "/") ? dir.slice(root.length + 1) : dir;
+    const baseRoot = dir === managedRoot || dir.startsWith(managedRoot + "/") ? managedRoot : root;
+    const rel = dir.startsWith(baseRoot + "/") ? dir.slice(baseRoot.length + 1) : dir;
     const parts = rel.split("/").filter(Boolean);
     const dirName = parts[parts.length - 1] || dir;
     const parent = parts.length > 1 ? parts[parts.length - 2] : null;
@@ -362,6 +397,9 @@ export async function scanProjectsTree(
       services: parsed.services,
       domain: parsed.domain,
       hasGit: meta.hasGit,
+      valid: parsed.valid,
+      parseError: parsed.error,
+      managed: dir === managedRoot || dir.startsWith(managedRoot + "/"),
     });
   }
 
