@@ -70,6 +70,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
 | 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
+| 💓 | **Container Health Scheduler** | Periodic container health checks on a configurable interval. Alerts when containers go down or become unhealthy — runs independently of the dashboard. |
 | 🔀 | **Services** | Containers, reverse proxy, projects, deployments, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
 | ⚙️ | **Tabbed Settings** | Connections, server layout, AI provider/model, security, Cloudflare, cloud accounts, deploy targets, infrastructure, and alert rules. |
 | 🌩️ | **Cloudflare Integration** | List/create tunnels and manage DNS records from the UI, automatically at deploy time. |

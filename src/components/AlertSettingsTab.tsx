@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
+import HealthCheckSettingsCard from "@/components/HealthCheckSettingsCard";
 
 interface AlertRule {
   id: number;
@@ -366,6 +367,8 @@ export default function AlertSettingsTab() {
           {evaluating ? "Evaluating..." : "Evaluate Now"}
         </button>
       </div>
+
+      <HealthCheckSettingsCard />
 
       <ConfirmDelete
         open={!!deleteTarget}

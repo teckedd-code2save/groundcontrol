@@ -288,6 +288,27 @@ model AlertSetting {
   updatedAt     DateTime @updatedAt
 }
 
+model HealthCheckConfig {
+  id          Int       @id @default(autoincrement())
+  intervalSec Int       @default(60)
+  enabled     Boolean   @default(true)
+  severity    String    @default("error") // info | warning | error | critical
+  lastRunAt   DateTime?
+  lastStatus  String?   // ok | degraded | down
+  updatedAt   DateTime  @updatedAt
+}
+
+model HealthCheckResult {
+  id            Int      @id @default(autoincrement())
+  containerName String
+  status        String   // healthy | unhealthy | down
+  detail        String   @default("")
+  checkedAt     DateTime @default(now())
+
+  @@index([containerName, checkedAt])
+  @@index([checkedAt])
+}
+
 // -----------------------------------------------------------------------------
 // AI operator memory
 // -----------------------------------------------------------------------------
