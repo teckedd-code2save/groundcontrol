@@ -20,10 +20,19 @@ export async function POST(req: NextRequest) {
 
     const config = await getSystemConfig();
     const managedRoot = normalizeRoot(config.templateDeploymentRoot || "/srv/groundcontrol/deployments");
-    if (deploymentPath !== managedRoot && !deploymentPath.startsWith(`${managedRoot}/`)) {
-      return NextResponse.json({
-        error: `Refusing to delete unmanaged path ${deploymentPath}. Adopt or replicate it under ${managedRoot} first.`,
-      }, { status: 400 });
+    const isManaged = deploymentPath !== managedRoot && deploymentPath.startsWith(`${managedRoot}/`);
+    const force = body.force === true;
+
+    if (!isManaged && !force) {
+      // For non-managed paths, still allow deletion if force is set
+      // but verify it's a real project directory with a compose file
+      const vps = await getActiveVps();
+      const check = await execOnVps(`test -f ${shQuote(`${deploymentPath}/docker-compose.yml`)} && echo yes || echo no`, vps);
+      if (check.stdout.trim() !== "yes") {
+        return NextResponse.json({
+          error: `No docker-compose.yml found at ${deploymentPath}. Not a deployment directory.`,
+        }, { status: 400 });
+      }
     }
 
     const vps = await getActiveVps();

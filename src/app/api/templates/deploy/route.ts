@@ -114,6 +114,15 @@ export async function POST(req: NextRequest) {
 
     // Clone repo if provided
     if (repoUrl) {
+      // Check if git is installed, install if missing
+      const gitCheck = await execOnVps(`command -v git >/dev/null 2>&1 && echo yes || echo no`, vps);
+      if (gitCheck.stdout.trim() === "no") {
+        const installResult = await execOnVps(`(apt-get update -qq && apt-get install -y -qq git >/dev/null 2>&1) || (apk add --quiet git) || (yum install -y -q git) || true`, vps);
+        const recheck = await execOnVps(`command -v git >/dev/null 2>&1 && echo yes || echo no`, vps);
+        if (recheck.stdout.trim() === "no") {
+          return NextResponse.json({ success: false, error: "Git is not installed on the VPS and could not be auto-installed. Install git manually: apt-get install git" }, { status: 400 });
+        }
+      }
       const ref = String(branch || "main");
       const cloneResult = await execOnVps(`cd ${shQuote(deployPath)} 2>/dev/null || (mkdir -p ${shQuote(deployPath)} && git clone ${shQuote(repoUrl)} ${shQuote(deployPath)}) && cd ${shQuote(deployPath)} && git fetch --all --prune && git checkout ${shQuote(ref)} && git pull --ff-only`, vps);
       if (cloneResult.code !== 0) {

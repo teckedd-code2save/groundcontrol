@@ -507,21 +507,21 @@ export function ProjectsPanel() {
   }
 
   async function deleteManagedDeployment(project: ScannedProject) {
-    if (!project.managed) {
-      setError(`Delete is only enabled for managed deployments under ${templateDeploymentRoot}. Replicate or adopt this app first.`);
+    if (!project.path) {
+      setError("No deployment path found for this project.");
       return;
     }
     const confirmed = window.confirm(
-      `Delete managed deployment?\n\nRoot: ${project.path}\nContainers: docker compose down\nVolumes: kept by default\nNetworks: compose-managed networks removed\nProxy/DNS: review manifest before deleting external records`
+      `Delete deployment?\n\nRoot: ${project.path}\nContainers: docker compose down\nVolumes: kept by default\nNetworks: compose-managed networks removed`
     );
     if (!confirmed) return;
     const deleteVolumes = window.confirm("Also delete compose volumes? Cancel keeps data volumes.");
-    setComposeOutput({ slug: project.slug, output: "Deleting managed deployment..." });
+    setComposeOutput({ slug: project.slug, output: "Deleting deployment..." });
     try {
       const res = await fetch("/api/deployments/delete-managed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: project.path, deleteVolumes }),
+        body: JSON.stringify({ path: project.path, deleteVolumes, force: !project.managed }),
       });
       const { ok, data } = await safeJson(res);
       if (!ok || data.error) {
@@ -808,9 +808,9 @@ export function ProjectsPanel() {
                         </button>
                         <button
                           onClick={() => deleteManagedDeployment(project)}
-                          disabled={!project.managed || !!composeAction}
+                          disabled={!!composeAction}
                           className="px-3 py-2 text-xs font-mono border border-error/30 text-error rounded-lg hover:bg-error/10 transition-colors disabled:opacity-40"
-                          title={project.managed ? "Delete managed deployment" : "Only managed deployments can be deleted here"}
+                          title="Delete deployment"
                         >
                           Trash Delete
                         </button>
