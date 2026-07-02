@@ -4,6 +4,7 @@ import { loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/te
 import { getActiveVps, execOnVps, getSystemConfig, shQuote } from "@/lib/vps";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
 import { prisma } from "@/lib/prisma";
+import { resolveTemplateSource } from "@/lib/template-source";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -29,6 +30,15 @@ function collectDomains(inputs: Record<string, string>): string[] {
 function collectHostPorts(compose: string): string[] {
   const matches = compose.match(/127\.0\.0\.1:(\d+):/g) || [];
   return Array.from(new Set(matches.map((match) => match.match(/:(\d+):/)?.[1]).filter(Boolean) as string[]));
+}
+
+interface CloudflareZone {
+  id: string;
+  name?: string;
+}
+
+function isCloudflareZone(value: unknown): value is CloudflareZone {
+  return Boolean(value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string");
 }
 
 async function ensureNoPortCollisions(compose: string, vps: Awaited<ReturnType<typeof getActiveVps>>) {
@@ -98,11 +108,6 @@ export async function POST(req: NextRequest) {
     const slug = slugify(inputs.app_slug || domain || allInputs.domain || templateName);
     const composeProject = `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
     const deployPath = `${templateRoot}/${slug}`;
-    const manifest = JSON.stringify({
-      ...JSON.parse(resolved.manifest),
-      deploymentRoot: deployPath,
-      composeProject,
-    }, null, 2);
     const vps = await getActiveVps();
 
     if (!vps) {
@@ -112,38 +117,24 @@ export async function POST(req: NextRequest) {
     }
 
     await execOnVps(`mkdir -p ${shQuote(templateRoot)}`, vps);
-
-    // Clone repo if provided
-    if (repoUrl) {
-      // Check if git is installed, install if missing
-      const gitCheck = await execOnVps(`command -v git >/dev/null 2>&1 && echo yes || echo no`, vps);
-      if (gitCheck.stdout.trim() === "no") {
-        const installResult = await execOnVps(`(apt-get update -qq && apt-get install -y -qq git >/dev/null 2>&1) || (apk add --quiet git) || (yum install -y -q git) || true`, vps);
-        const recheck = await execOnVps(`command -v git >/dev/null 2>&1 && echo yes || echo no`, vps);
-        if (recheck.stdout.trim() === "no") {
-          return NextResponse.json({ success: false, error: "Git is not installed on the VPS and could not be auto-installed. Install git manually: apt-get install git" }, { status: 400 });
-        }
-      }
-      const ref = String(branch || "main");
-      const cloneResult = await execOnVps(`cd ${shQuote(deployPath)} 2>/dev/null || (mkdir -p ${shQuote(deployPath)} && git clone ${shQuote(repoUrl)} ${shQuote(deployPath)}) && cd ${shQuote(deployPath)} && git fetch --all --prune && git checkout ${shQuote(ref)} && git pull --ff-only`, vps);
-      if (cloneResult.code !== 0) {
-        return NextResponse.json({ success: false, error: cloneResult.stderr || cloneResult.stdout || "Git source validation failed" }, { status: 400 });
-      }
-    } else if (localPath) {
-      const localResult = await execOnVps(`test -d ${shQuote(localPath)} && echo yes || echo no`, vps);
-      if (localResult.stdout.trim() !== "yes") {
-        return NextResponse.json({ success: false, error: `Local source path does not exist on VPS: ${localPath}` }, { status: 400 });
-      }
-      await execOnVps(`mkdir -p ${shQuote(deployPath)}`, vps);
-    } else {
-      await execOnVps(`mkdir -p ${shQuote(deployPath)}`, vps);
+    const source = await resolveTemplateSource({ repoUrl, branch, localPath, deployPath, vps })
+      .catch((err) => ({ error: err instanceof Error ? err.message : "Source validation failed" }));
+    if ("error" in source) {
+      return NextResponse.json({ success: false, error: source.error }, { status: 400 });
     }
+
+    const manifest = JSON.stringify({
+      ...JSON.parse(resolved.manifest),
+      deploymentRoot: deployPath,
+      composeProject,
+      source,
+    }, null, 2);
 
     const usesBuild = template.services.some((service) => service.build);
     if (usesBuild) {
-      const dockerfile = await execOnVps(`test -f ${shQuote(deployPath)}/Dockerfile && echo yes || echo no`, vps);
+      const dockerfile = await execOnVps(`test -f ${shQuote(source.sourcePath)}/Dockerfile && echo yes || echo no`, vps);
       if (dockerfile.stdout.trim() !== "yes") {
-        return NextResponse.json({ success: false, error: `Template requires a Dockerfile, but none was found at ${deployPath}/Dockerfile` }, { status: 400 });
+        return NextResponse.json({ success: false, error: `Template requires a Dockerfile, but none was found at ${source.sourcePath}/Dockerfile` }, { status: 400 });
       }
     }
 
@@ -157,9 +148,9 @@ export async function POST(req: NextRequest) {
     let composeContent = resolved.dockerCompose;
     if (composeContent.includes("{{tunnel_token}}")) {
       try {
-        const tunnel = await (prisma as any).cloudflareTunnel.findFirst({ orderBy: { createdAt: "desc" } });
+        const tunnel = await prisma.cloudflareTunnel.findFirst({ orderBy: { createdAt: "desc" } });
         if (tunnel) {
-          composeContent = composeContent.replace(/\{\{tunnel_token\}\}/g, tunnel.token);
+          composeContent = composeContent.replace(/\{\{tunnel_token\}\}/g, tunnel.tunnelSecret || "");
         }
       } catch {}
     }
@@ -191,16 +182,21 @@ export async function POST(req: NextRequest) {
     if (createDns && domains.length > 0) {
       try {
         const { listZones } = await import("@/lib/cloudflare");
-        const zones = await listZones();
+        const zones: CloudflareZone[] = (await listZones()).flatMap((zone) =>
+          isCloudflareZone(zone)
+            ? [{ id: zone.id, name: typeof zone.name === "string" ? zone.name : undefined }]
+            : []
+        );
         const records = [];
         for (const recordName of domains) {
-          const zone = zoneId
-            ? { id: zoneId }
-            : (zones as any[]).find((z: any) => recordName.endsWith(z.name));
+          const requestedZoneId = String(zoneId || "").trim();
+          const zone: CloudflareZone | undefined = requestedZoneId
+            ? { id: requestedZoneId }
+            : zones.find((z) => Boolean(z.name) && recordName.endsWith(String(z.name)));
           if (zone) {
             records.push(await provisionCustomDomain({
               subdomain: recordName,
-              zoneId: String((zone as any).id),
+              zoneId: String(zone.id),
               targetHost: vps.host,
               recordType: "A",
               proxied: proxied !== false,
@@ -232,6 +228,7 @@ export async function POST(req: NextRequest) {
       proxyConfig: resolved.proxyConfig,
       proxyConfigPath: proxyPath,
       manifest,
+      source,
       message: `Deployed ${slug} to ${deployPath}. ${domains.length ? `Served at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}`,
     });
   } catch (err) {
