@@ -42,6 +42,7 @@ export interface TemplateService {
   name: string;
   image?: string;
   build?: boolean;
+  env_file?: string[];
   command?: string;
   ports?: string[];
   env?: string[];
@@ -153,6 +154,7 @@ function parseTemplateYaml(content: string): TemplateDefinition {
       name: String(s.name || ""),
       image: s.image == null ? undefined : String(s.image),
       build: s.build === true,
+      env_file: asStringArray(s.env_file),
       command: s.command == null ? undefined : String(s.command),
       ports: asStringArray(s.ports),
       env: asStringArray(s.env ?? s.environment),
@@ -318,6 +320,10 @@ function generateDockerCompose(
     if (svc.env && svc.env.length > 0) {
       lines.push(`    environment:`);
       for (const e of svc.env) lines.push(`      - ${resolveTemplateString(e, resolved)}`);
+    }
+    if (svc.env_file && svc.env_file.length > 0) {
+      lines.push(`    env_file:`);
+      for (const envFile of svc.env_file) lines.push(`      - ${resolveTemplateString(envFile, resolved)}`);
     }
     if (svc.labels && svc.labels.length > 0) {
       lines.push(`    labels:`);

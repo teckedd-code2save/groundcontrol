@@ -41,6 +41,11 @@ services:
       - NODE_ENV=production
       - PORT={{app_port}}
       - APP_SECRET={{app_secret}}
+      - JWT_SECRET={{jwt_secret}}
+      - DATABASE_URL={{database_url}}
+      - REDIS_URL={{redis_url}}
+    env_file:
+      - .env
     restart: unless-stopped
     healthcheck:
       test: "wget -qO- http://localhost:{{app_port}}{{health_path}} || exit 1"
@@ -75,3 +80,12 @@ inputs:
   - name: app_secret
     prompt: "Application secret"
     generate: true
+  - name: jwt_secret
+    prompt: "JWT secret"
+    generate: true
+  - name: database_url
+    prompt: "Database URL"
+    default: "file:/app/prisma/prod.db"
+  - name: redis_url
+    prompt: "Redis URL"
+    default: ""

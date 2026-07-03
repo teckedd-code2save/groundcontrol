@@ -39,6 +39,9 @@ function inputsFor(names: string[]): Record<string, string> {
     minio_root_user: "minio",
     minio_root_password: "minio-secret",
     app_secret: "secret",
+    jwt_secret: "jwt-secret",
+    database_url: "file:/app/prisma/prod.db",
+    redis_url: "redis://redis:6379",
     tunnel_token: "token",
     namespace: "app",
     replicas: "2",
@@ -107,6 +110,17 @@ describe("template engine", () => {
     const caddyResolved = resolveTemplate(caddy!, inputsFor(caddy!.inputs.map((input) => input.name)));
     expect(caddyResolved.dockerCompose).toContain("redis-server --appendonly yes");
     expect(caddyResolved.dockerCompose).toContain('test: ["CMD-SHELL"');
+  });
+
+  it("renders source-build env file and runtime env defaults", () => {
+    const sourceBuild = listTemplates().find((template) => template._filename === "vps-caddy-source-build");
+    expect(sourceBuild).toBeTruthy();
+
+    const resolved = resolveTemplate(sourceBuild!, inputsFor(sourceBuild!.inputs.map((input) => input.name)));
+    expect(resolved.dockerCompose).toContain("env_file:");
+    expect(resolved.dockerCompose).toContain("      - .env");
+    expect(resolved.dockerCompose).toContain("JWT_SECRET=jwt-secret");
+    expect(resolved.dockerCompose).toContain("DATABASE_URL=file:/app/prisma/prod.db");
   });
 
   it("rejects invalid compose service shapes", () => {
