@@ -210,11 +210,11 @@ export default function DashboardPage() {
     if (stats) {
       const loadRatio = (stats.load[0] || 0) / (stats.cpuCount || 1);
       if (loadRatio > 2) {
-        items.push({ label: "Load", status: "critical", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. System overloaded.`, href: "/topology" });
+        items.push({ label: "Load", status: "critical", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. System overloaded.`, href: "/processes" });
       } else if (loadRatio > 1) {
-        items.push({ label: "Load", status: "warn", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. Elevated but stable.`, href: "/topology" });
+        items.push({ label: "Load", status: "warn", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. Elevated but stable.`, href: "/processes" });
       } else {
-        items.push({ label: "Load", status: "good", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. Idle capacity available.`, href: "/topology" });
+        items.push({ label: "Load", status: "good", detail: `Load average is ${loadRatio.toFixed(2)}x CPU count. Idle capacity available.`, href: "/processes" });
       }
     }
 
@@ -241,10 +241,23 @@ export default function DashboardPage() {
   const intelligence = generateIntelligence();
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted mt-1">Real-time overview of your Hetzner VPS</p>
+    <div className="p-4 md:p-6 max-w-7xl mx-auto">
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted mt-1 text-sm">Live VPS status, resource pressure, and container health.</p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
+          <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">
+            uptime <span className="text-foreground">{stats ? formatUptime(stats.uptime) : "—"}</span>
+          </span>
+          <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">
+            cores <span className="text-foreground">{stats?.cpuCount || 0}</span>
+          </span>
+          <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">
+            containers <span className="text-success">{runningContainers}</span>/<span className="text-foreground">{containers.length}</span>
+          </span>
+        </div>
       </div>
 
       {error && (
@@ -257,146 +270,121 @@ export default function DashboardPage() {
 
       {loading && !stats ? null : (
         <>
-          {/* AI Summary */}
-          <div className="bg-card border border-border rounded-xl p-5 mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2a10 10 0 1 0 10 10H12V2z" />
-                  <path d="M12 2a10 10 0 0 1 10 10" />
-                  <path d="M12 12L2.5 8.5" />
-                </svg>
-                <h2 className="text-sm font-mono text-muted">AI Summary</h2>
+          <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <StatCard
+                  title="Memory"
+                  value={stats ? `${stats.memory.percent}%` : "—"}
+                  subtitle={`${stats?.memory.used || 0} / ${stats?.memory.total || 0} MB`}
+                  trend={stats && parseFloat(stats.memory.percent) > 85 ? "down" : "neutral"}
+                  icon="◉"
+                />
+                <StatCard
+                  title="Disk"
+                  value={stats ? `${stats.disk.percent}%` : "—"}
+                  subtitle={`${stats?.disk.used || 0} / ${stats?.disk.total || 0}`}
+                  trend={stats && parseFloat(stats.disk.percent) > 85 ? "down" : "neutral"}
+                  icon="◆"
+                />
+                <StatCard
+                  title="Load"
+                  value={stats ? (stats.load[0] || 0).toFixed(2) : "—"}
+                  subtitle={`${stats?.cpuCount || 0} CPU cores`}
+                  icon="◈"
+                />
+                <StatCard
+                  title="Containers"
+                  value={`${runningContainers} / ${containers.length}`}
+                  subtitle={unhealthyContainers > 0 ? `${unhealthyContainers} unhealthy` : "All healthy"}
+                  trend={unhealthyContainers > 0 ? "down" : "up"}
+                  icon="▶"
+                />
               </div>
-              <button
-                onClick={investigateWithAi}
-                disabled={synthesisLoading && !synthesis}
-                className="text-xs font-mono px-3 py-1.5 border border-accent/30 text-accent rounded-lg hover:bg-accent/10 transition-colors disabled:opacity-50"
-              >
-                Investigate
-              </button>
-            </div>
-            {synthesisLoading && !synthesis ? (
-              <LoaderOverlay3D open={synthesisLoading && !synthesis} variant="generic" title="Analyzing alerts..." />
-            ) : synthesisError ? (
-              <p className="text-sm text-muted">{synthesisError}</p>
-            ) : synthesis ? (
-              <div>
-                <p className="text-sm font-medium leading-relaxed">{synthesis.summary}</p>
-                {(synthesis.rootCauses.length > 0 || synthesis.actions.length > 0) && (
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                    {synthesis.rootCauses.length > 0 && (
-                      <div>
-                        <p className="font-mono text-muted mb-1 ">Root Causes</p>
-                        <ul className="space-y-1 list-disc list-inside text-muted">
-                          {synthesis.rootCauses.map((c, i) => (
-                            <li key={i}>{c}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {synthesis.actions.length > 0 && (
-                      <div>
-                        <p className="font-mono text-muted mb-1 ">Recommended Actions</p>
-                        <ul className="space-y-1 list-disc list-inside text-muted">
-                          {synthesis.actions.map((a, i) => (
-                            <li key={i}>{a}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : null}
-          </div>
 
-          {/* Intelligence Overview */}
-          <div className="bg-card border border-border rounded-xl p-5 mb-8">
-            <div className="flex items-center gap-2 mb-4">
-              <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2a10 10 0 1 0 10 10H12V2z" />
-                <path d="M12 2a10 10 0 0 1 10 10" />
-                <path d="M12 12L2.5 8.5" />
-              </svg>
-              <h2 className="text-sm font-mono text-muted">Intelligence Overview</h2>
-              <a
-                href="/settings?tab=alerts"
-                className="ml-auto text-[11px] font-mono text-accent hover:text-accent/80 transition-colors"
-              >
-                Manage alert rules →
-              </a>
-            </div>
-            <h3 className="text-lg font-medium mb-3">{intelligence.title}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {intelligence.items.map((item) => {
-                const className = `flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
-                  item.status === "critical"
-                    ? "bg-error/5 border-error/20 hover:bg-error/10"
-                    : item.status === "warn"
-                    ? "bg-warning/5 border-warning/20 hover:bg-warning/10"
-                    : "bg-success/5 border-success/20 hover:bg-success/10"
-                }`;
-                const content = (
-                  <>
-                    <div
-                      className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                        item.status === "critical" ? "bg-error" : item.status === "warn" ? "bg-warning" : "bg-success"
-                      }`}
-                    />
-                    <div>
-                      <div className="text-xs font-mono font-medium">{item.label}</div>
-                      <div className="text-[11px] text-muted mt-0.5 leading-relaxed">{item.detail}</div>
-                    </div>
-                  </>
-                );
-                if (item.action) {
-                  return (
-                    <button key={item.label} onClick={item.action} className={className + " text-left w-full"}>
-                      {content}
-                    </button>
-                  );
-                }
-                return (
-                  <a key={item.label} href={item.href} className={className}>
-                    {content}
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <h2 className="text-xs font-mono uppercase tracking-wider text-muted">Ops Review</h2>
+                  <a href="/settings?tab=alerts" className="ml-auto text-[11px] font-mono text-accent hover:text-accent/80">
+                    alert rules
                   </a>
-                );
-              })}
+                </div>
+                <h3 className="mb-3 text-base font-medium">{intelligence.title}</h3>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  {intelligence.items.map((item) => {
+                    const className = `flex items-start gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                      item.status === "critical"
+                        ? "bg-error/5 border-error/20 hover:bg-error/10"
+                        : item.status === "warn"
+                        ? "bg-warning/5 border-warning/20 hover:bg-warning/10"
+                        : "bg-success/5 border-success/20 hover:bg-success/10"
+                    }`;
+                    const content = (
+                      <>
+                        <div
+                          className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                            item.status === "critical" ? "bg-error" : item.status === "warn" ? "bg-warning" : "bg-success"
+                          }`}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-mono font-medium">{item.label}</div>
+                          <div className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-muted">{item.detail}</div>
+                        </div>
+                      </>
+                    );
+                    if (item.action) {
+                      return (
+                        <button key={item.label} onClick={item.action} className={className}>
+                          {content}
+                        </button>
+                      );
+                    }
+                    return (
+                      <a key={item.label} href={item.href} className={className}>
+                        {content}
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-xs font-mono uppercase tracking-wider text-muted">AI Ops Summary</h2>
+                <button
+                  onClick={investigateWithAi}
+                  disabled={synthesisLoading && !synthesis}
+                  className="text-[11px] font-mono text-accent hover:text-accent/80 disabled:opacity-50"
+                >
+                  investigate
+                </button>
+              </div>
+              {synthesisLoading && !synthesis ? (
+                <div className="text-xs text-muted">Analyzing alerts...</div>
+              ) : synthesisError ? (
+                <p className="text-xs text-muted">{synthesisError}</p>
+              ) : synthesis ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium leading-relaxed">{synthesis.summary}</p>
+                  {synthesis.actions.length > 0 && (
+                    <div>
+                      <p className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Next actions</p>
+                      <ul className="space-y-1 text-xs text-muted">
+                        {synthesis.actions.slice(0, 3).map((a, i) => (
+                          <li key={i} className="line-clamp-2">• {a}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted">No AI summary available yet.</p>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <StatCard
-              title="Uptime"
-              value={stats ? formatUptime(stats.uptime) : "—"}
-              subtitle={`${stats?.cpuCount || 0} CPU cores`}
-              icon="◈"
-            />
-            <StatCard
-              title="Memory"
-              value={stats ? `${stats.memory.percent}%` : "—"}
-              subtitle={`${stats?.memory.used || 0} / ${stats?.memory.total || 0} MB`}
-              trend={stats && parseFloat(stats.memory.percent) > 85 ? "down" : "neutral"}
-              icon="◉"
-            />
-            <StatCard
-              title="Disk"
-              value={stats ? `${stats.disk.percent}%` : "—"}
-              subtitle={`${stats?.disk.used || 0} / ${stats?.disk.total || 0}`}
-              trend={stats && parseFloat(stats.disk.percent) > 85 ? "down" : "neutral"}
-              icon="◆"
-            />
-            <StatCard
-              title="Containers"
-              value={`${runningContainers} / ${containers.length}`}
-              subtitle={unhealthyContainers > 0 ? `${unhealthyContainers} unhealthy` : "All healthy"}
-              trend={unhealthyContainers > 0 ? "down" : "up"}
-              icon="▶"
-            />
-          </div>
-
-          <div className="mb-8">
+          <div className="mb-6">
             <HealthScore />
           </div>
 

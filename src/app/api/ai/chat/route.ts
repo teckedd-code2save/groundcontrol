@@ -64,7 +64,7 @@ const SYSTEM_PROMPT =
   `- If a tool returns an error (e.g. the VPS is unreachable), say so plainly and suggest next steps; ` +
   `do not invent results.\n\n` +
   `Be concise and practical. Assume a Linux VPS (could be Debian/Ubuntu or Alpine/BusyBox). When useful, ` +
-  `reference GroundControl dashboard pages (Topology, XRay, Terminal, Alerts, Sites, Deployments). Format ` +
+  `reference GroundControl dashboard pages (Terminal, Alerts, Services, Deployments, Templates, Settings). Format ` +
   `answers in clean Markdown.`;
 
 type ConfirmedTool = { name: string; args: Record<string, unknown> };

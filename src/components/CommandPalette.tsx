@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 
 interface CommandItem {
   id: string;
@@ -11,28 +11,27 @@ interface CommandItem {
   category: string;
 }
 
+const staticItems: CommandItem[] = [
+  { id: "page-dashboard", label: "Dashboard", href: "/dashboard", category: "Pages" },
+  { id: "page-containers", label: "Containers", href: "/containers", category: "Pages" },
+  { id: "page-projects", label: "Deployments", href: "/projects", category: "Pages" },
+  { id: "page-processes", label: "Processes", href: "/processes", category: "Pages" },
+  { id: "page-files", label: "Files", href: "/files", category: "Pages" },
+  { id: "page-deploy", label: "Deploy", href: "/deploy", category: "Pages" },
+  { id: "page-terminal", label: "Terminal", href: "/terminal", category: "Pages" },
+  { id: "page-proxy", label: "Reverse Proxy", href: "/proxy", category: "Pages" },
+  { id: "page-ai", label: "AI Co-Pilot", href: "/ai", category: "Pages" },
+  { id: "page-alerts", label: "Alerts", href: "/alerts", category: "Pages" },
+  { id: "page-settings", label: "Settings", href: "/settings", category: "Pages" },
+];
+
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [items, setItems] = useState<CommandItem[]>([]);
   const [selected, setSelected] = useState(0);
   const [containers, setContainers] = useState<{ name: string; state: string }[]>([]);
   const [projects, setProjects] = useState<{ slug: string; name: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const staticItems: CommandItem[] = [
-    { id: "page-dashboard", label: "Dashboard", href: "/dashboard", category: "Pages" },
-    { id: "page-containers", label: "Containers", href: "/containers", category: "Pages" },
-    { id: "page-projects", label: "Deployments", href: "/projects", category: "Pages" },
-    { id: "page-processes", label: "Processes", href: "/processes", category: "Pages" },
-    { id: "page-files", label: "Files", href: "/files", category: "Pages" },
-    { id: "page-deploy", label: "Deploy", href: "/deploy", category: "Pages" },
-    { id: "page-terminal", label: "Terminal", href: "/terminal", category: "Pages" },
-    { id: "page-proxy", label: "Reverse Proxy", href: "/proxy", category: "Pages" },
-    { id: "page-topology", label: "Topology", href: "/topology", category: "Pages" },
-    { id: "page-alerts", label: "Alerts", href: "/alerts", category: "Pages" },
-    { id: "page-settings", label: "Settings", href: "/settings", category: "Pages" },
-  ];
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -50,8 +49,6 @@ export default function CommandPalette() {
 
   useEffect(() => {
     if (open) {
-      setQuery("");
-      setSelected(0);
       inputRef.current?.focus();
       fetch("/api/containers")
         .then((r) => (r.ok ? r.json() : []))
@@ -72,7 +69,7 @@ export default function CommandPalette() {
     }
   }, [open]);
 
-  useEffect(() => {
+  const items = useMemo(() => {
     const dynamic: CommandItem[] = [
       ...containers.map((c) => ({
         id: `container-${c.name}`,
@@ -91,19 +88,13 @@ export default function CommandPalette() {
     ];
     const all = [...staticItems, ...dynamic];
     const q = query.toLowerCase().trim();
-    if (!q) {
-      setItems(all);
-    } else {
-      setItems(
-        all.filter(
-          (i) =>
-            i.label.toLowerCase().includes(q) ||
-            (i.sublabel && i.sublabel.toLowerCase().includes(q)) ||
-            i.category.toLowerCase().includes(q)
-        )
-      );
-    }
-    setSelected(0);
+    if (!q) return all;
+    return all.filter(
+      (i) =>
+        i.label.toLowerCase().includes(q) ||
+        (i.sublabel && i.sublabel.toLowerCase().includes(q)) ||
+        i.category.toLowerCase().includes(q)
+    );
   }, [query, containers, projects]);
 
   const execute = useCallback(
@@ -135,7 +126,11 @@ export default function CommandPalette() {
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setQuery("");
+          setSelected(0);
+          setOpen(true);
+        }}
         className="fixed top-4 right-4 z-50 flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg shadow-sm hover:border-accent hover:text-accent transition-colors"
         title="Command Palette (Cmd+K)"
       >
@@ -167,7 +162,10 @@ export default function CommandPalette() {
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelected(0);
+            }}
             onKeyDown={onKeyDown}
             placeholder="Search pages, containers, projects..."
             className="flex-1 bg-transparent text-sm outline-none text-foreground placeholder:text-muted"
@@ -184,7 +182,7 @@ export default function CommandPalette() {
                 <div className="px-4 py-2 text-[10px] font-mono uppercase tracking-wider text-muted bg-background/30">
                   {category}
                 </div>
-                {groupItems.map((item, idx) => {
+                {groupItems.map((item) => {
                   const globalIdx = items.findIndex((i) => i.id === item.id);
                   const isSelected = globalIdx === selected;
                   return (

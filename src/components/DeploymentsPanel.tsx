@@ -372,12 +372,9 @@ export function DeploymentsPanel() {
 
                 <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:w-auto md:shrink-0 md:items-center">
                   {d.target.type === "k3s" && (
-                    <a
-                      href={`/topology?k8sNamespace=${encodeURIComponent(getK3sNamespace(d.target, d.project.slug))}`}
-                      className="px-3 py-2 text-center text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors"
-                    >
-                      View in k8s
-                    </a>
+                    <span className="px-3 py-2 text-center text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg">
+                      k8s: {getK3sNamespace(d.target, d.project.slug)}
+                    </span>
                   )}
                   {(d.output || d.error || d.jobId) && (
                     <button

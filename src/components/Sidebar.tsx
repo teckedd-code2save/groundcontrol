@@ -16,8 +16,6 @@ const primaryItems = [
 ];
 
 const secondaryItems = [
-  { href: "/topology", label: "Topology", icon: "◐" },
-  { href: "/guides", label: "Guides", icon: "▣" },
   { href: "/alerts", label: "Alerts", icon: "◑" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];

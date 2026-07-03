@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { renderMarkdown } from "@/lib/markdown";
 
@@ -48,6 +49,13 @@ interface ThreadDetail {
   }[];
 }
 
+interface GuideSummary {
+  slug: string;
+  title: string;
+  category: string;
+  progress?: { status: string };
+}
+
 const STORAGE_THREAD = "gc:copilot:thread-id";
 
 export default function AiCoPilotPage() {
@@ -58,6 +66,7 @@ export default function AiCoPilotPage() {
   const [loading, setLoading] = useState(false);
   const [threadId, setThreadId] = useState<number | null>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [guides, setGuides] = useState<GuideSummary[]>([]);
   const [showThreadMenu, setShowThreadMenu] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -75,6 +84,13 @@ export default function AiCoPilotPage() {
     try { if (threadId) localStorage.setItem(STORAGE_THREAD, String(threadId)); }
     catch {}
   }, [threadId]);
+
+  useEffect(() => {
+    fetch("/api/guides")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setGuides(Array.isArray(data) ? data.slice(0, 4) : []))
+      .catch(() => setGuides([]));
+  }, []);
 
   // ── Scroll ───────────────────────────────────────────
   useEffect(() => {
@@ -279,6 +295,24 @@ export default function AiCoPilotPage() {
           <h1 className="text-lg font-bold tracking-tight">AI Co-Pilot</h1>
           <p className="text-[10px] text-muted font-mono">⌘K to focus · I can query, manage, and deploy</p>
         </div>
+        {guides.length > 0 && (
+          <div className="hidden max-w-sm items-center gap-2 lg:flex">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-muted">Guides</span>
+            {guides.slice(0, 2).map((guide) => (
+              <Link
+                key={guide.slug}
+                href={`/guides/${guide.slug}`}
+                className="max-w-36 truncate rounded-lg border border-border bg-card px-2.5 py-1.5 text-[11px] text-muted transition-colors hover:border-accent hover:text-accent"
+                title={guide.title}
+              >
+                {guide.title}
+              </Link>
+            ))}
+            <Link href="/guides" className="text-[11px] font-mono text-accent hover:text-accent/80">
+              all
+            </Link>
+          </div>
+        )}
         <div className="relative">
           <button
             onClick={() => { setShowThreadMenu(!showThreadMenu); loadThreads(); }}
