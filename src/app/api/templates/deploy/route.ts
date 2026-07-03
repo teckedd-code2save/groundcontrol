@@ -5,6 +5,7 @@ import { getActiveVps, execOnVps, getSystemConfig, shQuote } from "@/lib/vps";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
 import { prisma } from "@/lib/prisma";
 import { resolveTemplateSource } from "@/lib/template-source";
+import { persistTemplateDeployment } from "@/lib/template-deployment-state";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest) {
     const composeProject = `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
     const deployPath = `${templateRoot}/${slug}`;
     const vps = await getActiveVps();
+    const startTime = Date.now();
 
     if (!vps) {
       return NextResponse.json({
@@ -215,8 +217,28 @@ export async function POST(req: NextRequest) {
       healthResults.push({ domain: recordName, result: health.stdout.trim() || health.stderr.trim() });
     }
 
+    const persisted = await persistTemplateDeployment({
+      slug,
+      templateName,
+      deployPath,
+      composeProject,
+      source,
+      domains,
+      composeYml: resolved.dockerCompose,
+      proxyConfig: resolved.proxyConfig,
+      proxyConfigPath: proxyPath,
+      proxyOutput: proxyResult,
+      dnsResult,
+      healthResults,
+      upOutput: upResult,
+      manifest,
+      vpsConfigId: vps.id,
+      durationMs: Date.now() - startTime,
+    });
+
     return NextResponse.json({
       success: true,
+      ...persisted,
       deployPath,
       slug,
       composeProject,
