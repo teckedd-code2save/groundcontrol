@@ -769,51 +769,63 @@ export function ProjectsPanel() {
                           </div>
                         )}
                       </div>
-                      <div className="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:justify-end">
-                        {!isInvalid && (
-                          <>
+                      <div className="relative shrink-0 self-start">
+                        <details className="group">
+                          <summary
+                            className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg border border-border bg-background text-lg leading-none text-muted transition-colors hover:border-accent hover:text-accent [&::-webkit-details-marker]:hidden"
+                            title="Deployment actions"
+                            aria-label={`Actions for ${project.name}`}
+                          >
+                            ⋮
+                          </summary>
+                          <div className="absolute right-0 top-11 z-30 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-xl shadow-black/20">
+                            {!isInvalid && (
+                              <>
+                                <button
+                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "up" })}
+                                  disabled={!!composeAction}
+                                  className="block w-full px-3 py-2 text-left text-xs font-mono text-success transition-colors hover:bg-success/10 disabled:opacity-50"
+                                  title="Start deployment services"
+                                >
+                                  Box Up
+                                </button>
+                                <button
+                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "down" })}
+                                  disabled={!!composeAction}
+                                  className="block w-full px-3 py-2 text-left text-xs font-mono text-warning transition-colors hover:bg-warning/10 disabled:opacity-50"
+                                  title="Stop deployment services"
+                                >
+                                  Box Down
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeploy(project.slug)}
+                                  disabled={deploying === project.slug}
+                                  className="block w-full px-3 py-2 text-left text-xs font-mono text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
+                                  title="Redeploy through configured target"
+                                >
+                                  Branch Redeploy
+                                </button>
+                                <div className="border-t border-border" />
+                              </>
+                            )}
                             <button
-                              onClick={() => setConfirmCompose({ slug: project.slug, type: "up" })}
+                              onClick={() => replicateDeployment(project)}
                               disabled={!!composeAction}
-                              className="px-3 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded-lg hover:bg-success/20 transition-colors disabled:opacity-50"
-                              title="Start deployment services"
+                              className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent disabled:opacity-50"
+                              title="Replicate deployment"
                             >
-                              Box Up
+                              Copy Replicate
                             </button>
                             <button
-                              onClick={() => setConfirmCompose({ slug: project.slug, type: "down" })}
+                              onClick={() => deleteManagedDeployment(project)}
                               disabled={!!composeAction}
-                              className="px-3 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded-lg hover:bg-warning/20 transition-colors disabled:opacity-50"
-                              title="Stop deployment services"
+                              className="block w-full px-3 py-2 text-left text-xs font-mono text-error transition-colors hover:bg-error/10 disabled:opacity-40"
+                              title="Delete deployment"
                             >
-                              Box Down
+                              Trash Delete
                             </button>
-                            <button
-                              onClick={() => setConfirmDeploy(project.slug)}
-                              disabled={deploying === project.slug}
-                              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50 shrink-0"
-                              title="Redeploy through configured target"
-                            >
-                              Branch Redeploy
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={() => replicateDeployment(project)}
-                          disabled={!!composeAction}
-                          className="px-3 py-2 text-xs font-mono border border-border text-muted rounded-lg hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
-                          title="Replicate deployment"
-                        >
-                          Copy Replicate
-                        </button>
-                        <button
-                          onClick={() => deleteManagedDeployment(project)}
-                          disabled={!!composeAction}
-                          className="px-3 py-2 text-xs font-mono border border-error/30 text-error rounded-lg hover:bg-error/10 transition-colors disabled:opacity-40"
-                          title="Delete deployment"
-                        >
-                          Trash Delete
-                        </button>
+                          </div>
+                        </details>
                       </div>
                     </div>
 
