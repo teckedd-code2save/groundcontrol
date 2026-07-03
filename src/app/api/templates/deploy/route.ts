@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
               zoneId: String(zone.id),
               targetHost: dnsTunnelId ? `${dnsTunnelId}.cfargotunnel.com` : vps.host,
               recordType: dnsTunnelId ? "CNAME" : "A",
-              proxied: proxied !== false,
+              proxied: dnsTunnelId ? proxied !== false : proxied === true,
             }));
           }
         }

@@ -121,6 +121,8 @@ describe("template engine", () => {
     expect(resolved.dockerCompose).toContain("      - .env");
     expect(resolved.dockerCompose).toContain("JWT_SECRET=jwt-secret");
     expect(resolved.dockerCompose).toContain("DATABASE_URL=file:/app/prisma/prod.db");
+    expect(resolved.dockerCompose).toContain("REDIS_URL=redis://redis:6379");
+    expect(resolved.dockerCompose).not.toContain("{{redis_url}}");
   });
 
   it("rejects invalid compose service shapes", () => {

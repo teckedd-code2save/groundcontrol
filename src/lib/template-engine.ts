@@ -269,12 +269,12 @@ export function resolveTemplate(
 function resolveInputs(templateInputs: TemplateInput[], userInputs: Record<string, string>): Record<string, string> {
   const resolved: Record<string, string> = {};
   for (const input of templateInputs) {
-    if (userInputs[input.name]) {
+    if (Object.prototype.hasOwnProperty.call(userInputs, input.name)) {
       resolved[input.name] = userInputs[input.name];
     } else if (input.generate) {
       resolved[input.name] = generateSecureValue();
-    } else if (input.default) {
-      resolved[input.name] = input.default;
+    } else if (Object.prototype.hasOwnProperty.call(input, "default")) {
+      resolved[input.name] = input.default ?? "";
     }
   }
   return resolved;
@@ -511,7 +511,9 @@ export function validateComposeDocument(content: string): { ok: true; services: 
 // ── Template string resolution ─────────────────────────
 
 function resolveTemplateString(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] || `{{${key}}}`);
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) =>
+    Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : `{{${key}}}`
+  );
 }
 
 export function resolveTemplateForExisting(
