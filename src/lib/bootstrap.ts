@@ -213,18 +213,36 @@ export async function installGit(vps?: VpsConnection | null): Promise<BootstrapR
   if (!allowed.ok) return { success: false, output: "", error: allowed.reason || HOST_PACKAGE_BLOCKED };
 
   const os = await detectOsFamily(conn);
+  const verify = `command -v git >/dev/null 2>&1 && git --version`;
 
   if (os === "debian") {
-    const result = await execOnTarget("apt-get update && apt-get install -y git 2>&1", conn);
+    const result = await execOnTarget(`apt-get update && apt-get install -y git && ${verify} 2>&1`, conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
   if (os === "alpine") {
-    const result = await execOnTarget("apk add --no-cache git 2>&1", conn);
+    const result = await execOnTarget(`apk add --no-cache git && ${verify} 2>&1`, conn);
     return { success: result.code === 0, output: result.stdout, error: result.stderr };
   }
 
-  const result = await execOnTarget("command -v git || (curl -fsSL https://raw.githubusercontent.com/git/git/master/INSTALL 2>/dev/null) 2>&1", conn);
+  const script = [
+    "set -eu",
+    "if command -v git >/dev/null 2>&1; then",
+    "  git --version",
+    "elif command -v apt-get >/dev/null 2>&1; then",
+    "  apt-get update && apt-get install -y git && git --version",
+    "elif command -v apk >/dev/null 2>&1; then",
+    "  apk add --no-cache git && git --version",
+    "elif command -v dnf >/dev/null 2>&1; then",
+    "  dnf install -y git && git --version",
+    "elif command -v yum >/dev/null 2>&1; then",
+    "  yum install -y git && git --version",
+    "else",
+    "  echo 'No supported package manager found to install git' >&2",
+    "  exit 127",
+    "fi",
+  ].join("\n");
+  const result = await execOnTarget(`${script} 2>&1`, conn);
   return { success: result.code === 0, output: result.stdout, error: result.stderr };
 }
 
