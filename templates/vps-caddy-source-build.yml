@@ -1,0 +1,77 @@
+name: "VPS Caddy Source Build"
+description: "Build and run a Dockerfile-backed application from a Git repository with Caddy edge routing, DNS, health checks, and persisted deployment metadata."
+category: "source"
+version: "1.0"
+requires:
+  docker: true
+  caddy: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "127.0.0.1:{{host_port}}"
+components:
+  - id: git
+    label: Git source checkout
+    layer: source
+    kind: repository
+  - id: docker
+    label: Dockerfile build
+    layer: build
+    kind: image-build
+  - id: app
+    label: Application service
+    layer: application
+    kind: service
+    service: app
+  - id: caddy
+    label: Caddy edge proxy
+    layer: traffic
+    kind: proxy
+  - id: dns
+    label: Cloudflare DNS
+    layer: edge
+    kind: dns
+services:
+  - name: app
+    build: true
+    ports:
+      - "127.0.0.1:{{host_port}}:{{app_port}}"
+    env:
+      - NODE_ENV=production
+      - PORT={{app_port}}
+      - APP_SECRET={{app_secret}}
+    restart: unless-stopped
+    healthcheck:
+      test: "wget -qO- http://localhost:{{app_port}}{{health_path}} || exit 1"
+      interval: "30s"
+      timeout: "5s"
+      retries: 5
+volumes: []
+networks:
+  - app_network
+inputs:
+  - name: app_slug
+    prompt: "Deployment slug"
+    default: "source-app"
+  - name: domain
+    prompt: "Public domain"
+    example: "app.example.com"
+  - name: repo_url
+    prompt: "Git repository URL"
+    example: "https://github.com/example/app.git"
+  - name: repo_branch
+    prompt: "Git branch, tag, or commit"
+    default: "main"
+  - name: app_port
+    prompt: "Application container port"
+    default: "3000"
+  - name: host_port
+    prompt: "Host loopback port"
+    default: "13050"
+  - name: health_path
+    prompt: "Health path"
+    default: "/"
+  - name: app_secret
+    prompt: "Application secret"
+    generate: true

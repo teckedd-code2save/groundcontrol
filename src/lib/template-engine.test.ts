@@ -65,6 +65,7 @@ describe("template engine", () => {
       "cloudflare-tunnel-private-apps",
       "k3s-caddy-nodeport-platform",
       "vps-caddy-commerce-secure",
+      "vps-caddy-source-build",
       "vps-nginx-polyglot-secure",
       "vps-traefik-scaled-services",
     ]);
