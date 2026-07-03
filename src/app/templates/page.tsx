@@ -8,6 +8,25 @@ interface TemplateWithId extends TemplateDefinition {
   _filename: string;
 }
 
+interface CloudflareTunnelOption {
+  id: string;
+  name: string;
+  connectorStatus?: string;
+  status?: string;
+  hasToken?: boolean;
+  domains?: string[];
+}
+
+interface TemplateDeployResult {
+  deployPath?: string;
+  composeProject?: string;
+  dns?: unknown;
+  health?: { domain: string; result: string }[];
+  upOutput?: string | { stdout?: string; stderr?: string };
+  tunnelId?: string | null;
+  tunnelConfig?: unknown;
+}
+
 type Step = "browse" | "source" | "configure" | "preview" | "deploy";
 
 export default function TemplatesPage() {
@@ -29,15 +48,19 @@ export default function TemplatesPage() {
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([]);
   const [createDns, setCreateDns] = useState(false);
   const [autoDomain, setAutoDomain] = useState(false);
+  const [tunnels, setTunnels] = useState<CloudflareTunnelOption[]>([]);
+  const [selectedTunnelId, setSelectedTunnelId] = useState("");
 
   const [previewText, setPreviewText] = useState("");
   const [composeYml, setComposeYml] = useState("");
   const [proxyConfig, setProxyConfig] = useState("");
-  const [deployResult, setDeployResult] = useState<any>(null);
+  const [deployResult, setDeployResult] = useState<TemplateDeployResult | null>(null);
 
   useEffect(() => {
     fetch("/api/templates").then(r => r.json())
       .then(d => setTemplates(d.templates || [])).catch(() => {});
+    fetch("/api/cloudflare/tunnels").then(r => r.json())
+      .then(d => setTunnels(d.tunnels || [])).catch(() => setTunnels([]));
   }, []);
 
   function selectTemplate(t: TemplateWithId) {
@@ -50,6 +73,7 @@ export default function TemplatesPage() {
     setResult(null);
     setPreviewText("");
     setDeployResult(null);
+    setSelectedTunnelId("");
   }
 
   async function validateRepo() {
@@ -69,8 +93,8 @@ export default function TemplatesPage() {
   }
 
   function deploymentInputs(): Record<string, string> {
-    if (!selected || sourceType !== "ghcr" || !ghcrImage) return inputs;
     const merged = { ...inputs };
+    if (!selected || sourceType !== "ghcr" || !ghcrImage) return merged;
     for (const input of selected.inputs || []) {
       if (input.name.endsWith("_image") || input.name === "app_image") {
         merged[input.name] = ghcrImage;
@@ -78,6 +102,22 @@ export default function TemplatesPage() {
     }
     return merged;
   }
+
+  function previewInputs(): Record<string, string> {
+    const merged = deploymentInputs();
+    if (usesCloudflareTunnel && selectedTunnelId) {
+      merged.tunnel_token = "stored-in-groundcontrol";
+    }
+    return merged;
+  }
+
+  const usesCloudflareTunnel = Boolean(selected && (
+    (selected.inputs || []).some((input) => input.name === "tunnel_token") ||
+    (selected.components || []).some((component) => component.kind === "tunnel" || component.id === "tunnel" || component.id === "cloudflare")
+  ));
+
+  const selectedTunnel = tunnels.find((tunnel) => tunnel.id === selectedTunnelId);
+  const dnsRecordType = usesCloudflareTunnel && selectedTunnelId ? "CNAME" : "A";
 
   function addEnvVar() { setEnvVars([...envVars, { key: "", value: "" }]); }
   function updateEnvVar(i: number, f: "key" | "value", v: string) {
@@ -95,7 +135,7 @@ export default function TemplatesPage() {
         body: JSON.stringify({
           name: selected._filename,
           preview: true,
-          inputs: deploymentInputs(),
+          inputs: previewInputs(),
           repoUrl: sourceType === "github" ? repoUrl : undefined,
           branch: sourceType === "github" ? branch : undefined,
           ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
@@ -132,6 +172,8 @@ export default function TemplatesPage() {
           localPath: sourceType === "local" ? localPath : undefined,
           domain: inputs.domain || undefined,
           createDns: createDns && !!inputs.domain,
+          tunnelId: usesCloudflareTunnel && selectedTunnelId ? selectedTunnelId : undefined,
+          tunnelService: usesCloudflareTunnel ? `http://app:${inputs.app_port || inputs.port || "80"}` : undefined,
         }),
       });
       const data = await res.json();
@@ -146,7 +188,7 @@ export default function TemplatesPage() {
       } else {
         setResult({ ok: false, msg: data.error || "Deploy failed — check VPS connection" });
       }
-    } catch (err) {
+    } catch {
       setResult({ ok: false, msg: "Connection error" });
     } finally { setLoading(false); }
   }
@@ -285,7 +327,7 @@ export default function TemplatesPage() {
                   <span className="text-xs text-muted font-mono">Auto-generate subdomain</span>
                 </label>
               </div>
-              {(selected.inputs || []).filter(i => i.name !== "domain").map(inp => (
+              {(selected.inputs || []).filter(i => i.name !== "domain" && i.name !== "tunnel_token").map(inp => (
                 <div key={inp.name}>
                   <label className="block text-xs font-mono text-muted mb-1">
                     {inp.prompt || inp.name}
@@ -321,10 +363,35 @@ export default function TemplatesPage() {
             <h3 className="text-sm font-medium mb-3">Cloudflare DNS</h3>
             <label className="flex items-center gap-3">
               <input type="checkbox" checked={createDns} onChange={e => setCreateDns(e.target.checked)} className="accent-accent w-4 h-4"/>
-              <span className="text-sm">Auto-create A record for {inputs.domain || "your domain"} → this VPS</span>
+              <span className="text-sm">Auto-create {dnsRecordType} record for {inputs.domain || "your domain"} → {dnsRecordType === "CNAME" ? "selected tunnel" : "this VPS"}</span>
             </label>
             <p className="text-[10px] text-muted mt-2 ml-7">Cloudflare token required in Settings.</p>
           </div>
+
+          {usesCloudflareTunnel && (
+            <div className="bg-card border border-border p-5">
+              <h3 className="text-sm font-medium mb-3">Cloudflare Tunnel</h3>
+              <label className="block text-xs font-mono text-muted mb-1">Saved tunnel</label>
+              <select value={selectedTunnelId} onChange={e => setSelectedTunnelId(e.target.value)}
+                className="w-full max-w-lg bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent">
+                <option value="">Select tunnel...</option>
+                {tunnels.map((tunnel) => (
+                  <option key={tunnel.id} value={tunnel.id}>
+                    {tunnel.name || tunnel.id} · {tunnel.connectorStatus || tunnel.status || "unknown"}{tunnel.hasToken ? "" : " · no token"}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted mt-2">
+                GroundControl injects the saved token, configures the tunnel hostname, and creates a CNAME to <span className="font-mono">{selectedTunnelId || "<tunnel-id>"}.cfargotunnel.com</span>.
+              </p>
+              {selectedTunnel && selectedTunnel.domains && selectedTunnel.domains.length > 0 && (
+                <p className="text-[10px] text-muted mt-1 font-mono break-all">Current domains: {selectedTunnel.domains.join(", ")}</p>
+              )}
+              {tunnels.length === 0 && (
+                <p className="text-xs text-error mt-3 font-mono">No saved tunnels found. Create one in Settings → Cloudflare first.</p>
+              )}
+            </div>
+          )}
 
           <div className="flex gap-3">
             <BackBtn onClick={() => setStep("source")} />
@@ -362,7 +429,7 @@ export default function TemplatesPage() {
               <h3 className="text-sm font-medium text-success mb-2">Deploy Result</h3>
               <p className="text-xs text-muted font-mono">Path: {deployResult.deployPath}</p>
               {deployResult.composeProject && <p className="text-xs text-muted font-mono mt-1">Compose project: {deployResult.composeProject}</p>}
-              {deployResult.dns && <p className="text-xs text-muted font-mono mt-1">DNS: record created</p>}
+              {Boolean(deployResult.dns) && <p className="text-xs text-muted font-mono mt-1">DNS: record created</p>}
               {Array.isArray(deployResult.health) && deployResult.health.length > 0 && (
                 <div className="mt-2 space-y-1">
                   {deployResult.health.map((h: { domain: string; result: string }) => (

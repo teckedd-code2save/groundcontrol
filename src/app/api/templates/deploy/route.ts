@@ -152,10 +152,16 @@ export async function POST(req: NextRequest) {
     const selectedTunnel = requestedTunnelId
       ? await prisma.cloudflareTunnel.findFirst({ where: { tunnelId: requestedTunnelId } })
       : null;
+    if (requestedTunnelId && !selectedTunnel) {
+      return NextResponse.json({ success: false, error: `Cloudflare tunnel not found: ${requestedTunnelId}` }, { status: 400 });
+    }
     let composeContent = resolved.dockerCompose;
     if (composeContent.includes("{{tunnel_token}}")) {
+      if (!requestedTunnelId) {
+        return NextResponse.json({ success: false, error: "Template requires a saved Cloudflare tunnel. Select a tunnel before deploying." }, { status: 400 });
+      }
       try {
-        const tunnel = selectedTunnel || await prisma.cloudflareTunnel.findFirst({ orderBy: { createdAt: "desc" } });
+        const tunnel = selectedTunnel;
         if (tunnel?.tunnelSecret) {
           composeContent = composeContent.replace(/\{\{tunnel_token\}\}/g, tunnel.tunnelSecret || "");
         }
