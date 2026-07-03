@@ -136,6 +136,36 @@ export async function deleteTunnel(
   );
 }
 
+export interface TunnelIngressRule {
+  hostname?: string;
+  service: string;
+}
+
+export async function updateTunnelConfiguration(
+  tunnelId: string,
+  ingress: TunnelIngressRule[],
+  account?: CloudflareAccountRecord | null
+) {
+  const active = account || (await getActiveCloudflareAccount());
+  if (!active) throw new Error("No active Cloudflare account");
+  if (!active.accountId) throw new Error("Cloudflare account ID is required");
+  return cfRequest<Record<string, unknown>>(
+    `/accounts/${active.accountId}/cfd_tunnel/${tunnelId}/configurations`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        config: {
+          ingress: [
+            ...ingress,
+            { service: "http_status:404" },
+          ],
+        },
+      }),
+    },
+    active
+  );
+}
+
 export async function listZones(account?: CloudflareAccountRecord | null) {
   return cfRequest<Array<Record<string, unknown>>>("/zones", { method: "GET" }, account);
 }
@@ -241,5 +271,4 @@ export async function verifyCloudflareToken(account?: { apiToken: string }) {
   if (!account?.apiToken) throw new Error("No Cloudflare API token provided");
   return verifyToken({ apiToken: account.apiToken, id: 0, name: "", accountId: null, email: null, isActive: true, createdAt: new Date(), updatedAt: new Date() });
 }
-
 

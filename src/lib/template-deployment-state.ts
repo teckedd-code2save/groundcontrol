@@ -20,9 +20,11 @@ export interface PersistTemplateDeploymentInput {
   proxyConfigPath: string;
   proxyOutput: unknown;
   dnsResult: unknown;
+  tunnelConfigResult?: unknown;
   healthResults: unknown[];
   upOutput: unknown;
   manifest: string;
+  tunnelId?: string | null;
   vpsConfigId?: number | null;
   durationMs?: number;
 }
@@ -90,6 +92,7 @@ export async function persistTemplateDeployment(
     source: input.source,
     domains: input.domains,
     proxyConfigPath: input.proxyConfigPath,
+    tunnelId: input.tunnelId || null,
   };
 
   const existingTarget = await client.deploymentTarget.findFirst({
@@ -127,6 +130,8 @@ export async function persistTemplateDeployment(
         deployPath: input.deployPath,
         composeProject: input.composeProject,
         source: input.source,
+        tunnelId: input.tunnelId || null,
+        tunnelConfig: input.tunnelConfigResult ?? null,
         dns: input.dnsResult,
         proxy: input.proxyOutput,
         health: input.healthResults,

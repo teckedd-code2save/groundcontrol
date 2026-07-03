@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { templateName, inputs = {}, envVars = [], repoUrl, branch, ghcrImage, localPath, domain, createDns, zoneId, proxied } = body;
+    const { templateName, inputs = {}, envVars = [], repoUrl, branch, ghcrImage, localPath, domain, createDns, zoneId, proxied, tunnelId } = body;
 
     if (!templateName) {
       return NextResponse.json({ success: false, error: "templateName is required" }, { status: 400 });
@@ -147,14 +147,21 @@ export async function POST(req: NextRequest) {
 
     // Write docker-compose.yml
     // Auto-inject tunnel tokens from Settings if template references {{tunnel_token}}
+    const requestedTunnelId = String(tunnelId || "").trim();
+    const selectedTunnel = requestedTunnelId
+      ? await prisma.cloudflareTunnel.findFirst({ where: { tunnelId: requestedTunnelId } })
+      : null;
     let composeContent = resolved.dockerCompose;
     if (composeContent.includes("{{tunnel_token}}")) {
       try {
-        const tunnel = await prisma.cloudflareTunnel.findFirst({ orderBy: { createdAt: "desc" } });
-        if (tunnel) {
+        const tunnel = selectedTunnel || await prisma.cloudflareTunnel.findFirst({ orderBy: { createdAt: "desc" } });
+        if (tunnel?.tunnelSecret) {
           composeContent = composeContent.replace(/\{\{tunnel_token\}\}/g, tunnel.tunnelSecret || "");
         }
       } catch {}
+      if (composeContent.includes("{{tunnel_token}}")) {
+        return NextResponse.json({ success: false, error: "Template requires a Cloudflare tunnel token, but no saved tunnel token is available." }, { status: 400 });
+      }
     }
 
     await execOnVps(`mkdir -p ${shQuote(deployPath)}/.groundcontrol && cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${composeContent}\nGCEOF\ncat > ${shQuote(deployPath)}/.env.schema << 'GCEOF'\n${resolved.envSchema}\nGCEOF\ncat > ${shQuote(deployPath)}/.groundcontrol/manifest.json << 'GCEOF'\n${manifest}\nGCEOF`, vps);
@@ -180,6 +187,7 @@ export async function POST(req: NextRequest) {
 
     // Cloudflare DNS
     let dnsResult: unknown = null;
+    let tunnelConfigResult: unknown = null;
     const domains = collectDomains(allInputs);
     if (createDns && domains.length > 0) {
       try {
@@ -190,6 +198,22 @@ export async function POST(req: NextRequest) {
             : []
         );
         const records = [];
+        const dnsTunnelId = selectedTunnel?.tunnelId || requestedTunnelId;
+        if (dnsTunnelId) {
+          const { updateTunnelConfiguration } = await import("@/lib/cloudflare");
+          const tunnelService = String(body.tunnelService || `http://app:${allInputs.app_port || allInputs.port || "80"}`);
+          tunnelConfigResult = await updateTunnelConfiguration(
+            dnsTunnelId,
+            domains.map((recordName) => ({ hostname: recordName, service: tunnelService }))
+          );
+          await prisma.cloudflareTunnel.updateMany({
+            where: { tunnelId: dnsTunnelId },
+            data: {
+              domains: domains.join(","),
+              configJson: JSON.stringify({ ingress: domains.map((recordName) => ({ hostname: recordName, service: tunnelService })) }),
+            },
+          }).catch(() => undefined);
+        }
         for (const recordName of domains) {
           const requestedZoneId = String(zoneId || "").trim();
           const zone: CloudflareZone | undefined = requestedZoneId
@@ -199,8 +223,8 @@ export async function POST(req: NextRequest) {
             records.push(await provisionCustomDomain({
               subdomain: recordName,
               zoneId: String(zone.id),
-              targetHost: vps.host,
-              recordType: "A",
+              targetHost: dnsTunnelId ? `${dnsTunnelId}.cfargotunnel.com` : vps.host,
+              recordType: dnsTunnelId ? "CNAME" : "A",
               proxied: proxied !== false,
             }));
           }
@@ -229,9 +253,11 @@ export async function POST(req: NextRequest) {
       proxyConfigPath: proxyPath,
       proxyOutput: proxyResult,
       dnsResult,
+      tunnelConfigResult,
       healthResults,
       upOutput: upResult,
       manifest,
+      tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
       vpsConfigId: vps.id,
       durationMs: Date.now() - startTime,
     });
@@ -244,6 +270,7 @@ export async function POST(req: NextRequest) {
       composeProject,
       upOutput: upResult,
       dns: dnsResult,
+      tunnelConfig: tunnelConfigResult,
       proxy: proxyResult,
       health: healthResults,
       composeYml: resolved.dockerCompose,
@@ -251,6 +278,7 @@ export async function POST(req: NextRequest) {
       proxyConfigPath: proxyPath,
       manifest,
       source,
+      tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
       message: `Deployed ${slug} to ${deployPath}. ${domains.length ? `Served at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}`,
     });
   } catch (err) {
