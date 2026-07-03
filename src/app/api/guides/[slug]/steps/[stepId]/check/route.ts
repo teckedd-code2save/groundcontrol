@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { execOnTarget } from "@/lib/host-exec";
-import { getActiveVps } from "@/lib/vps";
+import { getActiveVps, getKubeconfigEnv } from "@/lib/vps";
 import { parseGuideSteps } from "@/lib/guides/loader";
 import { updateProgressStep, serializeProgress } from "@/lib/guides/progress";
 
@@ -37,7 +37,8 @@ export async function POST(
     }
 
     const activeVps = await getActiveVps();
-    const result = await execOnTarget(step.checkCommand, activeVps);
+    const command = `export ${getKubeconfigEnv(activeVps)}; ${step.checkCommand}`;
+    const result = await execOnTarget(command, activeVps);
     const combined = `${result.stdout}\n${result.stderr}`.trim();
     const ok = result.code === 0;
 
