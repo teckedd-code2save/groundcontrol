@@ -8,6 +8,7 @@ const defaultExecAsync = promisify(exec);
 const DOCKER_SOCK = "/var/run/docker.sock";
 const BRIDGE_IMAGE = "groundcontrol-host-bridge:latest";
 const OS_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
+const HOST_COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 
 export interface BridgeDeps {
   statSync: typeof fs.statSync;
@@ -115,7 +116,7 @@ export async function execViaDockerHostBridge(
   ].join(" ");
 
   try {
-    const { stdout, stderr } = await deps.execAsync(dockerCmd, { timeout: 120000 });
+    const { stdout, stderr } = await deps.execAsync(dockerCmd, { timeout: HOST_COMMAND_TIMEOUT_MS });
     return { stdout, stderr, code: 0 };
   } catch (err) {
     const execErr = err as { stdout?: string; stderr?: string; code?: number };

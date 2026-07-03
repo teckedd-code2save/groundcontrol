@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
-import { getActiveVps, execOnVps, getSystemConfig, shQuote } from "@/lib/vps";
+import { getActiveVps, getSystemConfig, shQuote } from "@/lib/vps";
+import { execOnTarget } from "@/lib/host-exec";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
 import { prisma } from "@/lib/prisma";
 import { resolveTemplateSource } from "@/lib/template-source";
@@ -44,7 +45,7 @@ function isCloudflareZone(value: unknown): value is CloudflareZone {
 
 async function ensureNoPortCollisions(compose: string, vps: Awaited<ReturnType<typeof getActiveVps>>) {
   for (const port of collectHostPorts(compose)) {
-    const result = await execOnVps(`(ss -tln 2>/dev/null || netstat -tln 2>/dev/null || true) | grep -E '[:.]${port}[[:space:]]' || true`, vps);
+    const result = await execOnTarget(`(ss -tln 2>/dev/null || netstat -tln 2>/dev/null || true) | grep -E '[:.]${port}[[:space:]]' || true`, vps);
     if (result.stdout.trim()) {
       throw new Error(`Host port ${port} is already in use. Choose a different template host port.`);
     }
@@ -53,14 +54,14 @@ async function ensureNoPortCollisions(compose: string, vps: Awaited<ReturnType<t
 
 async function writeProxyConfig(type: string, config: string, path: string, vps: Awaited<ReturnType<typeof getActiveVps>>) {
   if (!config.trim()) return { path: "", output: "" };
-  await execOnVps(`mkdir -p ${shQuote(path.replace(/\/[^/]+$/, ""))} && cat > ${shQuote(path)} << 'GCEOF'\n${config}\nGCEOF`, vps);
+  await execOnTarget(`mkdir -p ${shQuote(path.replace(/\/[^/]+$/, ""))} && cat > ${shQuote(path)} << 'GCEOF'\n${config}\nGCEOF`, vps);
   if (type === "caddy") {
-    const result = await execOnVps(`caddy validate --config /etc/caddy/Caddyfile && (systemctl reload caddy 2>/dev/null || service caddy reload 2>/dev/null || caddy reload --config /etc/caddy/Caddyfile)`, vps);
+    const result = await execOnTarget(`caddy validate --config /etc/caddy/Caddyfile && (systemctl reload caddy 2>/dev/null || service caddy reload 2>/dev/null || caddy reload --config /etc/caddy/Caddyfile)`, vps);
     if (result.code !== 0) throw new Error(result.stderr || result.stdout || "Caddy validation/reload failed");
     return { path, output: result.stdout || result.stderr };
   }
   if (type === "nginx") {
-    const result = await execOnVps(`nginx -t && (systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || nginx -s reload)`, vps);
+    const result = await execOnTarget(`nginx -t && (systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || nginx -s reload)`, vps);
     if (result.code !== 0) throw new Error(result.stderr || result.stdout || "Nginx validation/reload failed");
     return { path, output: result.stdout || result.stderr };
   }
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    await execOnVps(`mkdir -p ${shQuote(templateRoot)}`, vps);
+    await execOnTarget(`mkdir -p ${shQuote(templateRoot)}`, vps);
     const source = await resolveTemplateSource({ repoUrl, branch, localPath, deployPath, vps })
       .catch((err) => ({ error: err instanceof Error ? err.message : "Source validation failed" }));
     if ("error" in source) {
@@ -134,13 +135,13 @@ export async function POST(req: NextRequest) {
 
     const usesBuild = template.services.some((service) => service.build);
     if (usesBuild) {
-      const dockerfile = await execOnVps(`test -f ${shQuote(source.sourcePath)}/Dockerfile && echo yes || echo no`, vps);
+      const dockerfile = await execOnTarget(`test -f ${shQuote(source.sourcePath)}/Dockerfile && echo yes || echo no`, vps);
       if (dockerfile.stdout.trim() !== "yes") {
         return NextResponse.json({ success: false, error: `Template requires a Dockerfile, but none was found at ${source.sourcePath}/Dockerfile` }, { status: 400 });
       }
     }
 
-    const existingDeployment = await execOnVps(`test -f ${shQuote(deployPath)}/docker-compose.yml && echo yes || echo no`, vps);
+    const existingDeployment = await execOnTarget(`test -f ${shQuote(deployPath)}/docker-compose.yml && echo yes || echo no`, vps);
     if (existingDeployment.stdout.trim() !== "yes") {
       await ensureNoPortCollisions(resolved.dockerCompose, vps);
     }
@@ -164,20 +165,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await execOnVps(`mkdir -p ${shQuote(deployPath)}/.groundcontrol && cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${composeContent}\nGCEOF\ncat > ${shQuote(deployPath)}/.env.schema << 'GCEOF'\n${resolved.envSchema}\nGCEOF\ncat > ${shQuote(deployPath)}/.groundcontrol/manifest.json << 'GCEOF'\n${manifest}\nGCEOF`, vps);
+    await execOnTarget(`mkdir -p ${shQuote(deployPath)}/.groundcontrol && cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${composeContent}\nGCEOF\ncat > ${shQuote(deployPath)}/.env.schema << 'GCEOF'\n${resolved.envSchema}\nGCEOF\ncat > ${shQuote(deployPath)}/.groundcontrol/manifest.json << 'GCEOF'\n${manifest}\nGCEOF`, vps);
 
     // Write .env
     if (envVars && envVars.length > 0) {
       const envFile = envVars.filter((e: { key: string }) => e.key).map((e: { key: string; value: string }) => `${e.key}=${e.value || ""}`).join("\n");
       if (envFile) {
-        await execOnVps(`cat > ${shQuote(deployPath)}/.env << 'GCEOF'\n${envFile}\nGCEOF`, vps);
-        await execOnVps(`chmod 600 ${shQuote(deployPath)}/.env`, vps);
+        await execOnTarget(`cat > ${shQuote(deployPath)}/.env << 'GCEOF'\n${envFile}\nGCEOF`, vps);
+        await execOnTarget(`chmod 600 ${shQuote(deployPath)}/.env`, vps);
       }
     }
 
     // Deploy
     const composeCmd = `if docker compose version >/dev/null 2>&1; then printf 'docker compose'; elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'; else printf ''; fi`;
-    const upResult = await execOnVps(`cd ${shQuote(deployPath)} && compose_cmd=$(${composeCmd}) && if [ -z "$compose_cmd" ]; then echo "docker compose plugin or docker-compose is required" >&2; exit 127; fi && $compose_cmd -p ${shQuote(composeProject)} config >/tmp/${composeProject}.compose.yml && $compose_cmd -p ${shQuote(composeProject)} pull && $compose_cmd -p ${shQuote(composeProject)} up -d --remove-orphans 2>&1`, vps);
+    const upResult = await execOnTarget(`cd ${shQuote(deployPath)} && compose_cmd=$(${composeCmd}) && if [ -z "$compose_cmd" ]; then echo "docker compose plugin or docker-compose is required" >&2; exit 127; fi && $compose_cmd -p ${shQuote(composeProject)} config >/tmp/${composeProject}.compose.yml && $compose_cmd -p ${shQuote(composeProject)} pull && $compose_cmd -p ${shQuote(composeProject)} up -d --remove-orphans 2>&1`, vps);
     if (upResult.code !== 0) {
       return NextResponse.json({ success: false, error: upResult.stderr || upResult.stdout || "docker compose up failed", upOutput: upResult }, { status: 500 });
     }
@@ -237,7 +238,7 @@ export async function POST(req: NextRequest) {
 
     const healthResults = [];
     for (const recordName of domains) {
-      const health = await execOnVps(`curl -k -fsS -I --max-time 15 ${shQuote(`https://${recordName}/`)} 2>&1 | head -n 1 || true`, vps);
+      const health = await execOnTarget(`curl -k -fsS -I --max-time 15 ${shQuote(`https://${recordName}/`)} 2>&1 | head -n 1 || true`, vps);
       healthResults.push({ domain: recordName, result: health.stdout.trim() || health.stderr.trim() });
     }
 

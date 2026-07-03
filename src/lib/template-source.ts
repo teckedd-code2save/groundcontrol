@@ -1,5 +1,6 @@
 import { installGit } from "./bootstrap";
-import { execOnVps, shQuote, type VpsConnection } from "./vps";
+import { execOnTarget } from "./host-exec";
+import { shQuote, type VpsConnection } from "./vps";
 
 export type TemplateSourceKind = "empty" | "git" | "local";
 
@@ -22,11 +23,11 @@ export interface TemplateSourceResolution {
   defaultBranch?: string;
 }
 
-type ExecOnVps = typeof execOnVps;
+type ExecOnTarget = typeof execOnTarget;
 type InstallGit = typeof installGit;
 
 export interface TemplateSourceDeps {
-  exec?: ExecOnVps;
+  exec?: ExecOnTarget;
   installGit?: InstallGit;
 }
 
@@ -34,7 +35,7 @@ export async function resolveTemplateSource(
   input: TemplateSourceInput,
   deps: TemplateSourceDeps = {}
 ): Promise<TemplateSourceResolution> {
-  const run = deps.exec || execOnVps;
+  const run = deps.exec || execOnTarget;
   const install = deps.installGit || installGit;
   const repoUrl = clean(input.repoUrl);
   const localPath = clean(input.localPath);
@@ -73,7 +74,7 @@ export async function resolveTemplateSource(
   };
 }
 
-async function ensureGitAvailable(vps: VpsConnection | null | undefined, run: ExecOnVps, install: InstallGit) {
+async function ensureGitAvailable(vps: VpsConnection | null | undefined, run: ExecOnTarget, install: InstallGit) {
   const gitCheck = await run(`command -v git >/dev/null 2>&1 && echo yes || echo no`, vps);
   if (gitCheck.stdout.trim() === "yes") return;
 
@@ -99,7 +100,7 @@ async function resolveGitSource({
   requestedRef: string;
   deployPath: string;
   vps?: VpsConnection | null;
-  run: ExecOnVps;
+  run: ExecOnTarget;
 }): Promise<TemplateSourceResolution> {
   const script = [
     `set -eu`,
