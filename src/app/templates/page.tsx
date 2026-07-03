@@ -29,6 +29,41 @@ interface TemplateDeployResult {
 
 type Step = "browse" | "source" | "configure" | "preview" | "deploy";
 
+function templatePurpose(template: TemplateWithId): string {
+  const category = template.category.toLowerCase();
+  if (category === "source") return "Dockerfile apps built from Git, with Caddy and DNS wired after deploy.";
+  if (category === "private") return "Admin and internal apps that should enter through Cloudflare Tunnel, not public host ports.";
+  if (category === "commerce") return "SaaS or commerce stacks with web, API, workers, data stores, and object storage.";
+  if (category === "polyglot") return "Mixed frontend/backend stacks that need a shared database and reverse proxy.";
+  if (category === "microservices") return "Scale-ready web/API services behind Traefik with middleware and observability.";
+  if (category === "kubernetes") return "k3s workloads exposed through host Caddy without Traefik or ServiceLB port conflicts.";
+  return template.description;
+}
+
+function templateExposure(template: TemplateWithId): string {
+  const usesTunnel = (template.components || []).some((component) => component.kind === "tunnel");
+  if (usesTunnel) return "Cloudflare Tunnel CNAME -> cloudflared -> app service";
+  if (template.reverse_proxy.type === "traefik") return "Public 80/443 -> Traefik routers -> compose services";
+  if (template.reverse_proxy.type === "nginx") return "Public DNS -> Nginx -> loopback service ports";
+  return "Public DNS -> Caddy -> loopback service ports";
+}
+
+function templateSourceModes(template: TemplateWithId): string[] {
+  const hasBuild = template.services.some((service) => service.build);
+  const imageInputs = template.inputs.filter((input) => input.name.endsWith("_image") || input.name === "app_image");
+  if (hasBuild) return ["Git repo with Dockerfile", "Local VPS path"];
+  if (imageInputs.length > 0) return ["GHCR/container image", "Template defaults"];
+  return ["Template defaults"];
+}
+
+function templateComplexity(template: TemplateWithId): string {
+  const serviceCount = template.services.length;
+  const dataCount = (template.components || []).filter((component) => component.layer === "data").length;
+  if (serviceCount <= 2 && dataCount === 0) return "simple";
+  if (serviceCount <= 4) return "standard";
+  return "full stack";
+}
+
 export default function TemplatesPage() {
   const router = useRouter();
   const [templates, setTemplates] = useState<TemplateWithId[]>([]);
@@ -236,25 +271,59 @@ export default function TemplatesPage() {
 
       {/* Step 1: Browse */}
       {step === "browse" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="border border-border bg-card p-4">
+              <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Pick by app shape</div>
+              <p className="text-[11px] text-muted/75 leading-relaxed">
+                Templates describe deployable app shapes: source builds, private tunnel apps, SaaS stacks, polyglot
+                services, Traefik microservices, and k3s edge setups.
+              </p>
+            </div>
+            <div className="border border-border bg-card p-4">
+              <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Know the exposure</div>
+              <p className="text-[11px] text-muted/75 leading-relaxed">
+                Each card shows whether traffic enters through Caddy, Nginx, Traefik, or Cloudflare Tunnel before it
+                reaches the app service.
+              </p>
+            </div>
+            <div className="border border-border bg-card p-4">
+              <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Then deploy</div>
+              <p className="text-[11px] text-muted/75 leading-relaxed">
+                Successful deployments are managed under <span className="font-mono">/srv/groundcontrol/deployments</span>{" "}
+                and appear on the Deployments page.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {templates.map(t => (
             <button key={t._filename} onClick={() => selectTemplate(t)}
               className="text-left p-5 bg-card border border-border hover:border-accent/30 hover:bg-accent/5 transition-colors">
               <div className="flex items-start justify-between mb-2">
-                <h3 className="font-medium text-sm">{t.name}</h3>
-                <span className="text-lg">{t.category === "static" ? "◈" : "◉"}</span>
+                <div>
+                  <h3 className="font-medium text-sm">{t.name}</h3>
+                  <p className="mt-1 text-[10px] font-mono uppercase tracking-wider text-accent">{t.category} · {templateComplexity(t)}</p>
+                </div>
+                <span className="text-lg">{t.category === "private" ? "◎" : t.category === "kubernetes" ? "▦" : "◉"}</span>
               </div>
-              <p className="text-xs text-muted leading-relaxed mb-3">{t.description}</p>
+              <p className="text-xs text-muted leading-relaxed mb-3">{templatePurpose(t)}</p>
+              <div className="mb-3 space-y-1.5 text-[10px] text-muted/80">
+                <p><span className="font-mono text-muted">Exposure:</span> {templateExposure(t)}</p>
+                <p><span className="font-mono text-muted">Source:</span> {templateSourceModes(t).join(" or ")}</p>
+                <p><span className="font-mono text-muted">Services:</span> {t.services.map((service) => service.name).join(", ")}</p>
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {t.requires?.docker && <Tag>Docker</Tag>}
                 {t.requires?.caddy && <Tag>Caddy</Tag>}
                 {t.requires?.traefik && <Tag>Traefik</Tag>}
                 {t.requires?.nginx && <Tag>Nginx</Tag>}
                 {t.requires?.k3s && <Tag>k3s</Tag>}
+                {(t.components || []).some((component) => component.kind === "tunnel") && <Tag>Tunnel</Tag>}
                 <span className="text-[9px] px-1.5 py-0.5 bg-muted/10 text-muted border border-muted/20 font-mono">v{t.version}</span>
               </div>
             </button>
           ))}
+          </div>
         </div>
       )}
 
@@ -490,7 +559,21 @@ function SelectedTemplateCard({ selected }: { selected: TemplateWithId }) {
   return (
     <div className="bg-card border border-border p-5 space-y-4">
       <h2 className="text-sm font-medium mb-1">{selected.name}</h2>
-      <p className="text-xs text-muted">{selected.description}</p>
+      <p className="text-xs text-muted">{templatePurpose(selected)}</p>
+      <div className="grid gap-2 md:grid-cols-3">
+        <div className="border border-border bg-background/40 p-3">
+          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Best for</div>
+          <p className="text-xs text-muted leading-relaxed">{selected.description}</p>
+        </div>
+        <div className="border border-border bg-background/40 p-3">
+          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Exposure</div>
+          <p className="text-xs text-muted leading-relaxed">{templateExposure(selected)}</p>
+        </div>
+        <div className="border border-border bg-background/40 p-3">
+          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Source</div>
+          <p className="text-xs text-muted leading-relaxed">{templateSourceModes(selected).join(" or ")}</p>
+        </div>
+      </div>
       {Object.keys(grouped).length > 0 && (
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {Object.entries(grouped).map(([layer, components]) => (

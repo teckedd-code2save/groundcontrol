@@ -3,9 +3,20 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { handleApiError } from "@/lib/errors";
 
+function isTemplateManagedTarget(target: { name: string; configJson: string | null }): boolean {
+  if (target.name.startsWith("Template: ")) return true;
+  try {
+    const config = JSON.parse(target.configJson || "{}") as { managedBy?: unknown };
+    return config.managedBy === "template-deploy";
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
+    const includeTemplateManaged = req.nextUrl.searchParams.get("includeTemplateManaged") === "1";
 
     const targets = await prisma.deploymentTarget.findMany({
       orderBy: { updatedAt: "desc" },
@@ -15,7 +26,7 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json(targets);
+    return NextResponse.json(includeTemplateManaged ? targets : targets.filter((target) => !isTemplateManagedTarget(target)));
   } catch (err: unknown) {
     return handleApiError(err);
   }

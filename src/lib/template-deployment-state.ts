@@ -37,14 +37,21 @@ export interface PersistTemplateDeploymentResult {
 
 export type TemplateDeploymentPrismaClient = Pick<PrismaClient, "project" | "deploymentTarget" | "deployment">;
 
+function isTemplateManagedTargetConfig(value: string | null | undefined): boolean {
+  try {
+    const parsed = JSON.parse(value || "{}") as { managedBy?: unknown };
+    return parsed.managedBy === "template-deploy";
+  } catch {
+    return false;
+  }
+}
+
 export async function persistTemplateDeployment(
   input: PersistTemplateDeploymentInput,
   client: TemplateDeploymentPrismaClient = defaultPrisma
 ): Promise<PersistTemplateDeploymentResult> {
   const primaryDomain = input.domains[0] || null;
   const publicUrl = primaryDomain ? `https://${primaryDomain}` : null;
-  const dnsRecords = normalizeDnsRecords(input.dnsResult);
-  const firstDns = dnsRecords[0];
 
   const project = await client.project.upsert({
     where: { slug: input.slug },
@@ -83,39 +90,7 @@ export async function persistTemplateDeployment(
     },
   });
 
-  const targetName = `Template: ${input.slug}`;
-  const targetConfig = {
-    managedBy: "template-deploy",
-    templateName: input.templateName,
-    deploymentRoot: input.deployPath,
-    composeProject: input.composeProject,
-    source: input.source,
-    domains: input.domains,
-    proxyConfigPath: input.proxyConfigPath,
-    tunnelId: input.tunnelId || null,
-  };
-
-  const existingTarget = await client.deploymentTarget.findFirst({
-    where: { name: targetName, type: "docker-compose" },
-    orderBy: { createdAt: "desc" },
-  });
-
-  const targetData = {
-    name: targetName,
-    type: "docker-compose",
-    vpsConfigId: input.vpsConfigId ?? null,
-    configJson: JSON.stringify(targetConfig),
-    isActive: false,
-    dnsRecordId: firstDns?.recordId || null,
-    dnsRecordName: firstDns?.name || primaryDomain,
-  };
-
-  const target = existingTarget
-    ? await client.deploymentTarget.update({
-        where: { id: existingTarget.id },
-        data: targetData,
-      })
-    : await client.deploymentTarget.create({ data: targetData });
+  const target = await resolveTemplateDeploymentTarget(client, input.vpsConfigId ?? null);
 
   const deployment = await client.deployment.create({
     data: {
@@ -147,6 +122,51 @@ export async function persistTemplateDeployment(
     targetId: target.id,
     deploymentId: deployment.id,
   };
+}
+
+async function resolveTemplateDeploymentTarget(
+  client: TemplateDeploymentPrismaClient,
+  vpsConfigId: number | null
+) {
+  const activeTargets = await client.deploymentTarget.findMany({
+    where: {
+      isActive: true,
+      AND: [
+        { OR: [{ type: "compose" }, { type: "docker-compose" }] },
+        ...(vpsConfigId ? [{ OR: [{ vpsConfigId }, { vpsConfigId: null }] }] : []),
+      ],
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  const activeTarget = activeTargets.find((target) => !isTemplateManagedTargetConfig(target.configJson));
+  if (activeTarget && !isTemplateManagedTargetConfig(activeTarget.configJson)) return activeTarget;
+
+  const composeTargets = await client.deploymentTarget.findMany({
+    where: {
+      AND: [
+        { OR: [{ type: "compose" }, { type: "docker-compose" }] },
+        ...(vpsConfigId ? [{ OR: [{ vpsConfigId }, { vpsConfigId: null }] }] : []),
+      ],
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  const composeTarget = composeTargets.find((target) => !isTemplateManagedTargetConfig(target.configJson));
+  if (composeTarget && !isTemplateManagedTargetConfig(composeTarget.configJson)) return composeTarget;
+
+  return client.deploymentTarget.create({
+    data: {
+      name: "VPS Docker Compose",
+      type: "compose",
+      vpsConfigId,
+      configJson: JSON.stringify({
+        composeFile: "docker-compose.yml",
+        projectPath: "",
+        pullBeforeUp: true,
+        managedBy: "groundcontrol",
+      }),
+      isActive: false,
+    },
+  });
 }
 
 export function normalizeDnsRecords(value: unknown): TemplateDnsRecord[] {

@@ -611,11 +611,17 @@ export function ProjectsPanel() {
   const grouped = useMemo(() => {
     const groups = new Map<string, ScannedProject[]>();
     for (const p of projects) {
-      const key = p.parent || "";
+      const key = p.managed ? "__managed__" : p.parent || "__discovered__";
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(p);
     }
-    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    return Array.from(groups.entries()).sort((a, b) => {
+      if (a[0] === "__managed__") return -1;
+      if (b[0] === "__managed__") return 1;
+      if (a[0] === "__discovered__") return -1;
+      if (b[0] === "__discovered__") return 1;
+      return a[0].localeCompare(b[0]);
+    });
   }, [projects]);
 
   if (loading) {
@@ -641,9 +647,25 @@ export function ProjectsPanel() {
         </div>
       )}
 
-      <p className="text-[11px] text-muted/70 leading-relaxed">
-        Deployments discovered under {projectRoot}; managed template deployments live under {templateDeploymentRoot}.
-      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Deployment inventory</div>
+          <p className="text-[11px] text-muted/75 leading-relaxed">
+            Discovered compose apps are scanned from <span className="font-mono text-foreground">{projectRoot}</span>.
+            Managed template deployments are scanned from{" "}
+            <span className="font-mono text-foreground">{templateDeploymentRoot}</span> and stay visible here with the
+            same compose actions.
+          </p>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Tunnel routing model</div>
+          <p className="text-[11px] text-muted/75 leading-relaxed">
+            Cloudflare DNS points a hostname to a saved tunnel; the compose-managed{" "}
+            <span className="font-mono text-foreground">cloudflared</span> service carries traffic into the deployment
+            network and forwards it to the selected app service.
+          </p>
+        </div>
+      </div>
 
       {projects.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-6 text-muted text-sm">
@@ -654,7 +676,37 @@ export function ProjectsPanel() {
         <div className="space-y-8">
           {grouped.map(([parent, groupProjects]) => (
             <div key={parent || "root"} className="space-y-4">
-              {parent && (
+              {parent === "__managed__" ? (
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-sm font-mono uppercase tracking-wider text-success">
+                      Managed Template Deployments
+                    </h2>
+                    <p className="text-[10px] text-muted/70">
+                      Created by templates under {templateDeploymentRoot}; use the card menu for up, down, redeploy,
+                      replicate, and delete.
+                    </p>
+                  </div>
+                  <span className="self-start rounded bg-success/10 px-2 py-1 text-[10px] font-mono text-success">
+                    {groupProjects.length} managed
+                  </span>
+                </div>
+              ) : parent === "__discovered__" ? (
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
+                      Discovered Compose Apps
+                    </h2>
+                    <p className="text-[10px] text-muted/70">
+                      Compose projects found under {projectRoot}; GroundControl can start, stop, replicate, or redeploy
+                      them when metadata is available.
+                    </p>
+                  </div>
+                  <span className="self-start rounded bg-border/50 px-2 py-1 text-[10px] font-mono text-muted">
+                    {groupProjects.length} discovered
+                  </span>
+                </div>
+              ) : (
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
                     {parent}/
@@ -833,7 +885,7 @@ export function ProjectsPanel() {
                     {!isInvalid && <div className="mb-4 p-3 bg-background/50 border border-border rounded-lg space-y-3">
                       <div className="flex flex-wrap items-end gap-3">
                         <div>
-                          <label className="block text-[10px] font-mono text-muted mb-1">Target</label>
+                          <label className="block text-[10px] font-mono text-muted mb-1">Redeploy target</label>
                           <select
                             value={opts.targetId}
                             onChange={(e) => updateDeployOptions(project.slug, { targetId: e.target.value ? Number(e.target.value) : "" })}
@@ -1047,11 +1099,12 @@ export function ProjectsPanel() {
                       )}
 
                       <div className="text-[10px] text-muted/60 font-mono">
-                        Deploying via {selectedTargetName}
+                        Redeploying via {selectedTargetName}
                         {isCloudRun && ` · ${opts.serviceName} · ${opts.region}`}
                         {isTerraform && " · terraform provision + deploy"}
                         {opts.generatePreviewUrl && " · quick tunnel preview"}
                         {opts.subdomain && opts.zoneId && ` · ${opts.subdomain} → ${zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId}`}
+                        {project.managed && ` · managed root ${templateDeploymentRoot}`}
                       </div>
                     </div>}
 

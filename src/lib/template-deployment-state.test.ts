@@ -36,13 +36,13 @@ function baseInput(): PersistTemplateDeploymentInput {
   };
 }
 
-function createClient(existingTarget: { id: number } | null = null): TemplateDeploymentPrismaClient {
+function createClient(existingTarget: { id: number; configJson?: string } | null = null): TemplateDeploymentPrismaClient {
   return {
     project: {
       upsert: vi.fn().mockResolvedValue({ id: 11, slug: "demo-app" }),
     },
     deploymentTarget: {
-      findFirst: vi.fn().mockResolvedValue(existingTarget),
+      findMany: vi.fn().mockResolvedValue(existingTarget ? [{ configJson: "{}", ...existingTarget }] : []),
       create: vi.fn().mockResolvedValue({ id: 22 }),
       update: vi.fn().mockResolvedValue({ id: existingTarget?.id ?? 22 }),
     },
@@ -53,7 +53,7 @@ function createClient(existingTarget: { id: number } | null = null): TemplateDep
 }
 
 describe("persistTemplateDeployment", () => {
-  it("persists template deployments into project, target, and deployment rows", async () => {
+  it("persists template deployments into project and deployment rows using a compose target", async () => {
     const client = createClient();
     const result = await persistTemplateDeployment(baseInput(), client);
 
@@ -69,11 +69,9 @@ describe("persistTemplateDeployment", () => {
     }));
     expect(client.deploymentTarget.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        name: "Template: demo-app",
-        type: "docker-compose",
+        name: "VPS Docker Compose",
+        type: "compose",
         vpsConfigId: 7,
-        dnsRecordId: "dns_123",
-        dnsRecordName: "demo.serendepify.com",
       }),
     });
     expect(client.deployment.create).toHaveBeenCalledWith({
@@ -89,15 +87,29 @@ describe("persistTemplateDeployment", () => {
     });
   });
 
-  it("reuses an existing template deployment target for the same slug", async () => {
+  it("reuses an existing compose target instead of creating a template target", async () => {
     const client = createClient({ id: 44 });
     const result = await persistTemplateDeployment(baseInput(), client);
 
     expect(result.targetId).toBe(44);
     expect(client.deploymentTarget.create).not.toHaveBeenCalled();
-    expect(client.deploymentTarget.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 44 },
-    }));
+    expect(client.deploymentTarget.update).not.toHaveBeenCalled();
+  });
+
+  it("ignores historical template-managed targets when selecting a target", async () => {
+    const client = createClient(null);
+    const targetFind = client.deploymentTarget.findMany as ReturnType<typeof vi.fn>;
+    targetFind
+      .mockResolvedValueOnce([{ id: 44, configJson: JSON.stringify({ managedBy: "template-deploy" }) }])
+      .mockResolvedValueOnce([
+        { id: 44, configJson: JSON.stringify({ managedBy: "template-deploy" }) },
+        { id: 45, configJson: "{}" },
+      ]);
+
+    const result = await persistTemplateDeployment(baseInput(), client);
+
+    expect(result.targetId).toBe(45);
+    expect(client.deploymentTarget.create).not.toHaveBeenCalled();
   });
 
   it("normalizes DNS record arrays and ignores error objects", () => {
