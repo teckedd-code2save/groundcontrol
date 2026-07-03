@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDockerComposeCommand, resolveBinary, shQuote } from "@/lib/vps";
+import { getDockerComposeCommand, getKubeconfigEnv, resolveBinary, shQuote } from "@/lib/vps";
 import { execOnTarget } from "@/lib/host-exec";
 import { requireAuth } from "@/lib/auth";
 
 const PATH_EXPORT = 'export PATH="/usr/local/bin:/usr/bin:/bin:/snap/bin:$PATH"';
+const DEFAULT_ENV_EXPORT = `${PATH_EXPORT}; export ${getKubeconfigEnv()}`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const result = await execOnTarget(cmd, null, cwd || "/");
+    const result = await execOnTarget(`${DEFAULT_ENV_EXPORT}; ${cmd}`, null, cwd || "/");
     return NextResponse.json({
       stdout: result.stdout,
       stderr: result.stderr,
