@@ -7,6 +7,7 @@ import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
 import { prisma } from "@/lib/prisma";
 import { resolveTemplateSource } from "@/lib/template-source";
 import { persistTemplateDeployment } from "@/lib/template-deployment-state";
+import { stopCloudflaredConnector } from "@/lib/bootstrap";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -156,7 +157,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: `Cloudflare tunnel not found: ${requestedTunnelId}` }, { status: 400 });
     }
     let composeContent = resolved.dockerCompose;
-    if (composeContent.includes("{{tunnel_token}}")) {
+    const usesTunnelToken = composeContent.includes("{{tunnel_token}}");
+    if (usesTunnelToken) {
       if (!requestedTunnelId) {
         return NextResponse.json({ success: false, error: "Template requires a saved Cloudflare tunnel. Select a tunnel before deploying." }, { status: 400 });
       }
@@ -186,6 +188,11 @@ export async function POST(req: NextRequest) {
 
     // Deploy
     const composeCmd = `if docker compose version >/dev/null 2>&1; then printf 'docker compose'; elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'; else printf ''; fi`;
+    const composeManagedTunnelConnector = usesTunnelToken ? `${composeProject}-cloudflared-1` : "";
+    if (usesTunnelToken && selectedTunnel?.connectorId && selectedTunnel.connectorId !== composeManagedTunnelConnector) {
+      await stopCloudflaredConnector(selectedTunnel.connectorId).catch(() => undefined);
+    }
+
     const upResult = await execOnTarget(`cd ${shQuote(deployPath)} && compose_cmd=$(${composeCmd}) && if [ -z "$compose_cmd" ]; then echo "docker compose plugin or docker-compose is required" >&2; exit 127; fi && $compose_cmd -p ${shQuote(composeProject)} config >/tmp/${composeProject}.compose.yml && $compose_cmd -p ${shQuote(composeProject)} pull && $compose_cmd -p ${shQuote(composeProject)} up -d --remove-orphans 2>&1`, vps);
     if (upResult.code !== 0) {
       return NextResponse.json({ success: false, error: upResult.stderr || upResult.stdout || "docker compose up failed", upOutput: upResult }, { status: 500 });
@@ -223,6 +230,8 @@ export async function POST(req: NextRequest) {
             where: { tunnelId: dnsTunnelId },
             data: {
               domains: domains.join(","),
+              connectorId: composeManagedTunnelConnector || selectedTunnel?.connectorId || null,
+              status: composeManagedTunnelConnector ? "active" : undefined,
               configJson: JSON.stringify({ ingress: domains.map((recordName) => ({ hostname: recordName, service: tunnelService })) }),
             },
           }).catch(() => undefined);
