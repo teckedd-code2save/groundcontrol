@@ -566,6 +566,16 @@ export async function resolveComposeProjectPath(
     };
   }
 
+  const dbProject = await prisma.project.findUnique({ where: { slug: projectSlug } });
+  if (dbProject?.path) {
+    return {
+      projectPath: dbProject.path.replace(/\/+$/, ""),
+      projectSlug,
+      service,
+      source: "config",
+    };
+  }
+
   return {
     projectPath: `${config.projectRoot.replace(/\/$/, "")}/${projectSlug}`,
     projectSlug,
