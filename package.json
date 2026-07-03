@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "db:seed": "npx tsx prisma/seed.ts",
+    "validate:template-deploy": "node scripts/validate-template-deploy.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
