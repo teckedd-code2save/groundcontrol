@@ -167,13 +167,15 @@ export async function POST(req: NextRequest) {
 
     await execOnTarget(`mkdir -p ${shQuote(deployPath)}/.groundcontrol && cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${composeContent}\nGCEOF\ncat > ${shQuote(deployPath)}/.env.schema << 'GCEOF'\n${resolved.envSchema}\nGCEOF\ncat > ${shQuote(deployPath)}/.groundcontrol/manifest.json << 'GCEOF'\n${manifest}\nGCEOF`, vps);
 
-    // Write .env
-    if (envVars && envVars.length > 0) {
-      const envFile = envVars.filter((e: { key: string }) => e.key).map((e: { key: string; value: string }) => `${e.key}=${e.value || ""}`).join("\n");
-      if (envFile) {
-        await execOnTarget(`cat > ${shQuote(deployPath)}/.env << 'GCEOF'\n${envFile}\nGCEOF`, vps);
-        await execOnTarget(`chmod 600 ${shQuote(deployPath)}/.env`, vps);
-      }
+    // Write .env. Compose fails if env_file points at a missing file, so create
+    // an empty file when the template references .env even without user envs.
+    const envFile = (envVars || [])
+      .filter((e: { key: string }) => e.key)
+      .map((e: { key: string; value: string }) => `${e.key}=${e.value || ""}`)
+      .join("\n");
+    if (envFile || composeContent.includes("env_file:")) {
+      await execOnTarget(`cat > ${shQuote(deployPath)}/.env << 'GCEOF'\n${envFile}\nGCEOF`, vps);
+      await execOnTarget(`chmod 600 ${shQuote(deployPath)}/.env`, vps);
     }
 
     // Deploy
