@@ -15,6 +15,7 @@ export interface TemplateInput {
   prompt?: string;
   example?: string;
   default?: string;
+  hasDefault?: boolean;
   generate?: boolean;  // Auto-generate a secure value
 }
 
@@ -181,11 +182,13 @@ function parseTemplateYaml(content: string): TemplateDefinition {
 
   const inps = asArray(doc.inputs).map((input) => {
     const i = asRecord(input);
+    const hasDefault = Object.prototype.hasOwnProperty.call(i, "default");
     return {
       name: String(i.name || ""),
       prompt: i.prompt == null ? undefined : String(i.prompt),
       example: i.example == null ? undefined : String(i.example),
-      default: i.default == null ? undefined : String(i.default),
+      default: hasDefault ? String(i.default ?? "") : undefined,
+      hasDefault,
       generate: i.generate === true,
     } satisfies TemplateInput;
   }).filter((input) => input.name);
@@ -273,7 +276,7 @@ function resolveInputs(templateInputs: TemplateInput[], userInputs: Record<strin
       resolved[input.name] = userInputs[input.name];
     } else if (input.generate) {
       resolved[input.name] = generateSecureValue();
-    } else if (Object.prototype.hasOwnProperty.call(input, "default")) {
+    } else if (input.hasDefault) {
       resolved[input.name] = input.default ?? "";
     }
   }

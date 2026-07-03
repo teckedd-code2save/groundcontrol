@@ -126,6 +126,25 @@ describe("template engine", () => {
     expect(resolved.dockerCompose).not.toContain("{{redis_url}}");
   });
 
+  it("preserves missing tunnel token placeholders for server-side injection", () => {
+    const tunnel = listTemplates().find((template) => template._filename === "cloudflare-tunnel-private-apps");
+    expect(tunnel).toBeTruthy();
+
+    const inputNames = tunnel!.inputs.map((input) => input.name).filter((name) => name !== "tunnel_token");
+    const resolved = resolveTemplate(tunnel!, inputsFor(inputNames));
+    expect(resolved.dockerCompose).toContain("{{tunnel_token}}");
+  });
+
+  it("keeps explicit empty defaults distinct from missing defaults", () => {
+    const sourceBuild = listTemplates().find((template) => template._filename === "vps-caddy-source-build");
+    expect(sourceBuild).toBeTruthy();
+
+    const inputNames = sourceBuild!.inputs.map((input) => input.name).filter((name) => name !== "redis_url");
+    const resolved = resolveTemplate(sourceBuild!, inputsFor(inputNames));
+    expect(resolved.dockerCompose).toContain("REDIS_URL=");
+    expect(resolved.dockerCompose).not.toContain("{{redis_url}}");
+  });
+
   it("rejects invalid compose service shapes", () => {
     expect(validateComposeDocument("name: bad\nservices: []").ok).toBe(false);
     expect(validateComposeDocument("name: bad\nservices:\n").ok).toBe(false);
