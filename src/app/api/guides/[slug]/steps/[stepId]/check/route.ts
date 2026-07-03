@@ -7,6 +7,15 @@ import { getActiveVps, getKubeconfigEnv } from "@/lib/vps";
 import { parseGuideSteps } from "@/lib/guides/loader";
 import { updateProgressStep, serializeProgress } from "@/lib/guides/progress";
 
+function isKubernetesApiUnavailable(command: string, output: string): boolean {
+  if (!/\bkubectl\b/.test(command)) return false;
+  return (
+    /127\.0\.0\.1:6443.*connect: connection refused/i.test(output) ||
+    /localhost:8080.*connect: connection refused/i.test(output) ||
+    /The connection to the server .* was refused/i.test(output)
+  );
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ slug: string; stepId: string }> }
@@ -41,6 +50,21 @@ export async function POST(
     const result = await execOnTarget(command, activeVps);
     const combined = `${result.stdout}\n${result.stderr}`.trim();
     const ok = result.code === 0;
+
+    if (!ok && isKubernetesApiUnavailable(step.checkCommand, combined)) {
+      return NextResponse.json({
+        ok: false,
+        skipped: true,
+        message:
+          "kubectl is installed and the k3s kubeconfig was found, but the k3s API is not reachable at 127.0.0.1:6443. Start or reinstall k3s, then run this check again.",
+        stdout: result.stdout,
+        stderr: result.stderr,
+        code: result.code,
+        expectedOutput: step.expectedOutput || null,
+        matchesExpected: false,
+        progress: null,
+      });
+    }
 
     // Optionally match expected output substring/regex.
     let matchesExpected = true;
