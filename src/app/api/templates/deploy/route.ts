@@ -185,7 +185,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: upResult.stderr || upResult.stdout || "docker compose up failed", upOutput: upResult }, { status: 500 });
     }
 
-    const proxyPath = resolved.proxyConfigPath.replace("/etc/caddy/sites/app.conf", `/etc/caddy/sites/${slug}.caddy`).replace("/etc/nginx/sites-available/app", `/etc/nginx/sites-available/${slug}`);
+    const proxyPath = template.reverse_proxy.type === "caddy"
+      ? resolved.proxyConfigPath
+        .replace("/etc/caddy/sites/app.conf", `/etc/caddy/sites/${slug}.caddy`)
+        .replace(/\.conf$/, ".caddy")
+      : resolved.proxyConfigPath.replace("/etc/nginx/sites-available/app", `/etc/nginx/sites-available/${slug}`);
     const proxyResult = await writeProxyConfig(template.reverse_proxy.type, resolved.proxyConfig, proxyPath, vps);
 
     // Cloudflare DNS

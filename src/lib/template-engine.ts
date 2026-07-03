@@ -257,7 +257,7 @@ export function resolveTemplate(
     dockerCompose,
     proxyConfig,
     proxyConfigPath: template.reverse_proxy.type === "caddy"
-      ? `/etc/caddy/sites/${resolvedInputs.domain || "app"}.conf`
+      ? `/etc/caddy/sites/${resolvedInputs.domain || "app"}.caddy`
       : template.reverse_proxy.type === "traefik"
       ? `/etc/traefik/dynamic/${resolvedInputs.domain || "app"}.yml`
       : `/etc/nginx/sites-available/${resolvedInputs.domain || "app"}`,

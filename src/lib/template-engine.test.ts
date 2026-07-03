@@ -117,6 +117,7 @@ describe("template engine", () => {
     expect(sourceBuild).toBeTruthy();
 
     const resolved = resolveTemplate(sourceBuild!, inputsFor(sourceBuild!.inputs.map((input) => input.name)));
+    expect(resolved.proxyConfigPath).toBe("/etc/caddy/sites/app.example.com.caddy");
     expect(resolved.dockerCompose).toContain("env_file:");
     expect(resolved.dockerCompose).toContain("      - .env");
     expect(resolved.dockerCompose).toContain("JWT_SECRET=jwt-secret");
