@@ -10,6 +10,7 @@ import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { DeployTargetsTab } from "@/components/DeployTargetsTab";
 import CloudAccountsTab from "@/components/CloudAccountsTab";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
+import EnvProvidersTab from "@/components/EnvProvidersTab";
 
 interface VpsConfig {
   id: number;
@@ -25,7 +26,7 @@ interface VpsConfig {
   createdAt: string;
 }
 
-type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "cloud-accounts" | "deploy-targets" | "infrastructure";
+type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "env-providers" | "cloud-accounts" | "deploy-targets" | "infrastructure";
 
 function Badge({ type }: { type: "prod" | "experimental" | "planned" }) {
   const styles = {
@@ -47,7 +48,7 @@ export default function SettingsPage() {
     const tab = new URLSearchParams(window.location.search).get("tab");
     if (
       tab &&
-      ["connections", "layout", "ai", "security", "alerts", "cloudflare", "cloud-accounts", "deploy-targets", "infrastructure"].includes(tab)
+      ["connections", "layout", "ai", "security", "alerts", "cloudflare", "env-providers", "cloud-accounts", "deploy-targets", "infrastructure"].includes(tab)
     ) {
       return tab as TabKey;
     }
@@ -58,7 +59,7 @@ export default function SettingsPage() {
     <div className="p-8 max-w-5xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, security, Cloudflare, cloud accounts, alerts, and deploy targets</p>
+        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, security, Cloudflare, env providers, cloud accounts, alerts, and deploy targets</p>
       </div>
 
       {/* Tabs */}
@@ -69,6 +70,7 @@ export default function SettingsPage() {
           { key: "ai", label: "AI", badge: "prod" as const },
           { key: "security", label: "Security", badge: "prod" as const },
           { key: "cloudflare", label: "Cloudflare", badge: "prod" as const },
+          { key: "env-providers", label: "Env Providers", badge: "experimental" as const },
           { key: "alerts", label: "Alerts", badge: "prod" as const },
           { key: "cloud-accounts", label: "Cloud Accounts", badge: "experimental" as const },
           { key: "deploy-targets", label: "Deploy Targets", badge: "experimental" as const },
@@ -94,6 +96,7 @@ export default function SettingsPage() {
       {activeTab === "ai" && <AIConfigTab />}
       {activeTab === "security" && <SecurityTab />}
       {activeTab === "cloudflare" && <CloudflareSettingsTab />}
+      {activeTab === "env-providers" && <EnvProvidersTab />}
       {activeTab === "alerts" && <AlertSettingsTab />}
       {activeTab === "cloud-accounts" && (
         <div>

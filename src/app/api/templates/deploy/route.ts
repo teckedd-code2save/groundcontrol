@@ -8,6 +8,13 @@ import { prisma } from "@/lib/prisma";
 import { resolveTemplateSource } from "@/lib/template-source";
 import { persistTemplateDeployment } from "@/lib/template-deployment-state";
 import { stopCloudflaredConnector } from "@/lib/bootstrap";
+import {
+  materializeEnvFile,
+  parseEnvSchema,
+  setLocalEnvValues,
+  upsertEnvProfileForProject,
+  validateEnv,
+} from "@/lib/env-management";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -67,6 +74,21 @@ async function writeProxyConfig(type: string, config: string, path: string, vps:
     return { path, output: result.stdout || result.stderr };
   }
   return { path, output: "proxy config generated; Traefik uses Docker labels" };
+}
+
+async function readInfisicalProjectRef(sourcePath: string, vps: Awaited<ReturnType<typeof getActiveVps>>): Promise<string> {
+  const result = await execOnTarget(`cat ${shQuote(`${sourcePath}/.infisical.json`)} 2>/dev/null || true`, vps);
+  if (!result.stdout.trim()) return "";
+  try {
+    const parsed = JSON.parse(result.stdout) as { workspaceId?: unknown; projectId?: unknown };
+    return typeof parsed.workspaceId === "string"
+      ? parsed.workspaceId
+      : typeof parsed.projectId === "string"
+        ? parsed.projectId
+        : "";
+  } catch {
+    return "";
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -177,13 +199,17 @@ export async function POST(req: NextRequest) {
 
     // Write .env. Compose fails if env_file points at a missing file, so create
     // an empty file when the template references .env even without user envs.
+    const envValues = Object.fromEntries(
+      (envVars || [])
+        .filter((e: { key: string }) => e.key)
+        .map((e: { key: string; value: string }) => [String(e.key), String(e.value || "")])
+    );
     const envFile = (envVars || [])
       .filter((e: { key: string }) => e.key)
       .map((e: { key: string; value: string }) => `${e.key}=${e.value || ""}`)
       .join("\n");
     if (envFile || composeContent.includes("env_file:")) {
-      await execOnTarget(`cat > ${shQuote(deployPath)}/.env << 'GCEOF'\n${envFile}\nGCEOF`, vps);
-      await execOnTarget(`chmod 600 ${shQuote(deployPath)}/.env`, vps);
+      await materializeEnvFile(deployPath, envValues, vps);
     }
 
     // Deploy
@@ -282,6 +308,36 @@ export async function POST(req: NextRequest) {
       tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
       vpsConfigId: vps.id,
       durationMs: Date.now() - startTime,
+    });
+    const envSchema = parseEnvSchema(resolved.envSchema);
+    const envProfile = await upsertEnvProfileForProject({
+      projectId: persisted.projectId,
+      deploymentId: persisted.deploymentId,
+      schema: envSchema,
+      providerType: "local",
+      projectRef: await readInfisicalProjectRef(source.sourcePath, vps),
+    });
+    if (Object.keys(envValues).length > 0) {
+      await setLocalEnvValues(envProfile.id, envValues, envSchema);
+    }
+    const envValidation = validateEnv(envSchema, envValues);
+    await prisma.deploymentEnvProfile.update({
+      where: { id: envProfile.id },
+      data: {
+        status: envValidation.ok ? "synced" : "missing",
+        lastHash: envValidation.hash,
+        lastSyncedAt: Object.keys(envValues).length > 0 ? new Date() : null,
+        lastError: envValidation.ok ? null : `Missing: ${envValidation.missing.join(", ")}`,
+      },
+    });
+    await prisma.deployment.update({
+      where: { id: persisted.deploymentId },
+      data: {
+        envProfileId: envProfile.id,
+        envProviderType: envProfile.providerType,
+        envHash: envValidation.hash,
+        envStatus: envValidation.ok ? "valid" : "missing",
+      },
     });
 
     return NextResponse.json({

@@ -23,6 +23,7 @@ import { runTerraformApply } from "@/lib/terraform/runner";
 import { syncTerraformVpsConfig } from "@/lib/terraform/vps-sync";
 import type { TerraformOutput } from "@/lib/terraform/types";
 import { createJob, runJob } from "@/lib/jobs/job-runner";
+import { applyEnvToDeployment } from "@/lib/env-management";
 
 const IDEMPOTENCY_WINDOW_MS = 5 * 60 * 1000;
 
@@ -232,6 +233,22 @@ export async function runDeploy(options: RunDeployOptions): Promise<number> {
     }
 
     try {
+      const envResult = await applyEnvToDeployment(project, deployment.id, ctx.log, {
+        materialize: effectiveTarget.type === "compose" || effectiveTarget.type === "docker-compose",
+      });
+      if (envResult) {
+        ctx.env = envResult.values;
+        await prisma.deployment.update({
+          where: { id: deployment.id },
+          data: {
+            envProfileId: envResult.profile.id,
+            envProviderType: envResult.profile.providerType,
+            envHash: envResult.validation.hash,
+            envStatus: envResult.validation.ok ? "valid" : "missing",
+          },
+        });
+      }
+
       const adapter = createAdapter(project, effectiveTarget);
 
       ctx.log(`[pipeline] deploy ${deployment.id} for ${project.slug}\n`);

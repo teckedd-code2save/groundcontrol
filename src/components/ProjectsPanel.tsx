@@ -5,6 +5,7 @@ import { ContainerIcon, getContainerType, getContainerTypeLabel } from "@/compon
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ActionConfirm } from "@/components/ActionConfirm";
 import type { TerraformStack } from "@/components/TerraformStacksTab";
+import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 
 interface CaddySite {
   file: string;
@@ -203,6 +204,7 @@ export function ProjectsPanel() {
   const [composeOutput, setComposeOutput] = useState<{ slug: string; output: string; error?: string } | null>(null);
   const [selectedServices, setSelectedServices] = useState<Record<string, Set<string>>>({});
   const [confirmCompose, setConfirmCompose] = useState<ConfirmComposeState | null>(null);
+  const [envOpen, setEnvOpen] = useState<Record<string, boolean>>({});
 
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -860,16 +862,25 @@ export function ProjectsPanel() {
                                 <div className="border-t border-border" />
                               </>
                             )}
-                            <button
-                              onClick={() => replicateDeployment(project)}
-                              disabled={!!composeAction}
+                        <button
+                          onClick={() => replicateDeployment(project)}
+                          disabled={!!composeAction}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent disabled:opacity-50"
                               title="Replicate deployment"
-                            >
-                              Copy Replicate
-                            </button>
-                            <button
-                              onClick={() => deleteManagedDeployment(project)}
+                        >
+                          Copy Replicate
+                        </button>
+                        {dbProject && (
+                          <button
+                            onClick={() => setEnvOpen((prev) => ({ ...prev, [project.slug]: !prev[project.slug] }))}
+                            className="px-3 py-2 text-xs font-mono border border-border text-muted rounded-lg hover:border-accent hover:text-accent transition-colors"
+                            title="Manage deployment environment"
+                          >
+                            Env
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteManagedDeployment(project)}
                               disabled={!!composeAction}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-error transition-colors hover:bg-error/10 disabled:opacity-40"
                               title="Delete deployment"
@@ -880,6 +891,16 @@ export function ProjectsPanel() {
                         </details>
                       </div>
                     </div>
+
+                    {dbProject && envOpen[project.slug] && (
+                      <div className="mb-4">
+                        <DeploymentEnvPanel
+                          projectId={dbProject.id}
+                          deploymentId={latest?.id}
+                          onRedeploy={() => setConfirmDeploy(project.slug)}
+                        />
+                      </div>
+                    )}
 
                     {/* Deploy options */}
                     {!isInvalid && <div className="mb-4 p-3 bg-background/50 border border-border rounded-lg space-y-3">

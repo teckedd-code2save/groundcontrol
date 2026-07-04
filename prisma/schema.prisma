@@ -74,6 +74,7 @@ model Project {
   updatedAt   DateTime @updatedAt
 
   deployments Deployment[]
+  envProfiles DeploymentEnvProfile[]
 }
 
 model DeploymentTarget {
@@ -131,16 +132,79 @@ model Deployment {
   output             String?
   error              String?
   durationMs         Int?
+  envProfileId       Int?
+  envProviderType    String?
+  envHash            String?
+  envStatus          String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   target  DeploymentTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
   job     Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  envProfiles DeploymentEnvProfile[]
 
   @@index([projectId, createdAt])
   @@index([targetId, createdAt])
   @@index([idempotencyKey])
+}
+
+model EnvProviderAccount {
+  id          Int      @id @default(autoincrement())
+  name        String
+  provider    String   @default("local") // local | infisical | future providers
+  configJson  String   @default("") // non-secret provider settings
+  credentials String   @default("") // encrypted JSON credentials
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  envProfiles DeploymentEnvProfile[]
+
+  @@index([provider, isActive])
+}
+
+model DeploymentEnvProfile {
+  id                Int      @id @default(autoincrement())
+  projectId         Int
+  deploymentId      Int?
+  providerType      String   @default("local")
+  providerAccountId Int?
+  environment       String   @default("prod")
+  secretPath        String   @default("/")
+  projectRef        String   @default("") // Infisical workspace/project ID or provider-specific ref
+  schemaJson        String   @default("[]")
+  status            String   @default("unknown") // unknown | missing | valid | synced | stale | failed
+  lastHash          String?
+  lastSyncedAt      DateTime?
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deployment Deployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  providerAccount EnvProviderAccount? @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
+  values DeploymentEnvValue[]
+
+  @@index([projectId, providerType])
+  @@index([deploymentId])
+  @@index([providerAccountId])
+}
+
+model DeploymentEnvValue {
+  id        Int      @id @default(autoincrement())
+  profileId Int
+  key       String
+  value     String   @default("") // encrypted at rest
+  required  Boolean  @default(false)
+  source    String   @default("local") // local | imported | generated
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile DeploymentEnvProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, key])
+  @@index([profileId])
 }
 
 model DeploymentLog {
