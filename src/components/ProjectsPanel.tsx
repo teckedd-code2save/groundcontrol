@@ -205,6 +205,7 @@ export function ProjectsPanel() {
   const [selectedServices, setSelectedServices] = useState<Record<string, Set<string>>>({});
   const [confirmCompose, setConfirmCompose] = useState<ConfirmComposeState | null>(null);
   const [envOpen, setEnvOpen] = useState<Record<string, boolean>>({});
+  const [adoptedProjects, setAdoptedProjects] = useState<Record<string, ProjectRecord>>({});
 
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -300,7 +301,7 @@ export function ProjectsPanel() {
   }
 
   function getDbProject(slug: string): ProjectRecord | undefined {
-    return data?.projects?.find((p) => p.slug === slug);
+    return adoptedProjects[slug] || data?.projects?.find((p) => p.slug === slug);
   }
 
   function getLatestDeployment(projectId?: number): Deployment | undefined {
@@ -537,6 +538,37 @@ export function ProjectsPanel() {
       const message = err instanceof Error ? err.message : String(err);
       setComposeOutput({ slug: project.slug, output: "", error: message });
       setError(`Delete failed: ${message}`);
+    }
+  }
+
+  async function ensureProjectRecord(project: ScannedProject): Promise<ProjectRecord | null> {
+    const existing = getDbProject(project.slug);
+    if (existing) return existing;
+    setError("");
+    try {
+      const res = await fetch("/api/projects/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug: project.slug,
+          name: project.name,
+          path: project.path,
+          composePath: project.composePath,
+          domain: project.domain || "",
+          hasGit: project.hasGit,
+        }),
+      });
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error || !data.project) {
+        setError(`Adopt failed: ${data.error || "Unknown error"}`);
+        return null;
+      }
+      const adopted = data.project as ProjectRecord;
+      setAdoptedProjects((prev) => ({ ...prev, [project.slug]: adopted }));
+      return adopted;
+    } catch (err) {
+      setError(`Adopt failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
     }
   }
 
@@ -870,15 +902,16 @@ export function ProjectsPanel() {
                         >
                           Copy Replicate
                         </button>
-                        {dbProject && (
-                          <button
-                            onClick={() => setEnvOpen((prev) => ({ ...prev, [project.slug]: !prev[project.slug] }))}
-                            className="px-3 py-2 text-xs font-mono border border-border text-muted rounded-lg hover:border-accent hover:text-accent transition-colors"
-                            title="Manage deployment environment"
-                          >
-                            Env
-                          </button>
-                        )}
+                        <button
+                          onClick={async () => {
+                            const record = await ensureProjectRecord(project);
+                            if (record) setEnvOpen((prev) => ({ ...prev, [project.slug]: !prev[project.slug] }));
+                          }}
+                          className="px-3 py-2 text-xs font-mono border border-border text-muted rounded-lg hover:border-accent hover:text-accent transition-colors"
+                          title="Manage deployment environment"
+                        >
+                          Env
+                        </button>
                         <button
                           onClick={() => deleteManagedDeployment(project)}
                               disabled={!!composeAction}
@@ -892,10 +925,10 @@ export function ProjectsPanel() {
                       </div>
                     </div>
 
-                    {dbProject && envOpen[project.slug] && (
+                    {getDbProject(project.slug) && envOpen[project.slug] && (
                       <div className="mb-4">
                         <DeploymentEnvPanel
-                          projectId={dbProject.id}
+                          projectId={getDbProject(project.slug)!.id}
                           deploymentId={latest?.id}
                           onRedeploy={() => setConfirmDeploy(project.slug)}
                         />

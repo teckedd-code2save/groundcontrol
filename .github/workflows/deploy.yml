@@ -66,6 +66,15 @@ jobs:
               "https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml" \
               -o docker-compose.yml || echo "docker-compose.yml sync skipped (using existing)"
             docker compose pull
+            docker compose run --rm --no-deps web npx prisma migrate deploy --schema /app/db/schema.prisma
             docker compose up -d --remove-orphans
+            for i in $(seq 1 30); do
+              if docker compose ps web | grep -q healthy; then
+                break
+              fi
+              sleep 2
+            done
+            docker compose ps
+            docker compose logs --tail=80 web
             docker logout ghcr.io
             docker system prune -f
