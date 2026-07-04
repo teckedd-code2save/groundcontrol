@@ -21,4 +21,8 @@ else
   echo "[entrypoint] WARNING: $SCHEMA not found, skipping migration"
 fi
 
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
 exec node server.js
