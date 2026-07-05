@@ -123,7 +123,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   }
 
   if (!profile) {
-    return <div className="rounded-lg border border-border bg-background/40 p-3 text-xs text-muted">Loading env profile...</div>;
+    return <div className="rounded-lg bg-background/40 p-3 text-xs text-muted">Loading env profile...</div>;
   }
 
   const visibleDiscovered = componentName
@@ -140,7 +140,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     : !!profile.providerAccountId;
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-background/40 p-3">
+    <div className="space-y-3 rounded-lg bg-background/40 p-3">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="text-xs font-medium">Environment</div>
@@ -154,7 +154,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           <button
             onClick={() => saveProfile({}, undefined, profile.providerType === "local")}
             disabled={loading}
-            className="rounded border border-border px-2 py-1 text-[10px] font-mono hover:border-accent"
+            className="rounded bg-background px-2 py-1 text-[10px] font-mono hover:bg-accent/10 hover:text-accent"
             title="Choose where environment values live. Local source can save current server keys without showing raw secrets in the browser."
           >
             Connect source <InfoMark />
@@ -165,7 +165,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               saveProfile({}, changed);
             }}
             disabled={loading}
-            className="rounded border border-accent/30 bg-accent/10 px-2 py-1 text-[10px] font-mono text-accent"
+            className="rounded bg-accent/10 px-2 py-1 text-[10px] font-mono text-accent hover:bg-accent/20"
             title="Store edited values in the selected environment source. It does not restart containers."
           >
             Save <InfoMark />
@@ -174,7 +174,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             <button
               onClick={onRedeploy}
               disabled={loading}
-              className="rounded border border-success/30 bg-success/10 px-2 py-1 text-[10px] font-mono text-success"
+              className="rounded bg-success/10 px-2 py-1 text-[10px] font-mono text-success hover:bg-success/20"
               title="Redeploy the selected component or deployment so the runtime picks up saved env."
             >
               Redeploy <InfoMark />
@@ -183,7 +183,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
         </div>
       </div>
 
-      {message && <div className="rounded border border-border bg-card p-2 text-[10px] font-mono text-muted">{message}</div>}
+      {message && <div className="rounded bg-card p-2 text-[10px] font-mono text-muted">{message}</div>}
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
         <label className="block">
@@ -195,7 +195,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               if (value === "local") saveProfile({ providerType: "local", providerAccountId: null });
               else saveProfile({ providerType: "infisical", providerAccountId: Number(value) });
             }}
-            className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+            className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
           >
             <option value="local">Local encrypted .env</option>
             {providerOptions.map((provider) => (
@@ -215,14 +215,14 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       )}
 
       {!hasSavedSource && visibleDiscovered.length > 0 && (
-        <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 text-xs text-muted">
+        <div className="rounded-lg bg-accent/5 p-3 text-xs text-muted">
           Current server env is available. Choose an env source to edit and redeploy with those values.
         </div>
       )}
 
       {profile.providerType === "local" && (
         <div className="space-y-2">
-          <div className="overflow-hidden rounded-lg border border-border">
+          <div className="overflow-hidden rounded-lg bg-card">
             <div className="grid grid-cols-[1fr_1fr] bg-card px-3 py-2 text-[10px] font-mono text-muted md:grid-cols-[1fr_1fr_110px_110px]">
               <span>Key</span>
               <span>Value</span>
@@ -245,7 +245,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                       value={localValues[key] || ""}
                       placeholder={profile.values?.[key]?.hasValue ? `keep ${profile.values[key].masked}` : "set value"}
                       onChange={(event) => setLocalValues({ ...localValues, [key]: event.target.value })}
-                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+                      className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                     />
                     <div className="text-[10px] font-mono text-muted">
                       {profile.values?.[key]?.hasValue ? "saved" : discoveredEntry?.source || "new"}
@@ -258,19 +258,19 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               })
             )}
           </div>
-          <div className="grid gap-2 rounded-lg border border-border bg-card p-3 md:grid-cols-[1fr_1fr_auto]">
+          <div className="grid gap-2 rounded-lg bg-card p-3 md:grid-cols-[1fr_1fr_auto]">
             <input
               value={newKey}
               onChange={(event) => setNewKey(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
               placeholder="NEW_KEY"
-              className="rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+              className="rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
             />
             <input
               type="password"
               value={newValue}
               onChange={(event) => setNewValue(event.target.value)}
               placeholder="value"
-              className="rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+              className="rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
             />
             <button
               onClick={() => {
@@ -283,7 +283,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                 setNewValue("");
               }}
               disabled={loading || !newKey}
-              className="rounded border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent disabled:opacity-50"
+              className="rounded bg-background px-3 py-2 text-xs font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
             >
               Add variable
             </button>
@@ -365,7 +365,7 @@ function Input({ label, value, onChange, onBlur }: {
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur}
-        className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+        className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
       />
     </label>
   );

@@ -182,11 +182,23 @@ async function safeJson(res: Response): Promise<{ ok: boolean; data: any; text: 
 }
 
 function normalizeToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return value
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function compactToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return normalizeToken(value).replace(/-/g, "");
+}
+
+function semanticToken(value: string): string {
+  return normalizeToken(value)
+    .split("-")
+    .filter((part) => part && !["a", "my", "the", "www", "http", "https"].includes(part))
+    .join("");
 }
 
 function tokensMatch(a: string, b: string): boolean {
@@ -238,6 +250,8 @@ function findProjectSite(project: ScannedProject, sites: CaddySite[] = [], meta:
     normalizeToken(project.dirName),
     compactToken(project.slug),
     compactToken(project.dirName),
+    semanticToken(project.slug),
+    semanticToken(project.dirName),
   ].filter((token) => token.length >= 4);
   const serviceTokens = [
     ...project.services.map((service) => normalizeToken(service.name)),
@@ -260,8 +274,9 @@ function findProjectSite(project: ScannedProject, sites: CaddySite[] = [], meta:
 
       if (site.root && pathInside(site.root, project.path)) score += 100;
       if (sitePort && ports.has(sitePort)) score += 90;
-      if (projectTokens.some((token) => fileToken === token || fileToken.includes(token))) score += 80;
-      if (projectTokens.some((token) => domainToken === token || compactDomain.includes(token))) score += 70;
+      if (site.proxy || site.root) score += 15;
+      if (projectTokens.some((token) => fileToken === token || fileToken.includes(token) || semanticToken(fileToken) === token)) score += 80;
+      if (projectTokens.some((token) => domainToken === token || compactDomain.includes(token) || semanticToken(domainToken) === token)) score += 70;
       if (serviceTokens.some((token) => proxyText === token || proxyText.includes(token))) score += 50;
 
       return { site, score };
@@ -286,16 +301,16 @@ function matchedServiceForSite(site: CaddySite, project: ScannedProject, meta: {
 function statusColor(status: string): string {
   switch (status) {
     case "success":
-      return "bg-success/10 text-success border-success/30";
+      return "bg-success/10 text-success";
     case "failed":
     case "rolled_back":
-      return "bg-error/10 text-error border-error/30";
+      return "bg-error/10 text-error";
     case "running":
     case "building":
     case "deploying":
-      return "bg-accent/10 text-accent border-accent/30";
+      return "bg-accent/10 text-accent";
     default:
-      return "bg-warning/10 text-warning border-warning/30";
+      return "bg-warning/10 text-warning";
   }
 }
 
@@ -758,14 +773,14 @@ export function ProjectsPanel() {
         title={deploying ? `Deploying ${deploying}...` : "Deploying..."}
       />
       {error && (
-        <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono flex items-start justify-between">
+        <div className="mb-4 p-3 bg-error/10 rounded-lg text-error text-xs font-mono flex items-start justify-between">
           <span>{error}</span>
           <button onClick={() => setError("")} className="ml-2 hover:text-foreground">✕</button>
         </div>
       )}
 
       {projects.length === 0 ? (
-        <div className="bg-card border border-border rounded-xl p-6 text-muted text-sm">
+        <div className="bg-card rounded-xl p-6 text-muted text-sm">
           No deployments found yet.
         </div>
       ) : (
@@ -788,7 +803,7 @@ export function ProjectsPanel() {
                 return (
                   <div
                     key={project.slug}
-                    className="bg-card border border-border rounded-xl p-5 hover:border-border-hover transition-colors"
+                    className="bg-card rounded-xl p-5 transition-colors hover:bg-card/80"
                   >
                     <div className="flex flex-col gap-4 mb-4 md:flex-row md:items-start md:justify-between">
                       <div className="min-w-0">
@@ -827,7 +842,7 @@ export function ProjectsPanel() {
                                 href={latest.publicUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-success/10 text-success border-success/30 hover:bg-success/20 transition-colors"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded bg-success/10 text-success hover:bg-success/20 transition-colors"
                               >
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
@@ -840,7 +855,7 @@ export function ProjectsPanel() {
                                 href={latest.previewUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-accent/10 text-accent border-accent/30 hover:bg-accent/20 transition-colors"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
                               >
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -850,7 +865,7 @@ export function ProjectsPanel() {
                               </a>
                             )}
                             {latest.status && (
-                              <span className={`text-[10px] font-mono px-2 py-1 rounded border ${statusColor(latest.status)}`}>
+                              <span className={`text-[10px] font-mono px-2 py-1 rounded ${statusColor(latest.status)}`}>
                                 {latest.status}
                               </span>
                             )}
@@ -995,7 +1010,7 @@ export function ProjectsPanel() {
                     </div>
 
                     {composeOutput?.slug === project.slug && composeOutput.error && (
-                      <div className="mt-3 rounded border border-error/20 bg-error/5 p-2 text-[10px] font-mono text-error">
+                      <div className="mt-3 rounded bg-error/5 p-2 text-[10px] font-mono text-error">
                         Action failed. Open Activity for output.
                       </div>
                     )}
@@ -1020,13 +1035,13 @@ export function ProjectsPanel() {
                             </button>
                           </div>
 
-                          <div className="flex gap-1 overflow-x-auto border-b border-border px-5 pt-3">
+                          <div className="flex gap-1 overflow-x-auto px-5 pt-3">
                             {(["overview", "components", "environment", "source", "networking", "storage", "activity"] as DeploymentDetailTab[]).map((tab) => (
                               <button
                                 key={tab}
                                 onClick={() => openDeploymentDetail(project, tab)}
-                                className={`shrink-0 border-b-2 px-3 py-2 text-xs font-mono capitalize transition-colors ${
-                                  detailState.tab === tab ? "border-accent text-accent" : "border-transparent text-muted hover:text-foreground"
+                                className={`shrink-0 rounded px-3 py-2 text-xs font-mono capitalize transition-colors ${
+                                  detailState.tab === tab ? "bg-accent/10 text-accent" : "text-muted hover:bg-background hover:text-foreground"
                                 }`}
                               >
                                 {tab}
@@ -1049,11 +1064,11 @@ export function ProjectsPanel() {
                             {detailState.tab === "components" && (
                               <div className="space-y-3">
                                 {isInvalid ? (
-                                  <div className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-warning">
+                                  <div className="rounded-lg bg-warning/5 p-3 text-xs text-warning">
                                     {project.parseError || "Compose file is invalid"}
                                   </div>
                                 ) : project.services.length === 0 ? (
-                                  <div className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-warning">
+                                  <div className="rounded-lg bg-warning/5 p-3 text-xs text-warning">
                                     No parseable components found.
                                   </div>
                                 ) : (
@@ -1151,12 +1166,12 @@ export function ProjectsPanel() {
                               <div className="space-y-3">
                                 <InfoTile label="Latest status" value={latest?.status || "No deployment record"} />
                                 {composeOutput?.slug === project.slug && (
-                                  <pre className="max-h-72 overflow-auto rounded-lg border border-border bg-card p-3 text-xs whitespace-pre-wrap">
+                                  <pre className="max-h-72 overflow-auto rounded-lg bg-card p-3 text-xs whitespace-pre-wrap">
                                     {composeOutput.error || composeOutput.output || "No output"}
                                   </pre>
                                 )}
                                 {latest?.output && (
-                                  <pre className="max-h-72 overflow-auto rounded-lg border border-border bg-card p-3 text-xs whitespace-pre-wrap">
+                                  <pre className="max-h-72 overflow-auto rounded-lg bg-card p-3 text-xs whitespace-pre-wrap">
                                     {latest.output}
                                   </pre>
                                 )}
@@ -1190,13 +1205,13 @@ export function ProjectsPanel() {
                                 <CloseIcon />
                               </button>
                             </div>
-                            <div className="flex gap-1 overflow-x-auto border-b border-border px-4 pt-2">
+                            <div className="flex gap-1 overflow-x-auto px-4 pt-2">
                               {(["overview", "runtime", "environment", "source", "networking", "storage", "logs", "actions"] as ComponentDetailTab[]).map((tab) => (
                                 <button
                                   key={tab}
                                   onClick={() => setComponentState({ projectSlug: project.slug, serviceName: svc.name, tab })}
-                                  className={`shrink-0 border-b-2 px-3 py-2 text-xs font-mono capitalize ${
-                                    componentState.tab === tab ? "border-accent text-accent" : "border-transparent text-muted hover:text-foreground"
+                                  className={`shrink-0 rounded px-3 py-2 text-xs font-mono capitalize ${
+                                    componentState.tab === tab ? "bg-accent/10 text-accent" : "text-muted hover:bg-card hover:text-foreground"
                                   }`}
                                 >
                                   {tab}
@@ -1491,7 +1506,7 @@ export function ProjectsPanel() {
 
 function InfoTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-3">
+    <div className="rounded-lg bg-card p-3">
       <div className="mb-1 text-[10px] font-mono text-muted">{label}</div>
       <div className="break-words text-sm font-mono text-foreground">{value || "Not set"}</div>
     </div>
