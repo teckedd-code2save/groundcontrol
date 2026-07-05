@@ -221,6 +221,7 @@ export function ProjectsPanel() {
   const [replicateState, setReplicateState] = useState<ReplicateState | null>(null);
   const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
+  const [redeployAdvancedOpen, setRedeployAdvancedOpen] = useState(false);
 
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -765,7 +766,10 @@ export function ProjectsPanel() {
                         {!isInvalid && (
                           running > 0 ? (
                             <button
-                              onClick={() => setRedeploySlug(project.slug)}
+                              onClick={() => {
+                                setRedeployAdvancedOpen(false);
+                                setRedeploySlug(project.slug);
+                              }}
                               disabled={deploying === project.slug}
                               className="rounded-lg bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                               title="Run the full deployment pipeline"
@@ -812,7 +816,6 @@ export function ProjectsPanel() {
                             </button>
                             {!isInvalid && (
                               <>
-                                <div className="border-t border-border" />
                                 <button
                                   onClick={() => {
                                     setOpenActionMenu(null);
@@ -835,7 +838,6 @@ export function ProjectsPanel() {
                                 >
                                   Restart
                                 </button>
-                                <div className="border-t border-border" />
                               </>
                             )}
                             <button
@@ -907,7 +909,7 @@ export function ProjectsPanel() {
                     {detailState?.slug === project.slug && (
                       <div className="fixed inset-0 z-[70] flex justify-end bg-black/70" onMouseDown={closeAllSheets}>
                         <div className="flex h-full w-full max-w-5xl flex-col bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-                          <div className="flex items-start justify-between gap-4 border-b border-border p-5">
+                          <div className="flex items-start justify-between gap-4 p-5">
                             <div className="min-w-0">
                               <h2 className="truncate text-xl font-semibold">{project.name}</h2>
                               <p className="mt-1 text-xs font-mono text-muted">
@@ -1012,7 +1014,10 @@ export function ProjectsPanel() {
                                   <DeploymentEnvPanel
                                     projectId={dbProject.id}
                                     deploymentId={latest?.id}
-                                    onRedeploy={() => setRedeploySlug(project.slug)}
+                                    onRedeploy={() => {
+                                      setRedeployAdvancedOpen(false);
+                                      setRedeploySlug(project.slug);
+                                    }}
                                   />
                                 )
                               ) : (
@@ -1080,7 +1085,7 @@ export function ProjectsPanel() {
                       return (
                         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setComponentState(null)}>
                           <div className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-xl bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-                            <div className="flex items-start justify-between border-b border-border p-4">
+                            <div className="flex items-start justify-between p-4">
                               <div>
                                 <h3 className="text-lg font-semibold">{svc.name}</h3>
                                 <p className="mt-1 text-xs font-mono text-muted">{existing?.state || "not running"}</p>
@@ -1173,11 +1178,11 @@ export function ProjectsPanel() {
                     {redeploySlug === project.slug && (
                       <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setRedeploySlug(null)}>
                         <div className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-                          <div className="flex items-start justify-between border-b border-border p-5">
+                          <div className="flex items-start justify-between p-5">
                             <div>
                               <h2 className="text-xl font-semibold">Redeploy {project.name}</h2>
                               <p className="mt-1 text-xs font-mono text-muted">
-                                Configure only what applies to this redeploy.
+                                Runs saved environment, source or image refresh, migrations, proxy reload, and health checks when configured.
                               </p>
                             </div>
                             <button
@@ -1190,7 +1195,19 @@ export function ProjectsPanel() {
                             </button>
                           </div>
                           <div className="space-y-4 p-5">
-                            <div className="grid gap-3 md:grid-cols-3">
+                            <div className="rounded-lg bg-card p-3 text-xs font-mono text-muted">
+                              Component redeploys live in component details. This action redeploys the whole deployment.
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setRedeployAdvancedOpen((open) => !open)}
+                              className="rounded bg-card px-3 py-2 text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+                            >
+                              {redeployAdvancedOpen ? "Hide" : "Show"} advanced target settings
+                            </button>
+
+                            {redeployAdvancedOpen && (
+                            <div className="grid gap-3 rounded-lg bg-card p-3 md:grid-cols-3">
                               <label className="block">
                                 <span className="mb-1 block text-[10px] font-mono text-muted">Target</span>
                                 <select
@@ -1198,7 +1215,7 @@ export function ProjectsPanel() {
                                   onChange={(e) => updateDeployOptions(project.slug, { targetId: e.target.value ? Number(e.target.value) : "" })}
                                   className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                                 >
-                                  <option value="">Default target</option>
+                                  <option value="">Active target</option>
                                   {targets.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.type})</option>)}
                                 </select>
                               </label>
@@ -1217,11 +1234,12 @@ export function ProjectsPanel() {
                                   onChange={(e) => updateDeployOptions(project.slug, { generatePreviewUrl: e.target.checked })}
                                   className="accent-accent"
                                 />
-                                Generate preview URL
+                                Create preview URL
                               </label>
                             </div>
+                            )}
 
-                            {isK3s && (
+                            {redeployAdvancedOpen && isK3s && (
                               <div className="grid gap-3 md:grid-cols-3">
                                 <NumberInput label="Replicas" value={opts.replicas} onChange={(value) => updateDeployOptions(project.slug, { replicas: Math.max(1, value) })} />
                                 <NumberInput label="Port" value={opts.port} onChange={(value) => updateDeployOptions(project.slug, { port: Math.max(1, value) })} />
@@ -1239,7 +1257,7 @@ export function ProjectsPanel() {
                               </div>
                             )}
 
-                            {isCloudRun && (
+                            {redeployAdvancedOpen && isCloudRun && (
                               <div className="grid gap-3 md:grid-cols-3">
                                 <TextInput label="GCP project" value={opts.projectId} onChange={(value) => updateDeployOptions(project.slug, { projectId: value })} />
                                 <TextInput label="Region" value={opts.region} onChange={(value) => updateDeployOptions(project.slug, { region: value })} />
@@ -1250,7 +1268,7 @@ export function ProjectsPanel() {
                               </div>
                             )}
 
-                            {zones.length > 0 && (
+                            {redeployAdvancedOpen && zones.length > 0 && (
                               <div className="grid gap-3 md:grid-cols-3">
                                 <TextInput label="Subdomain" value={opts.subdomain} onChange={(value) => updateDeployOptions(project.slug, { subdomain: value })} />
                                 <label className="block">
@@ -1271,13 +1289,13 @@ export function ProjectsPanel() {
                               </div>
                             )}
 
-                            <div className="rounded-lg bg-card p-3 text-xs font-mono text-muted">
+                            {redeployAdvancedOpen && <div className="rounded-lg bg-card p-3 text-xs font-mono text-muted">
                               Target: {selectedTargetName}
                               {isTerraform && " · Terraform apply first"}
                               {opts.generatePreviewUrl && " · Preview URL"}
-                            </div>
+                            </div>}
                           </div>
-                          <div className="flex justify-end gap-2 border-t border-border p-5">
+                          <div className="flex justify-end gap-2 p-5">
                             <button onClick={() => setRedeploySlug(null)} className="rounded px-4 py-2 text-xs font-mono text-muted hover:bg-card hover:text-accent">
                               Cancel
                             </button>

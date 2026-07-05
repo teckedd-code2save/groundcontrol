@@ -57,6 +57,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [pastedEnv, setPastedEnv] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
 
   const providerOptions = useMemo(() => providers.filter((provider) => provider.provider !== "local"), [providers]);
   const selectedProvider = providers.find((provider) => provider.id === profile?.providerAccountId);
@@ -127,7 +128,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   }
 
   const visibleDiscovered = componentName
-    ? discovered.filter((entry) => !entry.component || entry.component === componentName)
+    ? discovered.filter((entry) => entry.component === componentName || (entry.scope === "deployment" && entry.source === ".env"))
     : discovered;
   const discoveredByKey = new Map(visibleDiscovered.map((entry) => [entry.key, entry]));
   const envKeys = Array.from(new Set([
@@ -151,14 +152,22 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => saveProfile({}, undefined, profile.providerType === "local")}
-            disabled={loading}
-            className="rounded bg-background px-2 py-1 text-[10px] font-mono hover:bg-accent/10 hover:text-accent"
-            title="Choose where environment values live. Local source can save current server keys without showing raw secrets in the browser."
-          >
-            Connect source <InfoMark />
-          </button>
+          {!hasSavedSource && (
+            <button
+              onClick={() => {
+                if (!sourceOpen) {
+                  setSourceOpen(true);
+                  return;
+                }
+                saveProfile({}, undefined, profile.providerType === "local");
+              }}
+              disabled={loading}
+              className="rounded bg-background px-2 py-1 text-[10px] font-mono hover:bg-accent/10 hover:text-accent"
+              title="Choose where environment values live. Local source imports current server values without exposing raw secrets in the browser."
+            >
+              Connect source <InfoMark />
+            </button>
+          )}
           <button
             onClick={() => {
               const changed = Object.fromEntries(Object.entries(localValues).filter(([, value]) => value));
@@ -185,28 +194,39 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
 
       {message && <div className="rounded bg-card p-2 text-[10px] font-mono text-muted">{message}</div>}
 
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-        <label className="block">
-          <span className="mb-1 block text-[10px] font-mono text-muted">Provider</span>
-          <select
-            value={profile.providerType === "infisical" ? String(profile.providerAccountId || "") : "local"}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value === "local") saveProfile({ providerType: "local", providerAccountId: null });
-              else saveProfile({ providerType: "infisical", providerAccountId: Number(value) });
-            }}
-            className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-          >
-            <option value="local">Local encrypted .env</option>
-            {providerOptions.map((provider) => (
-              <option key={provider.id} value={provider.id}>{provider.name}</option>
-            ))}
-          </select>
-        </label>
-        <Input label="Project ID" value={profile.projectRef || ""} onChange={(value) => setProfile({ ...profile, projectRef: value })} onBlur={() => saveProfile({ projectRef: profile.projectRef })} />
-        <Input label="Environment" value={profile.environment || "prod"} onChange={(value) => setProfile({ ...profile, environment: value })} onBlur={() => saveProfile({ environment: profile.environment })} />
-        <Input label="Path" value={profile.secretPath || "/"} onChange={(value) => setProfile({ ...profile, secretPath: value })} onBlur={() => saveProfile({ secretPath: profile.secretPath })} />
-      </div>
+      <button
+        type="button"
+        onClick={() => setSourceOpen((open) => !open)}
+        className="flex w-full items-center justify-between rounded-lg bg-card px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-accent/5 hover:text-accent"
+      >
+        <span>Source: {selectedProvider && profile.providerType !== "local" ? selectedProvider.name : "Local encrypted .env"}</span>
+        <span aria-hidden="true">{sourceOpen ? "−" : "+"}</span>
+      </button>
+
+      {sourceOpen && (
+        <div className="grid grid-cols-1 gap-2 rounded-lg bg-card p-3 md:grid-cols-4">
+          <label className="block">
+            <span className="mb-1 block text-[10px] font-mono text-muted">Provider</span>
+            <select
+              value={profile.providerType === "infisical" ? String(profile.providerAccountId || "") : "local"}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value === "local") saveProfile({ providerType: "local", providerAccountId: null });
+                else saveProfile({ providerType: "infisical", providerAccountId: Number(value) });
+              }}
+              className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+            >
+              <option value="local">Local encrypted .env</option>
+              {providerOptions.map((provider) => (
+                <option key={provider.id} value={provider.id}>{provider.name}</option>
+              ))}
+            </select>
+          </label>
+          <Input label="Project ID" value={profile.projectRef || ""} onChange={(value) => setProfile({ ...profile, projectRef: value })} onBlur={() => saveProfile({ projectRef: profile.projectRef })} />
+          <Input label="Environment" value={profile.environment || "prod"} onChange={(value) => setProfile({ ...profile, environment: value })} onBlur={() => saveProfile({ environment: profile.environment })} />
+          <Input label="Path" value={profile.secretPath || "/"} onChange={(value) => setProfile({ ...profile, secretPath: value })} onBlur={() => saveProfile({ secretPath: profile.secretPath })} />
+        </div>
+      )}
 
       {selectedProvider && profile.providerType !== "local" && (
         <div className="text-[10px] font-mono text-muted">
@@ -216,7 +236,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
 
       {!hasSavedSource && visibleDiscovered.length > 0 && (
         <div className="rounded-lg bg-accent/5 p-3 text-xs text-muted">
-          Current server env is available. Choose an env source to edit and redeploy with those values.
+          Current server env is available and can be imported into the selected source without exposing raw secrets in the browser.
         </div>
       )}
 
@@ -236,7 +256,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                 const schemaEntry = profile.schema.find((entry) => entry.key === key);
                 const discoveredEntry = discoveredByKey.get(key);
                 return (
-                  <div key={key} className="grid grid-cols-1 gap-2 border-t border-border px-3 py-2 md:grid-cols-[1fr_1fr_110px_110px] md:items-center">
+                  <div key={key} className="grid grid-cols-1 gap-2 px-3 py-2 md:grid-cols-[1fr_1fr_110px_110px] md:items-center">
                     <div className="text-xs font-mono">
                       {key}{schemaEntry?.required ? " *" : ""}
                     </div>
