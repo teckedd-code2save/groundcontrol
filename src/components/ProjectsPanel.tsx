@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { ContainerIcon, getContainerType, getContainerTypeLabel } from "@/components/TopoIcons";
+import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ActionConfirm } from "@/components/ActionConfirm";
 import type { TerraformStack } from "@/components/TerraformStacksTab";
@@ -107,11 +107,16 @@ interface Deployment {
   output: string | null;
   error: string | null;
   durationMs: number | null;
+  envStatus?: string | null;
+  envProviderType?: string | null;
   createdAt: string;
   updatedAt: string;
   project: { id: number; slug: string; name: string };
   target: DeploymentTarget;
 }
+
+type DeploymentDetailTab = "overview" | "components" | "environment" | "source" | "networking" | "storage" | "activity";
+type ComponentDetailTab = "overview" | "runtime" | "environment" | "source" | "networking" | "storage" | "logs" | "actions";
 
 interface CloudflareZone {
   id: string;
@@ -198,14 +203,16 @@ export function ProjectsPanel() {
   const [images, setImages] = useState<DockerImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState<string | null>(null);
-  const [confirmDeploy, setConfirmDeploy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [composeAction, setComposeAction] = useState<ComposeActionState | null>(null);
   const [composeOutput, setComposeOutput] = useState<{ slug: string; output: string; error?: string } | null>(null);
   const [selectedServices, setSelectedServices] = useState<Record<string, Set<string>>>({});
   const [confirmCompose, setConfirmCompose] = useState<ConfirmComposeState | null>(null);
-  const [envOpen, setEnvOpen] = useState<Record<string, boolean>>({});
   const [adoptedProjects, setAdoptedProjects] = useState<Record<string, ProjectRecord>>({});
+  const [detailState, setDetailState] = useState<{ slug: string; tab: DeploymentDetailTab } | null>(null);
+  const [componentState, setComponentState] = useState<{ projectSlug: string; serviceName: string; tab: ComponentDetailTab } | null>(null);
+  const [redeploySlug, setRedeploySlug] = useState<string | null>(null);
+  const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
 
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -340,7 +347,6 @@ export function ProjectsPanel() {
     const dbProject = getDbProject(slug);
     if (!dbProject) {
       setError(`Project ${slug} is not registered in the database.`);
-      setConfirmDeploy(null);
       return;
     }
 
@@ -363,7 +369,6 @@ export function ProjectsPanel() {
         }
         if (!stackId) {
           setError(`Terraform target ${target.name} has no stack configured.`);
-          setConfirmDeploy(null);
           return;
         }
         const provisionRes = await fetch("/api/terraform/provision", {
@@ -374,7 +379,6 @@ export function ProjectsPanel() {
         const { ok: provOk, data: provData } = await safeJson(provisionRes);
         if (!provOk || provData.error) {
           setError(`Terraform provision failed: ${provData.error || "Unknown error"}`);
-          setConfirmDeploy(null);
           return;
         }
       }
@@ -420,7 +424,6 @@ export function ProjectsPanel() {
       setError(`Deploy failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setDeploying(null);
-      setConfirmDeploy(null);
     }
   }
 
@@ -750,7 +753,7 @@ export function ProjectsPanel() {
                         {!isInvalid && (
                           running > 0 ? (
                             <button
-                              onClick={() => setConfirmDeploy(project.slug)}
+                              onClick={() => setRedeploySlug(project.slug)}
                               disabled={deploying === project.slug}
                               className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                               title="Run the full deployment pipeline"
@@ -768,19 +771,41 @@ export function ProjectsPanel() {
                             </button>
                           )
                         )}
-                        <details className="group relative">
-                          <summary
-                            className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg border border-border bg-background text-lg leading-none text-muted transition-colors hover:border-accent hover:text-accent [&::-webkit-details-marker]:hidden"
+                        <div className="relative">
+                          {openActionMenu === project.slug && (
+                            <button
+                              aria-label="Close deployment actions"
+                              className="fixed inset-0 z-20 cursor-default bg-transparent"
+                              onClick={() => setOpenActionMenu(null)}
+                            />
+                          )}
+                          <button
+                            onClick={() => setOpenActionMenu(openActionMenu === project.slug ? null : project.slug)}
+                            className="relative z-30 flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background text-lg leading-none text-muted transition-colors hover:border-accent hover:text-accent"
                             title="Deployment actions"
                             aria-label={`Actions for ${project.name}`}
                           >
                             ⋮
-                          </summary>
-                          <div className="absolute right-0 top-11 z-30 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-xl shadow-black/20">
+                          </button>
+                          {openActionMenu === project.slug && <div className="absolute right-0 top-11 z-30 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-xl shadow-black/20">
+                            <button
+                              onClick={() => {
+                                setOpenActionMenu(null);
+                                setDetailState({ slug: project.slug, tab: "overview" });
+                              }}
+                              className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
+                              title="Open deployment details"
+                            >
+                              Details
+                            </button>
                             {!isInvalid && (
                               <>
+                                <div className="border-t border-border" />
                                 <button
-                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "stop", projectName: project.name })}
+                                  onClick={() => {
+                                    setOpenActionMenu(null);
+                                    setConfirmCompose({ slug: project.slug, type: "stop", projectName: project.name });
+                                  }}
                                   disabled={!!composeAction}
                                   className="block w-full px-3 py-2 text-left text-xs font-mono text-warning transition-colors hover:bg-warning/10 disabled:opacity-50"
                                   title="Stop the deployment or selected services"
@@ -788,7 +813,10 @@ export function ProjectsPanel() {
                                   Stop
                                 </button>
                                 <button
-                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "restart", projectName: project.name })}
+                                  onClick={() => {
+                                    setOpenActionMenu(null);
+                                    setConfirmCompose({ slug: project.slug, type: "restart", projectName: project.name });
+                                  }}
                                   disabled={!!composeAction}
                                   className="block w-full px-3 py-2 text-left text-xs font-mono text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
                                   title="Restart the deployment or selected services"
@@ -800,8 +828,9 @@ export function ProjectsPanel() {
                             )}
                             <button
                               onClick={async () => {
+                                setOpenActionMenu(null);
                                 const record = await ensureProjectRecord(project);
-                                if (record) setEnvOpen((prev) => ({ ...prev, [project.slug]: !prev[project.slug] }));
+                                if (record) setDetailState({ slug: project.slug, tab: "environment" });
                               }}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
                               title="Manage deployment environment"
@@ -809,7 +838,10 @@ export function ProjectsPanel() {
                               Environment
                             </button>
                             <button
-                              onClick={() => replicateDeployment(project)}
+                              onClick={() => {
+                                setOpenActionMenu(null);
+                                replicateDeployment(project);
+                              }}
                               disabled={!!composeAction}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent disabled:opacity-50"
                               title="Replicate deployment"
@@ -817,410 +849,399 @@ export function ProjectsPanel() {
                               Replicate
                             </button>
                             <button
-                              onClick={() => deleteManagedDeployment(project)}
+                              onClick={() => {
+                                setOpenActionMenu(null);
+                                deleteManagedDeployment(project);
+                              }}
                               disabled={!!composeAction}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-error transition-colors hover:bg-error/10 disabled:opacity-40"
                               title="Delete deployment"
                             >
                               Delete
                             </button>
-                          </div>
-                        </details>
+                          </div>}
+                        </div>
                       </div>
                     </div>
 
-                    {getDbProject(project.slug) && envOpen[project.slug] && (
-                      <div className="mb-4">
-                        <DeploymentEnvPanel
-                          projectId={getDbProject(project.slug)!.id}
-                          deploymentId={latest?.id}
-                          onRedeploy={() => setConfirmDeploy(project.slug)}
-                        />
+                    <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
+                      <button
+                        onClick={() => setDetailState({ slug: project.slug, tab: "components" })}
+                        className="rounded border border-border bg-background/50 px-2 py-1 hover:border-accent hover:text-accent"
+                      >
+                        {project.services.length} component{project.services.length === 1 ? "" : "s"}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await ensureProjectRecord(project);
+                          setDetailState({ slug: project.slug, tab: "environment" });
+                        }}
+                        className="rounded border border-border bg-background/50 px-2 py-1 hover:border-accent hover:text-accent"
+                      >
+                        Env {latest?.envStatus || "unknown"}
+                      </button>
+                      <button
+                        onClick={() => setDetailState({ slug: project.slug, tab: "overview" })}
+                        className="rounded border border-border bg-background/50 px-2 py-1 hover:border-accent hover:text-accent"
+                      >
+                        Details
+                      </button>
+                    </div>
+
+                    {composeOutput?.slug === project.slug && composeOutput.error && (
+                      <div className="mt-3 rounded border border-error/20 bg-error/5 p-2 text-[10px] font-mono text-error">
+                        Action failed. Open Activity for output.
                       </div>
                     )}
 
-                    {/* Deploy options */}
-                    {!isInvalid && <div className="mb-4 p-3 bg-background/50 border border-border rounded-lg space-y-3">
-                      <div className="flex flex-wrap items-end gap-3">
-                        <div>
-                          <label className="block text-[10px] font-mono text-muted mb-1">Redeploy target</label>
-                          <select
-                            value={opts.targetId}
-                            onChange={(e) => updateDeployOptions(project.slug, { targetId: e.target.value ? Number(e.target.value) : "" })}
-                            className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent min-w-[140px]"
-                          >
-                            <option value="">Default target</option>
-                            {targets.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.name} ({t.type})
-                              </option>
+                    {detailState?.slug === project.slug && (
+                      <div className="fixed inset-0 z-[70] flex justify-end bg-black/70">
+                        <div className="flex h-full w-full max-w-5xl flex-col border-l border-border bg-background shadow-2xl">
+                          <div className="flex items-start justify-between gap-4 border-b border-border p-5">
+                            <div className="min-w-0">
+                              <h2 className="truncate text-xl font-semibold">{project.name}</h2>
+                              <p className="mt-1 text-xs font-mono text-muted">
+                                {site?.domain || project.domain || "No domain mapped"} · {running} running · {project.services.length} components
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => setDetailState(null)}
+                              className="rounded-lg border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent"
+                            >
+                              Close
+                            </button>
+                          </div>
+
+                          <div className="flex gap-1 overflow-x-auto border-b border-border px-5 pt-3">
+                            {(["overview", "components", "environment", "source", "networking", "storage", "activity"] as DeploymentDetailTab[]).map((tab) => (
+                              <button
+                                key={tab}
+                                onClick={() => setDetailState({ slug: project.slug, tab })}
+                                className={`shrink-0 border-b-2 px-3 py-2 text-xs font-mono capitalize transition-colors ${
+                                  detailState.tab === tab ? "border-accent text-accent" : "border-transparent text-muted hover:text-foreground"
+                                }`}
+                              >
+                                {tab}
+                              </button>
                             ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-mono text-muted mb-1">Branch</label>
-                          <input
-                            type="text"
-                            value={opts.branch}
-                            onChange={(e) => updateDeployOptions(project.slug, { branch: e.target.value })}
-                            placeholder="main"
-                            className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-32"
-                          />
-                        </div>
-                        <label className="flex items-center gap-2 text-xs font-mono text-muted cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={opts.generatePreviewUrl}
-                            onChange={(e) => updateDeployOptions(project.slug, { generatePreviewUrl: e.target.checked })}
-                            className="accent-accent"
-                          />
-                          Generate preview URL
-                        </label>
-                      </div>
+                          </div>
 
-                      {isK3s && (
-                        <div className="flex flex-wrap items-end gap-3">
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Replicas</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={20}
-                              value={opts.replicas}
-                              onChange={(e) => updateDeployOptions(project.slug, { replicas: Math.max(1, Number(e.target.value) || 1) })}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Port</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={65535}
-                              value={opts.port}
-                              onChange={(e) => updateDeployOptions(project.slug, { port: Math.max(1, Number(e.target.value) || 1) })}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Ingress class</label>
-                            <select
-                              value={opts.ingressClass}
-                              onChange={(e) => updateDeployOptions(project.slug, { ingressClass: e.target.value as "traefik" | "caddy" })}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent min-w-[120px]"
-                            >
-                              <option value="traefik">Traefik</option>
-                              <option value="caddy">Caddy</option>
-                            </select>
-                          </div>
-                        </div>
-                      )}
-
-                      {isCloudRun && (
-                        <div className="flex flex-wrap items-end gap-3">
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">GCP Project</label>
-                            <input
-                              type="text"
-                              value={opts.projectId}
-                              onChange={(e) => updateDeployOptions(project.slug, { projectId: e.target.value })}
-                              placeholder="my-project-123"
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-40"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Region</label>
-                            <input
-                              type="text"
-                              value={opts.region}
-                              onChange={(e) => updateDeployOptions(project.slug, { region: e.target.value })}
-                              placeholder="us-central1"
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-32"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Service name</label>
-                            <input
-                              type="text"
-                              value={opts.serviceName}
-                              onChange={(e) => updateDeployOptions(project.slug, { serviceName: e.target.value })}
-                              placeholder={project.slug}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-40"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">CPU</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={8}
-                              step={1}
-                              value={opts.cpu}
-                              onChange={(e) => updateDeployOptions(project.slug, { cpu: Math.max(1, Number(e.target.value) || 1) })}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-20"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Memory</label>
-                            <input
-                              type="text"
-                              value={opts.memory}
-                              onChange={(e) => updateDeployOptions(project.slug, { memory: e.target.value })}
-                              placeholder="512Mi"
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Concurrency</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={1000}
-                              value={opts.concurrency}
-                              onChange={(e) => updateDeployOptions(project.slug, { concurrency: Math.max(1, Number(e.target.value) || 1) })}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Max instances</label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={1000}
-                              value={opts.maxInstances}
-                              onChange={(e) => updateDeployOptions(project.slug, { maxInstances: Math.max(1, Number(e.target.value) || 1) })}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-24"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {isTerraform && (
-                        <div className="p-3 bg-accent/5 border border-accent/20 rounded-lg space-y-2">
-                          <div className="text-[11px] text-muted leading-relaxed">
-                            <strong className="text-accent">Provision infra first:</strong> this target references a
-                            Terraform stack. GroundControl will run <span className="font-mono">terraform apply</span>{" "}
-                            before deploying the project.
-                          </div>
-                          <div className="text-[10px] font-mono text-muted">
-                            Stack:{" "}
-                            {(() => {
-                              try {
-                                const cfg = JSON.parse(selectedTarget?.configJson || "{}");
-                                const stack = stacks.find((s) => String(s.id) === String(cfg.stackId));
-                                return stack ? `${stack.name} (${stack.provider})` : cfg.stackId || "none";
-                              } catch {
-                                return "none";
-                              }
-                            })()}
-                          </div>
-                        </div>
-                      )}
-
-                      {zones.length > 0 && (
-                        <div className="flex flex-wrap items-end gap-3">
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Subdomain</label>
-                            <input
-                              type="text"
-                              value={opts.subdomain}
-                              onChange={(e) => updateDeployOptions(project.slug, { subdomain: e.target.value })}
-                              placeholder={`${project.slug}.example.com`}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent w-56"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-mono text-muted mb-1">Zone</label>
-                            <select
-                              value={opts.zoneId}
-                              onChange={(e) => updateDeployOptions(project.slug, { zoneId: e.target.value })}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-accent min-w-[160px]"
-                            >
-                              <option value="">Select zone</option>
-                              {zones.map((z) => (
-                                <option key={z.id} value={z.id}>
-                                  {z.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <label className="flex items-center gap-2 text-xs font-mono text-muted cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={opts.proxied}
-                              onChange={(e) => updateDeployOptions(project.slug, { proxied: e.target.checked })}
-                              className="accent-accent"
-                            />
-                            Proxied
-                          </label>
-                        </div>
-                      )}
-
-                      <div className="text-[10px] text-muted/60 font-mono">
-                        Redeploying via {selectedTargetName}
-                        {isCloudRun && ` · ${opts.serviceName} · ${opts.region}`}
-                        {isTerraform && " · terraform provision + deploy"}
-                        {opts.generatePreviewUrl && " · quick tunnel preview"}
-                        {opts.subdomain && opts.zoneId && ` · ${opts.subdomain} → ${zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId}`}
-                      </div>
-                    </div>}
-
-                    {/* Components */}
-                    {isInvalid ? (
-                      <div className="mb-4 text-[10px] text-warning font-mono bg-warning/5 border border-warning/20 p-2 rounded-lg">
-                        Compose file at {project.composePath} is invalid: {project.parseError || "services must be a mapping"}
-                      </div>
-                    ) : project.services.length > 0 ? (
-                      <div className="mb-4 space-y-2">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <h4 className="text-[10px] font-mono tracking-wider text-muted">
-                            Components ({project.services.length})
-                          </h4>
-                          {selected.length > 0 && (
-                            <span className="rounded border border-accent/20 bg-accent/5 px-2 py-1 text-[10px] font-mono text-accent">
-                              {selected.length} selected
-                            </span>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {project.services.map((svc) => {
-                            const existing = meta.containers.find(
-                              (c) =>
-                                tokensMatch(c.composeService || "", svc.name) ||
-                                c.name.toLowerCase().includes(svc.name.toLowerCase())
-                            );
-                            const isRunning = existing?.state === "running";
-                            const checked = isServiceSelected(project.slug, svc.name);
-                            return (
-                              <div
-                                key={svc.name}
-                                className={`flex items-center justify-between gap-2 p-2 rounded-lg border ${
-                                  isRunning ? "bg-background/50 border-border/50" : "bg-warning/5 border-warning/10"
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={() => toggleService(project.slug, svc.name)}
-                                    className="shrink-0 accent-accent"
-                                    title="Select service"
-                                  />
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                      <ContainerIcon
-                                        className="w-3.5 h-3.5"
-                                        type={getContainerType(svc.name, svc.image || "")}
-                                      />
-                                      <div className="text-xs font-mono truncate">{svc.name}</div>
-                                    </div>
-                                    <div className="text-[10px] text-muted font-mono truncate">
-                                      {svc.image || (svc.build ? "build" : "no image")}
-                                      {svc.ports && svc.ports.length > 0 ? ` · :${svc.ports[0]}` : ""}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {existing ? (
-                                    <div
-                                      className={`w-2 h-2 rounded-full ${isRunning ? "bg-success" : "bg-error"}`}
-                                      title={isRunning ? "running" : "stopped"}
-                                    />
-                                  ) : (
-                                    <span className="text-[9px] font-mono text-accent">new</span>
-                                  )}
-                                </div>
+                          <div className="flex-1 overflow-auto p-5">
+                            {detailState.tab === "overview" && (
+                              <div className="grid gap-3 md:grid-cols-3">
+                                <InfoTile label="Status" value={isInvalid ? "Invalid compose" : running > 0 ? "Running" : "Stopped"} />
+                                <InfoTile label="Route" value={site?.domain || project.domain || "No domain mapped"} />
+                                <InfoTile label="Environment" value={latest?.envStatus || "unknown"} />
+                                <InfoTile label="Components" value={String(project.services.length)} />
+                                <InfoTile label="Containers" value={`${running} running, ${stopped} stopped`} />
+                                <InfoTile label="Last deploy" value={latest?.status || "No deployment record"} />
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mb-4 text-[10px] text-warning font-mono bg-warning/5 p-2 rounded-lg">
-                        Compose file at {project.composePath} declared no parseable services.
-                      </div>
-                    )}
+                            )}
 
-                    {/* Compose action output */}
-                    {composeOutput?.slug === project.slug && (
-                      <div className="mb-4 space-y-1">
-                        {composeOutput.error && (
-                          <div className="text-[10px] font-mono text-error bg-error/5 border border-error/20 rounded p-2 whitespace-pre-wrap">
-                            {composeOutput.error}
-                          </div>
-                        )}
-                        {composeOutput.output && (
-                          <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap">
-                            {composeOutput.output}
-                          </pre>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Related Containers */}
-                    {meta.containers.length > 0 && (
-                      <div className="mb-4 space-y-2">
-                        <h4 className="text-[10px] font-mono tracking-wider text-muted">
-                          Containers ({meta.containers.length})
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {meta.containers.map((c) => {
-                            const ctype = getContainerType(c.name, c.image);
-                            const isRunning = c.state === "running";
-                            return (
-                              <a
-                                key={c.name}
-                                href="/containers"
-                                className={`flex items-center gap-2 p-2 rounded-lg border ${
-                                  isRunning ? "bg-background/50 border-border/50" : "bg-error/5 border-error/10"
-                                }`}
-                              >
-                                <ContainerIcon className="w-4 h-4" type={ctype} />
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-xs font-mono truncate">{c.name}</div>
-                                  <div className="text-[10px] text-muted font-mono truncate">
-                                    {getContainerTypeLabel(ctype)} · {c.image}
+                            {detailState.tab === "components" && (
+                              <div className="space-y-3">
+                                {isInvalid ? (
+                                  <div className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-warning">
+                                    {project.parseError || "Compose file is invalid"}
                                   </div>
-                                </div>
-                                <div
-                                  className={`w-2 h-2 rounded-full shrink-0 ${
-                                    isRunning
-                                      ? c.status.includes("unhealthy")
-                                        ? "bg-warning"
-                                        : "bg-success"
-                                      : "bg-error"
-                                  }`}
+                                ) : project.services.length === 0 ? (
+                                  <div className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-warning">
+                                    No parseable components found.
+                                  </div>
+                                ) : (
+                                  project.services.map((svc) => {
+                                    const existing = meta.containers.find(
+                                      (c) => tokensMatch(c.composeService || "", svc.name) || c.name.toLowerCase().includes(svc.name.toLowerCase())
+                                    );
+                                    const checked = isServiceSelected(project.slug, svc.name);
+                                    return (
+                                      <div key={svc.name} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3">
+                                        <label className="flex min-w-0 items-center gap-3">
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => toggleService(project.slug, svc.name)}
+                                            className="shrink-0 accent-accent"
+                                          />
+                                          <ContainerIcon className="h-4 w-4 text-muted" type={getContainerType(svc.name, svc.image || "")} />
+                                          <span className="truncate text-sm font-mono">{svc.name}</span>
+                                        </label>
+                                        <button
+                                          onClick={() => setComponentState({ projectSlug: project.slug, serviceName: svc.name, tab: "overview" })}
+                                          className="rounded border border-border px-2 py-1 text-[10px] font-mono text-muted hover:border-accent hover:text-accent"
+                                        >
+                                          Open
+                                        </button>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            )}
+
+                            {detailState.tab === "environment" && (
+                              dbProject ? (
+                                <DeploymentEnvPanel
+                                  projectId={dbProject.id}
+                                  deploymentId={latest?.id}
+                                  onRedeploy={() => setRedeploySlug(project.slug)}
                                 />
-                              </a>
-                            );
-                          })}
+                              ) : (
+                                <button
+                                  onClick={() => ensureProjectRecord(project)}
+                                  className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
+                                >
+                                  Enable environment management
+                                </button>
+                              )
+                            )}
+
+                            {detailState.tab === "source" && (
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <InfoTile label="Repository" value={dbProject?.repoUrl || (project.hasGit ? "Git repository on server" : "No repository detected")} />
+                                <InfoTile label="Branch" value={opts.branch || "main"} />
+                                <InfoTile label="Compose file" value={project.composePath} />
+                                <InfoTile label="Deployment path" value={project.path} />
+                              </div>
+                            )}
+
+                            {detailState.tab === "networking" && (
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <InfoTile label="Domain" value={site?.domain || project.domain || "No domain mapped"} />
+                                <InfoTile label="Proxy target" value={site?.proxy || "No proxy target detected"} />
+                                <InfoTile label="DNS zone" value={opts.zoneId ? zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId : "No zone selected"} />
+                                <InfoTile label="Public route" value={latest?.publicUrl || latest?.previewUrl || "No public URL"} />
+                              </div>
+                            )}
+
+                            {detailState.tab === "storage" && (
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <InfoTile label="Containers" value={`${meta.containers.length} linked`} />
+                                <InfoTile label="Images" value={`${meta.images.length} linked`} />
+                                <InfoTile label="Volumes" value="Volume inventory not attached yet" />
+                                <InfoTile label="Data policy" value="Volumes are preserved by default" />
+                              </div>
+                            )}
+
+                            {detailState.tab === "activity" && (
+                              <div className="space-y-3">
+                                <InfoTile label="Latest status" value={latest?.status || "No deployment record"} />
+                                {composeOutput?.slug === project.slug && (
+                                  <pre className="max-h-72 overflow-auto rounded-lg border border-border bg-card p-3 text-xs whitespace-pre-wrap">
+                                    {composeOutput.error || composeOutput.output || "No output"}
+                                  </pre>
+                                )}
+                                {latest?.output && (
+                                  <pre className="max-h-72 overflow-auto rounded-lg border border-border bg-card p-3 text-xs whitespace-pre-wrap">
+                                    {latest.output}
+                                  </pre>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {/* Related Images */}
-                    {meta.images.length > 0 && (
-                      <div className="space-y-2">
-                        <h4 className="text-[10px] font-mono tracking-wider text-muted">
-                          Images ({meta.images.length})
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {meta.images.map((img) => {
-                            const fullName =
-                              img.tag && img.tag !== "<none>" ? `${img.repository}:${img.tag}` : img.repository;
-                            return (
-                              <a
-                                key={img.id}
-                                href="/containers"
-                                className="flex items-center justify-between p-2 rounded-lg border border-border/50 bg-background/30 hover:border-border-hover transition-colors"
-                              >
-                                <div className="min-w-0">
-                                  <div className="text-xs font-mono truncate">{fullName}</div>
-                                  <div className="text-[10px] text-muted font-mono">{img.size}</div>
+                    {componentState?.projectSlug === project.slug && (() => {
+                      const svc = project.services.find((service) => service.name === componentState.serviceName);
+                      if (!svc) return null;
+                      const existing = meta.containers.find(
+                        (c) => tokensMatch(c.composeService || "", svc.name) || c.name.toLowerCase().includes(svc.name.toLowerCase())
+                      );
+                      return (
+                        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4">
+                          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-xl border border-border bg-background shadow-2xl">
+                            <div className="flex items-start justify-between border-b border-border p-4">
+                              <div>
+                                <h3 className="text-lg font-semibold">{svc.name}</h3>
+                                <p className="mt-1 text-xs font-mono text-muted">{existing?.state || "not running"}</p>
+                              </div>
+                              <button onClick={() => setComponentState(null)} className="rounded border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+                                Close
+                              </button>
+                            </div>
+                            <div className="flex gap-1 overflow-x-auto border-b border-border px-4 pt-2">
+                              {(["overview", "runtime", "environment", "source", "networking", "storage", "logs", "actions"] as ComponentDetailTab[]).map((tab) => (
+                                <button
+                                  key={tab}
+                                  onClick={() => setComponentState({ projectSlug: project.slug, serviceName: svc.name, tab })}
+                                  className={`shrink-0 border-b-2 px-3 py-2 text-xs font-mono capitalize ${
+                                    componentState.tab === tab ? "border-accent text-accent" : "border-transparent text-muted hover:text-foreground"
+                                  }`}
+                                >
+                                  {tab}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="overflow-auto p-4">
+                              {componentState.tab === "overview" && (
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <InfoTile label="Service" value={svc.name} />
+                                  <InfoTile label="State" value={existing?.state || "not created"} />
                                 </div>
-                              </a>
-                            );
-                          })}
+                              )}
+                              {componentState.tab === "runtime" && (
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <InfoTile label="Container" value={existing?.name || "No linked container"} />
+                                  <InfoTile label="Status" value={existing?.status || "not running"} />
+                                </div>
+                              )}
+                              {componentState.tab === "environment" && <InfoTile label="Environment scope" value="Deployment environment applies to this component" />}
+                              {componentState.tab === "source" && (
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <InfoTile label="Image" value={svc.image || "No image declared"} />
+                                  <InfoTile label="Build" value={svc.build ? "Build context declared" : "No build context"} />
+                                </div>
+                              )}
+                              {componentState.tab === "networking" && <InfoTile label="Ports" value={svc.ports?.join(", ") || "No ports declared"} />}
+                              {componentState.tab === "storage" && <InfoTile label="Storage" value="No storage metadata parsed yet" />}
+                              {componentState.tab === "logs" && <InfoTile label="Logs" value={existing ? "Open Containers to stream logs" : "No linked container"} />}
+                              {componentState.tab === "actions" && (
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setSelectedServices((prev) => ({ ...prev, [project.slug]: new Set([svc.name]) }));
+                                      setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name });
+                                    }}
+                                    className="rounded border border-success/30 bg-success/10 px-3 py-2 text-xs font-mono text-success"
+                                  >
+                                    Start
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setSelectedServices((prev) => ({ ...prev, [project.slug]: new Set([svc.name]) }));
+                                      setConfirmCompose({ slug: project.slug, type: "stop", projectName: project.name });
+                                    }}
+                                    className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-mono text-warning"
+                                  >
+                                    Stop
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {redeploySlug === project.slug && (
+                      <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4">
+                        <div className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl border border-border bg-background shadow-2xl">
+                          <div className="flex items-start justify-between border-b border-border p-5">
+                            <div>
+                              <h2 className="text-xl font-semibold">Redeploy {project.name}</h2>
+                              <p className="mt-1 text-xs font-mono text-muted">
+                                Configure only what applies to this redeploy.
+                              </p>
+                            </div>
+                            <button onClick={() => setRedeploySlug(null)} className="rounded border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+                              Close
+                            </button>
+                          </div>
+                          <div className="space-y-4 p-5">
+                            <div className="grid gap-3 md:grid-cols-3">
+                              <label className="block">
+                                <span className="mb-1 block text-[10px] font-mono text-muted">Target</span>
+                                <select
+                                  value={opts.targetId}
+                                  onChange={(e) => updateDeployOptions(project.slug, { targetId: e.target.value ? Number(e.target.value) : "" })}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                >
+                                  <option value="">Default target</option>
+                                  {targets.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.type})</option>)}
+                                </select>
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-[10px] font-mono text-muted">Branch</span>
+                                <input
+                                  value={opts.branch}
+                                  onChange={(e) => updateDeployOptions(project.slug, { branch: e.target.value })}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                />
+                              </label>
+                              <label className="flex items-center gap-2 pt-5 text-xs font-mono text-muted">
+                                <input
+                                  type="checkbox"
+                                  checked={opts.generatePreviewUrl}
+                                  onChange={(e) => updateDeployOptions(project.slug, { generatePreviewUrl: e.target.checked })}
+                                  className="accent-accent"
+                                />
+                                Generate preview URL
+                              </label>
+                            </div>
+
+                            {isK3s && (
+                              <div className="grid gap-3 md:grid-cols-3">
+                                <NumberInput label="Replicas" value={opts.replicas} onChange={(value) => updateDeployOptions(project.slug, { replicas: Math.max(1, value) })} />
+                                <NumberInput label="Port" value={opts.port} onChange={(value) => updateDeployOptions(project.slug, { port: Math.max(1, value) })} />
+                                <label className="block">
+                                  <span className="mb-1 block text-[10px] font-mono text-muted">Ingress class</span>
+                                  <select
+                                    value={opts.ingressClass}
+                                    onChange={(e) => updateDeployOptions(project.slug, { ingressClass: e.target.value as "traefik" | "caddy" })}
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                  >
+                                    <option value="traefik">Traefik</option>
+                                    <option value="caddy">Caddy</option>
+                                  </select>
+                                </label>
+                              </div>
+                            )}
+
+                            {isCloudRun && (
+                              <div className="grid gap-3 md:grid-cols-3">
+                                <TextInput label="GCP project" value={opts.projectId} onChange={(value) => updateDeployOptions(project.slug, { projectId: value })} />
+                                <TextInput label="Region" value={opts.region} onChange={(value) => updateDeployOptions(project.slug, { region: value })} />
+                                <TextInput label="Service name" value={opts.serviceName} onChange={(value) => updateDeployOptions(project.slug, { serviceName: value })} />
+                                <NumberInput label="CPU" value={opts.cpu} onChange={(value) => updateDeployOptions(project.slug, { cpu: Math.max(1, value) })} />
+                                <TextInput label="Memory" value={opts.memory} onChange={(value) => updateDeployOptions(project.slug, { memory: value })} />
+                                <NumberInput label="Max instances" value={opts.maxInstances} onChange={(value) => updateDeployOptions(project.slug, { maxInstances: Math.max(1, value) })} />
+                              </div>
+                            )}
+
+                            {zones.length > 0 && (
+                              <div className="grid gap-3 md:grid-cols-3">
+                                <TextInput label="Subdomain" value={opts.subdomain} onChange={(value) => updateDeployOptions(project.slug, { subdomain: value })} />
+                                <label className="block">
+                                  <span className="mb-1 block text-[10px] font-mono text-muted">Zone</span>
+                                  <select
+                                    value={opts.zoneId}
+                                    onChange={(e) => updateDeployOptions(project.slug, { zoneId: e.target.value })}
+                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                  >
+                                    <option value="">Select zone</option>
+                                    {zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
+                                  </select>
+                                </label>
+                                <label className="flex items-center gap-2 pt-5 text-xs font-mono text-muted">
+                                  <input type="checkbox" checked={opts.proxied} onChange={(e) => updateDeployOptions(project.slug, { proxied: e.target.checked })} className="accent-accent" />
+                                  Proxied
+                                </label>
+                              </div>
+                            )}
+
+                            <div className="rounded-lg border border-border bg-card p-3 text-xs font-mono text-muted">
+                              Target: {selectedTargetName}
+                              {isTerraform && " · Terraform apply first"}
+                              {opts.generatePreviewUrl && " · Preview URL"}
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2 border-t border-border p-5">
+                            <button onClick={() => setRedeploySlug(null)} className="rounded border border-border px-4 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRedeploySlug(null);
+                                triggerDeploy(project.slug);
+                              }}
+                              disabled={deploying === project.slug}
+                              className="rounded border border-accent/30 bg-accent/10 px-4 py-2 text-xs font-mono text-accent hover:bg-accent/20 disabled:opacity-50"
+                            >
+                              Redeploy
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1228,17 +1249,6 @@ export function ProjectsPanel() {
                 );
               })}
         </div>
-      )}
-
-      {confirmDeploy && (
-        <ActionConfirm
-          open={!!confirmDeploy}
-          action="deploy"
-          targetName={confirmDeploy}
-          targetType="Project"
-          onConfirm={() => triggerDeploy(confirmDeploy)}
-          onCancel={() => setConfirmDeploy(null)}
-        />
       )}
 
       {confirmCompose && (
@@ -1258,5 +1268,41 @@ export function ProjectsPanel() {
         />
       )}
     </div>
+  );
+}
+
+function InfoTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="mb-1 text-[10px] font-mono text-muted">{label}</div>
+      <div className="break-words text-sm font-mono text-foreground">{value || "Not set"}</div>
+    </div>
+  );
+}
+
+function TextInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-mono text-muted">{label}</span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+      />
+    </label>
+  );
+}
+
+function NumberInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-mono text-muted">{label}</span>
+      <input
+        type="number"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value) || 0)}
+        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+      />
+    </label>
   );
 }

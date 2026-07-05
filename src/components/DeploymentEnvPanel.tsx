@@ -41,6 +41,8 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [profile, setProfile] = useState<EnvProfile | null>(null);
   const [localValues, setLocalValues] = useState<Record<string, string>>({});
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -56,6 +58,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
     setProfile(profileRes.profile || null);
     const initial: Record<string, string> = {};
     for (const entry of profileRes.profile?.schema || []) initial[entry.key] = "";
+    for (const key of Object.keys(profileRes.profile?.values || {})) initial[key] = "";
     setLocalValues(initial);
   }
 
@@ -79,7 +82,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
           environment: patch.environment ?? profile.environment,
           secretPath: patch.secretPath ?? profile.secretPath,
           projectRef: patch.projectRef ?? profile.projectRef,
-          schema: profile.schema || [],
+          schema: patch.schema || profile.schema || [],
           values,
         }),
       });
@@ -87,6 +90,10 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
       if (!res.ok || data.error) setMessage(data.error || "Save failed");
       else {
         setProfile(data.profile);
+        const nextValues: Record<string, string> = {};
+        for (const entry of data.profile?.schema || []) nextValues[entry.key] = "";
+        for (const key of Object.keys(data.profile?.values || {})) nextValues[key] = "";
+        setLocalValues(nextValues);
         setMessage("Env profile saved");
       }
     } finally {
@@ -116,6 +123,8 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
   if (!profile) {
     return <div className="rounded-lg border border-border bg-background/40 p-3 text-xs text-muted">Loading env profile...</div>;
   }
+
+  const envKeys = Array.from(new Set([...(profile.schema || []).map((entry) => entry.key), ...Object.keys(profile.values || {})])).sort();
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-background/40 p-3">
@@ -160,7 +169,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
         <Input label="Path" value={profile.secretPath || "/"} onChange={(value) => setProfile({ ...profile, secretPath: value })} onBlur={() => saveProfile({ secretPath: profile.secretPath })} />
       </div>
 
-      {selectedProvider && (
+      {selectedProvider && profile.providerType !== "local" && (
         <div className="text-[10px] font-mono text-muted">
           External provider selected: {selectedProvider.name}
         </div>
@@ -168,22 +177,66 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
 
       {profile.providerType === "local" && (
         <div className="space-y-2">
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {(profile.schema || []).map((entry) => (
-              <label key={entry.key} className="block">
-                <span className="mb-1 block text-[10px] font-mono text-muted">
-                  {entry.key}{entry.required ? " *" : ""}
-                  {profile.values?.[entry.key]?.hasValue ? ` · ${profile.values[entry.key].masked}` : ""}
-                </span>
-                <input
-                  type="password"
-                  value={localValues[entry.key] || ""}
-                  placeholder={profile.values?.[entry.key]?.hasValue ? "leave blank to keep current" : "set value"}
-                  onChange={(event) => setLocalValues({ ...localValues, [entry.key]: event.target.value })}
-                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
-                />
-              </label>
-            ))}
+          <div className="overflow-hidden rounded-lg border border-border">
+            <div className="grid grid-cols-[1fr_1fr] bg-card px-3 py-2 text-[10px] font-mono text-muted md:grid-cols-[1fr_1fr_120px]">
+              <span>Key</span>
+              <span>Value</span>
+              <span className="hidden md:block">Status</span>
+            </div>
+            {envKeys.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-muted">No environment variables yet.</div>
+            ) : (
+              envKeys.map((key) => {
+                const schemaEntry = profile.schema.find((entry) => entry.key === key);
+                return (
+                  <div key={key} className="grid grid-cols-1 gap-2 border-t border-border px-3 py-2 md:grid-cols-[1fr_1fr_120px] md:items-center">
+                    <div className="text-xs font-mono">
+                      {key}{schemaEntry?.required ? " *" : ""}
+                    </div>
+                    <input
+                      type="password"
+                      value={localValues[key] || ""}
+                      placeholder={profile.values?.[key]?.hasValue ? `keep ${profile.values[key].masked}` : "set value"}
+                      onChange={(event) => setLocalValues({ ...localValues, [key]: event.target.value })}
+                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+                    />
+                    <div className="text-[10px] font-mono text-muted">
+                      {profile.values?.[key]?.hasValue ? "saved" : "missing"}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className="grid gap-2 rounded-lg border border-border bg-card p-3 md:grid-cols-[1fr_1fr_auto]">
+            <input
+              value={newKey}
+              onChange={(event) => setNewKey(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+              placeholder="NEW_KEY"
+              className="rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+            />
+            <input
+              type="password"
+              value={newValue}
+              onChange={(event) => setNewValue(event.target.value)}
+              placeholder="value"
+              className="rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
+            />
+            <button
+              onClick={() => {
+                if (!newKey) return;
+                const nextSchema = profile.schema.some((entry) => entry.key === newKey)
+                  ? profile.schema
+                  : [...profile.schema, { key: newKey, required: true }];
+                saveProfile({ schema: nextSchema }, newValue ? { [newKey]: newValue } : undefined);
+                setNewKey("");
+                setNewValue("");
+              }}
+              disabled={loading || !newKey}
+              className="rounded border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent disabled:opacity-50"
+            >
+              Add variable
+            </button>
           </div>
           <button
             onClick={() => {
@@ -193,7 +246,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
             disabled={loading}
             className="rounded border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
           >
-            Save Local Values
+            Save local values
           </button>
         </div>
       )}
