@@ -1165,7 +1165,7 @@ export function ProjectsPanel() {
                               className="rounded bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
                                     title="Recreate this service with the saved environment."
                                   >
-                                    Redeploy component <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[9px]">i</span>
+                                    Redeploy component <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-current/10 text-[9px]">i</span>
                                   </button>
                                 </div>
                               )}

@@ -121,4 +121,38 @@ describe("deployment route matching", () => {
     expect(site?.file).toBe("/etc/caddy/sites/40-infisical.caddy");
     expect(site?.domain).toBe("secrets.serendepify.com");
   });
+
+  it("does not assign auridux to HealthWallet when there is no route evidence", () => {
+    const site = findProjectSite(
+      {
+        slug: "agent-flow/HealthWallet-TON-MiniApp",
+        dirName: "HealthWallet-TON-MiniApp",
+        path: "/opt/agent-flow/HealthWallet-TON-MiniApp",
+        services: [
+          { name: "web", ports: ["3001:3000"] },
+          { name: "api", ports: ["5001:5000"] },
+        ],
+      },
+      caddySites
+    );
+
+    expect(site).toBeUndefined();
+  });
+
+  it("does not assign auridux to agent-ops deploy when no Caddy file matches", () => {
+    const site = findProjectSite(
+      {
+        slug: "agent-ops/deploy",
+        dirName: "deploy",
+        path: "/opt/agent-ops/deploy",
+        services: [
+          { name: "web", ports: ["3011:3000"] },
+          { name: "worker", ports: [] },
+        ],
+      },
+      caddySites
+    );
+
+    expect(site).toBeUndefined();
+  });
 });

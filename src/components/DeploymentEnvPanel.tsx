@@ -369,7 +369,7 @@ function parseEnvText(content: string): Record<string, string> {
 }
 
 function InfoMark() {
-  return <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[9px]">i</span>;
+  return <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-current/10 text-[9px]">i</span>;
 }
 
 function Input({ label, value, onChange, onBlur }: {
