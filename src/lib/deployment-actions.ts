@@ -1,4 +1,4 @@
-export type LifecycleAction = "start" | "stop" | "restart";
+export type LifecycleAction = "start" | "stop" | "restart" | "redeploy";
 
 export interface LifecycleScope {
   services?: string[];
@@ -25,5 +25,6 @@ export function resolveLifecycleScope(projectName: string, selectedServices: str
 export function lifecycleActionLabel(action: LifecycleAction): string {
   if (action === "start") return "Start";
   if (action === "stop") return "Stop";
+  if (action === "redeploy") return "Redeploy";
   return "Restart";
 }

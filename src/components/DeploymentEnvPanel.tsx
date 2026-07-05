@@ -42,9 +42,10 @@ async function json(res: Response) {
   }
 }
 
-export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
+export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onRedeploy }: {
   projectId: number;
   deploymentId?: number;
+  componentName?: string;
   onRedeploy?: () => void;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -53,6 +54,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
   const [localValues, setLocalValues] = useState<Record<string, string>>({});
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
+  const [pastedEnv, setPastedEnv] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -70,9 +72,11 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
     const initial: Record<string, string> = {};
     for (const entry of profileRes.profile?.schema || []) initial[entry.key] = "";
     for (const key of Object.keys(profileRes.profile?.values || {})) initial[key] = "";
-    for (const entry of profileRes.discovered?.entries || []) initial[entry.key] ||= "";
+    for (const entry of profileRes.discovered?.entries || []) {
+      if (!componentName || !entry.component || entry.component === componentName) initial[entry.key] ||= "";
+    }
     setLocalValues(initial);
-  }, [projectId, deploymentId]);
+  }, [projectId, deploymentId, componentName]);
 
   useEffect(() => {
     void Promise.resolve().then(load).catch(() => undefined);
@@ -107,7 +111,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
         const nextValues: Record<string, string> = {};
         for (const entry of data.profile?.schema || []) nextValues[entry.key] = "";
         for (const key of Object.keys(data.profile?.values || {})) nextValues[key] = "";
-        for (const entry of data.discovered?.entries || []) nextValues[entry.key] ||= "";
+        for (const entry of data.discovered?.entries || []) {
+          if (!componentName || !entry.component || entry.component === componentName) nextValues[entry.key] ||= "";
+        }
         setLocalValues(nextValues);
         setMessage(importCurrentServerEnv ? "Current server env saved to source" : "Environment saved");
       }
@@ -120,11 +126,14 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
     return <div className="rounded-lg border border-border bg-background/40 p-3 text-xs text-muted">Loading env profile...</div>;
   }
 
-  const discoveredByKey = new Map(discovered.map((entry) => [entry.key, entry]));
+  const visibleDiscovered = componentName
+    ? discovered.filter((entry) => !entry.component || entry.component === componentName)
+    : discovered;
+  const discoveredByKey = new Map(visibleDiscovered.map((entry) => [entry.key, entry]));
   const envKeys = Array.from(new Set([
     ...(profile.schema || []).map((entry) => entry.key),
     ...Object.keys(profile.values || {}),
-    ...discovered.map((entry) => entry.key),
+    ...visibleDiscovered.map((entry) => entry.key),
   ])).sort();
   const hasSavedSource = profile.providerType === "local"
     ? Object.keys(profile.values || {}).length > 0 || profile.schema.length > 0
@@ -136,6 +145,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
         <div>
           <div className="text-xs font-medium">Environment</div>
           <div className="text-[10px] font-mono text-muted">
+            {componentName ? `${componentName} · ` : ""}
             {profile.providerType} · {profile.status || "unknown"}
             {profile.lastHash ? ` · ${profile.lastHash.slice(0, 12)}` : ""}
           </div>
@@ -204,7 +214,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
         </div>
       )}
 
-      {!hasSavedSource && discovered.length > 0 && (
+      {!hasSavedSource && visibleDiscovered.length > 0 && (
         <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 text-xs text-muted">
           Current server env is available. Choose an env source to edit and redeploy with those values.
         </div>
@@ -278,10 +288,64 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
               Add variable
             </button>
           </div>
+          <div className="space-y-2 rounded-lg bg-card p-3">
+            <input
+              type="file"
+              accept=".env,text/plain"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                setPastedEnv(await file.text());
+                event.currentTarget.value = "";
+              }}
+              className="block w-full text-xs font-mono text-muted file:mr-3 file:rounded file:border-0 file:bg-background file:px-3 file:py-2 file:text-xs file:font-mono file:text-muted hover:file:bg-accent/10 hover:file:text-accent"
+            />
+            <textarea
+              value={pastedEnv}
+              onChange={(event) => setPastedEnv(event.target.value)}
+              placeholder="Paste .env contents"
+              rows={4}
+              className="w-full resize-y rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+            />
+            <button
+              onClick={() => {
+                const parsed = parseEnvText(pastedEnv);
+                const keys = Object.keys(parsed);
+                if (keys.length === 0) return;
+                const nextSchema = [...profile.schema];
+                const seen = new Set(nextSchema.map((entry) => entry.key));
+                for (const key of keys) {
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    nextSchema.push({ key, required: true });
+                  }
+                }
+                setLocalValues({ ...localValues, ...parsed });
+                setProfile({ ...profile, schema: nextSchema });
+                setMessage(`${keys.length} value${keys.length === 1 ? "" : "s"} loaded from pasted env`);
+              }}
+              disabled={!pastedEnv.trim()}
+              className="rounded bg-background px-3 py-2 text-xs font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
+            >
+              Fill from pasted env
+            </button>
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+function parseEnvText(content: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    values[match[1]] = match[2].replace(/^["']|["']$/g, "");
+  }
+  return values;
 }
 
 function InfoMark() {

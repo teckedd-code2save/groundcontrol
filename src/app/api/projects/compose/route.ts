@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { execOnVps, resolveComposeProjectPath, runDockerCompose, shQuote } from "@/lib/vps";
 import { parseComposeServices } from "@/lib/project-scan";
+import { prisma } from "@/lib/prisma";
+import { applyEnvToDeployment } from "@/lib/env-management";
 
 function errorResponse(err: unknown, status = 500) {
   const message = err instanceof Error ? err.message : String(err);
@@ -56,10 +58,10 @@ export async function GET(req: NextRequest) {
  * Body:
  *   projectSlug: string
  *   services?: string[]   // optional subset of services to start/restart
- *   action?: "start" | "restart"
+ *   action?: "start" | "restart" | "redeploy"
  *
- * Runs `docker compose up -d` or `docker compose restart` for the whole
- * project or for the selected services.
+ * Runs compose lifecycle actions for the whole project or selected services.
+ * Redeploy materializes saved env first and force-recreates the service scope.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -72,10 +74,24 @@ export async function POST(req: NextRequest) {
     const serviceArgs = Array.isArray(services) && services.length > 0
       ? services.map((s: string) => shQuote(s)).join(" ")
       : "";
+    const project = await prisma.project.findFirst({
+      where: {
+        OR: [
+          { slug: projectSlug },
+          { path: target.projectPath },
+        ],
+      },
+    });
+    if (action === "redeploy" && project) {
+      await applyEnvToDeployment(project, undefined, undefined, { materialize: true });
+    }
+
     const args =
       action === "restart"
         ? `restart${serviceArgs ? ` ${serviceArgs}` : ""}`
-        : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
+        : action === "redeploy"
+          ? `up -d --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`
+          : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
 
     const result = await runDockerCompose(target.projectPath, args);
 

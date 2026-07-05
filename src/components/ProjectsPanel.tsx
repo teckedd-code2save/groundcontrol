@@ -185,6 +185,10 @@ function normalizeToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+function compactToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 function tokensMatch(a: string, b: string): boolean {
   const l = normalizeToken(a);
   const r = normalizeToken(b);
@@ -201,6 +205,14 @@ function pathInside(workingDir: string, projectPath: string): boolean {
 function proxyPort(proxy: string | null): string {
   const match = String(proxy || "").match(/:(\d+)/);
   return match?.[1] || "";
+}
+
+function siteFileName(site: CaddySite): string {
+  return (site.file || "").split("/").pop() || "";
+}
+
+function stripCaddyPrefix(value: string): string {
+  return normalizeToken(value.replace(/\.(caddy|conf)$/i, "").replace(/^\d+-/, "").replace(/^gc-/, ""));
 }
 
 function servicePortCandidates(service: ComposeServiceInfo): string[] {
@@ -221,30 +233,43 @@ function findProjectSite(project: ScannedProject, sites: CaddySite[] = [], meta:
     : undefined;
   if (exact) return exact;
 
-  const tokens = new Set([
+  const projectTokens = [
     normalizeToken(project.slug),
     normalizeToken(project.dirName),
+    compactToken(project.slug),
+    compactToken(project.dirName),
+  ].filter((token) => token.length >= 4);
+  const serviceTokens = [
     ...project.services.map((service) => normalizeToken(service.name)),
     ...meta.containers.map((container) => normalizeToken(container.name)),
     ...meta.containers.map((container) => normalizeToken(container.composeService || "")),
-  ].filter(Boolean));
+  ].filter((token) => token.length >= 4);
   const ports = new Set([
     ...project.services.flatMap(servicePortCandidates),
     ...meta.containers.flatMap(containerPortCandidates),
   ]);
 
-  return sites.find((site) => {
-    const domainToken = normalizeToken(site.domain);
-    const proxyText = normalizeToken(site.proxy || "");
-    const contentToken = normalizeToken(site.content || "");
-    const sitePort = proxyPort(site.proxy);
-    if (site.root && pathInside(site.root, project.path)) return true;
-    if (sitePort && ports.has(sitePort)) return true;
-    for (const token of tokens) {
-      if (token && (domainToken.includes(token) || proxyText.includes(token) || contentToken.includes(token))) return true;
-    }
-    return false;
-  });
+  const scored = sites
+    .map((site) => {
+      let score = 0;
+      const fileToken = stripCaddyPrefix(siteFileName(site));
+      const domainToken = normalizeToken(site.domain.replace(/^https?:\/\//, ""));
+      const compactDomain = compactToken(site.domain);
+      const proxyText = normalizeToken(site.proxy || "");
+      const sitePort = proxyPort(site.proxy);
+
+      if (site.root && pathInside(site.root, project.path)) score += 100;
+      if (sitePort && ports.has(sitePort)) score += 90;
+      if (projectTokens.some((token) => fileToken === token || fileToken.includes(token))) score += 80;
+      if (projectTokens.some((token) => domainToken === token || compactDomain.includes(token))) score += 70;
+      if (serviceTokens.some((token) => proxyText === token || proxyText.includes(token))) score += 50;
+
+      return { site, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  return scored[0]?.site;
 }
 
 function matchedServiceForSite(site: CaddySite, project: ScannedProject, meta: { containers: Container[]; images: DockerImage[] }): string {
@@ -318,9 +343,6 @@ export function ProjectsPanel() {
       fetch("/api/cloudflare/zones")
         .then((r) => safeJson(r))
         .catch(() => ({ ok: true, data: { success: false, result: [] }, text: "" })),
-      fetch("/api/terraform/stacks")
-        .then((r) => safeJson(r))
-        .catch(() => ({ ok: true, data: [], text: "" })),
     ])
       .then(([projectsRes, containersRes, imagesRes, targetsRes, deploymentsRes, zonesRes]) => {
         setData(projectsRes.data);
@@ -515,7 +537,7 @@ export function ProjectsPanel() {
       });
       const { ok, data } = await safeJson(res);
       const failed = !ok || (data.success === false && data.error);
-      const label = type === "start" ? "Start" : type === "stop" ? "Stop" : "Restart";
+      const label = type === "start" ? "Start" : type === "stop" ? "Stop" : type === "redeploy" ? "Redeploy" : "Restart";
       if (failed) {
         setError(`${label} failed: ${data.error || "Unknown error"}`);
         setComposeOutput({ slug, output: data.output || "", error: data.error });
@@ -526,7 +548,7 @@ export function ProjectsPanel() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const label = type === "start" ? "Start" : type === "stop" ? "Stop" : "Restart";
+      const label = type === "start" ? "Start" : type === "stop" ? "Stop" : type === "redeploy" ? "Redeploy" : "Restart";
       setError(`${label} failed: ${message}`);
       setComposeOutput({ slug, output: "", error: message });
     } finally {
@@ -635,6 +657,21 @@ export function ProjectsPanel() {
     }
   }
 
+  async function openDeploymentDetail(project: ScannedProject, tab: DeploymentDetailTab) {
+    if (tab === "environment") {
+      await ensureProjectRecord(project);
+    }
+    setDetailState({ slug: project.slug, tab });
+  }
+
+  function closeAllSheets() {
+    setDetailState(null);
+    setComponentState(null);
+    setRedeploySlug(null);
+    setReplicateState(null);
+    setDeleteState(null);
+  }
+
   function isServiceSelected(slug: string, service: string): boolean {
     return selectedServices[slug]?.has(service) ?? false;
   }
@@ -713,7 +750,7 @@ export function ProjectsPanel() {
       <LoaderOverlay3D
         open={!!composeAction}
         variant="compose"
-        title={composeAction ? `${composeAction.type === "start" ? "Starting" : composeAction.type === "stop" ? "Stopping" : "Restarting"} deployment...` : "Updating deployment..."}
+        title={composeAction ? `${composeAction.type === "start" ? "Starting" : composeAction.type === "stop" ? "Stopping" : composeAction.type === "redeploy" ? "Redeploying" : "Restarting"} deployment...` : "Updating deployment..."}
       />
       <LoaderOverlay3D
         open={!!deploying}
@@ -826,7 +863,7 @@ export function ProjectsPanel() {
                             <button
                               onClick={() => setRedeploySlug(project.slug)}
                               disabled={deploying === project.slug}
-                              className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                              className="rounded-lg bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                               title="Run the full deployment pipeline"
                             >
                               Redeploy
@@ -835,7 +872,7 @@ export function ProjectsPanel() {
                             <button
                               onClick={() => setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name })}
                               disabled={!!composeAction}
-                              className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs font-mono text-success transition-colors hover:bg-success/20 disabled:opacity-50"
+                              className="rounded-lg bg-success/10 px-3 py-2 text-xs font-mono text-success transition-colors hover:bg-success/20 disabled:opacity-50"
                               title="Start the deployment or selected services"
                             >
                               Start
@@ -852,17 +889,17 @@ export function ProjectsPanel() {
                           )}
                           <button
                             onClick={() => setOpenActionMenu(openActionMenu === project.slug ? null : project.slug)}
-                            className="relative z-30 flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background text-lg leading-none text-muted transition-colors hover:border-accent hover:text-accent"
+                            className="relative z-30 flex h-9 w-9 items-center justify-center rounded-lg bg-background text-lg leading-none text-muted transition-colors hover:bg-accent/10 hover:text-accent"
                             title="Deployment actions"
                             aria-label={`Actions for ${project.name}`}
                           >
                             ⋮
                           </button>
-                          {openActionMenu === project.slug && <div className="absolute right-0 top-11 z-30 w-52 overflow-hidden rounded-lg border border-border bg-card shadow-xl shadow-black/20">
+                            {openActionMenu === project.slug && <div className="absolute right-0 top-11 z-30 w-52 overflow-hidden rounded-lg bg-card shadow-xl shadow-black/20">
                             <button
                               onClick={() => {
                                 setOpenActionMenu(null);
-                                setDetailState({ slug: project.slug, tab: "overview" });
+                                openDeploymentDetail(project, "overview");
                               }}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
                               title="Open deployment details"
@@ -900,8 +937,7 @@ export function ProjectsPanel() {
                             <button
                               onClick={async () => {
                                 setOpenActionMenu(null);
-                                const record = await ensureProjectRecord(project);
-                                if (record) setDetailState({ slug: project.slug, tab: "environment" });
+                                await openDeploymentDetail(project, "environment");
                               }}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
                               title="Manage deployment environment"
@@ -937,23 +973,22 @@ export function ProjectsPanel() {
 
                     <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
                       <button
-                        onClick={() => setDetailState({ slug: project.slug, tab: "components" })}
-                        className="rounded border border-border bg-background/50 px-2 py-1 hover:border-accent hover:text-accent"
+                        onClick={() => openDeploymentDetail(project, "components")}
+                        className="rounded bg-background/50 px-2 py-1 hover:bg-accent/10 hover:text-accent"
                       >
                         {project.services.length} component{project.services.length === 1 ? "" : "s"}
                       </button>
                       <button
                         onClick={async () => {
-                          await ensureProjectRecord(project);
-                          setDetailState({ slug: project.slug, tab: "environment" });
+                          await openDeploymentDetail(project, "environment");
                         }}
-                        className="rounded border border-border bg-background/50 px-2 py-1 hover:border-accent hover:text-accent"
+                        className="rounded bg-background/50 px-2 py-1 hover:bg-accent/10 hover:text-accent"
                       >
                         Env {latest?.envStatus || "unknown"}
                       </button>
                       <button
-                        onClick={() => setDetailState({ slug: project.slug, tab: "overview" })}
-                        className="rounded border border-border bg-background/50 px-2 py-1 hover:border-accent hover:text-accent"
+                        onClick={() => openDeploymentDetail(project, "overview")}
+                        className="rounded bg-background/50 px-2 py-1 hover:bg-accent/10 hover:text-accent"
                       >
                         Details
                       </button>
@@ -966,8 +1001,8 @@ export function ProjectsPanel() {
                     )}
 
                     {detailState?.slug === project.slug && (
-                      <div className="fixed inset-0 z-[70] flex justify-end bg-black/70">
-                        <div className="flex h-full w-full max-w-5xl flex-col border-l border-border bg-background shadow-2xl">
+                      <div className="fixed inset-0 z-[70] flex justify-end bg-black/70" onMouseDown={closeAllSheets}>
+                        <div className="flex h-full w-full max-w-5xl flex-col bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
                           <div className="flex items-start justify-between gap-4 border-b border-border p-5">
                             <div className="min-w-0">
                               <h2 className="truncate text-xl font-semibold">{project.name}</h2>
@@ -977,9 +1012,11 @@ export function ProjectsPanel() {
                             </div>
                             <button
                               onClick={() => setDetailState(null)}
-                              className="rounded-lg border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent"
+                              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted hover:bg-background hover:text-accent"
+                              title="Close"
+                              aria-label="Close deployment details"
                             >
-                              Close
+                              <CloseIcon />
                             </button>
                           </div>
 
@@ -987,7 +1024,7 @@ export function ProjectsPanel() {
                             {(["overview", "components", "environment", "source", "networking", "storage", "activity"] as DeploymentDetailTab[]).map((tab) => (
                               <button
                                 key={tab}
-                                onClick={() => setDetailState({ slug: project.slug, tab })}
+                                onClick={() => openDeploymentDetail(project, tab)}
                                 className={`shrink-0 border-b-2 px-3 py-2 text-xs font-mono capitalize transition-colors ${
                                   detailState.tab === tab ? "border-accent text-accent" : "border-transparent text-muted hover:text-foreground"
                                 }`}
@@ -1023,24 +1060,24 @@ export function ProjectsPanel() {
                                   project.services.map((svc) => {
                                     const checked = isServiceSelected(project.slug, svc.name);
                                     return (
-                                      <div key={svc.name} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3">
-                                        <label className="flex min-w-0 items-center gap-3">
+                                      <button
+                                        key={svc.name}
+                                        onClick={() => setComponentState({ projectSlug: project.slug, serviceName: svc.name, tab: "overview" })}
+                                        className="flex w-full items-center justify-between gap-3 rounded-lg bg-card p-3 text-left transition-colors hover:bg-background"
+                                      >
+                                        <span className="flex min-w-0 items-center gap-3">
                                           <input
                                             type="checkbox"
                                             checked={checked}
+                                            onClick={(event) => event.stopPropagation()}
                                             onChange={() => toggleService(project.slug, svc.name)}
                                             className="shrink-0 accent-accent"
                                           />
                                           <ContainerIcon className="h-4 w-4 text-muted" type={getContainerType(svc.name, svc.image || "")} />
                                           <span className="truncate text-sm font-mono">{svc.name}</span>
-                                        </label>
-                                        <button
-                                          onClick={() => setComponentState({ projectSlug: project.slug, serviceName: svc.name, tab: "overview" })}
-                                          className="rounded border border-border px-2 py-1 text-[10px] font-mono text-muted hover:border-accent hover:text-accent"
-                                        >
-                                          Open
-                                        </button>
-                                      </div>
+                                        </span>
+                                        <span className="text-[10px] font-mono text-muted">Details</span>
+                                      </button>
                                     );
                                   })
                                 )}
@@ -1049,18 +1086,35 @@ export function ProjectsPanel() {
 
                             {detailState.tab === "environment" && (
                               dbProject ? (
-                                <DeploymentEnvPanel
-                                  projectId={dbProject.id}
-                                  deploymentId={latest?.id}
-                                  onRedeploy={() => setRedeploySlug(project.slug)}
-                                />
+                                project.services.length > 0 ? (
+                                  <div className="space-y-3">
+                                    {project.services.map((svc) => (
+                                      <button
+                                        key={svc.name}
+                                        onClick={() => setComponentState({ projectSlug: project.slug, serviceName: svc.name, tab: "environment" })}
+                                        className="flex w-full items-center justify-between rounded-lg bg-card p-3 text-left transition-colors hover:bg-background"
+                                      >
+                                        <span>
+                                          <span className="block text-sm font-mono">{svc.name}</span>
+                                          <span className="mt-1 block text-[10px] font-mono text-muted">
+                                            {(svc.environment?.length || 0) + (svc.envFiles?.length || 0)} env source{((svc.environment?.length || 0) + (svc.envFiles?.length || 0)) === 1 ? "" : "s"}
+                                          </span>
+                                        </span>
+                                        <span className="text-[10px] font-mono text-muted">Edit env</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <DeploymentEnvPanel
+                                    projectId={dbProject.id}
+                                    deploymentId={latest?.id}
+                                    onRedeploy={() => setRedeploySlug(project.slug)}
+                                  />
+                                )
                               ) : (
-                                <button
-                                  onClick={() => ensureProjectRecord(project)}
-                                  className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
-                                >
-                                  Enable environment management
-                                </button>
+                                <div className="rounded-lg bg-card p-3 text-xs text-muted">
+                                  Preparing environment source...
+                                </div>
                               )
                             )}
 
@@ -1120,15 +1174,20 @@ export function ProjectsPanel() {
                         (c) => tokensMatch(c.composeService || "", svc.name) || c.name.toLowerCase().includes(svc.name.toLowerCase())
                       );
                       return (
-                        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4">
-                          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-xl border border-border bg-background shadow-2xl">
+                        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setComponentState(null)}>
+                          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-xl bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
                             <div className="flex items-start justify-between border-b border-border p-4">
                               <div>
                                 <h3 className="text-lg font-semibold">{svc.name}</h3>
                                 <p className="mt-1 text-xs font-mono text-muted">{existing?.state || "not running"}</p>
                               </div>
-                              <button onClick={() => setComponentState(null)} className="rounded border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
-                                Close
+                              <button
+                                onClick={() => setComponentState(null)}
+                                className="flex h-9 w-9 items-center justify-center rounded-lg text-muted hover:bg-card hover:text-accent"
+                                title="Close"
+                                aria-label="Close component details"
+                              >
+                                <CloseIcon />
                               </button>
                             </div>
                             <div className="flex gap-1 overflow-x-auto border-b border-border px-4 pt-2">
@@ -1167,7 +1226,8 @@ export function ProjectsPanel() {
                                     <DeploymentEnvPanel
                                       projectId={dbProject.id}
                                       deploymentId={latest?.id}
-                                      onRedeploy={() => runCompose(project.slug, "start", [svc.name])}
+                                      componentName={svc.name}
+                                      onRedeploy={() => runCompose(project.slug, "redeploy", [svc.name])}
                                     />
                                   )}
                                 </div>
@@ -1191,9 +1251,9 @@ export function ProjectsPanel() {
                                   <button
                                     onClick={() => {
                                       setSelectedServices((prev) => ({ ...prev, [project.slug]: new Set([svc.name]) }));
-                                      runCompose(project.slug, "start", [svc.name]);
+                                      runCompose(project.slug, "redeploy", [svc.name]);
                                     }}
-                                    className="rounded border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
+                              className="rounded bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
                                     title="Recreate this service with the saved environment."
                                   >
                                     Redeploy component <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[9px]">i</span>
@@ -1207,8 +1267,8 @@ export function ProjectsPanel() {
                     })()}
 
                     {redeploySlug === project.slug && (
-                      <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4">
-                        <div className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl border border-border bg-background shadow-2xl">
+                      <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setRedeploySlug(null)}>
+                        <div className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
                           <div className="flex items-start justify-between border-b border-border p-5">
                             <div>
                               <h2 className="text-xl font-semibold">Redeploy {project.name}</h2>
@@ -1216,8 +1276,13 @@ export function ProjectsPanel() {
                                 Configure only what applies to this redeploy.
                               </p>
                             </div>
-                            <button onClick={() => setRedeploySlug(null)} className="rounded border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
-                              Close
+                            <button
+                              onClick={() => setRedeploySlug(null)}
+                              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted hover:bg-card hover:text-accent"
+                              title="Close"
+                              aria-label="Close redeploy"
+                            >
+                              <CloseIcon />
                             </button>
                           </div>
                           <div className="space-y-4 p-5">
@@ -1227,7 +1292,7 @@ export function ProjectsPanel() {
                                 <select
                                   value={opts.targetId}
                                   onChange={(e) => updateDeployOptions(project.slug, { targetId: e.target.value ? Number(e.target.value) : "" })}
-                                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                  className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                                 >
                                   <option value="">Default target</option>
                                   {targets.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.type})</option>)}
@@ -1238,7 +1303,7 @@ export function ProjectsPanel() {
                                 <input
                                   value={opts.branch}
                                   onChange={(e) => updateDeployOptions(project.slug, { branch: e.target.value })}
-                                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                  className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                                 />
                               </label>
                               <label className="flex items-center gap-2 pt-5 text-xs font-mono text-muted">
@@ -1261,7 +1326,7 @@ export function ProjectsPanel() {
                                   <select
                                     value={opts.ingressClass}
                                     onChange={(e) => updateDeployOptions(project.slug, { ingressClass: e.target.value as "traefik" | "caddy" })}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                    className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                                   >
                                     <option value="traefik">Traefik</option>
                                     <option value="caddy">Caddy</option>
@@ -1289,7 +1354,7 @@ export function ProjectsPanel() {
                                   <select
                                     value={opts.zoneId}
                                     onChange={(e) => updateDeployOptions(project.slug, { zoneId: e.target.value })}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                                    className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                                   >
                                     <option value="">Select zone</option>
                                     {zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
@@ -1302,14 +1367,14 @@ export function ProjectsPanel() {
                               </div>
                             )}
 
-                            <div className="rounded-lg border border-border bg-card p-3 text-xs font-mono text-muted">
+                            <div className="rounded-lg bg-card p-3 text-xs font-mono text-muted">
                               Target: {selectedTargetName}
                               {isTerraform && " · Terraform apply first"}
                               {opts.generatePreviewUrl && " · Preview URL"}
                             </div>
                           </div>
                           <div className="flex justify-end gap-2 border-t border-border p-5">
-                            <button onClick={() => setRedeploySlug(null)} className="rounded border border-border px-4 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+                            <button onClick={() => setRedeploySlug(null)} className="rounded px-4 py-2 text-xs font-mono text-muted hover:bg-card hover:text-accent">
                               Cancel
                             </button>
                             <button
@@ -1318,7 +1383,7 @@ export function ProjectsPanel() {
                                 triggerDeploy(project.slug);
                               }}
                               disabled={deploying === project.slug}
-                              className="rounded border border-accent/30 bg-accent/10 px-4 py-2 text-xs font-mono text-accent hover:bg-accent/20 disabled:opacity-50"
+                              className="rounded bg-accent/10 px-4 py-2 text-xs font-mono text-accent hover:bg-accent/20 disabled:opacity-50"
                             >
                               Redeploy
                             </button>
@@ -1333,8 +1398,8 @@ export function ProjectsPanel() {
       )}
 
       {replicateState && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setReplicateState(null)}>
+          <div className="w-full max-w-lg rounded-xl bg-card p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="mb-4">
               <h3 className="text-lg font-semibold">Replicate deployment</h3>
               <p className="mt-1 text-xs font-mono text-muted">{replicateState.project.name}</p>
@@ -1350,21 +1415,21 @@ export function ProjectsPanel() {
                 <select
                   value={replicateState.envStrategy}
                   onChange={(event) => setReplicateState({ ...replicateState, envStrategy: event.target.value as "copy" | "blank" })}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                  className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                 >
                   <option value="blank">Create blank env</option>
                   <option value="copy">Copy current env</option>
                 </select>
               </label>
-              <div className="rounded-lg border border-border bg-background/50 p-3 text-xs text-muted">
+              <div className="rounded-lg bg-background/50 p-3 text-xs text-muted">
                 Replication creates an isolated deployment copy. Domains and host ports are not reused automatically.
               </div>
             </div>
             <div className="mt-5 flex justify-end gap-2">
-              <button onClick={() => setReplicateState(null)} className="rounded border border-border px-4 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+              <button onClick={() => setReplicateState(null)} className="rounded px-4 py-2 text-xs font-mono text-muted hover:bg-background hover:text-accent">
                 Cancel
               </button>
-              <button onClick={performReplicate} disabled={!replicateState.newSlug.trim()} className="rounded border border-accent/30 bg-accent/10 px-4 py-2 text-xs font-mono text-accent hover:bg-accent/20 disabled:opacity-50">
+              <button onClick={performReplicate} disabled={!replicateState.newSlug.trim()} className="rounded bg-accent/10 px-4 py-2 text-xs font-mono text-accent hover:bg-accent/20 disabled:opacity-50">
                 Replicate
               </button>
             </div>
@@ -1373,8 +1438,8 @@ export function ProjectsPanel() {
       )}
 
       {deleteState && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setDeleteState(null)}>
+          <div className="w-full max-w-lg rounded-xl bg-card p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="mb-4">
               <h3 className="text-lg font-semibold">Delete deployment</h3>
               <p className="mt-1 text-xs font-mono text-muted">{deleteState.project.name}</p>
@@ -1382,7 +1447,7 @@ export function ProjectsPanel() {
             <div className="space-y-3 text-xs">
               <InfoTile label="Root" value={deleteState.project.path} />
               <InfoTile label="Components" value={deleteState.project.services.map((service) => service.name).join(", ") || "No services parsed"} />
-              <label className="flex items-center gap-2 rounded-lg border border-border bg-background/50 p-3 font-mono text-muted">
+              <label className="flex items-center gap-2 rounded-lg bg-background/50 p-3 font-mono text-muted">
                 <input
                   type="checkbox"
                   checked={deleteState.deleteVolumes}
@@ -1393,10 +1458,10 @@ export function ProjectsPanel() {
               </label>
             </div>
             <div className="mt-5 flex justify-end gap-2">
-              <button onClick={() => setDeleteState(null)} className="rounded border border-border px-4 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+              <button onClick={() => setDeleteState(null)} className="rounded px-4 py-2 text-xs font-mono text-muted hover:bg-background hover:text-accent">
                 Cancel
               </button>
-              <button onClick={performDelete} className="rounded border border-error/30 bg-error/10 px-4 py-2 text-xs font-mono text-error hover:bg-error/20">
+              <button onClick={performDelete} className="rounded bg-error/10 px-4 py-2 text-xs font-mono text-error hover:bg-error/20">
                 Delete
               </button>
             </div>
@@ -1440,7 +1505,7 @@ function TextInput({ label, value, onChange }: { label: string; value: string; o
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+        className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
       />
     </label>
   );
@@ -1454,8 +1519,16 @@ function NumberInput({ label, value, onChange }: { label: string; value: number;
         type="number"
         value={value}
         onChange={(event) => onChange(Number(event.target.value) || 0)}
-        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+        className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
       />
     </label>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+    </svg>
   );
 }
