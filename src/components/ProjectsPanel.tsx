@@ -6,6 +6,7 @@ import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ActionConfirm } from "@/components/ActionConfirm";
 import type { TerraformStack } from "@/components/TerraformStacksTab";
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
+import { resolveLifecycleScope, type LifecycleAction } from "@/lib/deployment-actions";
 
 interface CaddySite {
   file: string;
@@ -119,12 +120,13 @@ interface CloudflareZone {
 
 interface ComposeActionState {
   slug: string;
-  type: "up" | "down" | "up-selected" | "down-selected";
+  type: LifecycleAction;
 }
 
 interface ConfirmComposeState {
   slug: string;
   type: ComposeActionState["type"];
+  projectName: string;
 }
 
 interface DeployOptions {
@@ -429,47 +431,31 @@ export function ProjectsPanel() {
     }
   }
 
-  async function startService(slug: string, service: string) {
-    try {
-      const res = await fetch("/api/compose-service", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectSlug: slug, service }),
-      });
-      const { ok, data } = await safeJson(res);
-      if (!ok || (!data.success && data.error)) {
-        setError(`Start service failed: ${data.error || "Unknown error"}`);
-      } else {
-        setError("");
-      }
-    } catch (err) {
-      setError(`Start service failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  async function runCompose(slug: string, type: "up" | "down", services?: string[]) {
-    setComposeAction({ slug, type: services?.length ? `${type}-selected` : type });
+  async function runCompose(slug: string, type: LifecycleAction, services?: string[]) {
+    setComposeAction({ slug, type });
     setComposeOutput(null);
     try {
-      const endpoint = type === "up" ? "/api/projects/compose" : "/api/projects/compose-down";
+      const endpoint = type === "stop" ? "/api/projects/compose-down" : "/api/projects/compose";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectSlug: slug, services }),
+        body: JSON.stringify({ projectSlug: slug, services, action: type }),
       });
       const { ok, data } = await safeJson(res);
       const failed = !ok || (data.success === false && data.error);
+      const label = type === "start" ? "Start" : type === "stop" ? "Stop" : "Restart";
       if (failed) {
-        setError(`${type === "up" ? "Up" : "Down"} failed: ${data.error || "Unknown error"}`);
+        setError(`${label} failed: ${data.error || "Unknown error"}`);
         setComposeOutput({ slug, output: data.output || "", error: data.error });
       } else {
         setError("");
-        const output = data.output || data.stderr || `${type === "up" ? "Up" : "Down"} completed`;
+        const output = data.output || data.stderr || `${label} completed`;
         setComposeOutput({ slug, output, error: "" });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(`${type === "up" ? "Up" : "Down"} failed: ${message}`);
+      const label = type === "start" ? "Start" : type === "stop" ? "Stop" : "Restart";
+      setError(`${label} failed: ${message}`);
       setComposeOutput({ slug, output: "", error: message });
     } finally {
       setComposeAction(null);
@@ -667,7 +653,7 @@ export function ProjectsPanel() {
       <LoaderOverlay3D
         open={!!composeAction}
         variant="compose"
-        title={composeAction ? `Running compose ${composeAction.type}...` : "Running compose..."}
+        title={composeAction ? `${composeAction.type === "start" ? "Starting" : composeAction.type === "stop" ? "Stopping" : "Restarting"} deployment...` : "Updating deployment..."}
       />
       <LoaderOverlay3D
         open={!!deploying}
@@ -681,26 +667,6 @@ export function ProjectsPanel() {
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Deployment inventory</div>
-          <p className="text-[11px] text-muted/75 leading-relaxed">
-            Discovered compose apps are scanned from <span className="font-mono text-foreground">{projectRoot}</span>.
-            Managed template deployments are scanned from{" "}
-            <span className="font-mono text-foreground">{templateDeploymentRoot}</span> and stay visible here with the
-            same compose actions.
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Tunnel routing model</div>
-          <p className="text-[11px] text-muted/75 leading-relaxed">
-            Cloudflare DNS points a hostname to a saved tunnel; the compose-managed{" "}
-            <span className="font-mono text-foreground">cloudflared</span> service carries traffic into the deployment
-            network and forwards it to the selected app service.
-          </p>
-        </div>
-      </div>
-
       {projects.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-6 text-muted text-sm">
           No compose-bearing projects found under {projectRoot}/. Place a{" "}
@@ -713,8 +679,8 @@ export function ProjectsPanel() {
               {parent === "__managed__" ? (
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h2 className="text-sm font-mono uppercase tracking-wider text-success">
-                      Managed Template Deployments
+                    <h2 className="text-sm font-mono tracking-wider text-success">
+                      Managed deployments
                     </h2>
                     <p className="text-[10px] text-muted/70">
                       Created by templates under {templateDeploymentRoot}; use the card menu for up, down, redeploy,
@@ -728,8 +694,8 @@ export function ProjectsPanel() {
               ) : parent === "__discovered__" ? (
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
-                      Discovered Compose Apps
+                    <h2 className="text-sm font-mono tracking-wider text-muted">
+                      Discovered deployments
                     </h2>
                     <p className="text-[10px] text-muted/70">
                       Compose projects found under {projectRoot}; GroundControl can start, stop, replicate, or redeploy
@@ -742,7 +708,7 @@ export function ProjectsPanel() {
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
+                  <h2 className="text-sm font-mono tracking-wider text-muted">
                     {parent}/
                   </h2>
                   <span className="text-[10px] font-mono text-muted bg-border/40 px-1.5 py-0.5 rounded">
@@ -855,8 +821,29 @@ export function ProjectsPanel() {
                           </div>
                         )}
                       </div>
-                      <div className="relative shrink-0 self-start">
-                        <details className="group">
+                      <div className="flex shrink-0 items-start gap-2 self-start">
+                        {!isInvalid && (
+                          running > 0 ? (
+                            <button
+                              onClick={() => setConfirmDeploy(project.slug)}
+                              disabled={deploying === project.slug}
+                              className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                              title="Run the full deployment pipeline"
+                            >
+                              Redeploy
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name })}
+                              disabled={!!composeAction}
+                              className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs font-mono text-success transition-colors hover:bg-success/20 disabled:opacity-50"
+                              title="Start the deployment or selected services"
+                            >
+                              Start
+                            </button>
+                          )
+                        )}
+                        <details className="group relative">
                           <summary
                             className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg border border-border bg-background text-lg leading-none text-muted transition-colors hover:border-accent hover:text-accent [&::-webkit-details-marker]:hidden"
                             title="Deployment actions"
@@ -868,57 +855,49 @@ export function ProjectsPanel() {
                             {!isInvalid && (
                               <>
                                 <button
-                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "up" })}
-                                  disabled={!!composeAction}
-                                  className="block w-full px-3 py-2 text-left text-xs font-mono text-success transition-colors hover:bg-success/10 disabled:opacity-50"
-                                  title="Start deployment services"
-                                >
-                                  Box Up
-                                </button>
-                                <button
-                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "down" })}
+                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "stop", projectName: project.name })}
                                   disabled={!!composeAction}
                                   className="block w-full px-3 py-2 text-left text-xs font-mono text-warning transition-colors hover:bg-warning/10 disabled:opacity-50"
-                                  title="Stop deployment services"
+                                  title="Stop the deployment or selected services"
                                 >
-                                  Box Down
+                                  Stop
                                 </button>
                                 <button
-                                  onClick={() => setConfirmDeploy(project.slug)}
-                                  disabled={deploying === project.slug}
+                                  onClick={() => setConfirmCompose({ slug: project.slug, type: "restart", projectName: project.name })}
+                                  disabled={!!composeAction}
                                   className="block w-full px-3 py-2 text-left text-xs font-mono text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
-                                  title="Redeploy through configured target"
+                                  title="Restart the deployment or selected services"
                                 >
-                                  Branch Redeploy
+                                  Restart
                                 </button>
                                 <div className="border-t border-border" />
                               </>
                             )}
-                        <button
-                          onClick={() => replicateDeployment(project)}
-                          disabled={!!composeAction}
+                            <button
+                              onClick={async () => {
+                                const record = await ensureProjectRecord(project);
+                                if (record) setEnvOpen((prev) => ({ ...prev, [project.slug]: !prev[project.slug] }));
+                              }}
+                              className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
+                              title="Manage deployment environment"
+                            >
+                              Environment
+                            </button>
+                            <button
+                              onClick={() => replicateDeployment(project)}
+                              disabled={!!composeAction}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent disabled:opacity-50"
                               title="Replicate deployment"
-                        >
-                          Copy Replicate
-                        </button>
-                        <button
-                          onClick={async () => {
-                            const record = await ensureProjectRecord(project);
-                            if (record) setEnvOpen((prev) => ({ ...prev, [project.slug]: !prev[project.slug] }));
-                          }}
-                          className="px-3 py-2 text-xs font-mono border border-border text-muted rounded-lg hover:border-accent hover:text-accent transition-colors"
-                          title="Manage deployment environment"
-                        >
-                          Env
-                        </button>
-                        <button
-                          onClick={() => deleteManagedDeployment(project)}
+                            >
+                              Replicate
+                            </button>
+                            <button
+                              onClick={() => deleteManagedDeployment(project)}
                               disabled={!!composeAction}
                               className="block w-full px-3 py-2 text-left text-xs font-mono text-error transition-colors hover:bg-error/10 disabled:opacity-40"
                               title="Delete deployment"
                             >
-                              Trash Delete
+                              Delete
                             </button>
                           </div>
                         </details>
@@ -1162,7 +1141,7 @@ export function ProjectsPanel() {
                       </div>
                     </div>}
 
-                    {/* Compose Services */}
+                    {/* Components */}
                     {isInvalid ? (
                       <div className="mb-4 text-[10px] text-warning font-mono bg-warning/5 border border-warning/20 p-2 rounded-lg">
                         Compose file at {project.composePath} is invalid: {project.parseError || "services must be a mapping"}
@@ -1170,26 +1149,13 @@ export function ProjectsPanel() {
                     ) : project.services.length > 0 ? (
                       <div className="mb-4 space-y-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">
-                            Compose Services ({project.services.length})
+                          <h4 className="text-[10px] font-mono tracking-wider text-muted">
+                            Components ({project.services.length})
                           </h4>
                           {selected.length > 0 && (
-                            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-                              <button
-                                onClick={() => setConfirmCompose({ slug: project.slug, type: "up-selected" })}
-                                disabled={!!composeAction}
-                                className="px-2 py-1 text-[9px] font-mono bg-success/10 border border-success/30 text-success rounded hover:bg-success/20 transition-colors disabled:opacity-50"
-                              >
-                                Up selected
-                              </button>
-                              <button
-                                onClick={() => setConfirmCompose({ slug: project.slug, type: "down-selected" })}
-                                disabled={!!composeAction}
-                                className="px-2 py-1 text-[9px] font-mono bg-warning/10 border border-warning/30 text-warning rounded hover:bg-warning/20 transition-colors disabled:opacity-50"
-                              >
-                                Down selected
-                              </button>
-                            </div>
+                            <span className="rounded border border-accent/20 bg-accent/5 px-2 py-1 text-[10px] font-mono text-accent">
+                              {selected.length} selected
+                            </span>
                           )}
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -1239,21 +1205,10 @@ export function ProjectsPanel() {
                                   ) : (
                                     <span className="text-[9px] font-mono text-accent">new</span>
                                   )}
-                                  {(!existing || existing.state !== "running") && (
-                                    <button
-                                      onClick={() => startService(project.slug, svc.name)}
-                                      className="px-2 py-0.5 text-[9px] font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors"
-                                    >
-                                      start
-                                    </button>
-                                  )}
                                 </div>
                               </div>
                             );
                           })}
-                        </div>
-                        <div className="text-[10px] text-muted font-mono truncate">
-                          cd {project.path} && docker compose pull && docker compose up -d --remove-orphans
                         </div>
                       </div>
                     ) : (
@@ -1281,7 +1236,7 @@ export function ProjectsPanel() {
                     {/* Related Containers */}
                     {meta.containers.length > 0 && (
                       <div className="mb-4 space-y-2">
-                        <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">
+                        <h4 className="text-[10px] font-mono tracking-wider text-muted">
                           Containers ({meta.containers.length})
                         </h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -1322,7 +1277,7 @@ export function ProjectsPanel() {
                     {/* Related Images */}
                     {meta.images.length > 0 && (
                       <div className="space-y-2">
-                        <h4 className="text-[10px] font-mono uppercase tracking-wider text-muted">
+                        <h4 className="text-[10px] font-mono tracking-wider text-muted">
                           Images ({meta.images.length})
                         </h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -1354,7 +1309,7 @@ export function ProjectsPanel() {
           {/* Plain (compose-less) folders — surfaced so nothing is hidden. */}
           {data?.plainDirs && data.plainDirs.length > 0 && (
             <div className="space-y-3">
-              <h2 className="text-sm font-mono uppercase tracking-wider text-muted">
+              <h2 className="text-sm font-mono tracking-wider text-muted">
                 Other folders (no compose)
               </h2>
               <div className="flex flex-wrap gap-2">
@@ -1389,14 +1344,14 @@ export function ProjectsPanel() {
       {confirmCompose && (
         <ActionConfirm
           open={!!confirmCompose}
-          action={confirmCompose.type.startsWith("up") ? "compose-up" : "compose-down"}
-          targetName={`${confirmCompose.slug}${selectedServicesFor(confirmCompose.slug).length > 0 && confirmCompose.type.endsWith("selected") ? ` (${selectedServicesFor(confirmCompose.slug).join(", ")})` : ""}`}
-          targetType="Project"
+          action={confirmCompose.type === "stop" ? "compose-down" : confirmCompose.type === "restart" ? "restart" : "compose-up"}
+          targetName={resolveLifecycleScope(confirmCompose.projectName, selectedServicesFor(confirmCompose.slug)).targetName}
+          targetType={resolveLifecycleScope(confirmCompose.projectName, selectedServicesFor(confirmCompose.slug)).label}
           onConfirm={() =>
             runCompose(
               confirmCompose.slug,
-              confirmCompose.type.startsWith("up") ? "up" : "down",
-              confirmCompose.type.endsWith("selected") ? selectedServicesFor(confirmCompose.slug) : undefined
+              confirmCompose.type,
+              resolveLifecycleScope(confirmCompose.projectName, selectedServicesFor(confirmCompose.slug)).services
             )
           }
           onCancel={() => setConfirmCompose(null)}

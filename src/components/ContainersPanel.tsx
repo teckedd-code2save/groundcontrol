@@ -60,6 +60,23 @@ interface ImageContext {
   containers: Container[];
 }
 
+interface PlannedPruneImage {
+  fullName: string;
+  id: string;
+  tag: string;
+  size?: string;
+  createdAt: string;
+  reason: string;
+  containers: { name: string; state: string }[];
+}
+
+interface ImagePrunePlan {
+  repository: string;
+  kept: PlannedPruneImage[];
+  protected: PlannedPruneImage[];
+  removable: PlannedPruneImage[];
+}
+
 interface ContainerStateResult {
   name: string;
   id: string;
@@ -136,6 +153,7 @@ export function ContainersPanel() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [nameFilter, setNameFilter] = useState<string>("");
   const [imageRepoFilter, setImageRepoFilter] = useState<string>("");
+  const [imageHistoryTarget, setImageHistoryTarget] = useState<ImageGroup | null>(null);
 
   const [runModal, setRunModal] = useState<{
     image: string;
@@ -146,6 +164,7 @@ export function ContainersPanel() {
   } | null>(null);
 
   const [pruneRepoTarget, setPruneRepoTarget] = useState<string | null>(null);
+  const [prunePlan, setPrunePlan] = useState<ImagePrunePlan | null>(null);
 
   const fetchContainers = useCallback(async () => {
     if (containersInFlight.current) return;
@@ -431,6 +450,29 @@ export function ContainersPanel() {
     }
   }
 
+  async function openPrunePreview(repository: string) {
+    setActionLoading("prune-repo");
+    try {
+      const res = await fetch("/api/images/prune-repo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repository, preview: true }),
+      });
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error) {
+        setError(`Cleanup preview failed: ${data.error || "Unknown error"}`);
+      } else {
+        setPruneRepoTarget(repository);
+        setPrunePlan(data.plan || null);
+        setError("");
+      }
+    } catch (err) {
+      setError(`Cleanup preview failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function handlePruneRepo() {
     if (!pruneRepoTarget) return;
     setActionLoading("prune-repo");
@@ -442,17 +484,20 @@ export function ContainersPanel() {
       });
       const { ok, data } = await safeJson(res);
       if (!ok || data.error) {
-        setError(`Prune failed: ${data.error || "Unknown error"}`);
+        setError(`Cleanup failed: ${data.error || "Unknown error"}`);
       } else {
-        setError(data.errors?.length > 0 ? `Pruned ${data.removed?.length || 0}, errors: ${data.errors.join("; ")}` : "");
+        const removed = data.removed?.length || 0;
+        setError(data.errors?.length > 0 ? `Removed ${removed}, errors: ${data.errors.join("; ")}` : "");
+        pushToast("success", removed > 0 ? `Removed ${removed} old image${removed === 1 ? "" : "s"}` : "No removable images found");
         await fetchImages();
         await fetchContainers();
       }
     } catch (err) {
-      setError(`Prune failed: ${err instanceof Error ? err.message : String(err)}`);
+      setError(`Cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setActionLoading(null);
       setPruneRepoTarget(null);
+      setPrunePlan(null);
     }
   }
 
@@ -601,7 +646,7 @@ export function ContainersPanel() {
         disabled={actionLoading === "run"}
         className="px-2 py-1 text-[10px] font-mono border border-muted/30 text-muted rounded hover:border-warning hover:text-warning transition-colors disabled:opacity-50 shrink-0"
       >
-        run standalone
+        run image
       </button>
     );
   }
@@ -648,7 +693,7 @@ export function ContainersPanel() {
       <div className="mb-6 flex items-center gap-1 border-b border-border">
         <button
           onClick={() => setActiveTab("containers")}
-          className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors ${
+          className={`px-4 py-2 text-xs font-mono tracking-wider border-b-2 transition-colors ${
             activeTab === "containers"
               ? "border-accent text-accent"
               : "border-transparent text-muted hover:text-foreground"
@@ -658,7 +703,7 @@ export function ContainersPanel() {
         </button>
         <button
           onClick={() => setActiveTab("images")}
-          className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors ${
+          className={`px-4 py-2 text-xs font-mono tracking-wider border-b-2 transition-colors ${
             activeTab === "images"
               ? "border-accent text-accent"
               : "border-transparent text-muted hover:text-foreground"
@@ -905,72 +950,44 @@ export function ContainersPanel() {
                   : totalSize > 1024 ** 2
                   ? `${(totalSize / 1024 ** 2).toFixed(0)}MB`
                   : `${(totalSize / 1024).toFixed(0)}KB`;
+                const latest = group.images[0];
+                const latestName = latest?.tag && latest.tag !== "<none>" ? `${latest.repository}:${latest.tag}` : latest?.id;
+                const usedContainers = group.images.flatMap((img) => {
+                  const fullName = img.tag && img.tag !== "<none>" ? `${img.repository}:${img.tag}` : img.id;
+                  return imageContext.get(fullName)?.containers || [];
+                });
+                const runningCount = usedContainers.filter((container) => container.state === "running").length;
                 return (
                   <div key={group.repository} className="bg-card border border-border rounded-xl p-4">
-                    <div className="flex flex-col gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <div className="text-sm font-mono font-medium truncate flex items-center gap-2">
                           <ContainerIcon type={getContainerType(group.repository, "")} className="w-4 h-4 text-muted" />
                           {group.repository}
                         </div>
                         <div className="text-[10px] text-muted font-mono mt-0.5">
-                          {group.images.length} tag{group.images.length > 1 ? "s" : ""} · {totalSizeStr} total
+                          Latest {latestName || "unknown"} · {group.images.length} image{group.images.length === 1 ? "" : "s"} · {totalSizeStr}
+                          {usedContainers.length > 0 ? ` · ${runningCount} running / ${usedContainers.length} linked` : ""}
                         </div>
                       </div>
                       <div className="flex gap-2 sm:ml-4 sm:shrink-0">
+                        <button
+                          onClick={() => setImageHistoryTarget(group)}
+                          className="px-3 py-1.5 text-xs font-mono border border-border text-muted rounded hover:border-accent hover:text-accent transition-colors"
+                        >
+                          History
+                        </button>
+                        {latestName && renderImageAction(latestName, imageContext.get(latestName))}
                         {group.images.length > 1 && (
                           <button
-                            onClick={() => setPruneRepoTarget(group.repository)}
+                            onClick={() => openPrunePreview(group.repository)}
                             disabled={actionLoading === "prune-repo"}
                             className="px-3 py-1.5 text-xs font-mono border border-warning/30 text-warning rounded hover:bg-warning/10 transition-colors disabled:opacity-50"
                           >
-                            prune old
+                            Clean old images
                           </button>
                         )}
                       </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      {group.images.map((img, idx) => {
-                        const fullName = img.tag && img.tag !== "<none>" ? `${img.repository}:${img.tag}` : img.id;
-                        const ctx = imageContext.get(fullName);
-                        const isLarge = parseSize(img.size) > 1024 ** 3;
-                        return (
-                          <div
-                            key={img.id}
-                            className={`flex flex-col gap-2 p-2 rounded-lg border sm:flex-row sm:items-center sm:justify-between ${
-                              idx === 0 ? "bg-accent/5 border-accent/10" : "bg-background/30 border-border/30"
-                            }`}
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              {idx === 0 && <span className="text-[9px] font-mono text-accent shrink-0">latest</span>}
-                              <div className="min-w-0">
-                                <div className="text-xs font-mono truncate">
-                                  {img.tag && img.tag !== "<none>" ? img.tag : img.id}
-                                </div>
-                                <div className="text-[10px] text-muted font-mono">
-                                  {img.id} · {img.createdAt}
-                                  {ctx?.projectSlug && ctx?.service && (
-                                    <span className="ml-2 text-accent">
-                                      compose: {ctx.projectSlug}/{ctx.service}
-                                    </span>
-                                  )}
-                                  {ctx?.containers && ctx.containers.length > 0 && !ctx?.projectSlug && (
-                                    <span className="ml-2 text-success">
-                                      used by {ctx.containers.map((c) => c.name).join(", ")}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex w-full items-center justify-between gap-3 sm:ml-4 sm:w-auto sm:justify-end sm:shrink-0">
-                              <span className={`text-xs font-mono ${isLarge ? "text-warning" : "text-muted"}`}>
-                                {img.size}
-                              </span>
-                              {renderImageAction(fullName, ctx)}
-                            </div>
-                          </div>
-                        );
-                      })}
                     </div>
                   </div>
                 );
@@ -1049,7 +1066,7 @@ export function ContainersPanel() {
           <div className="bg-card border border-border rounded-xl w-full max-w-lg flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-mono text-sm">
-                Run Standalone: <span className="text-accent">{runModal.image}</span>
+                Run image: <span className="text-accent">{runModal.image}</span>
               </h3>
               <button onClick={() => setRunModal(null)} className="text-muted hover:text-foreground transition-colors">✕</button>
             </div>
@@ -1059,7 +1076,7 @@ export function ContainersPanel() {
                 For compose-managed services, use Deployments or start the existing container instead.
               </div>
               <div>
-                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Container Name</label>
+                <label className="text-[10px] font-mono text-muted block mb-1">Container name</label>
                 <input
                   type="text"
                   value={runModal.name}
@@ -1068,7 +1085,7 @@ export function ContainersPanel() {
                 />
               </div>
               <div>
-                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Ports (comma-separated, e.g. 8080:80)</label>
+                <label className="text-[10px] font-mono text-muted block mb-1">Ports (comma-separated, e.g. 8080:80)</label>
                 <input
                   type="text"
                   value={runModal.ports}
@@ -1078,7 +1095,7 @@ export function ContainersPanel() {
                 />
               </div>
               <div>
-                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Env Vars (comma-separated, e.g. KEY=value)</label>
+                <label className="text-[10px] font-mono text-muted block mb-1">Env vars (comma-separated, e.g. KEY=value)</label>
                 <input
                   type="text"
                   value={runModal.env}
@@ -1088,7 +1105,7 @@ export function ContainersPanel() {
                 />
               </div>
               <div>
-                <label className="text-[10px] font-mono uppercase text-muted block mb-1">Command Override</label>
+                <label className="text-[10px] font-mono text-muted block mb-1">Command override</label>
                 <input
                   type="text"
                   value={runModal.command}
@@ -1110,8 +1127,48 @@ export function ContainersPanel() {
                 disabled={actionLoading === "run"}
                 className="px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success rounded hover:bg-success/20 transition-colors disabled:opacity-50"
               >
-                Run Standalone
+                Run image
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {imageHistoryTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8">
+          <div className="bg-card border border-border rounded-xl w-full max-w-4xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div>
+                <h3 className="font-mono text-sm">Image history</h3>
+                <p className="text-xs text-muted font-mono mt-1">{imageHistoryTarget.repository}</p>
+              </div>
+              <button onClick={() => setImageHistoryTarget(null)} className="text-muted hover:text-foreground transition-colors">✕</button>
+            </div>
+            <div className="overflow-auto p-4 space-y-2">
+              {imageHistoryTarget.images.map((img, idx) => {
+                const fullName = img.tag && img.tag !== "<none>" ? `${img.repository}:${img.tag}` : img.id;
+                const ctx = imageContext.get(fullName);
+                return (
+                  <div key={`${img.id}-${img.tag}`} className="rounded-lg border border-border bg-background/30 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-xs font-mono">
+                          {idx === 0 && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent">latest</span>}
+                          <span className="truncate">{img.tag && img.tag !== "<none>" ? img.tag : img.id}</span>
+                        </div>
+                        <div className="mt-1 text-[10px] text-muted font-mono">
+                          {img.id} · {img.createdAt}
+                          {ctx?.containers?.length ? ` · used by ${ctx.containers.map((c) => c.name).join(", ")}` : ""}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-muted">{img.size}</span>
+                        {renderImageAction(fullName, ctx)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1119,26 +1176,34 @@ export function ContainersPanel() {
 
       {pruneRepoTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8">
-          <div className="bg-card border border-border rounded-xl w-full max-w-md flex flex-col">
+          <div className="bg-card border border-border rounded-xl w-full max-w-2xl flex flex-col">
             <div className="p-4 border-b border-border">
-              <h3 className="font-mono text-sm">Prune Old Tags</h3>
+              <h3 className="font-mono text-sm">Clean old images</h3>
               <p className="text-xs text-muted mt-1">
-                Keep the most recent tag for <span className="text-accent font-mono">{pruneRepoTarget}</span> and remove all older tags.
+                Review what will be removed for <span className="text-accent font-mono">{pruneRepoTarget}</span>. Running images are always protected.
               </p>
+            </div>
+            <div className="max-h-[55vh] overflow-auto p-4 space-y-3">
+              <PruneList title="Kept" items={prunePlan?.kept || []} tone="accent" />
+              <PruneList title="Protected" items={prunePlan?.protected || []} tone="success" />
+              <PruneList title="Will remove" items={prunePlan?.removable || []} tone="warning" />
             </div>
             <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
               <button
-                onClick={() => setPruneRepoTarget(null)}
+                onClick={() => {
+                  setPruneRepoTarget(null);
+                  setPrunePlan(null);
+                }}
                 className="px-4 py-2 text-xs font-mono border border-border rounded hover:border-accent transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handlePruneRepo}
-                disabled={actionLoading === "prune-repo"}
+                disabled={actionLoading === "prune-repo" || !prunePlan?.removable?.length}
                 className="px-4 py-2 text-xs font-mono bg-warning/10 border border-warning/30 text-warning rounded hover:bg-warning/20 transition-colors disabled:opacity-50"
               >
-                Prune Old Tags
+                Clean old images
               </button>
             </div>
           </div>
@@ -1163,6 +1228,33 @@ export function ContainersPanel() {
               {logs}
             </pre>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PruneList({ title, items, tone }: {
+  title: string;
+  items: PlannedPruneImage[];
+  tone: "accent" | "success" | "warning";
+}) {
+  const toneClass = tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-accent";
+  return (
+    <div className="rounded-lg border border-border bg-background/30 p-3">
+      <div className={`mb-2 text-xs font-mono ${toneClass}`}>{title} ({items.length})</div>
+      {items.length === 0 ? (
+        <div className="text-[10px] font-mono text-muted">None</div>
+      ) : (
+        <div className="space-y-1.5">
+          {items.map((item) => (
+            <div key={`${title}-${item.id}-${item.fullName}`} className="text-[10px] font-mono text-muted">
+              <span className="text-foreground">{item.fullName}</span>
+              <span> · {item.id}</span>
+              <span> · {item.reason}</span>
+              {item.containers.length > 0 && <span> · {item.containers.map((c) => `${c.name} ${c.state}`).join(", ")}</span>}
+            </div>
+          ))}
         </div>
       )}
     </div>

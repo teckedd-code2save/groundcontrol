@@ -104,7 +104,8 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
       if (!res.ok || data.error) {
         setMessage(data.error || `${kind} failed`);
       } else {
-        setMessage(`${kind} complete${data.validation?.missing?.length ? `; missing ${data.validation.missing.join(", ")}` : ""}`);
+        const label = kind === "materialize" ? "Environment applied" : kind === "sync" ? "Environment synced" : "Environment validated";
+        setMessage(`${label}${data.validation?.missing?.length ? `; missing ${data.validation.missing.join(", ")}` : ""}`);
         await load();
       }
     } finally {
@@ -127,9 +128,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, onRedeploy }: {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => action("validate")} disabled={loading} className="rounded border border-border px-2 py-1 text-[10px] font-mono hover:border-accent">Validate</button>
-          <button onClick={() => action("sync")} disabled={loading} className="rounded border border-border px-2 py-1 text-[10px] font-mono hover:border-accent">Sync</button>
-          <button onClick={() => action("materialize")} disabled={loading} className="rounded border border-border px-2 py-1 text-[10px] font-mono hover:border-accent">Write .env</button>
+          <button onClick={() => action("validate")} disabled={loading} className="rounded border border-border px-2 py-1 text-[10px] font-mono hover:border-accent">Validate env</button>
+          <button onClick={() => action("sync")} disabled={loading} className="rounded border border-border px-2 py-1 text-[10px] font-mono hover:border-accent">Sync env</button>
+          <button onClick={() => action("materialize")} disabled={loading} className="rounded border border-border px-2 py-1 text-[10px] font-mono hover:border-accent">Apply env</button>
           {onRedeploy && <button onClick={onRedeploy} disabled={loading} className="rounded border border-accent/30 bg-accent/10 px-2 py-1 text-[10px] font-mono text-accent">Redeploy</button>}
         </div>
       </div>

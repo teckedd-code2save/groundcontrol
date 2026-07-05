@@ -55,22 +55,27 @@ export async function GET(req: NextRequest) {
  *
  * Body:
  *   projectSlug: string
- *   services?: string[]   // optional subset of services to start
+ *   services?: string[]   // optional subset of services to start/restart
+ *   action?: "start" | "restart"
  *
- * Runs `docker compose up -d` for the whole project or for the selected services.
+ * Runs `docker compose up -d` or `docker compose restart` for the whole
+ * project or for the selected services.
  */
 export async function POST(req: NextRequest) {
   try {
-    const { projectSlug, services } = await req.json();
+    const { projectSlug, services, action } = await req.json();
     if (!projectSlug) {
       return NextResponse.json({ error: "projectSlug required" }, { status: 400 });
     }
 
     const target = await resolveComposeProjectPath(projectSlug);
+    const serviceArgs = Array.isArray(services) && services.length > 0
+      ? services.map((s: string) => shQuote(s)).join(" ")
+      : "";
     const args =
-      Array.isArray(services) && services.length > 0
-        ? `up -d ${services.map((s: string) => shQuote(s)).join(" ")}`
-        : "up -d";
+      action === "restart"
+        ? `restart${serviceArgs ? ` ${serviceArgs}` : ""}`
+        : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
 
     const result = await runDockerCompose(target.projectPath, args);
 

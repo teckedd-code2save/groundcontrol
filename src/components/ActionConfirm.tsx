@@ -31,7 +31,7 @@ const ACTION_META: Record<ActionType, { title: string; consequence: string; seve
   },
   restart: {
     title: "Restart",
-    consequence: "This will stop and start the container. A brief downtime of a few seconds will occur.",
+    consequence: "This will stop and start the resolved scope. A brief downtime of a few seconds may occur.",
     severity: "warning",
   },
   remove: {
@@ -55,13 +55,13 @@ const ACTION_META: Record<ActionType, { title: string; consequence: string; seve
     severity: "neutral",
   },
   "compose-up": {
-    title: "Compose Up",
-    consequence: "This will start the selected services and recreate their containers.",
+    title: "Start",
+    consequence: "This will bring the resolved deployment scope online using the current compose file, images, and environment.",
     severity: "neutral",
   },
   "compose-down": {
-    title: "Compose Down",
-    consequence: "This will stop and remove the selected service containers. Data in volumes is preserved.",
+    title: "Stop",
+    consequence: "This will stop the resolved deployment scope. Data in volumes is preserved.",
     severity: "warning",
   },
 };

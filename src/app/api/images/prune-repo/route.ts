@@ -1,51 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execOnVps } from "@/lib/vps";
+import { planRepositoryImagePrune } from "@/lib/image-prune";
+import { execOnVps, shQuote } from "@/lib/vps";
+
+function parseImages(stdout: string) {
+  return stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [repository, tag, id, size, createdAt] = line.split("|");
+      return { repository, tag, id, size, createdAt };
+    });
+}
+
+function parseUsages(stdout: string) {
+  return stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [name, imageId, imageRef, running] = line.split("|");
+      return {
+        name: name.replace(/^\//, ""),
+        imageId,
+        imageRef,
+        state: running === "true" ? "running" : "stopped",
+      };
+    });
+}
+
+async function buildPlan(repository: string, includeStopped = false) {
+  const imagesResult = await execOnVps(
+    `docker images --format "{{.Repository}}|{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedAt}}"`
+  );
+  const usageResult = await execOnVps(
+    `docker ps -a -q | xargs -r docker inspect --format '{{.Name}}|{{.Image}}|{{.Config.Image}}|{{.State.Running}}'`
+  );
+  return planRepositoryImagePrune({
+    repository,
+    includeStopped,
+    images: parseImages(imagesResult.stdout),
+    usages: parseUsages(usageResult.stdout),
+  });
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const { repository, keepTag } = await req.json();
+    const { repository, preview, includeStopped } = await req.json();
     if (!repository) {
       return NextResponse.json({ error: "repository required" }, { status: 400 });
     }
 
-    // Get all images for this repository with their tags and IDs
-    const result = await execOnVps(
-      `docker images --format "{{.Repository}}|{{.Tag}}|{{.ID}}|{{.CreatedAt}}" | grep "^${repository}|"`
-    );
+    const plan = await buildPlan(repository, !!includeStopped);
+    if (preview) return NextResponse.json({ success: true, plan });
 
-    if (!result.stdout.trim()) {
-      return NextResponse.json({ success: true, removed: [], message: "No images found" });
-    }
-
-    const images = result.stdout
-      .trim()
-      .split("\n")
-      .map((line) => {
-        const [repo, tag, id, createdAt] = line.split("|");
-        return { repo, tag, id, createdAt, fullName: tag && tag !== "<none>" ? `${repo}:${tag}` : id };
-      });
-
-    // Determine which image(s) to keep
-    const keepImages = new Set<string>();
-    
-    if (keepTag) {
-      // Keep specific tag
-      const keep = images.find((i) => i.tag === keepTag);
-      if (keep) keepImages.add(keep.id);
-    } else {
-      // Keep the most recently created image
-      images.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      if (images[0]) keepImages.add(images[0].id);
-    }
-
-    // Remove all others
     const removed: string[] = [];
     const errors: string[] = [];
-    
-    for (const img of images) {
-      if (keepImages.has(img.id)) continue;
-      
-      const rmi = await execOnVps(`docker rmi ${img.id} 2>&1`);
+
+    for (const img of plan.removable) {
+      const rmi = await execOnVps(`docker rmi ${shQuote(img.id)} 2>&1`);
       if (rmi.code === 0) {
         removed.push(img.fullName);
       } else {
@@ -55,9 +68,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      plan,
       removed,
       errors: errors.length > 0 ? errors : undefined,
-      kept: Array.from(keepImages).map((id) => images.find((i) => i.id === id)?.fullName).filter(Boolean),
+      kept: plan.kept.map((img) => img.fullName),
+      protected: plan.protected.map((img) => img.fullName),
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
