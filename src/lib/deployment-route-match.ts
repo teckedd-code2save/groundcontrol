@@ -95,13 +95,14 @@ export function findProjectSite(
       const compactDomain = compactToken(site.domain);
       const proxyText = normalizeRouteToken(site.proxy || "");
       const sitePort = proxyPort(site.proxy);
+      const hasRouteConfig = Boolean(site.proxy || site.root);
 
       if (site.root && pathInside(site.root, project.path)) score += 100;
       if (sitePort && ports.has(sitePort)) score += 90;
-      if (site.proxy || site.root) score += 15;
       if (projectTokens.some((token) => fileToken === token || fileToken.includes(token) || semanticToken(fileToken) === token)) score += 80;
       if (projectTokens.some((token) => domainToken === token || compactDomain.includes(token) || semanticToken(domainToken) === token)) score += 70;
       if (serviceTokens.some((token) => proxyText === token || proxyText.includes(token))) score += 50;
+      if (score > 0 && hasRouteConfig) score += 15;
 
       return { site, score };
     })

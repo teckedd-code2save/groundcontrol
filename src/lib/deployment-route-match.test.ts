@@ -31,6 +31,15 @@ const caddySites = [
       reverse_proxy 127.0.0.1:14080
     }`,
   },
+  {
+    file: "/etc/caddy/sites/40-infisical.caddy",
+    domain: "secrets.serendepify.com",
+    root: null,
+    proxy: "127.0.0.1:8080",
+    content: `secrets.serendepify.com {
+      reverse_proxy 127.0.0.1:8080
+    }`,
+  },
 ];
 
 describe("deployment route matching", () => {
@@ -82,5 +91,34 @@ describe("deployment route matching", () => {
     );
 
     expect(site?.domain).toBe("auridux.com");
+  });
+
+  it("does not assign auridux to unrelated generic app deployments", () => {
+    const site = findProjectSite(
+      {
+        slug: "groundcontrol/app",
+        dirName: "app",
+        path: "/opt/groundcontrol/app",
+        services: [{ name: "app", ports: ["3000:3000"] }],
+      },
+      caddySites
+    );
+
+    expect(site).toBeUndefined();
+  });
+
+  it("matches Infisical by its Caddy file and proxy port instead of auridux", () => {
+    const site = findProjectSite(
+      {
+        slug: "infisical",
+        dirName: "infisical",
+        path: "/opt/infisical",
+        services: [{ name: "infisical", ports: ["127.0.0.1:8080:8080"] }],
+      },
+      caddySites
+    );
+
+    expect(site?.file).toBe("/etc/caddy/sites/40-infisical.caddy");
+    expect(site?.domain).toBe("secrets.serendepify.com");
   });
 });
