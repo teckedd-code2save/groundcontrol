@@ -6,6 +6,12 @@ import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ActionConfirm } from "@/components/ActionConfirm";
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { resolveLifecycleScope, type LifecycleAction } from "@/lib/deployment-actions";
+import {
+  findProjectSite,
+  matchedServiceForSite,
+  pathInside,
+  tokensMatch,
+} from "@/lib/deployment-route-match";
 
 interface CaddySite {
   file: string;
@@ -179,123 +185,6 @@ async function safeJson(res: Response): Promise<{ ok: boolean; data: any; text: 
   } catch {
     return { ok: res.ok, data: { error: text || "Invalid response" }, text };
   }
-}
-
-function normalizeToken(value: string): string {
-  return value
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function compactToken(value: string): string {
-  return normalizeToken(value).replace(/-/g, "");
-}
-
-function semanticToken(value: string): string {
-  return normalizeToken(value)
-    .split("-")
-    .filter((part) => part && !["a", "my", "the", "www", "http", "https"].includes(part))
-    .join("");
-}
-
-function tokensMatch(a: string, b: string): boolean {
-  const l = normalizeToken(a);
-  const r = normalizeToken(b);
-  return !!l && !!r && l === r;
-}
-
-function pathInside(workingDir: string, projectPath: string): boolean {
-  const wd = (workingDir || "").toLowerCase().replace(/\/$/, "");
-  const pp = (projectPath || "").toLowerCase().replace(/\/$/, "");
-  if (!wd || !pp) return false;
-  return wd === pp || wd.startsWith(pp + "/");
-}
-
-function proxyPort(proxy: string | null): string {
-  const match = String(proxy || "").match(/:(\d+)/);
-  return match?.[1] || "";
-}
-
-function siteFileName(site: CaddySite): string {
-  return (site.file || "").split("/").pop() || "";
-}
-
-function stripCaddyPrefix(value: string): string {
-  return normalizeToken(value.replace(/\.(caddy|conf)$/i, "").replace(/^\d+-/, "").replace(/^gc-/, ""));
-}
-
-function servicePortCandidates(service: ComposeServiceInfo): string[] {
-  return (service.ports || []).flatMap((port) => {
-    const text = String(port);
-    const parts = text.split(":").map((part) => part.replace(/\/.*/, ""));
-    return parts.filter((part) => /^\d+$/.test(part));
-  });
-}
-
-function containerPortCandidates(container: Container): string[] {
-  return Array.from(String(container.ports || "").matchAll(/(?:0\.0\.0\.0|127\.0\.0\.1|\[::\])?:(\d+)->/g)).map((match) => match[1]);
-}
-
-function findProjectSite(project: ScannedProject, sites: CaddySite[] = [], meta: { containers: Container[]; images: DockerImage[] }): CaddySite | undefined {
-  const exact = project.domain
-    ? sites.find((site) => site.domain.toLowerCase() === project.domain!.toLowerCase())
-    : undefined;
-  if (exact) return exact;
-
-  const projectTokens = [
-    normalizeToken(project.slug),
-    normalizeToken(project.dirName),
-    compactToken(project.slug),
-    compactToken(project.dirName),
-    semanticToken(project.slug),
-    semanticToken(project.dirName),
-  ].filter((token) => token.length >= 4);
-  const serviceTokens = [
-    ...project.services.map((service) => normalizeToken(service.name)),
-    ...meta.containers.map((container) => normalizeToken(container.name)),
-    ...meta.containers.map((container) => normalizeToken(container.composeService || "")),
-  ].filter((token) => token.length >= 4);
-  const ports = new Set([
-    ...project.services.flatMap(servicePortCandidates),
-    ...meta.containers.flatMap(containerPortCandidates),
-  ]);
-
-  const scored = sites
-    .map((site) => {
-      let score = 0;
-      const fileToken = stripCaddyPrefix(siteFileName(site));
-      const domainToken = normalizeToken(site.domain.replace(/^https?:\/\//, ""));
-      const compactDomain = compactToken(site.domain);
-      const proxyText = normalizeToken(site.proxy || "");
-      const sitePort = proxyPort(site.proxy);
-
-      if (site.root && pathInside(site.root, project.path)) score += 100;
-      if (sitePort && ports.has(sitePort)) score += 90;
-      if (site.proxy || site.root) score += 15;
-      if (projectTokens.some((token) => fileToken === token || fileToken.includes(token) || semanticToken(fileToken) === token)) score += 80;
-      if (projectTokens.some((token) => domainToken === token || compactDomain.includes(token) || semanticToken(domainToken) === token)) score += 70;
-      if (serviceTokens.some((token) => proxyText === token || proxyText.includes(token))) score += 50;
-
-      return { site, score };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score);
-
-  return scored[0]?.site;
-}
-
-function matchedServiceForSite(site: CaddySite, project: ScannedProject, meta: { containers: Container[]; images: DockerImage[] }): string {
-  const port = proxyPort(site.proxy);
-  const byPort = project.services.find((service) => servicePortCandidates(service).includes(port));
-  if (byPort) return byPort.name;
-  const proxyText = normalizeToken(site.proxy || "");
-  const byService = project.services.find((service) => proxyText.includes(normalizeToken(service.name)));
-  if (byService) return byService.name;
-  const byContainer = meta.containers.find((container) => proxyText.includes(normalizeToken(container.name)));
-  return byContainer?.composeService || byContainer?.name || "Deployment route";
 }
 
 function statusColor(status: string): string {
@@ -789,7 +678,7 @@ export function ProjectsPanel() {
                 const meta = projectMeta.get(project.slug) || { containers: [], images: [] };
                 const running = meta.containers.filter((c) => c.state === "running").length;
                 const stopped = meta.containers.filter((c) => c.state !== "running").length;
-                const site = findProjectSite(project, data?.caddySites, meta);
+                const site = findProjectSite(project, data?.caddySites, meta.containers);
                 const dbProject = getDbProject(project.slug);
                 const latest = getLatestDeployment(dbProject?.id);
                 const opts = getDeployOptions(project.slug);
@@ -1146,7 +1035,7 @@ export function ProjectsPanel() {
                               <div className="grid gap-3 md:grid-cols-2">
                                 <InfoTile label="Domain" value={site?.domain || project.domain || "No route detected yet"} />
                                 <InfoTile label="Proxy target" value={site?.proxy || "No proxy target detected"} />
-                                <InfoTile label="Matched service" value={site ? matchedServiceForSite(site, project, meta) : "No route detected yet"} />
+                                <InfoTile label="Matched service" value={site ? matchedServiceForSite(site, project, meta.containers) : "No route detected yet"} />
                                 <InfoTile label="Config file" value={site?.file || "No proxy file detected"} />
                                 <InfoTile label="DNS zone" value={opts.zoneId ? zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId : "No zone selected"} />
                                 <InfoTile label="Public route" value={latest?.publicUrl || latest?.previewUrl || "No public URL"} />
