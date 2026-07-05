@@ -14,6 +14,12 @@ export interface ComposeServiceInfo {
   image?: string;
   build?: boolean;
   ports?: string[];
+  environment?: string[];
+  envFiles?: string[];
+  labels?: string[];
+  volumes?: string[];
+  networks?: string[];
+  dependsOn?: string[];
 }
 
 /**
@@ -136,134 +142,89 @@ export function parseComposeServices(content: string): {
   valid: boolean;
   error?: string;
 } {
+  let doc: Record<string, unknown>;
   try {
-    const doc = parse(content) as Record<string, unknown> | null;
-    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+    const parsed = parse(content) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return { services: [], valid: false, error: "Compose YAML must be an object" };
     }
-    if (!doc.services || typeof doc.services !== "object" || Array.isArray(doc.services)) {
+    if (!parsed.services || typeof parsed.services !== "object" || Array.isArray(parsed.services)) {
       return { services: [], valid: false, error: "Compose file services must be a mapping" };
     }
-    if (Object.keys(doc.services as Record<string, unknown>).length === 0) {
+    if (Object.keys(parsed.services as Record<string, unknown>).length === 0) {
       return { services: [], valid: false, error: "Compose file declared no services" };
     }
+    doc = parsed;
   } catch (err) {
     return { services: [], valid: false, error: err instanceof Error ? err.message : "Compose YAML parse failed" };
   }
 
-  const services: ComposeServiceInfo[] = [];
-  const lines = content.split("\n");
-  let inServices = false;
-  let current: ComposeServiceInfo | null = null;
-  let serviceIndent = -1;
-  let collectingPorts = false;
-  let portsIndent = -1;
-  let domain: string | undefined;
+  const rawServices = doc.services as Record<string, unknown>;
+  const services = Object.entries(rawServices).flatMap(([name, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const service = value as Record<string, unknown>;
+    return [{
+      name,
+      image: typeof service.image === "string" ? service.image : undefined,
+      build: service.build !== undefined,
+      ports: normalizeStringList(service.ports),
+      environment: normalizeEnvironmentKeys(service.environment),
+      envFiles: normalizeStringList(service.env_file),
+      labels: normalizeLabelList(service.labels),
+      volumes: normalizeStringList(service.volumes),
+      networks: normalizeStringList(service.networks),
+      dependsOn: normalizeStringList(service.depends_on),
+    }];
+  });
+  const domain = findDomainFromCompose(doc);
 
-  const finalize = () => {
-    if (current) services.push(current);
-    current = null;
-    collectingPorts = false;
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\r/g, "");
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    const indent = line.length - line.replace(/^\s*/, "").length;
-
-    // Domain heuristic: Caddy / virtual-host / traefik labels anywhere in file.
-    if (!domain) {
-      const domainMatch =
-        trimmed.match(
-          /(?:caddy|VIRTUAL_HOST|virtual_host|hostname)["']?\s*[:=]\s*["']?([a-z0-9.-]+\.[a-z]{2,})/i
-        ) || trimmed.match(/Host\(`([a-z0-9.-]+\.[a-z]{2,})`\)/i);
-      if (domainMatch) domain = domainMatch[1];
-    }
-
-    // Top-level key detection (indent 0).
-    if (indent === 0 && /^[a-zA-Z0-9_-]+:/.test(trimmed)) {
-      if (/^services:/.test(trimmed)) {
-        finalize();
-        inServices = true;
-        serviceIndent = -1;
-        continue;
-      }
-      // A different top-level key ends the services section.
-      finalize();
-      inServices = false;
-      continue;
-    }
-
-    if (!inServices) continue;
-
-    // Determine the service-name indent the first time we see a child of services:.
-    if (serviceIndent === -1 && indent > 0 && /^[a-zA-Z0-9_.-]+:/.test(trimmed)) {
-      serviceIndent = indent;
-    }
-
-    // A service name line (bare "name:" at the service indent).
-    if (indent === serviceIndent && /^[a-zA-Z0-9_.-]+:\s*$/.test(trimmed)) {
-      finalize();
-      current = { name: trimmed.replace(/:\s*$/, "") };
-      continue;
-    }
-
-    if (!current) continue;
-
-    // Anything at or above the service indent that isn't a service name ends
-    // the current service's property block.
-    if (indent <= serviceIndent) {
-      collectingPorts = false;
-      continue;
-    }
-
-    // ports list items
-    if (collectingPorts) {
-      if (indent > portsIndent && trimmed.startsWith("-")) {
-        const p = trimmed
-          .replace(/^-\s*/, "")
-          .replace(/^["']|["']$/g, "")
-          .trim();
-        if (p) (current.ports ||= []).push(p);
-        continue;
-      }
-      collectingPorts = false;
-    }
-
-    const propMatch = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
-    if (!propMatch) continue;
-    const key = propMatch[1];
-    const value = propMatch[2].trim();
-
-    if (key === "image") {
-      current.image = value.replace(/^["']|["']$/g, "");
-    } else if (key === "build") {
-      current.build = true;
-    } else if (key === "ports") {
-      if (value && value.startsWith("[")) {
-        // inline list: ["80:80", "443:443"]
-        const inner = value.replace(/^\[|\]$/g, "");
-        inner
-          .split(",")
-          .map((s) => s.replace(/["'\s]/g, ""))
-          .filter(Boolean)
-          .forEach((p) => (current!.ports ||= []).push(p));
-      } else {
-        collectingPorts = true;
-        portsIndent = indent;
-      }
-    }
-  }
-
-  finalize();
   return {
     services,
     domain,
     valid: services.length > 0,
     error: services.length > 0 ? undefined : "Compose file declared no parseable services",
   };
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (typeof value === "string") return [value].filter(Boolean);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (typeof entry === "string" || typeof entry === "number") return String(entry);
+        if (entry && typeof entry === "object") return JSON.stringify(entry);
+        return "";
+      })
+      .filter(Boolean);
+  }
+  if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>);
+  return [];
+}
+
+function normalizeEnvironmentKeys(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry || "").split("=")[0]?.trim())
+      .filter(Boolean);
+  }
+  if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>);
+  return [];
+}
+
+function normalizeLabelList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((entry) => String(entry || "")).filter(Boolean);
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).map(([key, entry]) => `${key}=${String(entry ?? "")}`);
+  }
+  return [];
+}
+
+function findDomainFromCompose(doc: Record<string, unknown>): string | undefined {
+  const text = JSON.stringify(doc);
+  const match =
+    text.match(/(?:caddy|VIRTUAL_HOST|virtual_host|hostname)["']?\s*[:=]\s*["']?([a-z0-9.-]+\.[a-z]{2,})/i) ||
+    text.match(/Host\(`([a-z0-9.-]+\.[a-z]{2,})`\)/i);
+  return match?.[1];
 }
 
 /**
@@ -281,11 +242,11 @@ export function parseComposeServices(content: string): {
 export async function scanProjectsTree(
   vps?: VpsConnection | null
 ): Promise<ProjectScanResult> {
-  let config: any;
+  let config: { projectRoot: string; templateDeploymentRoot?: string | null };
   try {
     config = await getSystemConfig();
-  } catch (err: any) {
-    return { projects: [], plainDirs: [], error: err?.message || "config error" };
+  } catch (err: unknown) {
+    return { projects: [], plainDirs: [], error: err instanceof Error ? err.message : "config error" };
   }
   const root = normalizeRoot(config.projectRoot);
   const managedRoot = normalizeRoot(config.templateDeploymentRoot || "/srv/groundcontrol/deployments");
@@ -318,8 +279,8 @@ export async function scanProjectsTree(
         return { composePath: (composePath || "").trim(), hasGit: git?.trim() === "1" };
       })
       .filter((r) => r.composePath.startsWith("/"));
-  } catch (err: any) {
-    return { projects: [], plainDirs: [], error: err?.message || "scan failed" };
+  } catch (err: unknown) {
+    return { projects: [], plainDirs: [], error: err instanceof Error ? err.message : "scan failed" };
   }
 
   // De-dup by parent directory: a dir with both .yml and .yaml counts once,

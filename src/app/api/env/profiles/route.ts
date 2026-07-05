@@ -10,6 +10,7 @@ import {
   setLocalEnvValues,
   upsertEnvProfileForProject,
 } from "@/lib/env-management";
+import { discoverProjectEnv } from "@/lib/env-discovery";
 
 function normalizeSchema(value: unknown) {
   if (Array.isArray(value)) return value.flatMap((entry) => {
@@ -35,7 +36,11 @@ export async function GET(req: NextRequest) {
     if (!project) return NextResponse.json({ error: "projectId or deploymentId is required" }, { status: 400 });
     const profile = await upsertEnvProfileForProject({ projectId: project.id, deploymentId: deploymentId || undefined });
     const values = await getProfileValues(profile.id);
-    return NextResponse.json({ profile: publicProfile(profile, values, parseEnvJson(profile.schemaJson)) });
+    const discovered = await discoverProjectEnv(project).catch(() => ({ entries: [], values: {} }));
+    return NextResponse.json({
+      profile: publicProfile(profile, values, parseEnvJson(profile.schemaJson)),
+      discovered: { entries: discovered.entries },
+    });
   } catch (err) {
     return handleApiError(err);
   }
@@ -58,12 +63,51 @@ export async function POST(req: NextRequest) {
       secretPath: body.secretPath || "/",
       projectRef: body.projectRef || "",
     });
+    if (body.importCurrentServerEnv) {
+      const project = await prisma.project.findUnique({ where: { id: projectId } });
+      if (!project) return NextResponse.json({ error: "project not found" }, { status: 404 });
+      const discovered = await discoverProjectEnv(project);
+      const nextSchema = mergeSchema(schema, Object.keys(discovered.values));
+      const updated = await upsertEnvProfileForProject({
+        projectId,
+        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        schema: nextSchema,
+        providerType: body.providerType || "local",
+        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : null,
+        environment: body.environment || "prod",
+        secretPath: body.secretPath || "/",
+        projectRef: body.projectRef || "",
+      });
+      await setLocalEnvValues(updated.id, discovered.values, nextSchema);
+      const values = await getProfileValues(updated.id);
+      return NextResponse.json({
+        profile: publicProfile(updated, values, parseEnvJson(updated.schemaJson)),
+        discovered: { entries: discovered.entries },
+      });
+    }
     if (body.values && typeof body.values === "object") {
       await setLocalEnvValues(profile.id, body.values, schema);
     }
     const values = await getProfileValues(profile.id);
-    return NextResponse.json({ profile: publicProfile(profile, values, parseEnvJson(profile.schemaJson)) });
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    const discovered = project ? await discoverProjectEnv(project).catch(() => ({ entries: [], values: {} })) : { entries: [], values: {} };
+    return NextResponse.json({
+      profile: publicProfile(profile, values, parseEnvJson(profile.schemaJson)),
+      discovered: { entries: discovered.entries },
+    });
   } catch (err) {
     return handleApiError(err);
   }
+}
+
+function mergeSchema(schema: { key: string; required: boolean }[], keys: string[]) {
+  const seen = new Set(schema.map((entry) => entry.key));
+  const merged = [...schema];
+  for (const key of keys) {
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push({ key, required: true });
+    }
+  }
+  return merged;
 }

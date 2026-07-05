@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo } from "react";
 import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ActionConfirm } from "@/components/ActionConfirm";
-import type { TerraformStack } from "@/components/TerraformStacksTab";
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { resolveLifecycleScope, type LifecycleAction } from "@/lib/deployment-actions";
 
@@ -21,6 +20,7 @@ interface Container {
   image: string;
   status: string;
   state: string;
+  ports?: string;
   composeProject?: string;
   composeService?: string;
   composeWorkingDir?: string;
@@ -41,6 +41,12 @@ interface ComposeServiceInfo {
   image?: string;
   build?: boolean;
   ports?: string[];
+  environment?: string[];
+  envFiles?: string[];
+  labels?: string[];
+  volumes?: string[];
+  networks?: string[];
+  dependsOn?: string[];
 }
 
 interface ScannedProject {
@@ -134,6 +140,17 @@ interface ConfirmComposeState {
   projectName: string;
 }
 
+interface ReplicateState {
+  project: ScannedProject;
+  newSlug: string;
+  envStrategy: "copy" | "blank";
+}
+
+interface DeleteState {
+  project: ScannedProject;
+  deleteVolumes: boolean;
+}
+
 interface DeployOptions {
   targetId: number | "";
   branch: string;
@@ -181,6 +198,66 @@ function pathInside(workingDir: string, projectPath: string): boolean {
   return wd === pp || wd.startsWith(pp + "/");
 }
 
+function proxyPort(proxy: string | null): string {
+  const match = String(proxy || "").match(/:(\d+)/);
+  return match?.[1] || "";
+}
+
+function servicePortCandidates(service: ComposeServiceInfo): string[] {
+  return (service.ports || []).flatMap((port) => {
+    const text = String(port);
+    const parts = text.split(":").map((part) => part.replace(/\/.*/, ""));
+    return parts.filter((part) => /^\d+$/.test(part));
+  });
+}
+
+function containerPortCandidates(container: Container): string[] {
+  return Array.from(String(container.ports || "").matchAll(/(?:0\.0\.0\.0|127\.0\.0\.1|\[::\])?:(\d+)->/g)).map((match) => match[1]);
+}
+
+function findProjectSite(project: ScannedProject, sites: CaddySite[] = [], meta: { containers: Container[]; images: DockerImage[] }): CaddySite | undefined {
+  const exact = project.domain
+    ? sites.find((site) => site.domain.toLowerCase() === project.domain!.toLowerCase())
+    : undefined;
+  if (exact) return exact;
+
+  const tokens = new Set([
+    normalizeToken(project.slug),
+    normalizeToken(project.dirName),
+    ...project.services.map((service) => normalizeToken(service.name)),
+    ...meta.containers.map((container) => normalizeToken(container.name)),
+    ...meta.containers.map((container) => normalizeToken(container.composeService || "")),
+  ].filter(Boolean));
+  const ports = new Set([
+    ...project.services.flatMap(servicePortCandidates),
+    ...meta.containers.flatMap(containerPortCandidates),
+  ]);
+
+  return sites.find((site) => {
+    const domainToken = normalizeToken(site.domain);
+    const proxyText = normalizeToken(site.proxy || "");
+    const contentToken = normalizeToken(site.content || "");
+    const sitePort = proxyPort(site.proxy);
+    if (site.root && pathInside(site.root, project.path)) return true;
+    if (sitePort && ports.has(sitePort)) return true;
+    for (const token of tokens) {
+      if (token && (domainToken.includes(token) || proxyText.includes(token) || contentToken.includes(token))) return true;
+    }
+    return false;
+  });
+}
+
+function matchedServiceForSite(site: CaddySite, project: ScannedProject, meta: { containers: Container[]; images: DockerImage[] }): string {
+  const port = proxyPort(site.proxy);
+  const byPort = project.services.find((service) => servicePortCandidates(service).includes(port));
+  if (byPort) return byPort.name;
+  const proxyText = normalizeToken(site.proxy || "");
+  const byService = project.services.find((service) => proxyText.includes(normalizeToken(service.name)));
+  if (byService) return byService.name;
+  const byContainer = meta.containers.find((container) => proxyText.includes(normalizeToken(container.name)));
+  return byContainer?.composeService || byContainer?.name || "Deployment route";
+}
+
 function statusColor(status: string): string {
   switch (status) {
     case "success":
@@ -212,12 +289,13 @@ export function ProjectsPanel() {
   const [detailState, setDetailState] = useState<{ slug: string; tab: DeploymentDetailTab } | null>(null);
   const [componentState, setComponentState] = useState<{ projectSlug: string; serviceName: string; tab: ComponentDetailTab } | null>(null);
   const [redeploySlug, setRedeploySlug] = useState<string | null>(null);
+  const [replicateState, setReplicateState] = useState<ReplicateState | null>(null);
+  const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
 
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [zones, setZones] = useState<CloudflareZone[]>([]);
-  const [stacks, setStacks] = useState<TerraformStack[]>([]);
   const [deployOptions, setDeployOptions] = useState<Record<string, DeployOptions>>({});
 
   const defaultTargetId = useMemo(() => {
@@ -244,7 +322,7 @@ export function ProjectsPanel() {
         .then((r) => safeJson(r))
         .catch(() => ({ ok: true, data: [], text: "" })),
     ])
-      .then(([projectsRes, containersRes, imagesRes, targetsRes, deploymentsRes, zonesRes, stacksRes]) => {
+      .then(([projectsRes, containersRes, imagesRes, targetsRes, deploymentsRes, zonesRes]) => {
         setData(projectsRes.data);
         setContainers(Array.isArray(containersRes.data) ? containersRes.data : []);
         setImages(Array.isArray(imagesRes.data) ? imagesRes.data : []);
@@ -258,8 +336,6 @@ export function ProjectsPanel() {
 
         const zoneResult = zonesRes.data?.result;
         setZones(Array.isArray(zoneResult) ? zoneResult : []);
-        setStacks(Array.isArray(stacksRes.data) ? stacksRes.data : []);
-
         const activeTarget = loadedTargets.find((t) => t.isActive) || loadedTargets[0];
         const initialOptions: Record<string, DeployOptions> = {};
         for (const p of projectsRes.data?.scannedProjects || []) {
@@ -460,10 +536,13 @@ export function ProjectsPanel() {
   }
 
   async function replicateDeployment(project: ScannedProject) {
-    const suggested = `${project.slug}-copy`;
-    const newSlug = window.prompt("New deployment slug", suggested);
-    if (!newSlug) return;
-    const copyEnv = window.confirm("Copy .env values into the replica? Cancel leaves a blank .env with 600 permissions.");
+    setReplicateState({ project, newSlug: `${project.slug}-copy`, envStrategy: "blank" });
+  }
+
+  async function performReplicate() {
+    if (!replicateState?.newSlug.trim()) return;
+    const { project, newSlug, envStrategy } = replicateState;
+    setReplicateState(null);
     setComposeOutput({ slug: project.slug, output: "Creating isolated deployment copy..." });
     try {
       const res = await fetch("/api/deployments/replicate", {
@@ -473,7 +552,7 @@ export function ProjectsPanel() {
           sourcePath: project.path,
           sourceSlug: project.slug,
           newSlug,
-          envStrategy: copyEnv ? "copy" : "blank",
+          envStrategy,
         }),
       });
       const { ok, data } = await safeJson(res);
@@ -496,11 +575,13 @@ export function ProjectsPanel() {
       setError("No deployment path found for this project.");
       return;
     }
-    const confirmed = window.confirm(
-      `Delete deployment?\n\nRoot: ${project.path}\nContainers: stopped and removed\nVolumes: kept by default\nNetworks: deployment networks removed`
-    );
-    if (!confirmed) return;
-    const deleteVolumes = window.confirm("Also delete compose volumes? Cancel keeps data volumes.");
+    setDeleteState({ project, deleteVolumes: false });
+  }
+
+  async function performDelete() {
+    if (!deleteState) return;
+    const { project, deleteVolumes } = deleteState;
+    setDeleteState(null);
     setComposeOutput({ slug: project.slug, output: "Deleting deployment..." });
     try {
       const res = await fetch("/api/deployments/delete-managed", {
@@ -656,17 +737,7 @@ export function ProjectsPanel() {
                 const meta = projectMeta.get(project.slug) || { containers: [], images: [] };
                 const running = meta.containers.filter((c) => c.state === "running").length;
                 const stopped = meta.containers.filter((c) => c.state !== "running").length;
-                const site =
-                  (project.domain &&
-                    data?.caddySites.find(
-                      (s) => s.domain.toLowerCase() === project.domain!.toLowerCase()
-                    )) ||
-                  data?.caddySites.find((s) =>
-                    s.domain.replace(/[^a-z0-9]/gi, "").toLowerCase().includes(
-                      project.dirName.replace(/[^a-z0-9]/gi, "").toLowerCase()
-                    )
-                  );
-                const selected = selectedServicesFor(project.slug);
+                const site = findProjectSite(project, data?.caddySites, meta);
                 const dbProject = getDbProject(project.slug);
                 const latest = getLatestDeployment(dbProject?.id);
                 const opts = getDeployOptions(project.slug);
@@ -710,7 +781,7 @@ export function ProjectsPanel() {
                         ) : project.domain ? (
                           <p className="text-xs text-accent font-mono mt-1">{project.domain}</p>
                         ) : (
-                          <p className="text-xs text-muted font-mono mt-1">No domain mapped</p>
+                          <p className="text-xs text-muted font-mono mt-1">No route detected yet</p>
                         )}
                         {latest && (latest.publicUrl || latest.previewUrl) && (
                           <div className="flex flex-wrap gap-2 mt-2">
@@ -901,7 +972,7 @@ export function ProjectsPanel() {
                             <div className="min-w-0">
                               <h2 className="truncate text-xl font-semibold">{project.name}</h2>
                               <p className="mt-1 text-xs font-mono text-muted">
-                                {site?.domain || project.domain || "No domain mapped"} · {running} running · {project.services.length} components
+                                {site?.domain || project.domain || "No route detected yet"} · {running} running · {project.services.length} components
                               </p>
                             </div>
                             <button
@@ -930,7 +1001,7 @@ export function ProjectsPanel() {
                             {detailState.tab === "overview" && (
                               <div className="grid gap-3 md:grid-cols-3">
                                 <InfoTile label="Status" value={isInvalid ? "Invalid compose" : running > 0 ? "Running" : "Stopped"} />
-                                <InfoTile label="Route" value={site?.domain || project.domain || "No domain mapped"} />
+                                <InfoTile label="Route" value={site?.domain || project.domain || "No route detected yet"} />
                                 <InfoTile label="Environment" value={latest?.envStatus || "unknown"} />
                                 <InfoTile label="Components" value={String(project.services.length)} />
                                 <InfoTile label="Containers" value={`${running} running, ${stopped} stopped`} />
@@ -950,9 +1021,6 @@ export function ProjectsPanel() {
                                   </div>
                                 ) : (
                                   project.services.map((svc) => {
-                                    const existing = meta.containers.find(
-                                      (c) => tokensMatch(c.composeService || "", svc.name) || c.name.toLowerCase().includes(svc.name.toLowerCase())
-                                    );
                                     const checked = isServiceSelected(project.slug, svc.name);
                                     return (
                                       <div key={svc.name} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3">
@@ -1007,8 +1075,10 @@ export function ProjectsPanel() {
 
                             {detailState.tab === "networking" && (
                               <div className="grid gap-3 md:grid-cols-2">
-                                <InfoTile label="Domain" value={site?.domain || project.domain || "No domain mapped"} />
+                                <InfoTile label="Domain" value={site?.domain || project.domain || "No route detected yet"} />
                                 <InfoTile label="Proxy target" value={site?.proxy || "No proxy target detected"} />
+                                <InfoTile label="Matched service" value={site ? matchedServiceForSite(site, project, meta) : "No route detected yet"} />
+                                <InfoTile label="Config file" value={site?.file || "No proxy file detected"} />
                                 <InfoTile label="DNS zone" value={opts.zoneId ? zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId : "No zone selected"} />
                                 <InfoTile label="Public route" value={latest?.publicUrl || latest?.previewUrl || "No public URL"} />
                               </div>
@@ -1087,35 +1157,46 @@ export function ProjectsPanel() {
                                   <InfoTile label="Status" value={existing?.status || "not running"} />
                                 </div>
                               )}
-                              {componentState.tab === "environment" && <InfoTile label="Environment scope" value="Deployment environment applies to this component" />}
+                              {componentState.tab === "environment" && (
+                                <div className="space-y-3">
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <InfoTile label="Service env keys" value={svc.environment?.join(", ") || "No service-specific env declared"} />
+                                    <InfoTile label="Env files" value={svc.envFiles?.join(", ") || "No env file declared"} />
+                                  </div>
+                                  {dbProject && (
+                                    <DeploymentEnvPanel
+                                      projectId={dbProject.id}
+                                      deploymentId={latest?.id}
+                                      onRedeploy={() => runCompose(project.slug, "start", [svc.name])}
+                                    />
+                                  )}
+                                </div>
+                              )}
                               {componentState.tab === "source" && (
                                 <div className="grid gap-3 md:grid-cols-2">
                                   <InfoTile label="Image" value={svc.image || "No image declared"} />
                                   <InfoTile label="Build" value={svc.build ? "Build context declared" : "No build context"} />
                                 </div>
                               )}
-                              {componentState.tab === "networking" && <InfoTile label="Ports" value={svc.ports?.join(", ") || "No ports declared"} />}
-                              {componentState.tab === "storage" && <InfoTile label="Storage" value="No storage metadata parsed yet" />}
+                              {componentState.tab === "networking" && (
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <InfoTile label="Ports" value={svc.ports?.join(", ") || "No ports declared"} />
+                                  <InfoTile label="Networks" value={svc.networks?.join(", ") || "Default compose network"} />
+                                </div>
+                              )}
+                              {componentState.tab === "storage" && <InfoTile label="Volumes" value={svc.volumes?.join(", ") || "No volumes declared"} />}
                               {componentState.tab === "logs" && <InfoTile label="Logs" value={existing ? "Open Containers to stream logs" : "No linked container"} />}
                               {componentState.tab === "actions" && (
                                 <div className="flex flex-wrap gap-2">
                                   <button
                                     onClick={() => {
                                       setSelectedServices((prev) => ({ ...prev, [project.slug]: new Set([svc.name]) }));
-                                      setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name });
+                                      runCompose(project.slug, "start", [svc.name]);
                                     }}
-                                    className="rounded border border-success/30 bg-success/10 px-3 py-2 text-xs font-mono text-success"
+                                    className="rounded border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
+                                    title="Recreate this service with the saved environment."
                                   >
-                                    Start
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setSelectedServices((prev) => ({ ...prev, [project.slug]: new Set([svc.name]) }));
-                                      setConfirmCompose({ slug: project.slug, type: "stop", projectName: project.name });
-                                    }}
-                                    className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-mono text-warning"
-                                  >
-                                    Stop
+                                    Redeploy component <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[9px]">i</span>
                                   </button>
                                 </div>
                               )}
@@ -1248,6 +1329,78 @@ export function ProjectsPanel() {
                   </div>
                 );
               })}
+        </div>
+      )}
+
+      {replicateState && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-2xl">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold">Replicate deployment</h3>
+              <p className="mt-1 text-xs font-mono text-muted">{replicateState.project.name}</p>
+            </div>
+            <div className="space-y-3">
+              <TextInput
+                label="New deployment slug"
+                value={replicateState.newSlug}
+                onChange={(newSlug) => setReplicateState({ ...replicateState, newSlug })}
+              />
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-mono text-muted">Environment</span>
+                <select
+                  value={replicateState.envStrategy}
+                  onChange={(event) => setReplicateState({ ...replicateState, envStrategy: event.target.value as "copy" | "blank" })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono outline-none focus:border-accent"
+                >
+                  <option value="blank">Create blank env</option>
+                  <option value="copy">Copy current env</option>
+                </select>
+              </label>
+              <div className="rounded-lg border border-border bg-background/50 p-3 text-xs text-muted">
+                Replication creates an isolated deployment copy. Domains and host ports are not reused automatically.
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setReplicateState(null)} className="rounded border border-border px-4 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+                Cancel
+              </button>
+              <button onClick={performReplicate} disabled={!replicateState.newSlug.trim()} className="rounded border border-accent/30 bg-accent/10 px-4 py-2 text-xs font-mono text-accent hover:bg-accent/20 disabled:opacity-50">
+                Replicate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteState && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-2xl">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold">Delete deployment</h3>
+              <p className="mt-1 text-xs font-mono text-muted">{deleteState.project.name}</p>
+            </div>
+            <div className="space-y-3 text-xs">
+              <InfoTile label="Root" value={deleteState.project.path} />
+              <InfoTile label="Components" value={deleteState.project.services.map((service) => service.name).join(", ") || "No services parsed"} />
+              <label className="flex items-center gap-2 rounded-lg border border-border bg-background/50 p-3 font-mono text-muted">
+                <input
+                  type="checkbox"
+                  checked={deleteState.deleteVolumes}
+                  onChange={(event) => setDeleteState({ ...deleteState, deleteVolumes: event.target.checked })}
+                  className="accent-error"
+                />
+                Delete compose volumes
+              </label>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setDeleteState(null)} className="rounded border border-border px-4 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent">
+                Cancel
+              </button>
+              <button onClick={performDelete} className="rounded border border-error/30 bg-error/10 px-4 py-2 text-xs font-mono text-error hover:bg-error/20">
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
