@@ -2,20 +2,18 @@
 
 import { useState } from "react";
 import { ContainersPanel } from "@/components/ContainersPanel";
-import { ProxyPanel } from "@/components/ProxyPanel";
 import { ProjectsPanel } from "@/components/ProjectsPanel";
 import { DeploymentsPanel } from "@/components/DeploymentsPanel";
 import { BootstrapPanel } from "@/components/BootstrapPanel";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
 
-type TabKey = "containers" | "proxy" | "deployments" | "bootstrap" | "infrastructure";
+type TabKey = "containers" | "deployments" | "bootstrap" | "infrastructure";
 
 export default function ServicesPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("containers");
 
   const tabs = [
     { key: "containers", label: "Containers" },
-    { key: "proxy", label: "Proxy" },
     { key: "deployments", label: "Deployments" },
     { key: "bootstrap", label: "Install" },
     { key: "infrastructure", label: "Infrastructure" },
@@ -26,7 +24,7 @@ export default function ServicesPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Services</h1>
         <label className="mt-4 block md:hidden">
-          <span className="mb-1 block text-[10px] font-mono uppercase tracking-wider text-muted">Section</span>
+          <span className="mb-1 block text-[10px] font-mono tracking-wider text-muted">Section</span>
           <select
             value={activeTab}
             onChange={(event) => setActiveTab(event.target.value as TabKey)}
@@ -60,7 +58,6 @@ export default function ServicesPage() {
       </div>
 
       {activeTab === "containers" && <ContainersPanel />}
-      {activeTab === "proxy" && <ProxyPanel />}
       {activeTab === "deployments" && (
         <div className="space-y-8">
           <ProjectsPanel />

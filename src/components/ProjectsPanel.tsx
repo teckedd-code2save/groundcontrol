@@ -199,8 +199,6 @@ export function ProjectsPanel() {
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState<string | null>(null);
   const [confirmDeploy, setConfirmDeploy] = useState<string | null>(null);
-  const [projectRoot, setProjectRoot] = useState("/opt");
-  const [templateDeploymentRoot, setTemplateDeploymentRoot] = useState("/srv/groundcontrol/deployments");
   const [error, setError] = useState("");
   const [composeAction, setComposeAction] = useState<ComposeActionState | null>(null);
   const [composeOutput, setComposeOutput] = useState<{ slug: string; output: string; error?: string } | null>(null);
@@ -226,9 +224,6 @@ export function ProjectsPanel() {
       fetch("/api/projects").then((r) => safeJson(r)),
       fetch("/api/containers").then((r) => safeJson(r)),
       fetch("/api/docker-images").then((r) => safeJson(r)),
-      fetch("/api/system-config")
-        .then((r) => safeJson(r))
-        .catch(() => ({ ok: true, data: null, text: "" })),
       fetch("/api/deployment-targets")
         .then((r) => safeJson(r))
         .catch(() => ({ ok: true, data: [], text: "" })),
@@ -242,12 +237,10 @@ export function ProjectsPanel() {
         .then((r) => safeJson(r))
         .catch(() => ({ ok: true, data: [], text: "" })),
     ])
-      .then(([projectsRes, containersRes, imagesRes, configRes, targetsRes, deploymentsRes, zonesRes, stacksRes]) => {
+      .then(([projectsRes, containersRes, imagesRes, targetsRes, deploymentsRes, zonesRes, stacksRes]) => {
         setData(projectsRes.data);
         setContainers(Array.isArray(containersRes.data) ? containersRes.data : []);
         setImages(Array.isArray(imagesRes.data) ? imagesRes.data : []);
-        if (configRes.data?.projectRoot) setProjectRoot(configRes.data.projectRoot);
-        if (configRes.data?.templateDeploymentRoot) setTemplateDeploymentRoot(configRes.data.templateDeploymentRoot);
         if (projectsRes.data?.scanError) setError(`Scan warning: ${projectsRes.data.scanError}`);
 
         const loadedTargets: DeploymentTarget[] = Array.isArray(targetsRes.data) ? targetsRes.data : [];
@@ -501,7 +494,7 @@ export function ProjectsPanel() {
       return;
     }
     const confirmed = window.confirm(
-      `Delete deployment?\n\nRoot: ${project.path}\nContainers: docker compose down\nVolumes: kept by default\nNetworks: compose-managed networks removed`
+      `Delete deployment?\n\nRoot: ${project.path}\nContainers: stopped and removed\nVolumes: kept by default\nNetworks: deployment networks removed`
     );
     if (!confirmed) return;
     const deleteVolumes = window.confirm("Also delete compose volumes? Cancel keeps data volumes.");
@@ -627,23 +620,6 @@ export function ProjectsPanel() {
     return result;
   }, [projects, containers, images]);
 
-  // Group projects by parent so nested projects render under their container dir.
-  const grouped = useMemo(() => {
-    const groups = new Map<string, ScannedProject[]>();
-    for (const p of projects) {
-      const key = p.managed ? "__managed__" : p.parent || "__discovered__";
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(p);
-    }
-    return Array.from(groups.entries()).sort((a, b) => {
-      if (a[0] === "__managed__") return -1;
-      if (b[0] === "__managed__") return 1;
-      if (a[0] === "__discovered__") return -1;
-      if (b[0] === "__discovered__") return 1;
-      return a[0].localeCompare(b[0]);
-    });
-  }, [projects]);
-
   if (loading) {
     return <LoaderOverlay3D open={loading} variant="project" title="Loading projects..." />;
   }
@@ -669,55 +645,11 @@ export function ProjectsPanel() {
 
       {projects.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-6 text-muted text-sm">
-          No compose-bearing projects found under {projectRoot}/. Place a{" "}
-          <code>docker-compose.yml</code> in a project directory to see it here.
+          No deployments found yet.
         </div>
       ) : (
-        <div className="space-y-8">
-          {grouped.map(([parent, groupProjects]) => (
-            <div key={parent || "root"} className="space-y-4">
-              {parent === "__managed__" ? (
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h2 className="text-sm font-mono tracking-wider text-success">
-                      Managed deployments
-                    </h2>
-                    <p className="text-[10px] text-muted/70">
-                      Created by templates under {templateDeploymentRoot}; use the card menu for up, down, redeploy,
-                      replicate, and delete.
-                    </p>
-                  </div>
-                  <span className="self-start rounded bg-success/10 px-2 py-1 text-[10px] font-mono text-success">
-                    {groupProjects.length} managed
-                  </span>
-                </div>
-              ) : parent === "__discovered__" ? (
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h2 className="text-sm font-mono tracking-wider text-muted">
-                      Discovered deployments
-                    </h2>
-                    <p className="text-[10px] text-muted/70">
-                      Compose projects found under {projectRoot}; GroundControl can start, stop, replicate, or redeploy
-                      them when metadata is available.
-                    </p>
-                  </div>
-                  <span className="self-start rounded bg-border/50 px-2 py-1 text-[10px] font-mono text-muted">
-                    {groupProjects.length} discovered
-                  </span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-mono tracking-wider text-muted">
-                    {parent}/
-                  </h2>
-                  <span className="text-[10px] font-mono text-muted bg-border/40 px-1.5 py-0.5 rounded">
-                    container of {groupProjects.length} project{groupProjects.length === 1 ? "" : "s"}
-                  </span>
-                </div>
-              )}
-
-              {groupProjects.map((project) => {
+        <div className="space-y-4">
+              {projects.map((project) => {
                 const meta = projectMeta.get(project.slug) || { containers: [], images: [] };
                 const running = meta.containers.filter((c) => c.state === "running").length;
                 const stopped = meta.containers.filter((c) => c.state !== "running").length;
@@ -759,11 +691,6 @@ export function ProjectsPanel() {
                               branch
                             </span>
                           )}
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                            project.managed ? "text-success bg-success/10" : "text-muted bg-border/50"
-                          }`}>
-                            {project.managed ? "managed" : "discovered"}
-                          </span>
                           {isInvalid && (
                             <span className="text-[10px] font-mono text-warning bg-warning/10 px-1.5 py-0.5 rounded">
                               invalid compose
@@ -782,8 +709,6 @@ export function ProjectsPanel() {
                         ) : (
                           <p className="text-xs text-muted font-mono mt-1">No domain mapped</p>
                         )}
-                        <p className="text-xs text-muted font-mono mt-0.5 truncate">{project.path}</p>
-
                         {latest && (latest.publicUrl || latest.previewUrl) && (
                           <div className="flex flex-wrap gap-2 mt-2">
                             {latest.publicUrl && (
@@ -1137,7 +1062,6 @@ export function ProjectsPanel() {
                         {isTerraform && " · terraform provision + deploy"}
                         {opts.generatePreviewUrl && " · quick tunnel preview"}
                         {opts.subdomain && opts.zoneId && ` · ${opts.subdomain} → ${zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId}`}
-                        {project.managed && ` · managed root ${templateDeploymentRoot}`}
                       </div>
                     </div>}
 
@@ -1303,30 +1227,6 @@ export function ProjectsPanel() {
                   </div>
                 );
               })}
-            </div>
-          ))}
-
-          {/* Plain (compose-less) folders — surfaced so nothing is hidden. */}
-          {data?.plainDirs && data.plainDirs.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-sm font-mono tracking-wider text-muted">
-                Other folders (no compose)
-              </h2>
-              <div className="flex flex-wrap gap-2">
-                {data.plainDirs
-                  .filter((d) => d.toLowerCase() !== "groundcontrol")
-                  .map((d) => (
-                    <span
-                      key={d}
-                      className="text-xs font-mono text-muted bg-card border border-border rounded-lg px-3 py-1.5"
-                      title={`${projectRoot}/${d}`}
-                    >
-                      {d}/
-                    </span>
-                  ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
