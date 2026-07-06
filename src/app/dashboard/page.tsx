@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { StatCard } from "@/components/StatCard";
 import HealthScore from "@/components/HealthScore";
 import MemoryPanel from "@/components/MemoryPanel";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
@@ -240,21 +239,28 @@ export default function DashboardPage() {
 
   const intelligence = generateIntelligence();
 
+  const topMetrics = [
+    { label: "Memory", value: stats ? `${stats.memory.percent}%` : "—", detail: `${stats?.memory.used || 0}/${stats?.memory.total || 0} MB`, tone: stats && parseFloat(stats.memory.percent) > 85 ? "text-error" : "text-foreground" },
+    { label: "Disk", value: stats ? `${stats.disk.percent}%` : "—", detail: `${stats?.disk.used || 0}/${stats?.disk.total || 0}`, tone: stats && parseFloat(stats.disk.percent) > 85 ? "text-error" : "text-foreground" },
+    { label: "Load", value: stats ? (stats.load[0] || 0).toFixed(2) : "—", detail: `${stats?.cpuCount || 0} cores`, tone: "text-foreground" },
+    { label: "Containers", value: `${runningContainers}/${containers.length}`, detail: unhealthyContainers > 0 ? `${unhealthyContainers} unhealthy` : `${stoppedContainers} stopped`, tone: unhealthyContainers > 0 ? "text-error" : "text-success" },
+  ];
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
-      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted mt-1 text-sm">Live VPS status, resource pressure, and container health.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-muted mt-1 text-xs">VPS status and deployment health.</p>
         </div>
         <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
-          <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">
+          <span className="rounded-lg bg-card px-2.5 py-1.5">
             uptime <span className="text-foreground">{stats ? formatUptime(stats.uptime) : "—"}</span>
           </span>
-          <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">
+          <span className="rounded-lg bg-card px-2.5 py-1.5">
             cores <span className="text-foreground">{stats?.cpuCount || 0}</span>
           </span>
-          <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">
+          <span className="rounded-lg bg-card px-2.5 py-1.5">
             containers <span className="text-success">{runningContainers}</span>/<span className="text-foreground">{containers.length}</span>
           </span>
         </div>
@@ -270,46 +276,30 @@ export default function DashboardPage() {
 
       {loading && !stats ? null : (
         <>
-          <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <StatCard
-                  title="Memory"
-                  value={stats ? `${stats.memory.percent}%` : "—"}
-                  subtitle={`${stats?.memory.used || 0} / ${stats?.memory.total || 0} MB`}
-                  trend={stats && parseFloat(stats.memory.percent) > 85 ? "down" : "neutral"}
-                  icon="◉"
-                />
-                <StatCard
-                  title="Disk"
-                  value={stats ? `${stats.disk.percent}%` : "—"}
-                  subtitle={`${stats?.disk.used || 0} / ${stats?.disk.total || 0}`}
-                  trend={stats && parseFloat(stats.disk.percent) > 85 ? "down" : "neutral"}
-                  icon="◆"
-                />
-                <StatCard
-                  title="Load"
-                  value={stats ? (stats.load[0] || 0).toFixed(2) : "—"}
-                  subtitle={`${stats?.cpuCount || 0} CPU cores`}
-                  icon="◈"
-                />
-                <StatCard
-                  title="Containers"
-                  value={`${runningContainers} / ${containers.length}`}
-                  subtitle={unhealthyContainers > 0 ? `${unhealthyContainers} unhealthy` : "All healthy"}
-                  trend={unhealthyContainers > 0 ? "down" : "up"}
-                  icon="▶"
-                />
-              </div>
+          <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            {topMetrics.map((metric) => (
+              <button
+                key={metric.label}
+                onClick={metric.label === "Memory" || metric.label === "Disk" ? () => setMemoryPanelOpen(true) : undefined}
+                className="rounded-lg bg-card px-3 py-2 text-left transition-colors hover:bg-card/80"
+              >
+                <span className="block text-[10px] font-mono text-muted">{metric.label}</span>
+                <span className={`mt-0.5 block text-lg font-semibold ${metric.tone}`}>{metric.value}</span>
+                <span className="mt-0.5 block truncate text-[10px] text-muted">{metric.detail}</span>
+              </button>
+            ))}
+          </div>
 
-              <div className="rounded-xl bg-card p-4">
+          <div className="mb-5 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="space-y-4">
+              <div className="rounded-xl bg-card p-3">
                 <div className="mb-3 flex items-center gap-2">
                   <h2 className="text-xs font-mono text-muted">System review</h2>
                   <a href="/settings?tab=alerts" className="ml-auto text-[11px] font-mono text-accent hover:text-accent/80">
                     alert rules
                   </a>
                 </div>
-                <h3 className="mb-3 text-base font-medium">{intelligence.title}</h3>
+                <h3 className="mb-2 text-sm font-medium">{intelligence.title}</h3>
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                   {intelligence.items.map((item) => {
                     const className = `flex items-start gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
@@ -349,7 +339,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="rounded-xl bg-card p-4">
+            <div className="rounded-xl bg-card p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <h2 className="text-xs font-mono text-muted">Assistant summary</h2>
                 <button
@@ -366,7 +356,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-muted">{synthesisError}</p>
               ) : synthesis ? (
                 <div className="space-y-3">
-                  <p className="text-sm font-medium leading-relaxed">{synthesis.summary}</p>
+                  <p className="text-xs font-medium leading-relaxed">{synthesis.summary}</p>
                   {synthesis.actions.length > 0 && (
                     <div>
                       <p className="mb-1 text-[10px] font-mono text-muted">Next actions</p>
@@ -384,7 +374,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="mb-6">
+          <div className="mb-5">
             <HealthScore />
           </div>
 
