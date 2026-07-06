@@ -28,19 +28,18 @@ interface VpsConfig {
 
 type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "env-providers" | "cloud-accounts" | "deploy-targets" | "infrastructure";
 
-function Badge({ type }: { type: "prod" | "experimental" | "planned" }) {
-  const styles = {
-    prod: "bg-success/10 text-success border-success/20",
-    experimental: "bg-accent/10 text-accent border-accent/20",
-    planned: "bg-muted/10 text-muted border-muted/20",
-  };
-  const labels = { prod: "Production", experimental: "Experimental", planned: "Planned" };
-  return (
-    <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${styles[type]}`}>
-      {labels[type]}
-    </span>
-  );
-}
+const settingsTabs: { key: TabKey; label: string; description: string }[] = [
+  { key: "connections", label: "VPS", description: "Hosts, SSH, and active server" },
+  { key: "layout", label: "Layout", description: "Deployment roots and scan paths" },
+  { key: "ai", label: "AI", description: "Assistant provider and model" },
+  { key: "security", label: "Security", description: "Access, sessions, and audit" },
+  { key: "cloudflare", label: "Cloudflare", description: "DNS, zones, and tunnels" },
+  { key: "env-providers", label: "Env", description: "Local and external secret sources" },
+  { key: "alerts", label: "Alerts", description: "Rules, retention, and health checks" },
+  { key: "cloud-accounts", label: "Cloud", description: "Cloud credentials and tests" },
+  { key: "deploy-targets", label: "Targets", description: "Deployment backends" },
+  { key: "infrastructure", label: "Infra", description: "Terraform stacks and outputs" },
+];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>(() => {
@@ -54,39 +53,28 @@ export default function SettingsPage() {
     }
     return "connections";
   });
+  const activeTabMeta = settingsTabs.find((tab) => tab.key === activeTab) || settingsTabs[0];
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted mt-1">Configure VPS connections, server layout, AI, security, Cloudflare, env providers, cloud accounts, alerts, and deploy targets</p>
+    <div className="p-4 md:p-8 max-w-6xl mx-auto">
+      <div className="mb-5 flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="text-xs text-muted">{activeTabMeta.description}</p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border mb-8 overflow-x-auto">
-        {[
-          { key: "connections", label: "VPS", badge: "prod" as const },
-          { key: "layout", label: "Layout", badge: "prod" as const },
-          { key: "ai", label: "AI", badge: "prod" as const },
-          { key: "security", label: "Security", badge: "prod" as const },
-          { key: "cloudflare", label: "Cloudflare", badge: "prod" as const },
-          { key: "env-providers", label: "Env Providers", badge: "experimental" as const },
-          { key: "alerts", label: "Alerts", badge: "prod" as const },
-          { key: "cloud-accounts", label: "Cloud Accounts", badge: "experimental" as const },
-          { key: "deploy-targets", label: "Deploy Targets", badge: "experimental" as const },
-          { key: "infrastructure", label: "Infrastructure", badge: "experimental" as const },
-        ].map((tab) => (
+      <div className="mb-6 flex flex-wrap gap-1 rounded-xl bg-card p-1">
+        {settingsTabs.map((tab) => (
           <button
             key={tab.key}
-            onClick={() => setActiveTab(tab.key as TabKey)}
-            className={`px-5 py-2.5 text-xs font-mono  border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${
+            onClick={() => setActiveTab(tab.key)}
+            title={tab.description}
+            className={`shrink-0 rounded-lg px-3 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
               activeTab === tab.key
-                ? "border-accent text-accent"
-                : "border-transparent text-muted hover:text-foreground"
+                ? "bg-accent/10 text-accent"
+                : "text-muted hover:bg-background hover:text-foreground"
             }`}
           >
-            <span>{tab.label}</span>
-            <Badge type={tab.badge} />
+            {tab.label}
           </button>
         ))}
       </div>
@@ -100,34 +88,16 @@ export default function SettingsPage() {
       {activeTab === "alerts" && <AlertSettingsTab />}
       {activeTab === "cloud-accounts" && (
         <div>
-          <div className="flex items-center gap-2 mb-6">
-            <Badge type="experimental" />
-            <p className="text-xs text-muted">
-              Cloud account features are part of GC&apos;s cloud development lab — actively researched, not production-hardened.
-            </p>
-          </div>
           <CloudAccountsTab />
         </div>
       )}
       {activeTab === "deploy-targets" && (
         <div>
-          <div className="flex items-center gap-2 mb-6">
-            <Badge type="experimental" />
-            <p className="text-xs text-muted">
-              Deploy targets are part of GC&apos;s cloud development lab. Production deployment is handled by Convoy.
-            </p>
-          </div>
           <DeployTargetsTab />
         </div>
       )}
       {activeTab === "infrastructure" && (
         <div>
-          <div className="flex items-center gap-2 mb-6">
-            <Badge type="experimental" />
-            <p className="text-xs text-muted">
-              Terraform infrastructure management is part of GC&apos;s cloud development lab — actively researched.
-            </p>
-          </div>
           <TerraformStacksTab />
         </div>
       )}
