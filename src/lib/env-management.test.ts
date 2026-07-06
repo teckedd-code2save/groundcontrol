@@ -3,6 +3,7 @@ import {
   buildMaterializeEnvCommand,
   hashEnv,
   maskSecret,
+  normalizeProviderRuntimeEnv,
   parseDotenv,
   parseEnvSchema,
   serializeDotenv,
@@ -54,5 +55,19 @@ DATABASE_URL=duplicate
     expect(command).toContain("chmod 600 .env.new");
     expect(command).toContain("mv .env.new .env");
     expect(command).toContain(".groundcontrol/env-backups");
+  });
+
+  it("preserves Infisical sec-prefixed keys and adds runtime aliases", () => {
+    expect(normalizeProviderRuntimeEnv({
+      sec_DATABASE_URL: "postgres://db",
+      "sec.REDIS_URL": "redis://cache",
+      API_URL: "https://api.example.com",
+    }, "infisical")).toEqual({
+      sec_DATABASE_URL: "postgres://db",
+      "sec.REDIS_URL": "redis://cache",
+      DATABASE_URL: "postgres://db",
+      REDIS_URL: "redis://cache",
+      API_URL: "https://api.example.com",
+    });
   });
 });

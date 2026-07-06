@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface HealthData {
   score: number;
@@ -26,7 +26,7 @@ export default function HealthScore() {
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
     try {
       const res = await fetch("/api/health-score");
       if (res.ok) setData(await res.json());
@@ -35,13 +35,16 @@ export default function HealthScore() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    fetchData();
+    const timeout = window.setTimeout(() => void fetchData(), 0);
     const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => {
+      window.clearTimeout(timeout);
+      clearInterval(interval);
+    };
+  }, [fetchData]);
 
   async function applyFix(fix: HealthData["fixes"][0]) {
     if (fix.action === "prune") {
@@ -81,9 +84,9 @@ export default function HealthScore() {
   const offset = circumference - (pct / 100) * circumference;
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
-      <h3 className="text-sm font-mono uppercase tracking-wider text-muted mb-4">
-        Health Score
+    <div className="bg-card rounded-xl p-5">
+      <h3 className="text-sm font-mono text-muted mb-4">
+        System status
       </h3>
 
       <div className="flex items-center gap-6">

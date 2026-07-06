@@ -25,6 +25,21 @@ export interface RouteContainer {
   composeService?: string;
 }
 
+export interface RouteMatchEvidence {
+  rootPath: boolean;
+  proxyPort: boolean;
+  fileToken: boolean;
+  domainToken: boolean;
+  proxyService: boolean;
+}
+
+export interface RouteSiteMatch {
+  site: RouteSite;
+  score: number;
+  confidence: "high" | "medium" | "low";
+  evidence: RouteMatchEvidence;
+}
+
 export function normalizeRouteToken(value: string): string {
   return value
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
@@ -64,10 +79,25 @@ export function findProjectSite(
   sites: RouteSite[] = [],
   containers: RouteContainer[] = []
 ): RouteSite | undefined {
+  return findProjectSiteMatch(project, sites, containers)?.site;
+}
+
+export function findProjectSiteMatch(
+  project: RouteProject,
+  sites: RouteSite[] = [],
+  containers: RouteContainer[] = []
+): RouteSiteMatch | undefined {
   const exact = project.domain
     ? sites.find((site) => site.domain.toLowerCase() === project.domain!.toLowerCase())
     : undefined;
-  if (exact) return exact;
+  if (exact) {
+    return {
+      site: exact,
+      score: 200,
+      confidence: "high",
+      evidence: { rootPath: false, proxyPort: false, fileToken: false, domainToken: true, proxyService: false },
+    };
+  }
 
   const projectTokens = [
     normalizeRouteToken(project.slug),
@@ -90,6 +120,13 @@ export function findProjectSite(
   const scored = sites
     .map((site) => {
       let score = 0;
+      const evidence: RouteMatchEvidence = {
+        rootPath: false,
+        proxyPort: false,
+        fileToken: false,
+        domainToken: false,
+        proxyService: false,
+      };
       const fileToken = stripCaddyPrefix(siteFileName(site));
       const domainToken = normalizeRouteToken(site.domain.replace(/^https?:\/\//, ""));
       const compactDomain = compactToken(site.domain);
@@ -97,19 +134,43 @@ export function findProjectSite(
       const sitePort = proxyPort(site.proxy);
       const hasRouteConfig = Boolean(site.proxy || site.root);
 
-      if (site.root && pathInside(site.root, project.path)) score += 100;
-      if (sitePort && ports.has(sitePort)) score += 90;
-      if (projectTokens.some((token) => fileToken === token || fileToken.includes(token) || semanticToken(fileToken) === token)) score += 80;
-      if (projectTokens.some((token) => domainToken === token || compactDomain.includes(token) || semanticToken(domainToken) === token)) score += 70;
-      if (serviceTokens.some((token) => proxyText === token || proxyText.includes(token))) score += 50;
+      if (site.root && pathInside(site.root, project.path)) {
+        evidence.rootPath = true;
+        score += 100;
+      }
+      if (sitePort && ports.has(sitePort)) {
+        evidence.proxyPort = true;
+        score += 45;
+      }
+      const identityTokens = [...projectTokens, ...serviceTokens];
+      if (identityTokens.some((token) => fileToken === token || fileToken.includes(token) || token.includes(fileToken) || semanticToken(fileToken) === token)) {
+        evidence.fileToken = true;
+        score += 80;
+      }
+      if (identityTokens.some((token) => domainToken === token || compactDomain.includes(token) || token.includes(compactDomain) || semanticToken(domainToken) === token)) {
+        evidence.domainToken = true;
+        score += 70;
+      }
+      if (serviceTokens.some((token) => proxyText === token || proxyText.includes(token))) {
+        evidence.proxyService = true;
+        score += 50;
+      }
       if (score > 0 && hasRouteConfig) score += 15;
 
-      return { site, score };
+      const strongEvidence = evidence.rootPath || evidence.fileToken || evidence.domainToken || evidence.proxyService;
+      const confidence: RouteSiteMatch["confidence"] = evidence.rootPath || evidence.fileToken || evidence.domainToken
+        ? "high"
+        : strongEvidence && evidence.proxyPort
+        ? "medium"
+        : "low";
+
+      return { site, score, confidence, evidence };
     })
     .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.confidence !== "low")
     .sort((a, b) => b.score - a.score);
 
-  return scored[0]?.site;
+  return scored[0];
 }
 
 export function matchedServiceForSite(site: RouteSite, project: RouteProject, containers: RouteContainer[] = []): string {

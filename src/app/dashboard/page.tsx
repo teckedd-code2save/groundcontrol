@@ -302,9 +302,9 @@ export default function DashboardPage() {
                 />
               </div>
 
-              <div className="rounded-xl border border-border bg-card p-4">
+              <div className="rounded-xl bg-card p-4">
                 <div className="mb-3 flex items-center gap-2">
-                  <h2 className="text-xs font-mono uppercase tracking-wider text-muted">Ops Review</h2>
+                  <h2 className="text-xs font-mono text-muted">System review</h2>
                   <a href="/settings?tab=alerts" className="ml-auto text-[11px] font-mono text-accent hover:text-accent/80">
                     alert rules
                   </a>
@@ -349,9 +349,9 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-border bg-card p-4">
+            <div className="rounded-xl bg-card p-4">
               <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-xs font-mono uppercase tracking-wider text-muted">AI Ops Summary</h2>
+                <h2 className="text-xs font-mono text-muted">Assistant summary</h2>
                 <button
                   onClick={investigateWithAi}
                   disabled={synthesisLoading && !synthesis}
@@ -369,7 +369,7 @@ export default function DashboardPage() {
                   <p className="text-sm font-medium leading-relaxed">{synthesis.summary}</p>
                   {synthesis.actions.length > 0 && (
                     <div>
-                      <p className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Next actions</p>
+                      <p className="mb-1 text-[10px] font-mono text-muted">Next actions</p>
                       <ul className="space-y-1 text-xs text-muted">
                         {synthesis.actions.slice(0, 3).map((a, i) => (
                           <li key={i} className="line-clamp-2">• {a}</li>

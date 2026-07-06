@@ -271,7 +271,7 @@ export function DeploymentsPanel() {
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[11px] text-muted/70 leading-relaxed">
-          Recent deployments across all projects and targets.
+          Deployment release history and rollback output.
         </p>
         <button
           onClick={() => {

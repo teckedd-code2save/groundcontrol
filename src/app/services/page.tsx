@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { ContainersPanel } from "@/components/ContainersPanel";
 import { ProjectsPanel } from "@/components/ProjectsPanel";
-import { DeploymentsPanel } from "@/components/DeploymentsPanel";
 import { BootstrapPanel } from "@/components/BootstrapPanel";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
 
@@ -28,7 +27,7 @@ export default function ServicesPage() {
           <select
             value={activeTab}
             onChange={(event) => setActiveTab(event.target.value as TabKey)}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-foreground outline-none focus:border-accent"
+            className="w-full rounded-lg bg-background px-3 py-2 text-sm font-mono text-foreground outline-none focus:ring-1 focus:ring-accent"
           >
             {tabs.map((tab) => (
               <option key={tab.key} value={tab.key}>
@@ -44,10 +43,10 @@ export default function ServicesPage() {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key as TabKey)}
-                className={`shrink-0 px-4 py-2 text-xs font-mono border transition-colors whitespace-nowrap ${
+                className={`shrink-0 rounded-lg px-4 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
                   active
-                    ? "border-accent text-accent"
-                    : "border-transparent text-muted hover:text-foreground hover:border-border"
+                    ? "bg-accent/10 text-accent"
+                    : "text-muted hover:bg-card hover:text-foreground"
                 }`}
               >
                 {tab.label}
@@ -58,12 +57,7 @@ export default function ServicesPage() {
       </div>
 
       {activeTab === "containers" && <ContainersPanel />}
-      {activeTab === "deployments" && (
-        <div className="space-y-8">
-          <ProjectsPanel />
-          <DeploymentsPanel />
-        </div>
-      )}
+      {activeTab === "deployments" && <ProjectsPanel />}
       {activeTab === "bootstrap" && <BootstrapPanel />}
       {activeTab === "infrastructure" && <TerraformStacksTab />}
     </div>

@@ -58,6 +58,8 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [envPreviewOpen, setEnvPreviewOpen] = useState(false);
+  const [revealEnvPreview, setRevealEnvPreview] = useState(false);
 
   const providerOptions = useMemo(() => providers.filter((provider) => provider.provider !== "local"), [providers]);
   const selectedProvider = providers.find((provider) => provider.id === profile?.providerAccountId);
@@ -139,6 +141,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const hasSavedSource = profile.providerType === "local"
     ? Object.keys(profile.values || {}).length > 0 || profile.schema.length > 0
     : !!profile.providerAccountId;
+  const envPreview = buildEnvPreview(envKeys, localValues, profile, discoveredByKey, revealEnvPreview);
 
   return (
     <div className="space-y-3 rounded-lg bg-background/40 p-3">
@@ -189,10 +192,48 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               Redeploy <InfoMark />
             </button>
           )}
+          <button
+            onClick={() => setEnvPreviewOpen((open) => !open)}
+            disabled={loading}
+            className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
+            title="View and copy the environment file preview. Saved secrets stay masked until revealed."
+          >
+            .env <InfoMark />
+          </button>
         </div>
       </div>
 
       {message && <div className="rounded bg-card p-2 text-[10px] font-mono text-muted">{message}</div>}
+
+      {envPreviewOpen && (
+        <div className="space-y-2 rounded-lg bg-card p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-medium">.env preview</div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setRevealEnvPreview((value) => !value)}
+                className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent"
+              >
+                {revealEnvPreview ? "Mask" : "Reveal"}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await navigator.clipboard?.writeText(envPreview);
+                  setMessage("Environment preview copied");
+                }}
+                className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-[10px] font-mono text-foreground/80 whitespace-pre-wrap">
+            {envPreview || "No environment keys found yet."}
+          </pre>
+        </div>
+      )}
 
       <button
         type="button"
@@ -366,6 +407,40 @@ function parseEnvText(content: string): Record<string, string> {
     values[match[1]] = match[2].replace(/^["']|["']$/g, "");
   }
   return values;
+}
+
+function buildEnvPreview(
+  keys: string[],
+  localValues: Record<string, string>,
+  profile: EnvProfile,
+  discoveredByKey: Map<string, DiscoveredEnvEntry>,
+  reveal: boolean
+): string {
+  return keys
+    .map((key) => {
+      const entered = localValues[key];
+      const saved = profile.values?.[key];
+      const discovered = discoveredByKey.get(key);
+      const value = entered
+        ? entered
+        : reveal && saved?.hasValue
+        ? saved.masked
+        : reveal && discovered?.hasValue
+        ? discovered.masked
+        : saved?.hasValue
+        ? saved.masked
+        : discovered?.hasValue
+        ? discovered.masked
+        : "";
+      return `${key}=${quoteEnvValue(value)}`;
+    })
+    .join("\n");
+}
+
+function quoteEnvValue(value: string): string {
+  if (!value) return "";
+  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
+  return JSON.stringify(value);
 }
 
 function InfoMark() {

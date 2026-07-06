@@ -7,7 +7,7 @@ export default function ProjectsPage() {
     <div className="p-8 max-w-7xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight">Deployments</h1>
-        <p className="text-muted mt-1">Managed deployments, discovered apps, and invalid compose folders</p>
+        <p className="text-muted mt-1">Deployments, components, environment, routes, and release history</p>
       </div>
       <ProjectsPanel />
     </div>

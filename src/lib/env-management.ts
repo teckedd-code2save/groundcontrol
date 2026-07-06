@@ -212,12 +212,25 @@ export async function resolveDeploymentEnv(project: Project): Promise<ResolvedDe
       environment: profile.environment,
       secretPath: profile.secretPath,
     };
-    values = await listInfisicalSecrets(config, decryptInfisicalCredentials(provider.credentials));
+    values = normalizeProviderRuntimeEnv(
+      await listInfisicalSecrets(config, decryptInfisicalCredentials(provider.credentials)),
+      "infisical"
+    );
   } else {
     values = await getProfileValues(profile.id);
   }
   const validation = validateEnv(schema, values);
   return { profile, provider, values, validation };
+}
+
+export function normalizeProviderRuntimeEnv(values: Record<string, string>, providerType: string): Record<string, string> {
+  if (providerType !== "infisical") return values;
+  const next = { ...values };
+  for (const [key, value] of Object.entries(values)) {
+    const alias = key.match(/^sec[_.-]([A-Za-z_][A-Za-z0-9_]*)$/i)?.[1];
+    if (alias && next[alias] === undefined) next[alias] = value;
+  }
+  return next;
 }
 
 export function buildMaterializeEnvCommand(deployPath: string, envContent: string): string {

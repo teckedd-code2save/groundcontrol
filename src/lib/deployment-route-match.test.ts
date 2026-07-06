@@ -139,6 +139,22 @@ describe("deployment route matching", () => {
     expect(site).toBeUndefined();
   });
 
+  it("does not assign a route from shared host port alone", () => {
+    const site = findProjectSite(
+      {
+        slug: "agent-flow/HealthWallet-TON-MiniApp",
+        dirName: "HealthWallet-TON-MiniApp",
+        path: "/opt/agent-flow/HealthWallet-TON-MiniApp",
+        services: [
+          { name: "api", ports: ["127.0.0.1:8000:5000"] },
+        ],
+      },
+      caddySites
+    );
+
+    expect(site).toBeUndefined();
+  });
+
   it("does not assign auridux to agent-ops deploy when no Caddy file matches", () => {
     const site = findProjectSite(
       {

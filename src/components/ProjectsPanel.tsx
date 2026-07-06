@@ -7,7 +7,7 @@ import { ActionConfirm } from "@/components/ActionConfirm";
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { resolveLifecycleScope, type LifecycleAction } from "@/lib/deployment-actions";
 import {
-  findProjectSite,
+  findProjectSiteMatch,
   matchedServiceForSite,
   pathInside,
   tokensMatch,
@@ -149,7 +149,12 @@ interface ConfirmComposeState {
 interface ReplicateState {
   project: ScannedProject;
   newSlug: string;
-  envStrategy: "copy" | "blank";
+  mode: "scale-component" | "replicate-resource" | "clone-deployment";
+  serviceName: string;
+  resourceType: "redis" | "database" | "";
+  replicas: number;
+  envStrategy: "copy" | "blank" | "generate" | "link";
+  dataStrategy: "empty" | "share" | "clone" | "external";
 }
 
 interface DeleteState {
@@ -203,6 +208,43 @@ function statusColor(status: string): string {
   }
 }
 
+function publicRouteHref(domainOrUrl: string | null | undefined): string {
+  const value = String(domainOrUrl || "").trim();
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value.replace(/^http:\/\//i, "https://");
+  return `https://${value}`;
+}
+
+function routeLabel(value: string | null | undefined): string {
+  return String(value || "").replace(/^https?:\/\//i, "").replace(/\/$/, "");
+}
+
+function deploymentVersion(deployment?: Deployment): string {
+  if (!deployment) return "No release yet";
+  if (deployment.commitSha) return deployment.commitSha.slice(0, 8);
+  if (deployment.imageTag) return deployment.imageTag.split(":").pop() || deployment.imageTag;
+  return `deploy-${deployment.id}`;
+}
+
+function formatShortDate(value?: string): string {
+  if (!value) return "Never deployed";
+  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function projectRuntimeGroup(running: number, stopped: number, invalid: boolean): "Invalid" | "Running" | "Partial" | "Stopped" {
+  if (invalid) return "Invalid";
+  if (running > 0 && stopped > 0) return "Partial";
+  if (running > 0) return "Running";
+  return "Stopped";
+}
+
+function replicateKind(serviceName: string): "redis" | "database" | "" {
+  const text = serviceName.toLowerCase();
+  if (text.includes("redis") || text.includes("cache")) return "redis";
+  if (/(postgres|postgis|mysql|mariadb|mongo|database|db)/.test(text)) return "database";
+  return "";
+}
+
 export function ProjectsPanel() {
   const [data, setData] = useState<ProjectData | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
@@ -222,6 +264,7 @@ export function ProjectsPanel() {
   const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
   const [redeployAdvancedOpen, setRedeployAdvancedOpen] = useState(false);
+  const [rollingBack, setRollingBack] = useState<number | null>(null);
 
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -302,6 +345,24 @@ export function ProjectsPanel() {
       setDeployments(Array.isArray(data) ? data : []);
     } catch {
       // ignore refresh errors
+    }
+  }
+
+  async function rollbackDeployment(deploymentId: number) {
+    setRollingBack(deploymentId);
+    try {
+      const res = await fetch(`/api/deployments/${deploymentId}/rollback`, { method: "POST" });
+      const { ok, data } = await safeJson(res);
+      if (!ok || data.error) {
+        setError(`Rollback failed: ${data.error || "Unknown error"}`);
+      } else {
+        setError("");
+        await refreshDeployments();
+      }
+    } catch (err) {
+      setError(`Rollback failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRollingBack(null);
     }
   }
 
@@ -463,22 +524,38 @@ export function ProjectsPanel() {
   }
 
   async function replicateDeployment(project: ScannedProject) {
-    setReplicateState({ project, newSlug: `${project.slug}-copy`, envStrategy: "blank" });
+    const firstService = project.services[0]?.name || "";
+    const resourceType = replicateKind(firstService);
+    setReplicateState({
+      project,
+      newSlug: `${project.slug}-copy`,
+      mode: firstService ? (resourceType ? "replicate-resource" : "scale-component") : "clone-deployment",
+      serviceName: firstService,
+      resourceType,
+      replicas: 2,
+      envStrategy: "blank",
+      dataStrategy: resourceType ? "empty" : "share",
+    });
   }
 
   async function performReplicate() {
     if (!replicateState?.newSlug.trim()) return;
-    const { project, newSlug, envStrategy } = replicateState;
+    const { project, newSlug, envStrategy, mode, serviceName, resourceType, replicas, dataStrategy } = replicateState;
     setReplicateState(null);
-    setComposeOutput({ slug: project.slug, output: "Creating isolated deployment copy..." });
+    setComposeOutput({ slug: project.slug, output: mode === "clone-deployment" ? "Planning isolated deployment copy..." : "Planning replication..." });
     try {
       const res = await fetch("/api/deployments/replicate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode,
           sourcePath: project.path,
           sourceSlug: project.slug,
           newSlug,
+          serviceName,
+          resourceType,
+          replicas,
+          dataStrategy,
           envStrategy,
         }),
       });
@@ -646,6 +723,22 @@ export function ProjectsPanel() {
     return result;
   }, [projects, containers, images]);
 
+  const groupedProjects = useMemo(() => {
+    const groups: Record<"Running" | "Partial" | "Stopped" | "Invalid", ScannedProject[]> = {
+      Running: [],
+      Partial: [],
+      Stopped: [],
+      Invalid: [],
+    };
+    for (const project of projects) {
+      const meta = projectMeta.get(project.slug) || { containers: [], images: [] };
+      const running = meta.containers.filter((c) => c.state === "running").length;
+      const stopped = meta.containers.filter((c) => c.state !== "running").length;
+      groups[projectRuntimeGroup(running, stopped, project.valid === false || !!project.parseError)].push(project);
+    }
+    return groups;
+  }, [projects, projectMeta]);
+
   if (loading) {
     return <LoaderOverlay3D open={loading} variant="project" title="Loading projects..." />;
   }
@@ -674,14 +767,29 @@ export function ProjectsPanel() {
           No deployments found yet.
         </div>
       ) : (
-        <div className="space-y-4">
-              {projects.map((project) => {
+        <div className="space-y-6">
+          {(["Running", "Partial", "Stopped", "Invalid"] as const).map((group) => (
+            groupedProjects[group].length > 0 && (
+              <section key={group} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-medium">{group}</h2>
+                  <span className="rounded bg-card px-2 py-1 text-[10px] font-mono text-muted">
+                    {groupedProjects[group].length}
+                  </span>
+                </div>
+                {groupedProjects[group].map((project) => {
                 const meta = projectMeta.get(project.slug) || { containers: [], images: [] };
                 const running = meta.containers.filter((c) => c.state === "running").length;
                 const stopped = meta.containers.filter((c) => c.state !== "running").length;
-                const site = findProjectSite(project, data?.caddySites, meta.containers);
+                const siteMatch = findProjectSiteMatch(project, data?.caddySites, meta.containers);
+                const site = siteMatch?.site;
                 const dbProject = getDbProject(project.slug);
                 const latest = getLatestDeployment(dbProject?.id);
+                const deploymentHistory = dbProject
+                  ? deployments
+                      .filter((d) => d.projectId === dbProject.id)
+                      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                  : [];
                 const opts = getDeployOptions(project.slug);
                 const selectedTarget = targets.find((t) => t.id === opts.targetId);
                 const isK3s = selectedTarget?.type === "k3s";
@@ -689,10 +797,13 @@ export function ProjectsPanel() {
                 const isTerraform = selectedTarget?.type === "terraform";
                 const selectedTargetName = selectedTarget?.name || "default";
                 const isInvalid = project.valid === false || !!project.parseError;
+                const route = site?.domain || project.domain || latest?.publicUrl || latest?.previewUrl || "";
+                const routeHref = publicRouteHref(route);
 
                 return (
                   <div
                     key={project.slug}
+                    onClick={() => openDeploymentDetail(project, "overview")}
                     className="bg-card rounded-xl p-5 transition-colors hover:bg-card/80"
                   >
                     <div className="flex flex-col gap-4 mb-4 md:flex-row md:items-start md:justify-between">
@@ -718,13 +829,25 @@ export function ProjectsPanel() {
                             </span>
                           )}
                         </div>
-                        {site ? (
-                          <p className="text-xs text-accent font-mono mt-1">{site.domain}</p>
-                        ) : project.domain ? (
-                          <p className="text-xs text-accent font-mono mt-1">{project.domain}</p>
+                        {route ? (
+                          <a
+                            href={routeHref}
+                            onClick={(event) => event.stopPropagation()}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 inline-flex items-center gap-1 text-xs font-mono text-accent hover:text-accent/80"
+                          >
+                            <LinkIcon className="h-3 w-3" />
+                            {routeLabel(route)}
+                          </a>
                         ) : (
                           <p className="text-xs text-muted font-mono mt-1">No route detected yet</p>
                         )}
+                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono text-muted">
+                          <span>{project.services.length} component{project.services.length === 1 ? "" : "s"}</span>
+                          <span>last deploy: {formatShortDate(latest?.createdAt)}</span>
+                          <span>version: {deploymentVersion(latest)}</span>
+                        </div>
                         {latest && (latest.publicUrl || latest.previewUrl) && (
                           <div className="flex flex-wrap gap-2 mt-2">
                             {latest.publicUrl && (
@@ -762,31 +885,7 @@ export function ProjectsPanel() {
                           </div>
                         )}
                       </div>
-                      <div className="flex shrink-0 items-start gap-2 self-start">
-                        {!isInvalid && (
-                          running > 0 ? (
-                            <button
-                              onClick={() => {
-                                setRedeployAdvancedOpen(false);
-                                setRedeploySlug(project.slug);
-                              }}
-                              disabled={deploying === project.slug}
-                              className="rounded-lg bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-                              title="Run the full deployment pipeline"
-                            >
-                              Redeploy
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name })}
-                              disabled={!!composeAction}
-                              className="rounded-lg bg-success/10 px-3 py-2 text-xs font-mono text-success transition-colors hover:bg-success/20 disabled:opacity-50"
-                              title="Start the deployment or selected services"
-                            >
-                              Start
-                            </button>
-                          )
-                        )}
+                      <div className="flex shrink-0 items-start gap-2 self-start" onClick={(event) => event.stopPropagation()}>
                         <div className="relative">
                           {openActionMenu === project.slug && (
                             <button
@@ -804,27 +903,35 @@ export function ProjectsPanel() {
                             ⋮
                           </button>
                             {openActionMenu === project.slug && <div className="absolute right-0 top-11 z-30 w-52 overflow-hidden rounded-lg bg-card shadow-xl shadow-black/20">
-                            <button
-                              onClick={() => {
-                                setOpenActionMenu(null);
-                                openDeploymentDetail(project, "overview");
-                              }}
-                              className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
-                              title="Open deployment details"
-                            >
-                              Details
-                            </button>
                             {!isInvalid && (
                               <>
+                                <button
+                                  onClick={() => {
+                                    setOpenActionMenu(null);
+                                    if (running > 0) {
+                                      setRedeployAdvancedOpen(false);
+                                      setRedeploySlug(project.slug);
+                                    } else {
+                                      setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name });
+                                    }
+                                  }}
+                                  disabled={!!composeAction || deploying === project.slug}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-mono text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
+                                  title={running > 0 ? "Run the full deployment pipeline" : "Start the deployment or selected services"}
+                                >
+                                  {running > 0 ? <RefreshIcon className="h-3.5 w-3.5" /> : <PlayIcon className="h-3.5 w-3.5" />}
+                                  {running > 0 ? "Redeploy" : "Start"}
+                                </button>
                                 <button
                                   onClick={() => {
                                     setOpenActionMenu(null);
                                     setConfirmCompose({ slug: project.slug, type: "stop", projectName: project.name });
                                   }}
                                   disabled={!!composeAction}
-                                  className="block w-full px-3 py-2 text-left text-xs font-mono text-warning transition-colors hover:bg-warning/10 disabled:opacity-50"
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-mono text-warning transition-colors hover:bg-warning/10 disabled:opacity-50"
                                   title="Stop the deployment or selected services"
                                 >
+                                  <StopIcon className="h-3.5 w-3.5" />
                                   Stop
                                 </button>
                                 <button
@@ -833,9 +940,10 @@ export function ProjectsPanel() {
                                     setConfirmCompose({ slug: project.slug, type: "restart", projectName: project.name });
                                   }}
                                   disabled={!!composeAction}
-                                  className="block w-full px-3 py-2 text-left text-xs font-mono text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-mono text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
                                   title="Restart the deployment or selected services"
                                 >
+                                  <RefreshIcon className="h-3.5 w-3.5" />
                                   Restart
                                 </button>
                               </>
@@ -845,9 +953,10 @@ export function ProjectsPanel() {
                                 setOpenActionMenu(null);
                                 await openDeploymentDetail(project, "environment");
                               }}
-                              className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent"
                               title="Manage deployment environment"
                             >
+                              <EnvIcon className="h-3.5 w-3.5" />
                               Environment
                             </button>
                             <button
@@ -856,9 +965,10 @@ export function ProjectsPanel() {
                                 replicateDeployment(project);
                               }}
                               disabled={!!composeAction}
-                              className="block w-full px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent disabled:opacity-50"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-background hover:text-accent disabled:opacity-50"
                               title="Replicate deployment"
                             >
+                              <CopyIcon className="h-3.5 w-3.5" />
                               Replicate
                             </button>
                             <button
@@ -867,9 +977,10 @@ export function ProjectsPanel() {
                                 deleteManagedDeployment(project);
                               }}
                               disabled={!!composeAction}
-                              className="block w-full px-3 py-2 text-left text-xs font-mono text-error transition-colors hover:bg-error/10 disabled:opacity-40"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-mono text-error transition-colors hover:bg-error/10 disabled:opacity-40"
                               title="Delete deployment"
                             >
+                              <TrashIcon className="h-3.5 w-3.5" />
                               Delete
                             </button>
                           </div>}
@@ -877,26 +988,12 @@ export function ProjectsPanel() {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
+                    <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted" onClick={(event) => event.stopPropagation()}>
                       <button
                         onClick={() => openDeploymentDetail(project, "components")}
                         className="rounded bg-background/50 px-2 py-1 hover:bg-accent/10 hover:text-accent"
                       >
                         {project.services.length} component{project.services.length === 1 ? "" : "s"}
-                      </button>
-                      <button
-                        onClick={async () => {
-                          await openDeploymentDetail(project, "environment");
-                        }}
-                        className="rounded bg-background/50 px-2 py-1 hover:bg-accent/10 hover:text-accent"
-                      >
-                        Env {latest?.envStatus || "unknown"}
-                      </button>
-                      <button
-                        onClick={() => openDeploymentDetail(project, "overview")}
-                        className="rounded bg-background/50 px-2 py-1 hover:bg-accent/10 hover:text-accent"
-                      >
-                        Details
                       </button>
                     </div>
 
@@ -945,10 +1042,10 @@ export function ProjectsPanel() {
                               <div className="grid gap-3 md:grid-cols-3">
                                 <InfoTile label="Status" value={isInvalid ? "Invalid compose" : running > 0 ? "Running" : "Stopped"} />
                                 <InfoTile label="Route" value={site?.domain || project.domain || "No route detected yet"} />
-                                <InfoTile label="Environment" value={latest?.envStatus || "unknown"} />
+                                <InfoTile label="Version" value={deploymentVersion(latest)} />
                                 <InfoTile label="Components" value={String(project.services.length)} />
                                 <InfoTile label="Containers" value={`${running} running, ${stopped} stopped`} />
-                                <InfoTile label="Last deploy" value={latest?.status || "No deployment record"} />
+                                <InfoTile label="Last deploy" value={formatShortDate(latest?.createdAt)} />
                               </div>
                             )}
 
@@ -982,7 +1079,9 @@ export function ProjectsPanel() {
                                           <ContainerIcon className="h-4 w-4 text-muted" type={getContainerType(svc.name, svc.image || "")} />
                                           <span className="truncate text-sm font-mono">{svc.name}</span>
                                         </span>
-                                        <span className="text-[10px] font-mono text-muted">Details</span>
+                                        <span className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-accent/10 hover:text-accent" title="Open component">
+                                          <ChevronIcon className="h-4 w-4" />
+                                        </span>
                                       </button>
                                     );
                                   })
@@ -1006,7 +1105,9 @@ export function ProjectsPanel() {
                                             {(svc.environment?.length || 0) + (svc.envFiles?.length || 0)} env source{((svc.environment?.length || 0) + (svc.envFiles?.length || 0)) === 1 ? "" : "s"}
                                           </span>
                                         </span>
-                                        <span className="text-[10px] font-mono text-muted">Edit env</span>
+                                        <span className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-accent/10 hover:text-accent" title="Environment">
+                                          <EnvIcon className="h-4 w-4" />
+                                        </span>
                                       </button>
                                     ))}
                                   </div>
@@ -1041,7 +1142,7 @@ export function ProjectsPanel() {
                                 <InfoTile label="Domain" value={site?.domain || project.domain || "No route detected yet"} />
                                 <InfoTile label="Proxy target" value={site?.proxy || "No proxy target detected"} />
                                 <InfoTile label="Matched service" value={site ? matchedServiceForSite(site, project, meta.containers) : "No route detected yet"} />
-                                <InfoTile label="Config file" value={site?.file || "No proxy file detected"} />
+                                <InfoTile label="Route evidence" value={siteMatch ? `${siteMatch.confidence} confidence · ${Object.entries(siteMatch.evidence).filter(([, value]) => value).map(([key]) => key).join(", ")}` : "No route evidence"} />
                                 <InfoTile label="DNS zone" value={opts.zoneId ? zones.find((z) => z.id === opts.zoneId)?.name || opts.zoneId : "No zone selected"} />
                                 <InfoTile label="Public route" value={latest?.publicUrl || latest?.previewUrl || "No public URL"} />
                               </div>
@@ -1058,15 +1159,56 @@ export function ProjectsPanel() {
 
                             {detailState.tab === "activity" && (
                               <div className="space-y-3">
-                                <InfoTile label="Latest status" value={latest?.status || "No deployment record"} />
+                                <InfoTile label="Latest version" value={deploymentVersion(latest)} />
+                                <InfoTile label="Last deploy" value={formatShortDate(latest?.createdAt)} />
+                                {deploymentHistory.length > 0 && (
+                                  <div className="space-y-2">
+                                    {deploymentHistory.map((deployment) => (
+                                      <div key={deployment.id} className="rounded-lg bg-card p-3">
+                                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                          <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className={`rounded px-2 py-1 text-[10px] font-mono ${statusColor(deployment.status)}`}>
+                                                {deployment.status}
+                                              </span>
+                                              <span className="text-xs font-mono">{deploymentVersion(deployment)}</span>
+                                              <span className="text-[10px] font-mono text-muted">{formatShortDate(deployment.createdAt)}</span>
+                                            </div>
+                                            {(deployment.publicUrl || deployment.previewUrl) && (
+                                              <a
+                                                href={publicRouteHref(deployment.publicUrl || deployment.previewUrl)}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="mt-2 inline-flex items-center gap-1 text-[10px] font-mono text-accent hover:text-accent/80"
+                                              >
+                                                <LinkIcon className="h-3 w-3" />
+                                                {routeLabel(deployment.publicUrl || deployment.previewUrl)}
+                                              </a>
+                                            )}
+                                          </div>
+                                          <button
+                                            onClick={() => rollbackDeployment(deployment.id)}
+                                            disabled={rollingBack === deployment.id || deployment.id === latest?.id}
+                                            className="rounded bg-warning/10 px-3 py-2 text-xs font-mono text-warning hover:bg-warning/20 disabled:opacity-40"
+                                          >
+                                            {rollingBack === deployment.id ? "Rolling back" : "Rollback"}
+                                          </button>
+                                        </div>
+                                        {(deployment.output || deployment.error) && (
+                                          <details className="mt-2">
+                                            <summary className="cursor-pointer text-[10px] font-mono text-muted">Output</summary>
+                                            <pre className="mt-2 max-h-56 overflow-auto rounded bg-background p-3 text-[10px] whitespace-pre-wrap">
+                                              {deployment.error || deployment.output}
+                                            </pre>
+                                          </details>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                                 {composeOutput?.slug === project.slug && (
                                   <pre className="max-h-72 overflow-auto rounded-lg bg-card p-3 text-xs whitespace-pre-wrap">
                                     {composeOutput.error || composeOutput.output || "No output"}
-                                  </pre>
-                                )}
-                                {latest?.output && (
-                                  <pre className="max-h-72 overflow-auto rounded-lg bg-card p-3 text-xs whitespace-pre-wrap">
-                                    {latest.output}
                                   </pre>
                                 )}
                               </div>
@@ -1127,10 +1269,6 @@ export function ProjectsPanel() {
                               )}
                               {componentState.tab === "environment" && (
                                 <div className="space-y-3">
-                                  <div className="grid gap-3 md:grid-cols-2">
-                                    <InfoTile label="Service env keys" value={svc.environment?.join(", ") || "No service-specific env declared"} />
-                                    <InfoTile label="Env files" value={svc.envFiles?.join(", ") || "No env file declared"} />
-                                  </div>
                                   {dbProject && (
                                     <DeploymentEnvPanel
                                       projectId={dbProject.id}
@@ -1315,18 +1453,93 @@ export function ProjectsPanel() {
                     )}
                   </div>
                 );
-              })}
+                })}
+              </section>
+            )
+          ))}
         </div>
       )}
 
       {replicateState && (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setReplicateState(null)}>
-          <div className="w-full max-w-lg rounded-xl bg-card p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="w-full max-w-2xl rounded-xl bg-card p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="mb-4">
               <h3 className="text-lg font-semibold">Replicate deployment</h3>
               <p className="mt-1 text-xs font-mono text-muted">{replicateState.project.name}</p>
             </div>
             <div className="space-y-3">
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-mono text-muted">Mode</span>
+                <select
+                  value={replicateState.mode}
+                  onChange={(event) => {
+                    const mode = event.target.value as ReplicateState["mode"];
+                    setReplicateState({
+                      ...replicateState,
+                      mode,
+                      dataStrategy: mode === "replicate-resource" ? replicateState.dataStrategy : "share",
+                    });
+                  }}
+                  className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+                >
+                  <option value="scale-component">Scale a stateless component</option>
+                  <option value="replicate-resource">Replicate Redis or database</option>
+                  <option value="clone-deployment">Create isolated deployment clone</option>
+                </select>
+              </label>
+              {replicateState.mode !== "clone-deployment" && (
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-mono text-muted">Component or resource</span>
+                  <select
+                    value={replicateState.serviceName}
+                    onChange={(event) => {
+                      const serviceName = event.target.value;
+                      setReplicateState({ ...replicateState, serviceName, resourceType: replicateKind(serviceName) });
+                    }}
+                    className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+                  >
+                    {replicateState.project.services.map((service) => (
+                      <option key={service.name} value={service.name}>{service.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {replicateState.mode === "scale-component" && (
+                <NumberInput
+                  label="Replicas"
+                  value={replicateState.replicas}
+                  onChange={(replicas) => setReplicateState({ ...replicateState, replicas: Math.max(1, replicas) })}
+                />
+              )}
+              {replicateState.mode === "replicate-resource" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1 block text-[10px] font-mono text-muted">Resource type</span>
+                    <select
+                      value={replicateState.resourceType}
+                      onChange={(event) => setReplicateState({ ...replicateState, resourceType: event.target.value as "redis" | "database" | "" })}
+                      className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+                    >
+                      <option value="">Auto-detect</option>
+                      <option value="redis">Redis</option>
+                      <option value="database">Database</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[10px] font-mono text-muted">Data strategy</span>
+                    <select
+                      value={replicateState.dataStrategy}
+                      onChange={(event) => setReplicateState({ ...replicateState, dataStrategy: event.target.value as ReplicateState["dataStrategy"] })}
+                      className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+                    >
+                      <option value="empty">Empty new resource</option>
+                      <option value="share">Share current resource</option>
+                      <option value="clone">Clone from backup when available</option>
+                      <option value="external">Use external resource</option>
+                    </select>
+                  </label>
+                </div>
+              )}
               <TextInput
                 label="New deployment slug"
                 value={replicateState.newSlug}
@@ -1336,15 +1549,21 @@ export function ProjectsPanel() {
                 <span className="mb-1 block text-[10px] font-mono text-muted">Environment</span>
                 <select
                   value={replicateState.envStrategy}
-                  onChange={(event) => setReplicateState({ ...replicateState, envStrategy: event.target.value as "copy" | "blank" })}
+                  onChange={(event) => setReplicateState({ ...replicateState, envStrategy: event.target.value as ReplicateState["envStrategy"] })}
                   className="w-full rounded-lg bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                 >
-                  <option value="blank">Create blank env</option>
-                  <option value="copy">Copy current env</option>
+                  <option value="blank">Copy keys only</option>
+                  <option value="copy">Copy current values</option>
+                  <option value="generate">Generate supported secrets</option>
+                  <option value="link">Link external provider path</option>
                 </select>
               </label>
               <div className="rounded-lg bg-background/50 p-3 text-xs text-muted">
-                Replication creates an isolated deployment copy. Domains and host ports are not reused automatically.
+                {replicateState.mode === "clone-deployment"
+                  ? "Clone preflight validates compose before creating a folder. Domains, host ports, names, and env profiles are isolated."
+                  : replicateState.mode === "replicate-resource"
+                  ? "Resource replication targets the selected Redis or database component and rewires dependencies only after validation."
+                  : "Scale replication adjusts the selected component without creating a new deployment folder."}
               </div>
             </div>
             <div className="mt-5 flex justify-end gap-2">
@@ -1451,6 +1670,70 @@ function CloseIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+function LinkIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5l-3 3m-2.5 4a4 4 0 01-5.66-5.66l3-3a4 4 0 015.66 0m4-2.34l3-3a4 4 0 015.66 5.66l-3 3a4 4 0 01-5.66 0" />
+    </svg>
+  );
+}
+
+function PlayIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M8 5.5v13l10-6.5-10-6.5z" />
+    </svg>
+  );
+}
+
+function StopIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M7 7h10v10H7z" />
+    </svg>
+  );
+}
+
+function RefreshIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20 11a8 8 0 10-2.34 5.66M20 11V5m0 6h-6" />
+    </svg>
+  );
+}
+
+function EnvIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h3" />
+    </svg>
+  );
+}
+
+function CopyIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8 8h10v12H8zM6 16H4V4h12v2" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
     </svg>
   );
 }
