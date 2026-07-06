@@ -307,7 +307,7 @@ export function BootstrapPanel() {
     return (
       <div
         key={tool.key}
-        className={`border border-border rounded-xl p-4 bg-background/30 ${hostDisabled ? "opacity-70" : ""}`}
+        className={`rounded-xl bg-background/30 p-4 ${hostDisabled ? "opacity-70" : ""}`}
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -336,10 +336,13 @@ export function BootstrapPanel() {
               <div className="text-xs font-mono text-success mb-1">{job.action} finished</div>
             )}
             {(job.output || job.error) && (
-              <pre className="max-h-40 overflow-auto rounded-lg bg-background border border-border p-2 text-[10px] font-mono whitespace-pre-wrap">
-                {job.output}
-                {job.error}
-              </pre>
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[10px] font-mono text-muted">Output</summary>
+                <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-background p-2 text-[10px] font-mono whitespace-pre-wrap">
+                  {job.output}
+                  {job.error}
+                </pre>
+              </details>
             )}
           </div>
         )}
@@ -350,7 +353,7 @@ export function BootstrapPanel() {
   function renderK3sCard() {
     const hostDisabled = hostPackagesBlocked;
     return (
-      <div className={`border border-border rounded-xl p-4 bg-background/30 ${hostDisabled ? "opacity-70" : ""}`}>
+      <div className={`rounded-xl bg-background/30 p-4 ${hostDisabled ? "opacity-70" : ""}`}>
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -370,7 +373,7 @@ export function BootstrapPanel() {
             const job = jobs[tool.key];
 
             return (
-              <div key={tool.key} className="border border-border rounded-lg p-3 bg-background/50">
+              <div key={tool.key} className="rounded-lg bg-background/50 p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium">{tool.label}</span>
                   {renderStatusBadge(tool.key)}
@@ -421,10 +424,13 @@ export function BootstrapPanel() {
                 <div className="text-xs font-mono text-success mb-1">{tool.label} {job.action} finished</div>
               )}
               {(job.output || job.error) && (
-                <pre className="max-h-40 overflow-auto rounded-lg bg-background border border-border p-2 text-[10px] font-mono whitespace-pre-wrap">
-                  {job.output}
-                  {job.error}
-                </pre>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[10px] font-mono text-muted">Output</summary>
+                  <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-background p-2 text-[10px] font-mono whitespace-pre-wrap">
+                    {job.output}
+                    {job.error}
+                  </pre>
+                </details>
               )}
             </div>
           );
@@ -467,18 +473,18 @@ export function BootstrapPanel() {
         </div>
       )}
 
-      <div className="bg-card border border-border rounded-xl p-6">
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">Component Lifecycle</h2>
-        <p className="text-[11px] text-muted/70 mb-6 leading-relaxed">
-          Install, uninstall, start, stop, restart, and reload infrastructure on the active VPS. Host packages target
-          the host OS. Container images are pulled to the host Docker daemon and work even when GroundControl itself
-          runs inside Docker.
-        </p>
+      <div className="rounded-xl bg-card p-4 md:p-5">
+        <div className="mb-5 flex flex-col gap-1">
+          <h2 className="text-sm font-medium">Component lifecycle</h2>
+          <p className="max-w-3xl text-[11px] text-muted/70 leading-relaxed">
+            Install, start, stop, restart, and reload host tools or container images on the active VPS.
+          </p>
+        </div>
 
         {statusLoading ? (
           <div className="space-y-3">
             {[...Array(4)].map((_, i) => (
-              <div key={i} className="bg-card border border-border rounded-xl p-4 h-20 animate-pulse" />
+              <div key={i} className="bg-card rounded-xl p-4 h-20 animate-pulse" />
             ))}
           </div>
         ) : (
@@ -499,17 +505,17 @@ export function BootstrapPanel() {
 
             <div className="space-y-6">
               <section>
-                <h3 className="text-xs font-mono uppercase tracking-wider text-muted mb-3">Host Packages</h3>
+                <h3 className="text-xs font-mono text-muted mb-3">Host packages</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{TOOLS.filter((t) => t.kind === "host").map(renderTool)}</div>
               </section>
 
               <section>
-                <h3 className="text-xs font-mono uppercase tracking-wider text-muted mb-3">Container Images</h3>
+                <h3 className="text-xs font-mono text-muted mb-3">Container images</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{TOOLS.filter((t) => t.kind === "container").map(renderTool)}</div>
               </section>
 
               <section>
-                <h3 className="text-xs font-mono uppercase tracking-wider text-muted mb-3">Kubernetes</h3>
+                <h3 className="text-xs font-mono text-muted mb-3">Kubernetes</h3>
                 <div className="grid grid-cols-1 gap-4">{renderK3sCard()}</div>
               </section>
             </div>
