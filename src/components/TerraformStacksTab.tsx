@@ -318,11 +318,11 @@ export default function TerraformStacksTab() {
         </div>
       )}
 
-      <div className="bg-card border border-border rounded-xl p-6">
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted mb-2">
+      <div className="rounded-xl bg-card p-4 md:p-5">
+        <h2 className="text-sm font-medium mb-1">
           {editingId ? "Edit Terraform Stack" : "Add Terraform Stack"}
         </h2>
-        <p className="text-[11px] text-muted/70 mb-6 leading-relaxed">
+        <p className="text-[11px] text-muted/70 mb-5 leading-relaxed">
           Terraform stacks describe cloud infrastructure. Variables are encrypted at rest. Plans and applies run on the
           active VPS (local backend) or against the configured remote backend.
         </p>
@@ -336,7 +336,7 @@ export default function TerraformStacksTab() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="production-vps"
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
+                className="w-full rounded-lg bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
             <div>
@@ -344,7 +344,7 @@ export default function TerraformStacksTab() {
               <select
                 value={form.provider}
                 onChange={(e) => setForm({ ...form, provider: e.target.value as TerraformProvider })}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
+                className="w-full rounded-lg bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent"
               >
                 {PROVIDERS.map((p) => (
                   <option key={p.value} value={p.value}>
@@ -360,7 +360,7 @@ export default function TerraformStacksTab() {
                 value={form.workspace}
                 onChange={(e) => setForm({ ...form, workspace: e.target.value })}
                 placeholder="default"
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
+                className="w-full rounded-lg bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
             <div>
@@ -368,7 +368,7 @@ export default function TerraformStacksTab() {
               <select
                 value={form.stateBackend}
                 onChange={(e) => setForm({ ...form, stateBackend: e.target.value as StateBackend })}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent transition-colors"
+                className="w-full rounded-lg bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent"
               >
                 {BACKENDS.map((b) => (
                   <option key={b.value} value={b.value}>
@@ -385,7 +385,7 @@ export default function TerraformStacksTab() {
               value={form.varsJson}
               onChange={(e) => setForm({ ...form, varsJson: e.target.value })}
               rows={5}
-              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent transition-colors"
+              className="w-full rounded-lg bg-background px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-accent"
             />
             {!isValidJson(form.varsJson) && <p className="text-[10px] text-error mt-1.5">Invalid JSON</p>}
           </div>
@@ -396,7 +396,7 @@ export default function TerraformStacksTab() {
               value={form.hcl}
               onChange={(e) => setForm({ ...form, hcl: e.target.value })}
               rows={14}
-              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent transition-colors"
+              className="w-full rounded-lg bg-background px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-accent"
             />
           </div>
 
@@ -412,7 +412,7 @@ export default function TerraformStacksTab() {
               <button
                 type="button"
                 onClick={resetForm}
-                className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
+                className="px-4 py-2 text-xs font-mono rounded-lg bg-background text-muted hover:bg-accent/10 hover:text-accent transition-colors"
               >
                 Cancel
               </button>
@@ -434,13 +434,13 @@ export default function TerraformStacksTab() {
       </div>
 
       {stacks.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-6 space-y-6">
-          <h2 className="text-sm font-mono uppercase tracking-wider text-muted">Saved Stacks</h2>
+        <div className="rounded-xl bg-card p-4 md:p-5 space-y-5">
+          <h2 className="text-sm font-medium">Saved stacks</h2>
           <div className="space-y-4">
             {stacks.map((stack) => (
               <div
                 key={stack.id}
-                className="bg-background/50 border border-border rounded-xl p-4 space-y-4"
+                className="bg-background/50 rounded-xl p-4 space-y-4"
               >
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="min-w-0">
@@ -464,14 +464,14 @@ export default function TerraformStacksTab() {
                     <button
                       onClick={() => runAction(stack, "generate")}
                       disabled={actionLoading}
-                      className="px-3 py-1.5 text-[10px] font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
+                      className="px-3 py-1.5 text-[10px] font-mono rounded-lg bg-card text-muted hover:bg-accent/10 hover:text-accent transition-colors disabled:opacity-50"
                     >
                       Generate HCL
                     </button>
                     <button
                       onClick={() => runAction(stack, "plan")}
                       disabled={actionLoading}
-                      className="px-3 py-1.5 text-[10px] font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
+                      className="px-3 py-1.5 text-[10px] font-mono rounded-lg bg-card text-muted hover:bg-accent/10 hover:text-accent transition-colors disabled:opacity-50"
                     >
                       Plan
                     </button>
@@ -492,13 +492,13 @@ export default function TerraformStacksTab() {
                     <button
                       onClick={() => runAction(stack, "outputs")}
                       disabled={actionLoading}
-                      className="px-3 py-1.5 text-[10px] font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
+                      className="px-3 py-1.5 text-[10px] font-mono rounded-lg bg-card text-muted hover:bg-accent/10 hover:text-accent transition-colors disabled:opacity-50"
                     >
                       Outputs
                     </button>
                     <button
                       onClick={() => startEdit(stack)}
-                      className="px-3 py-1.5 text-[10px] font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
+                      className="px-3 py-1.5 text-[10px] font-mono rounded-lg bg-card text-muted hover:bg-accent/10 hover:text-accent transition-colors"
                     >
                       Edit
                     </button>
@@ -512,31 +512,31 @@ export default function TerraformStacksTab() {
                 </div>
 
                 {planOutputs[stack.id] && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted">Last Plan</div>
-                    <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded p-3 max-h-60 overflow-auto whitespace-pre-wrap">
+                  <details className="space-y-1">
+                    <summary className="cursor-pointer text-[10px] font-mono text-muted">Last plan</summary>
+                    <pre className="mt-2 text-[10px] font-mono text-foreground/80 bg-background rounded p-3 max-h-60 overflow-auto whitespace-pre-wrap">
                       {planOutputs[stack.id]}
                     </pre>
-                  </div>
+                  </details>
                 )}
 
                 {stack.lastPlan && !planOutputs[stack.id] && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted">Stored Plan</div>
-                    <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded p-3 max-h-60 overflow-auto whitespace-pre-wrap">
+                  <details className="space-y-1">
+                    <summary className="cursor-pointer text-[10px] font-mono text-muted">Stored plan</summary>
+                    <pre className="mt-2 text-[10px] font-mono text-foreground/80 bg-background rounded p-3 max-h-60 overflow-auto whitespace-pre-wrap">
                       {stack.lastPlan}
                     </pre>
-                  </div>
+                  </details>
                 )}
 
                 {outputs[stack.id] && Object.keys(outputs[stack.id]).length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted">Outputs</div>
+                    <div className="text-[10px] font-mono text-muted">Outputs</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       {Object.entries(outputs[stack.id]).map(([key, out]) => (
                         <div
                           key={key}
-                          className="bg-background border border-border rounded-lg p-2.5"
+                          className="bg-background rounded-lg p-2.5"
                         >
                           <div className="text-[10px] font-mono text-accent truncate">{key}</div>
                           <div className="text-xs font-mono text-foreground truncate">
