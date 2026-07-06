@@ -57,13 +57,18 @@ export default function AlertsPage() {
   }
 
   useEffect(() => {
-    fetchAlerts();
-    fetchDeployments();
+    const initial = setTimeout(() => {
+      fetchAlerts();
+      fetchDeployments();
+    }, 0);
     const interval = setInterval(() => {
       fetchAlerts();
       fetchDeployments();
     }, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(interval);
+    };
   }, []);
 
   async function markRead(id: number) {
@@ -163,109 +168,121 @@ export default function AlertsPage() {
   };
 
   const unread = alerts.filter((a) => !a.read).length;
+  const critical = alerts.filter((a) => !a.read && ["critical", "error"].includes(a.severity)).length;
+  const warning = alerts.filter((a) => !a.read && a.severity === "warning").length;
+  const groupedAlerts = [
+    { label: "Needs attention", items: alerts.filter((a) => !a.read && ["critical", "error", "warning"].includes(a.severity)) },
+    { label: "Info", items: alerts.filter((a) => !a.read && !["critical", "error", "warning"].includes(a.severity)) },
+    { label: "Reviewed", items: alerts.filter((a) => a.read) },
+  ].filter((group) => group.items.length > 0);
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto">
+      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Alerts</h1>
-          <p className="text-muted mt-1">
-            {unread > 0 ? `${unread} unread alert${unread > 1 ? "s" : ""}` : "All caught up"}
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">Alerts</h1>
+          <p className="mt-1 text-xs text-muted">Incident queue, alert evidence, and next actions.</p>
         </div>
-        {unread > 0 && (
-          <button
-            onClick={markAllRead}
-            className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
-          >
-            Mark all read
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted">
+          <span className="rounded-lg bg-card px-2.5 py-1.5">unread <span className="text-foreground">{unread}</span></span>
+          <span className="rounded-lg bg-error/10 px-2.5 py-1.5 text-error">critical <span>{critical}</span></span>
+          <span className="rounded-lg bg-warning/10 px-2.5 py-1.5 text-warning">warning <span>{warning}</span></span>
+          {unread > 0 && (
+            <button
+              onClick={markAllRead}
+              className="rounded-lg bg-card px-3 py-1.5 text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+            >
+              Mark all read
+            </button>
+          )}
+        </div>
       </div>
 
       <LoaderOverlay3D open={loading || processing} variant="generic" title={loading ? "Loading alerts..." : "Updating alerts..."} />
 
       {loading ? null : alerts.length === 0 ? (
-        <div className="bg-card border border-border rounded-xl p-12 text-center">
-          <div className="text-4xl mb-3">🔕</div>
+        <div className="bg-card rounded-xl p-12 text-center">
           <h3 className="text-lg font-medium mb-1">No alerts</h3>
           <p className="text-sm text-muted">Your systems are running smoothly.</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {alerts.map((alert) => {
-            const isExpanded = expanded.has(alert.id);
-            const action = getAlertAction(alert);
-            return (
-              <div
-                key={alert.id}
-                className={`bg-card border rounded-xl transition-colors ${
-                  alert.read ? "border-border opacity-70" : "border-border hover:border-border-hover"
-                }`}
-              >
-                <button
-                  onClick={() => toggleExpand(alert.id)}
-                  className="w-full text-left p-4"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`text-[10px] font-mono uppercase px-1.5 py-0.5 rounded border ${severityColor(alert.severity)}`}>
-                          {alert.severity}
-                        </span>
-                        <span className="text-xs text-muted font-mono">{alert.source}</span>
-                        {!alert.read && <span className="w-2 h-2 rounded-full bg-accent shrink-0" />}
-                      </div>
-                      <h3 className="text-sm font-medium truncate">{alert.title}</h3>
-                      <p className="text-xs text-muted mt-0.5 truncate">{alert.message}</p>
-                    </div>
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      <span className="text-[10px] text-muted font-mono whitespace-nowrap">
-                        {new Date(alert.createdAt).toLocaleString()}
-                      </span>
-                      <span className="text-[10px] text-muted">{isExpanded ? "▲" : "▼"}</span>
-                    </div>
-                  </div>
-                </button>
-
-                {isExpanded && (
-                  <div className="px-4 pb-4 border-t border-border/50 pt-3">
-                    <p className="text-xs text-foreground/80 mb-3 whitespace-pre-wrap">{alert.message}</p>
-                    <div className="flex items-center gap-2 mb-3">
-                      {action && (
-                        <a
-                          href={action.href}
-                          className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded hover:bg-accent/10 transition-colors"
-                        >
-                          {action.label}
-                        </a>
-                      )}
-                      <button
-                        onClick={() => setTraceAlert(alert)}
-                        className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors"
-                      >
-                        Trace Incident
-                      </button>
-                      {!alert.read && (
-                        <button
-                          onClick={() => markRead(alert.id)}
-                          className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors"
-                        >
-                          Dismiss
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setDeleteTarget(alert)}
-                        className="px-3 py-1.5 text-xs font-mono border border-error/30 text-error rounded hover:bg-error/10 transition-colors"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                )}
+        <div className="space-y-5">
+          {groupedAlerts.map((group) => (
+            <section key={group.label} className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-medium">{group.label}</h2>
+                <span className="rounded bg-card px-2 py-1 text-[10px] font-mono text-muted">{group.items.length}</span>
               </div>
-            );
-          })}
+              {group.items.map((alert) => {
+                const isExpanded = expanded.has(alert.id);
+                const action = getAlertAction(alert);
+                return (
+                  <div
+                    key={alert.id}
+                    className={`bg-card rounded-xl transition-colors hover:bg-card/80 ${alert.read ? "opacity-60" : ""}`}
+                  >
+                    <button onClick={() => toggleExpand(alert.id)} className="w-full p-4 text-left">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${severityColor(alert.severity)}`}>
+                              {alert.severity}
+                            </span>
+                            <span className="text-xs text-muted font-mono">{alert.source}</span>
+                            {!alert.read && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
+                          </div>
+                          <h3 className="truncate text-sm font-medium">{alert.title}</h3>
+                          <p className="mt-0.5 truncate text-xs text-muted">{alert.message}</p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className="whitespace-nowrap text-[10px] font-mono text-muted">
+                            {new Date(alert.createdAt).toLocaleString()}
+                          </span>
+                          <span className="text-[10px] text-muted">{isExpanded ? "▲" : "▼"}</span>
+                        </div>
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="px-4 pb-4 pt-1">
+                        <p className="mb-3 whitespace-pre-wrap text-xs text-foreground/80">{alert.message}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {action && (
+                            <a
+                              href={action.href}
+                              className="rounded bg-accent/10 px-3 py-1.5 text-xs font-mono text-accent transition-colors hover:bg-accent/20"
+                            >
+                              {action.label}
+                            </a>
+                          )}
+                          <button
+                            onClick={() => setTraceAlert(alert)}
+                            className="rounded bg-background px-3 py-1.5 text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+                          >
+                            Trace
+                          </button>
+                          {!alert.read && (
+                            <button
+                              onClick={() => markRead(alert.id)}
+                              className="rounded bg-background px-3 py-1.5 text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+                            >
+                              Dismiss
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setDeleteTarget(alert)}
+                            className="rounded bg-error/10 px-3 py-1.5 text-xs font-mono text-error transition-colors hover:bg-error/20"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </section>
+          ))}
         </div>
       )}
 
