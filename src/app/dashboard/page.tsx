@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import HealthScore from "@/components/HealthScore";
 import MemoryPanel from "@/components/MemoryPanel";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
@@ -238,6 +237,8 @@ export default function DashboardPage() {
   }
 
   const intelligence = generateIntelligence();
+  const priorityItems = intelligence.items.filter((item) => item.status !== "good").slice(0, 2);
+  const calmItems = priorityItems.length > 0 ? priorityItems : intelligence.items.slice(0, 1);
 
   const topMetrics = [
     { label: "Memory", value: stats ? `${stats.memory.percent}%` : "—", detail: `${stats?.memory.used || 0}/${stats?.memory.total || 0} MB`, tone: stats && parseFloat(stats.memory.percent) > 85 ? "text-error" : "text-foreground" },
@@ -290,92 +291,45 @@ export default function DashboardPage() {
             ))}
           </div>
 
-          <div className="mb-5 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="space-y-4">
-              <div className="rounded-xl bg-card p-3">
-                <div className="mb-3 flex items-center gap-2">
-                  <h2 className="text-xs font-mono text-muted">System review</h2>
-                  <a href="/settings?tab=alerts" className="ml-auto text-[11px] font-mono text-accent hover:text-accent/80">
-                    alert rules
-                  </a>
-                </div>
-                <h3 className="mb-2 text-sm font-medium">{intelligence.title}</h3>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-                  {intelligence.items.map((item) => {
-                    const className = `flex items-start gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
-                      item.status === "critical"
-                        ? "bg-error/5 border-error/20 hover:bg-error/10"
-                        : item.status === "warn"
-                        ? "bg-warning/5 border-warning/20 hover:bg-warning/10"
-                        : "bg-success/5 border-success/20 hover:bg-success/10"
-                    }`;
-                    const content = (
-                      <>
-                        <div
-                          className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                            item.status === "critical" ? "bg-error" : item.status === "warn" ? "bg-warning" : "bg-success"
-                          }`}
-                        />
-                        <div className="min-w-0">
-                          <div className="text-[11px] font-mono font-medium">{item.label}</div>
-                          <div className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-muted">{item.detail}</div>
-                        </div>
-                      </>
-                    );
-                    if (item.action) {
-                      return (
-                        <button key={item.label} onClick={item.action} className={className}>
-                          {content}
-                        </button>
-                      );
-                    }
-                    return (
-                      <a key={item.label} href={item.href} className={className}>
-                        {content}
-                      </a>
-                    );
-                  })}
-                </div>
+          <div className="mb-5 rounded-xl bg-card p-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="text-[10px] font-mono text-muted">Attention</div>
+                <div className="mt-1 truncate text-sm font-medium">{intelligence.title}</div>
               </div>
-            </div>
-
-            <div className="rounded-xl bg-card p-3">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-xs font-mono text-muted">Assistant summary</h2>
-                <button
-                  onClick={investigateWithAi}
-                  disabled={synthesisLoading && !synthesis}
-                  className="text-[11px] font-mono text-accent hover:text-accent/80 disabled:opacity-50"
-                >
-                  investigate
-                </button>
+              <div className="flex flex-wrap gap-2">
+                {calmItems.map((item) => {
+                  const tone = item.status === "critical" ? "text-error bg-error/10" : item.status === "warn" ? "text-warning bg-warning/10" : "text-success bg-success/10";
+                  const content = (
+                    <span className={`inline-flex max-w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-mono ${tone}`}>
+                      <span className="truncate">{item.label}: {item.detail}</span>
+                    </span>
+                  );
+                  if (item.action) {
+                    return <button key={item.label} onClick={item.action} className="max-w-full">{content}</button>;
+                  }
+                  return <a key={item.label} href={item.href} className="max-w-full">{content}</a>;
+                })}
               </div>
-              {synthesisLoading && !synthesis ? (
-                <div className="text-xs text-muted">Analyzing alerts...</div>
-              ) : synthesisError ? (
-                <p className="text-xs text-muted">{synthesisError}</p>
-              ) : synthesis ? (
-                <div className="space-y-3">
-                  <p className="text-xs font-medium leading-relaxed">{synthesis.summary}</p>
-                  {synthesis.actions.length > 0 && (
-                    <div>
-                      <p className="mb-1 text-[10px] font-mono text-muted">Next actions</p>
-                      <ul className="space-y-1 text-xs text-muted">
-                        {synthesis.actions.slice(0, 3).map((a, i) => (
-                          <li key={i} className="line-clamp-2">• {a}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-xs text-muted">No AI summary available yet.</p>
-              )}
+              <button
+                onClick={investigateWithAi}
+                disabled={synthesisLoading && !synthesis}
+                className="shrink-0 rounded-lg bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+              >
+                Investigate
+              </button>
             </div>
-          </div>
-
-          <div className="mb-5">
-            <HealthScore />
+            {(synthesis || synthesisError) && (
+              <details className="mt-3 text-xs text-muted">
+                <summary className="cursor-pointer font-mono text-[10px] text-muted">Assistant note</summary>
+                <p className="mt-2 leading-relaxed">{synthesis?.summary || synthesisError}</p>
+                {synthesis?.actions.length ? (
+                  <ul className="mt-2 space-y-1">
+                    {synthesis.actions.slice(0, 3).map((action, index) => <li key={index}>{action}</li>)}
+                  </ul>
+                ) : null}
+              </details>
+            )}
           </div>
 
           {/* Metrics Charts */}
