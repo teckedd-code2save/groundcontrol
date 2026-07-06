@@ -690,23 +690,23 @@ export function ContainersPanel() {
         <LoaderOverlay3D open variant="container" title="Running bulk action..." />
       )}
 
-      <div className="mb-6 flex items-center gap-1 border-b border-border">
+      <div className="mb-5 flex w-fit max-w-full items-center gap-1 rounded-xl bg-card p-1">
         <button
           onClick={() => setActiveTab("containers")}
-          className={`px-4 py-2 text-xs font-mono tracking-wider border-b-2 transition-colors ${
+          className={`rounded-lg px-3 py-2 text-xs font-mono transition-colors ${
             activeTab === "containers"
-              ? "border-accent text-accent"
-              : "border-transparent text-muted hover:text-foreground"
+              ? "bg-accent/10 text-accent"
+              : "text-muted hover:bg-background hover:text-foreground"
           }`}
         >
           Containers ({containers.length})
         </button>
         <button
           onClick={() => setActiveTab("images")}
-          className={`px-4 py-2 text-xs font-mono tracking-wider border-b-2 transition-colors ${
+          className={`rounded-lg px-3 py-2 text-xs font-mono transition-colors ${
             activeTab === "images"
-              ? "border-accent text-accent"
-              : "border-transparent text-muted hover:text-foreground"
+              ? "bg-accent/10 text-accent"
+              : "text-muted hover:bg-background hover:text-foreground"
           }`}
         >
           Images ({images.length})
@@ -721,12 +721,12 @@ export function ContainersPanel() {
               placeholder="Filter by name..."
               value={nameFilter}
               onChange={(e) => setNameFilter(e.target.value)}
-              className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent sm:w-48"
+              className="w-full rounded-lg bg-card px-3 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent sm:w-48"
             />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent sm:w-auto"
+              className="w-full rounded-lg bg-card px-3 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent sm:w-auto"
             >
               <option value="">All ({counts.all})</option>
               <option value="running">Running ({counts.running})</option>
@@ -744,7 +744,7 @@ export function ContainersPanel() {
           </div>
 
           {selected.size > 0 && (
-            <div className="mb-4 flex flex-col gap-3 p-3 bg-accent/5 border border-accent/20 rounded-xl sm:flex-row sm:items-center">
+            <div className="mb-4 flex flex-col gap-3 rounded-xl bg-accent/5 p-3 sm:flex-row sm:items-center">
               <span className="text-xs font-mono text-accent">{selected.size} selected</span>
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 <button
@@ -801,7 +801,7 @@ export function ContainersPanel() {
                 <div
                   key={container.id}
                   className={`bg-card border rounded-xl p-4 hover:border-border-hover transition-colors ${
-                    container.state !== "running" ? "border-error/20" : "border-border"
+                    container.state !== "running" ? "border-error/20" : "border-transparent"
                   }`}
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -924,7 +924,7 @@ export function ContainersPanel() {
               placeholder="Filter by repository..."
               value={imageRepoFilter}
               onChange={(e) => setImageRepoFilter(e.target.value)}
-              className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-accent w-64"
+              className="w-full rounded-lg bg-card px-3 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent sm:w-64"
             />
             {imageRepoFilter && (
               <button
@@ -958,7 +958,7 @@ export function ContainersPanel() {
                 });
                 const runningCount = usedContainers.filter((container) => container.state === "running").length;
                 return (
-                  <div key={group.repository} className="bg-card border border-border rounded-xl p-4">
+                  <div key={group.repository} className="bg-card rounded-xl p-4 transition-colors hover:bg-card/80">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <div className="text-sm font-mono font-medium truncate flex items-center gap-2">
@@ -973,7 +973,7 @@ export function ContainersPanel() {
                       <div className="flex gap-2 sm:ml-4 sm:shrink-0">
                         <button
                           onClick={() => setImageHistoryTarget(group)}
-                          className="px-3 py-1.5 text-xs font-mono border border-border text-muted rounded hover:border-accent hover:text-accent transition-colors"
+                          className="rounded bg-background px-3 py-1.5 text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
                         >
                           History
                         </button>
