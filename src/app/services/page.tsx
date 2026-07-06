@@ -8,22 +8,24 @@ import TerraformStacksTab from "@/components/TerraformStacksTab";
 
 type TabKey = "containers" | "deployments" | "bootstrap" | "infrastructure";
 
+const tabs: { key: TabKey; label: string; description: string }[] = [
+  { key: "containers", label: "Containers", description: "Runtime state, health, images, and safe actions" },
+  { key: "deployments", label: "Deployments", description: "Apps, components, routes, env, and release history" },
+  { key: "bootstrap", label: "Install", description: "Host tools, package checks, and setup actions" },
+  { key: "infrastructure", label: "Infrastructure", description: "Stacks, plans, applies, and protected resources" },
+];
+
 export default function ServicesPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("containers");
-
-  const tabs = [
-    { key: "containers", label: "Containers" },
-    { key: "deployments", label: "Deployments" },
-    { key: "bootstrap", label: "Install" },
-    { key: "infrastructure", label: "Infrastructure" },
-  ];
+  const activeTabMeta = tabs.find((tab) => tab.key === activeTab) || tabs[0];
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Services</h1>
+      <div className="mb-5 flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Services</h1>
+        <p className="text-xs text-muted">{activeTabMeta.description}</p>
         <label className="mt-4 block md:hidden">
-          <span className="mb-1 block text-[10px] font-mono tracking-wider text-muted">Section</span>
+          <span className="mb-1 block text-[10px] font-mono text-muted">Section</span>
           <select
             value={activeTab}
             onChange={(event) => setActiveTab(event.target.value as TabKey)}
@@ -36,17 +38,18 @@ export default function ServicesPage() {
             ))}
           </select>
         </label>
-        <div className="mt-4 hidden flex-wrap items-center gap-1 pb-1 md:flex">
+        <div className="mt-4 hidden flex-wrap gap-1 rounded-xl bg-card p-1 md:flex">
           {tabs.map((tab) => {
             const active = activeTab === tab.key;
             return (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key as TabKey)}
-                className={`shrink-0 rounded-lg px-4 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
+                onClick={() => setActiveTab(tab.key)}
+                title={tab.description}
+                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
                   active
                     ? "bg-accent/10 text-accent"
-                    : "text-muted hover:bg-card hover:text-foreground"
+                    : "text-muted hover:bg-background hover:text-foreground"
                 }`}
               >
                 {tab.label}

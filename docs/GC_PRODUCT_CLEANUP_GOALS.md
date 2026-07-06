@@ -13,6 +13,7 @@ This backlog tracks the product goal of making GroundControl feel like a serious
 
 ## Dashboard
 
+- Progress: top stack simplified into compact metrics plus one attention strip.
 - Goal: executive command view, not a monitoring dump.
 - Top area: compact metric strip, one attention summary, one investigate action.
 - Move detailed health scoring, suggested fixes, alert rules, and AI recommendations behind expandable sections or dedicated pages.
@@ -28,6 +29,8 @@ This backlog tracks the product goal of making GroundControl feel like a serious
 - Marketability: screenshot should show how GC understands a VPS estate.
 
 ## Services
+
+- Progress: Services shell now uses compact tab chrome and active-tab descriptions.
 
 ### Containers
 
@@ -72,6 +75,8 @@ This backlog tracks the product goal of making GroundControl feel like a serious
 - Every alert should have owner surface, suggested action, and evidence.
 
 ## Settings
+
+- Progress: Settings shell now uses compact tab chrome, contextual subtitles, and no product-stage badges.
 
 ### Connections
 
