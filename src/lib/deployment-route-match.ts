@@ -31,6 +31,7 @@ export interface RouteMatchEvidence {
   fileToken: boolean;
   domainToken: boolean;
   proxyService: boolean;
+  liveContainerPort: boolean;
 }
 
 export interface RouteSiteMatch {
@@ -95,7 +96,7 @@ export function findProjectSiteMatch(
       site: exact,
       score: 200,
       confidence: "high",
-      evidence: { rootPath: false, proxyPort: false, fileToken: false, domainToken: true, proxyService: false },
+      evidence: { rootPath: false, proxyPort: false, fileToken: false, domainToken: true, proxyService: false, liveContainerPort: false },
     };
   }
 
@@ -116,6 +117,7 @@ export function findProjectSiteMatch(
     ...project.services.flatMap(servicePortCandidates),
     ...containers.flatMap(containerPortCandidates),
   ]);
+  const livePorts = new Set(containers.flatMap(containerPortCandidates));
 
   const scored = sites
     .map((site) => {
@@ -126,6 +128,7 @@ export function findProjectSiteMatch(
         fileToken: false,
         domainToken: false,
         proxyService: false,
+        liveContainerPort: false,
       };
       const fileToken = stripCaddyPrefix(siteFileName(site));
       const domainToken = normalizeRouteToken(site.domain.replace(/^https?:\/\//, ""));
@@ -140,14 +143,15 @@ export function findProjectSiteMatch(
       }
       if (sitePort && ports.has(sitePort)) {
         evidence.proxyPort = true;
+        evidence.liveContainerPort = livePorts.has(sitePort);
         score += 45;
       }
       const identityTokens = [...projectTokens, ...serviceTokens];
-      if (identityTokens.some((token) => fileToken === token || fileToken.includes(token) || token.includes(fileToken) || semanticToken(fileToken) === token)) {
+      if (identityTokens.some((token) => tokensRelated(fileToken, token))) {
         evidence.fileToken = true;
         score += 80;
       }
-      if (identityTokens.some((token) => domainToken === token || compactDomain.includes(token) || token.includes(compactDomain) || semanticToken(domainToken) === token)) {
+      if (identityTokens.some((token) => tokensRelated(domainToken, token) || tokensRelated(compactDomain, token))) {
         evidence.domainToken = true;
         score += 70;
       }
@@ -193,6 +197,19 @@ function semanticToken(value: string): string {
     .split("-")
     .filter((part) => part && !["a", "my", "the", "www", "http", "https"].includes(part))
     .join("");
+}
+
+function relaxedRouteToken(value: string): string {
+  return semanticToken(value).replace(/my/g, "").replace(/a/g, "");
+}
+
+function tokensRelated(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  return left === right ||
+    left.includes(right) ||
+    right.includes(left) ||
+    semanticToken(left) === right ||
+    relaxedRouteToken(left) === relaxedRouteToken(right);
 }
 
 function proxyPort(proxy: string | null): string {

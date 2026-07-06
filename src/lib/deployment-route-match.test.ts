@@ -64,6 +64,21 @@ describe("deployment route matching", () => {
     expect(site?.proxy).toBe("127.0.0.1:14080");
   });
 
+  it("matches RentAWeekend when Caddy uses rentmyweekend but containers use the compose project name", () => {
+    const site = findProjectSite(
+      {
+        slug: "agent-flow/RentAWeekend",
+        dirName: "RentAWeekend",
+        path: "/opt/agent-flow/RentAWeekend",
+        services: [{ name: "web", ports: ["127.0.0.1:14080:3000"] }],
+      },
+      caddySites,
+      [{ name: "rentaweekend-web-1", ports: "127.0.0.1:14080->3000/tcp", composeService: "web" }]
+    );
+
+    expect(site?.domain).toBe("rentmyweekend.serendepify.com");
+  });
+
   it("prefers proxy/root blocks over redirect-only blocks for the same deployment", () => {
     const site = findProjectSite(
       {
@@ -150,6 +165,23 @@ describe("deployment route matching", () => {
         ],
       },
       caddySites
+    );
+
+    expect(site).toBeUndefined();
+  });
+
+  it("does not assign a route from shared live container host port alone", () => {
+    const site = findProjectSite(
+      {
+        slug: "agent-flow/HealthWallet-TON-MiniApp",
+        dirName: "HealthWallet-TON-MiniApp",
+        path: "/opt/agent-flow/HealthWallet-TON-MiniApp",
+        services: [
+          { name: "api", ports: ["127.0.0.1:8000:5000"] },
+        ],
+      },
+      caddySites,
+      [{ name: "healthwallet-api-1", ports: "127.0.0.1:8000->5000/tcp", composeService: "api" }]
     );
 
     expect(site).toBeUndefined();

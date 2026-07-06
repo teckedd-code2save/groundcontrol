@@ -226,6 +226,13 @@ function deploymentVersion(deployment?: Deployment): string {
   return `deploy-${deployment.id}`;
 }
 
+function compactDeploymentSummary(project: ScannedProject, latest?: Deployment): string {
+  const parts = [`${project.services.length} component${project.services.length === 1 ? "" : "s"}`];
+  if (latest?.createdAt) parts.push(formatShortDate(latest.createdAt));
+  if (latest?.commitSha || latest?.imageTag) parts.push(deploymentVersion(latest));
+  return parts.join(" · ");
+}
+
 function formatShortDate(value?: string): string {
   if (!value) return "Never deployed";
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -841,12 +848,10 @@ export function ProjectsPanel() {
                             {routeLabel(route)}
                           </a>
                         ) : (
-                          <p className="text-xs text-muted font-mono mt-1">No route detected yet</p>
+                          <div className="mt-1 h-1" />
                         )}
                         <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono text-muted">
-                          <span>{project.services.length} component{project.services.length === 1 ? "" : "s"}</span>
-                          <span>last deploy: {formatShortDate(latest?.createdAt)}</span>
-                          <span>version: {deploymentVersion(latest)}</span>
+                          <span>{compactDeploymentSummary(project, latest)}</span>
                         </div>
                         {latest && (latest.publicUrl || latest.previewUrl) && (
                           <div className="flex flex-wrap gap-2 mt-2">
@@ -1004,8 +1009,8 @@ export function ProjectsPanel() {
                     )}
 
                     {detailState?.slug === project.slug && (
-                      <div className="fixed inset-0 z-[70] flex justify-end bg-black/70" onMouseDown={closeAllSheets}>
-                        <div className="flex h-full w-full max-w-5xl flex-col bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+                      <div className="fixed inset-0 z-[70] flex justify-end bg-black/70" onMouseDown={closeAllSheets} onClick={(event) => event.stopPropagation()}>
+                        <div className="flex h-full w-full max-w-5xl flex-col bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
                           <div className="flex items-start justify-between gap-4 p-5">
                             <div className="min-w-0">
                               <h2 className="truncate text-xl font-semibold">{project.name}</h2>
@@ -1225,8 +1230,8 @@ export function ProjectsPanel() {
                         (c) => tokensMatch(c.composeService || "", svc.name) || c.name.toLowerCase().includes(svc.name.toLowerCase())
                       );
                       return (
-                        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setComponentState(null)}>
-                          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-xl bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+                        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setComponentState(null)} onClick={(event) => event.stopPropagation()}>
+                          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-xl bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
                             <div className="flex items-start justify-between p-4">
                               <div>
                                 <h3 className="text-lg font-semibold">{svc.name}</h3>
