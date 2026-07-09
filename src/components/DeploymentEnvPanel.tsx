@@ -60,14 +60,15 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [sourceOpen, setSourceOpen] = useState(false);
   const [envPreviewOpen, setEnvPreviewOpen] = useState(false);
   const [revealEnvPreview, setRevealEnvPreview] = useState(false);
+  const [shownFields, setShownFields] = useState<Record<string, boolean>>({});
 
   const providerOptions = useMemo(() => providers.filter((provider) => provider.provider !== "local"), [providers]);
   const selectedProvider = providers.find((provider) => provider.id === profile?.providerAccountId);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (reveal?: boolean) => {
     const [providersRes, profileRes] = await Promise.all([
       fetch("/api/env/providers").then(json),
-      fetch(`/api/env/profiles?projectId=${projectId}${deploymentId ? `&deploymentId=${deploymentId}` : ""}`).then(json),
+      fetch(`/api/env/profiles?projectId=${projectId}${deploymentId ? `&deploymentId=${deploymentId}` : ""}${reveal ? "&reveal=true" : ""}`).then(json),
     ]);
     setProviders(Array.isArray(providersRes.providers) ? providersRes.providers : []);
     setProfile(profileRes.profile || null);
@@ -212,7 +213,11 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setRevealEnvPreview((value) => !value)}
+                onClick={() => {
+                  if (!revealEnvPreview) load(true);
+                  else load(false);
+                  setRevealEnvPreview((value) => !value);
+                }}
                 className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent"
               >
                 {revealEnvPreview ? "Mask" : "Reveal"}
@@ -295,17 +300,26 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                 const schemaEntry = profile.schema.find((entry) => entry.key === key);
                 const discoveredEntry = discoveredByKey.get(key);
                 return (
-                  <div key={key} className="grid grid-cols-[1fr_1fr] gap-2 px-3 py-2 items-center">
-                    <div className="text-xs font-mono">
-                      {key}{schemaEntry?.required ? " *" : ""}
+                  <div key={key} className="grid grid-cols-[1fr_auto] gap-2 px-3 py-2 items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono">{key}{schemaEntry?.required ? " *" : ""}</span>
                     </div>
-                    <input
-                      type="password"
-                      value={localValues[key] || ""}
-                      placeholder={profile.values?.[key]?.hasValue ? "••••••••" : "set value"}
-                      onChange={(event) => setLocalValues({ ...localValues, [key]: event.target.value })}
-                      className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-                    />
+                    <div className="flex items-center gap-1">
+                      <input
+                        type={shownFields[key] ? "text" : "password"}
+                        value={localValues[key] || ""}
+                        placeholder={profile.values?.[key]?.hasValue ? "••••••••" : "set value"}
+                        onChange={(event) => setLocalValues({ ...localValues, [key]: event.target.value })}
+                        className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+                      />
+                      <button
+                        onClick={() => setShownFields({ ...shownFields, [key]: !shownFields[key] })}
+                        className="px-1.5 py-1.5 text-xs text-muted hover:text-foreground"
+                        title={shownFields[key] ? "Hide" : "Show"}
+                      >
+                        {shownFields[key] ? "🙈" : "👁"}
+                      </button>
+                    </div>
                   </div>
                 );
               })

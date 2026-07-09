@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const projectId = Number(searchParams.get("projectId") || 0);
     const deploymentId = Number(searchParams.get("deploymentId") || 0);
+    const reveal = searchParams.get("reveal") === "true";
     let project = projectId ? await prisma.project.findUnique({ where: { id: projectId } }) : null;
     if (!project && deploymentId) {
       const deployment = await prisma.deployment.findUnique({ where: { id: deploymentId }, include: { project: true } });
@@ -38,7 +39,9 @@ export async function GET(req: NextRequest) {
     const values = await getProfileValues(profile.id);
     const discovered = await discoverProjectEnv(project).catch(() => ({ entries: [], values: {} }));
     return NextResponse.json({
-      profile: publicProfile(profile, values, parseEnvJson(profile.schemaJson)),
+      profile: reveal
+        ? { ...profile, schema: parseEnvJson(profile.schemaJson), values: Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { masked: v, hasValue: !!v }])) }
+        : publicProfile(profile, values, parseEnvJson(profile.schemaJson)),
       discovered: { entries: discovered.entries },
     });
   } catch (err) {
