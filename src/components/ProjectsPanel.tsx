@@ -261,6 +261,7 @@ export function ProjectsPanel() {
   const [error, setError] = useState("");
   const [composeAction, setComposeAction] = useState<ComposeActionState | null>(null);
   const [composeOutput, setComposeOutput] = useState<{ slug: string; output: string; error?: string } | null>(null);
+  const [projectCompose, setProjectCompose] = useState<Record<string, string>>({});
   const [selectedServices, setSelectedServices] = useState<Record<string, Set<string>>>({});
   const [confirmCompose, setConfirmCompose] = useState<ConfirmComposeState | null>(null);
   const [adoptedProjects, setAdoptedProjects] = useState<Record<string, ProjectRecord>>({});
@@ -1150,10 +1151,10 @@ export function ProjectsPanel() {
                                     </a>
                                   )}
                                   <button onClick={async () => {
-                                    setComposeOutput({...composeOutput, [project.slug]: "Loading compose..."});
+                                    setProjectCompose(p => ({...p, [project.slug]: "Loading compose..."}));
                                     const res = await fetch(`/api/deployments/compose?path=${encodeURIComponent(project.composePath)}`);
                                     const data = await res.json();
-                                    setComposeOutput({...composeOutput, [project.slug]: data.compose || "Not available"});
+                                    setProjectCompose(p => ({...p, [project.slug]: data.compose || "Not available"}));
                                   }}
                                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors">
                                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
@@ -1161,8 +1162,8 @@ export function ProjectsPanel() {
                                   </button>
                                   <button onClick={() => {
                                     navigator.clipboard?.writeText(project.path).then(() => {
-                                      setComposeOutput({ ...composeOutput, [project.slug]: `Copied: ${project.path}` });
-                                      setTimeout(() => setComposeOutput({...composeOutput, [project.slug]: undefined}), 2000);
+                                      setProjectCompose(p => ({...p, [project.slug]: `Copied: ${project.path}`}));
+                                      setTimeout(() => setProjectCompose(p => { const n={...p}; delete n[project.slug]; return n; }), 2000);
                                     });
                                   }}
                                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors">
@@ -1170,9 +1171,9 @@ export function ProjectsPanel() {
                                     Copy Path
                                   </button>
                                 </div>
-                                {composeOutput[project.slug] && (
+                                {projectCompose[project.slug] && (
                                   <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded-lg p-4 max-h-80 overflow-auto whitespace-pre-wrap">
-                                    {composeOutput[project.slug]}
+                                    {projectCompose[project.slug]}
                                   </pre>
                                 )}
                               </div>

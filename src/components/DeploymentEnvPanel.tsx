@@ -83,7 +83,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   }, [projectId, deploymentId, componentName]);
 
   useEffect(() => {
-    void Promise.resolve().then(load).catch(() => undefined);
+    void Promise.resolve().then(() => load(undefined)).catch(() => undefined);
   }, [load]);
 
   async function saveProfile(patch: Partial<EnvProfile> = {}, values?: Record<string, string>, importCurrentServerEnv = false) {
