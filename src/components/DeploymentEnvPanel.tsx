@@ -284,11 +284,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       {profile.providerType === "local" && (
         <div className="space-y-2">
           <div className="overflow-hidden rounded-lg bg-card">
-            <div className="grid grid-cols-[1fr_1fr] bg-card px-3 py-2 text-[10px] font-mono text-muted md:grid-cols-[1fr_1fr_110px_110px]">
+            <div className="grid grid-cols-[1fr_1fr] bg-card px-3 py-2 text-[10px] font-mono text-muted">
               <span>Key</span>
               <span>Value</span>
-              <span className="hidden md:block">Source</span>
-              <span className="hidden md:block">Status</span>
             </div>
             {envKeys.length === 0 ? (
               <div className="px-3 py-4 text-xs text-muted">No environment keys found yet.</div>
@@ -297,23 +295,17 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                 const schemaEntry = profile.schema.find((entry) => entry.key === key);
                 const discoveredEntry = discoveredByKey.get(key);
                 return (
-                  <div key={key} className="grid grid-cols-1 gap-2 px-3 py-2 md:grid-cols-[1fr_1fr_110px_110px] md:items-center">
+                  <div key={key} className="grid grid-cols-[1fr_1fr] gap-2 px-3 py-2 items-center">
                     <div className="text-xs font-mono">
                       {key}{schemaEntry?.required ? " *" : ""}
                     </div>
                     <input
                       type="password"
                       value={localValues[key] || ""}
-                      placeholder={profile.values?.[key]?.hasValue ? `keep ${profile.values[key].masked}` : "set value"}
+                      placeholder={profile.values?.[key]?.hasValue ? "••••••••" : "set value"}
                       onChange={(event) => setLocalValues({ ...localValues, [key]: event.target.value })}
                       className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                     />
-                    <div className="text-[10px] font-mono text-muted">
-                      {profile.values?.[key]?.hasValue ? "saved" : discoveredEntry?.source || "new"}
-                    </div>
-                    <div className="text-[10px] font-mono text-muted">
-                      {profile.values?.[key]?.hasValue ? "editable" : discoveredEntry?.hasValue ? `current ${discoveredEntry.masked}` : "needs value"}
-                    </div>
                   </div>
                 );
               })
@@ -420,19 +412,16 @@ function buildEnvPreview(
     .map((key) => {
       const entered = localValues[key];
       const saved = profile.values?.[key];
-      const discovered = discoveredByKey.get(key);
-      const value = entered
-        ? entered
-        : reveal && saved?.hasValue
-        ? saved.masked
-        : reveal && discovered?.hasValue
-        ? discovered.masked
-        : saved?.hasValue
-        ? saved.masked
-        : discovered?.hasValue
-        ? discovered.masked
-        : "";
-      return `${key}=${quoteEnvValue(value)}`;
+      if (entered) return `${key}=${quoteEnvValue(entered)}`;
+      if (reveal && saved?.hasValue) return `${key}=${quoteEnvValue(saved.masked)}`;
+      if (reveal) {
+        const discovered = discoveredByKey.get(key);
+        if (discovered?.hasValue) return `${key}=${quoteEnvValue(discovered.masked)}`;
+      }
+      if (saved?.hasValue || discoveredByKey.get(key)?.hasValue) {
+        return `${key}=••••••••`;
+      }
+      return `${key}=<unset>`;
     })
     .join("\n");
 }
