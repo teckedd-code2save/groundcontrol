@@ -1179,6 +1179,94 @@ export const AGENT_TOOLS: AgentTool[] = [
         return generatePreview(resolved);
       }),
   },
+  {
+    name: "list_deployments",
+    description: "List all template-managed deployments with paths, compose projects, and container status. Use to find what's deployed and where.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+    execute: async () =>
+      guard(async () => {
+        const { getActiveVps, execOnVps, shQuote } = await import("./vps");
+        const vps = await getActiveVps();
+        if (!vps) return "No active VPS connected.";
+        const result = await execOnVps(
+          `root=/srv/groundcontrol/deployments; test -d "$root" || (echo "[]" && exit 0); find "$root" -maxdepth 2 -name docker-compose.yml | while read f; do dir=$(dirname "$f"); slug=$(basename "$dir"); echo "{\\"path\\":\\"$dir\\",\\"slug\\":\\"$slug\\"}"; done | jq -s '.' 2>/dev/null || find "$root" -maxdepth 2 -name docker-compose.yml -exec dirname {} \\;`,
+          vps
+        );
+        return result.stdout || "No deployments found.";
+      }),
+  },
+  {
+    name: "inspect_deployment",
+    description: "Read a deployment's docker-compose.yml and check container status. Pass the deployment slug or full path.",
+    parameters: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "Deployment slug or name (e.g. 'gc-company-site')." },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const { getActiveVps, execOnVps, shQuote } = await import("./vps");
+        const vps = await getActiveVps();
+        if (!vps) return "No active VPS connected.";
+        const slug = String(args?.slug || "").trim();
+        const root = "/srv/groundcontrol/deployments";
+        // Find the actual path
+        const findResult = await execOnVps(
+          `find ${shQuote(root)} -maxdepth 2 -name docker-compose.yml -path "*/${slug}/*" -o -name docker-compose.yml -path "*/${slug}" | head -1`,
+          vps
+        );
+        const composePath = findResult.stdout.trim();
+        if (!composePath) return `Deployment "${slug}" not found under ${root}.`;
+        const dir = composePath.replace(/\/docker-compose\.yml$/, "");
+        const [composeResult, statusResult] = await Promise.all([
+          execOnVps(`cat ${shQuote(composePath)}`, vps),
+          execOnVps(`cd ${shQuote(dir)} && docker compose ps --format json 2>/dev/null || echo "No containers running"`, vps),
+        ]);
+        return JSON.stringify({ path: dir, compose: composeResult.stdout, containers: statusResult.stdout });
+      }),
+  },
+  {
+    name: "delete_deployment",
+    description: "Tear down and remove a deployment. MUTATING — stops containers, removes compose project, deletes files. Requires confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "Deployment slug or name to delete." },
+        delete_volumes: { type: "boolean", description: "Also delete compose volumes? Defaults to false.", default: false },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const { getActiveVps, execOnVps, shQuote } = await import("./vps");
+        const vps = await getActiveVps();
+        if (!vps) return "No active VPS connected.";
+        const slug = String(args?.slug || "").trim();
+        const deleteVolumes = args?.delete_volumes === true;
+        const root = "/srv/groundcontrol/deployments";
+        const findResult = await execOnVps(
+          `find ${shQuote(root)} -maxdepth 2 -name docker-compose.yml -path "*/${slug}/*" -o -name docker-compose.yml -path "*/${slug}" | head -1`,
+          vps
+        );
+        const composePath = findResult.stdout.trim();
+        if (!composePath) return `Deployment "${slug}" not found under ${root}.`;
+        const dir = composePath.replace(/\/docker-compose\.yml$/, "");
+        const projectSlug = slug.replace(/-/g, "_");
+        const composeProject = `gc_${projectSlug}`.slice(0, 63);
+        const result = await execOnVps(
+          `cd ${shQuote(dir)} && compose_cmd="" && if docker compose version >/dev/null 2>&1; then compose_cmd="docker compose"; elif command -v docker-compose >/dev/null 2>&1; then compose_cmd="docker-compose"; fi && $compose_cmd -p ${shQuote(composeProject)} down ${deleteVolumes ? "-v" : ""} 2>&1 && rm -rf ${shQuote(dir)} && echo "Deleted ${dir}"`,
+          vps
+        );
+        return result.stdout || result.stderr || `Deleted deployment ${slug}.`;
+      }),
+  },
 ];
 
 const TOOL_MAP = new Map(AGENT_TOOLS.map((t) => [t.name, t]));
