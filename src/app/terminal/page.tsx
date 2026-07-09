@@ -483,22 +483,30 @@ export default function TerminalPage() {
           <div ref={bottomRef} />
         </div>
 
-        {/* AI suggestion approval */}
+        {/* AI suggestion / help */}
         {aiSuggestion && (
           <div className="border-t border-border bg-background/50 p-3">
-            <div className="text-xs text-muted mb-1">AI suggestion</div>
-            <div className="font-mono text-sm text-accent mb-1">{aiSuggestion.command}</div>
-            <div className="text-xs text-muted mb-2">{aiSuggestion.explanation}</div>
+            <div className="text-xs text-muted mb-1">AI {aiSuggestion.mode === "help" ? "assistant" : "suggestion"}</div>
+            {aiSuggestion.help && <div className="text-xs text-foreground/80 mb-2 leading-relaxed">{aiSuggestion.help}</div>}
+            {aiSuggestion.command && (
+              <><div className="font-mono text-sm text-accent mb-1">{aiSuggestion.command}</div>
+              {aiSuggestion.explanation && <div className="text-xs text-muted mb-2">{aiSuggestion.explanation}</div>}</>
+            )}
+            {aiSuggestion.suggestions?.length > 0 && (
+              <div className="mb-2 space-y-1">
+                {aiSuggestion.suggestions.map((s: string, i: number) => (
+                  <div key={i} className="text-xs text-muted font-mono pl-2">→ {s}</div>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  executeCommand(aiSuggestion.command, cwd);
-                  setAiSuggestion(null);
-                }}
+              {aiSuggestion.command && (<>
+                <button onClick={() => { executeCommand(aiSuggestion.command!, cwd); setAiSuggestion(null); }}
                 className="px-3 py-1 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors"
               >
                 Run
               </button>
+              </>)}
               <button
                 onClick={() => setAiSuggestion(null)}
                 className="px-3 py-1 text-xs font-mono border border-border rounded hover:border-accent transition-colors"
