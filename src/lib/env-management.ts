@@ -89,8 +89,7 @@ function escapeEnvValue(value: string): string {
 
 export function maskSecret(value?: string | null): string {
   if (!value) return "";
-  if (value.length <= 4) return "••••";
-  return `${"•".repeat(Math.min(8, value.length - 4))}${value.slice(-4)}`;
+  return "••••••••";
 }
 
 export function hashEnv(values: Record<string, string>): string {

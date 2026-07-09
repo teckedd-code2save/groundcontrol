@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     const dirCheck = await execOnVps(`test -d ${shQuote(deploymentPath)} && echo yes || echo no`, vps);
     if (dirCheck.stdout.trim() !== "yes") {
       // Search by docker compose project name (gc_ prefix + slug with underscores)
-      const searchResult = await execOnVps(`find ${shQuote(managedRoot)} -maxdepth 2 -name docker-compose.yml -exec dirname {} \\; 2>/dev/null | head -5`, vps);
+      const searchResult = await execOnVps(`ls -d ${shQuote(managedRoot)}/gc-*/docker-compose.yml 2>/dev/null | sed 's|/docker-compose.yml||' | head -5`, vps);
       if (searchResult.stdout.trim()) {
         resolvedPath = searchResult.stdout.trim().split("\n")[0];
       } else {
