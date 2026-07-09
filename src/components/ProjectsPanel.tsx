@@ -1134,11 +1134,47 @@ export function ProjectsPanel() {
                             )}
 
                             {detailState.tab === "source" && (
-                              <div className="grid gap-3 md:grid-cols-2">
-                                <InfoTile label="Repository" value={dbProject?.repoUrl || (project.hasGit ? "Git repository on server" : "No repository detected")} />
-                                <InfoTile label="Branch" value={opts.branch || "main"} />
-                                <InfoTile label="Compose file" value={project.composePath} />
-                                <InfoTile label="Deployment path" value={project.path} />
+                              <div className="space-y-4">
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <InfoTile label="Repository" value={dbProject?.repoUrl || (project.hasGit ? "Git repository on server" : "No repository detected")} />
+                                  <InfoTile label="Branch" value={opts.branch || "main"} />
+                                  <InfoTile label="Compose file" value={project.composePath} />
+                                  <InfoTile label="Deployment path" value={project.path} />
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  {dbProject?.repoUrl && (
+                                    <a href={dbProject.repoUrl} target="_blank" rel="noreferrer"
+                                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors">
+                                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                                      Open Repository
+                                    </a>
+                                  )}
+                                  <button onClick={async () => {
+                                    setComposeOutput({...composeOutput, [project.slug]: "Loading compose..."});
+                                    const res = await fetch(`/api/deployments/compose?path=${encodeURIComponent(project.composePath)}`);
+                                    const data = await res.json();
+                                    setComposeOutput({...composeOutput, [project.slug]: data.compose || "Not available"});
+                                  }}
+                                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                                    View Compose
+                                  </button>
+                                  <button onClick={() => {
+                                    navigator.clipboard?.writeText(project.path).then(() => {
+                                      setComposeOutput({ ...composeOutput, [project.slug]: `Copied: ${project.path}` });
+                                      setTimeout(() => setComposeOutput({...composeOutput, [project.slug]: undefined}), 2000);
+                                    });
+                                  }}
+                                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                                    Copy Path
+                                  </button>
+                                </div>
+                                {composeOutput[project.slug] && (
+                                  <pre className="text-[10px] font-mono text-foreground/80 bg-background border border-border rounded-lg p-4 max-h-80 overflow-auto whitespace-pre-wrap">
+                                    {composeOutput[project.slug]}
+                                  </pre>
+                                )}
                               </div>
                             )}
 
