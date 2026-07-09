@@ -21,8 +21,11 @@ interface Suggestion {
 }
 
 interface AiSuggestion {
-  command: string;
-  explanation: string;
+  mode?: "command" | "help";
+  command?: string;
+  explanation?: string;
+  help?: string;
+  suggestions?: string[];
 }
 
 const HISTORY_KEY = "gc-terminal-history";
@@ -492,7 +495,7 @@ export default function TerminalPage() {
               <><div className="font-mono text-sm text-accent mb-1">{aiSuggestion.command}</div>
               {aiSuggestion.explanation && <div className="text-xs text-muted mb-2">{aiSuggestion.explanation}</div>}</>
             )}
-            {aiSuggestion.suggestions?.length > 0 && (
+            {aiSuggestion.suggestions?.length && aiSuggestion.suggestions.length > 0 && (
               <div className="mb-2 space-y-1">
                 {aiSuggestion.suggestions.map((s: string, i: number) => (
                   <div key={i} className="text-xs text-muted font-mono pl-2">→ {s}</div>
