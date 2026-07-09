@@ -36,10 +36,23 @@ export async function POST(req: NextRequest) {
     }
 
     const vps = await getActiveVps();
+    // Try to find the deployment path if the given one doesn't exist
+    let resolvedPath = deploymentPath;
+    const dirCheck = await execOnVps(`test -d ${shQuote(deploymentPath)} && echo yes || echo no`, vps);
+    if (dirCheck.stdout.trim() !== "yes") {
+      // Search by docker compose project name (gc_ prefix + slug with underscores)
+      const searchResult = await execOnVps(`find ${shQuote(managedRoot)} -maxdepth 2 -name docker-compose.yml -exec dirname {} \\; 2>/dev/null | head -5`, vps);
+      if (searchResult.stdout.trim()) {
+        resolvedPath = searchResult.stdout.trim().split("\n")[0];
+      } else {
+        return NextResponse.json({ error: `Deployment path does not exist: ${deploymentPath}. Searched ${managedRoot} but found no compose files.` }, { status: 400 });
+      }
+    }
+
     const result = await execOnVps(
       [
         `set -u`,
-        `dir=${shQuote(deploymentPath)}`,
+        `dir=${shQuote(resolvedPath)}`,
         `if [ ! -d "$dir" ]; then echo "Deployment path does not exist: $dir" >&2; exit 2; fi`,
         `compose_cmd=""`,
         `if docker compose version >/dev/null 2>&1; then compose_cmd="docker compose"; elif command -v docker-compose >/dev/null 2>&1; then compose_cmd="docker-compose"; fi`,
@@ -54,7 +67,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.stderr || result.stdout || "Delete failed" }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true, output: result.stdout, path: deploymentPath });
+    return NextResponse.json({ success: true, output: result.stdout, path: resolvedPath, searchedFor: deploymentPath !== resolvedPath ? deploymentPath : undefined });
   } catch (err) {
     return handleApiError(err);
   }
