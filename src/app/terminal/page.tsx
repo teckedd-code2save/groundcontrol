@@ -415,13 +415,12 @@ export default function TerminalPage() {
     <div className={mainClasses}>
       <div className={`flex items-center justify-between ${fullscreen ? "mb-2" : "mb-4"}`}>
         <div>
-          <h1 className={`${fullscreen ? "text-xl" : "text-3xl"} font-bold tracking-tight`}>Terminal</h1>
+          <h1 className={`${fullscreen ? "text-xl" : "text-2xl"} font-semibold tracking-tight`}>Terminal</h1>
           {!fullscreen && (
             <>
-              <p className="text-muted mt-1">Execute commands on your VPS directly from the browser</p>
-              <p className="text-warning/70 text-xs font-mono mt-1">
-                Remote shell is <span className="font-semibold">sh</span> (BusyBox) —{" "}
-                <span className="font-semibold">bash</span> is not installed. Use POSIX sh syntax.
+              <p className="text-muted mt-1 text-xs">Safe remote shell on the active host</p>
+              <p className="text-warning/70 text-[11px] font-mono mt-1">
+                Shell is <span className="font-semibold">sh</span> (BusyBox/POSIX) — not bash. Prefer chips and AI mode for common actions.
               </p>
             </>
           )}
@@ -429,7 +428,7 @@ export default function TerminalPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setFullscreen((f) => !f)}
-            className="px-3 py-1.5 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
+            className="px-3 py-1.5 text-xs font-mono border border-border rounded-md hover:border-accent hover:text-accent transition-colors"
             title={fullscreen ? "Exit full screen" : "Full screen"}
           >
             {fullscreen ? "Exit" : "Full Screen"}

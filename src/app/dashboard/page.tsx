@@ -257,20 +257,20 @@ export default function DashboardPage() {
           description="Status, priority attention, and the next safe action."
         />
         <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
-          <span className="rounded-md bg-card px-2.5 py-1.5">
+          <span className="rounded-md border border-border bg-card px-2.5 py-1.5">
             uptime <span className="text-foreground">{stats ? formatUptime(stats.uptime) : "—"}</span>
           </span>
-          <span className="rounded-lg bg-card px-2.5 py-1.5">
+          <span className="rounded-md border border-border bg-card px-2.5 py-1.5">
             cores <span className="text-foreground">{stats?.cpuCount || 0}</span>
           </span>
-          <span className="rounded-lg bg-card px-2.5 py-1.5">
+          <span className="rounded-md border border-border bg-card px-2.5 py-1.5">
             containers <span className="text-success">{runningContainers}</span>/<span className="text-foreground">{containers.length}</span>
           </span>
         </div>
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-error/10 border border-error/30 rounded-lg text-error text-sm">
+        <div className="mb-6 p-4 bg-error/10 border border-error/30 rounded-md text-error text-sm">
           {error}
         </div>
       )}
@@ -284,26 +284,26 @@ export default function DashboardPage() {
               <button
                 key={metric.label}
                 onClick={metric.label === "Memory" || metric.label === "Disk" ? () => setMemoryPanelOpen(true) : undefined}
-                className="rounded-lg bg-card px-3 py-2 text-left transition-colors hover:bg-card/80"
+                className="rounded-md border border-border bg-card px-3.5 py-3 text-left transition-colors hover:border-accent/30 hover:bg-border/15"
               >
-                <span className="block text-[10px] font-mono text-muted">{metric.label}</span>
-                <span className={`mt-0.5 block text-lg font-semibold ${metric.tone}`}>{metric.value}</span>
-                <span className="mt-0.5 block truncate text-[10px] text-muted">{metric.detail}</span>
+                <span className="block text-[10px] font-mono uppercase tracking-wider text-muted">{metric.label}</span>
+                <span className={`mt-1 block text-xl font-semibold tracking-tight ${metric.tone}`}>{metric.value}</span>
+                <span className="mt-0.5 block truncate text-[10px] font-mono text-muted">{metric.detail}</span>
               </button>
             ))}
           </div>
 
-          <div className="mb-5 rounded-xl bg-card p-3">
+          <div className="mb-5 rounded-md border border-border bg-card p-3.5">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
-                <div className="text-[10px] font-mono text-muted">Attention</div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted">Attention</div>
                 <div className="mt-1 truncate text-sm font-medium">{intelligence.title}</div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {calmItems.map((item) => {
-                  const tone = item.status === "critical" ? "text-error bg-error/10" : item.status === "warn" ? "text-warning bg-warning/10" : "text-success bg-success/10";
+                  const tone = item.status === "critical" ? "text-error bg-error/10 border-error/20" : item.status === "warn" ? "text-warning bg-warning/10 border-warning/20" : "text-success bg-success/10 border-success/20";
                   const content = (
-                    <span className={`inline-flex max-w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-mono ${tone}`}>
+                    <span className={`inline-flex max-w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px] font-mono ${tone}`}>
                       <span className="truncate">{item.label}: {item.detail}</span>
                     </span>
                   );
@@ -316,7 +316,7 @@ export default function DashboardPage() {
               <button
                 onClick={investigateWithAi}
                 disabled={synthesisLoading && !synthesis}
-                className="shrink-0 rounded-lg bg-accent/10 px-3 py-2 text-xs font-mono text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                className="shrink-0 rounded-md bg-accent px-3 py-2 text-xs font-mono text-white transition-colors hover:bg-accent-bright disabled:opacity-50"
               >
                 Investigate
               </button>

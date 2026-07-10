@@ -808,16 +808,17 @@ export function ProjectsPanel() {
           </div>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {(["Running", "Partial", "Stopped", "Invalid"] as const).map((group) => (
             groupedProjects[group].length > 0 && (
-              <section key={group} className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-medium">{group}</h2>
-                  <span className="rounded bg-card px-2 py-1 text-[10px] font-mono text-muted">
+              <section key={group} className="space-y-2">
+                <div className="flex items-center justify-between px-0.5">
+                  <h2 className="text-[11px] font-mono uppercase tracking-wider text-muted">{group}</h2>
+                  <span className="rounded-md bg-card border border-border px-2 py-0.5 text-[10px] font-mono text-muted">
                     {groupedProjects[group].length}
                   </span>
                 </div>
+                <div className="overflow-hidden rounded-lg border border-border bg-card divide-y divide-border">
                 {groupedProjects[group].map((project) => {
                 const meta = projectMeta.get(project.slug) || { containers: [], images: [] };
                 const running = meta.containers.filter((c) => c.state === "running").length;
@@ -840,91 +841,72 @@ export function ProjectsPanel() {
                 const isInvalid = project.valid === false || !!project.parseError;
                 const route = site?.domain || project.domain || latest?.publicUrl || latest?.previewUrl || "";
                 const routeHref = publicRouteHref(route);
+                const statusDot =
+                  group === "Running"
+                    ? "bg-success"
+                    : group === "Partial"
+                      ? "bg-warning"
+                      : group === "Invalid"
+                        ? "bg-error"
+                        : "bg-muted";
 
                 return (
                   <div
                     key={project.slug}
                     onClick={() => openDeploymentDetail(project, "overview")}
-                    className="bg-card rounded-xl p-5 transition-colors hover:bg-card/80"
+                    className="group/row relative px-4 py-3.5 transition-colors hover:bg-border/20 cursor-pointer"
                   >
-                    <div className="flex flex-col gap-4 mb-4 md:flex-row md:items-start md:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <h3 className="font-medium text-lg">{project.name}</h3>
-                          <span className="text-[10px] font-mono text-muted bg-border/50 px-1.5 py-0.5 rounded">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0 flex items-start gap-3">
+                        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${statusDot}`} aria-hidden />
+                        <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-medium text-[15px] tracking-tight">{project.name}</h3>
+                          <span className="text-[10px] font-mono text-muted bg-bg-darker px-1.5 py-0.5 rounded-md">
                             {project.slug}
                           </span>
                           {project.hasGit && (
-                            <span className="text-[10px] font-mono text-accent bg-accent/10 px-1.5 py-0.5 rounded">
-                              branch
+                            <span className="text-[10px] font-mono text-accent bg-accent/10 px-1.5 py-0.5 rounded-md">
+                              git
                             </span>
                           )}
                           {isInvalid && (
-                            <span className="text-[10px] font-mono text-warning bg-warning/10 px-1.5 py-0.5 rounded">
-                              invalid compose
+                            <span className="text-[10px] font-mono text-warning bg-warning/10 px-1.5 py-0.5 rounded-md">
+                              invalid
                             </span>
                           )}
                           {meta.containers.length > 0 && (
-                            <span className="text-[10px] font-mono text-success bg-success/10 px-1.5 py-0.5 rounded">
-                              {running} up{stopped > 0 ? ` · ${stopped} down` : ""}
+                            <span className="text-[10px] font-mono text-muted">
+                              <span className="text-success">{running}</span>
+                              {stopped > 0 ? <span className="text-muted"> · {stopped} down</span> : " up"}
                             </span>
                           )}
                         </div>
-                        {route ? (
-                          <a
-                            href={routeHref}
-                            onClick={(event) => event.stopPropagation()}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 inline-flex items-center gap-1 text-xs font-mono text-accent hover:text-accent/80"
-                          >
-                            <LinkIcon className="h-3 w-3" />
-                            {routeLabel(route)}
-                          </a>
-                        ) : (
-                          <div className="mt-1 h-1" />
-                        )}
-                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono text-muted">
-                          <span>{compactDeploymentSummary(project, latest)}</span>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-muted">
+                          {route ? (
+                            <a
+                              href={routeHref}
+                              onClick={(event) => event.stopPropagation()}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-accent hover:text-accent-bright"
+                            >
+                              <LinkIcon className="h-3 w-3" />
+                              {routeLabel(route)}
+                            </a>
+                          ) : (
+                            <span className="text-text-dim">no route</span>
+                          )}
+                          <span className="truncate">{compactDeploymentSummary(project, latest)}</span>
+                          {latest?.status && (
+                            <span className={`px-1.5 py-0.5 rounded-md ${statusColor(latest.status)}`}>
+                              {latest.status}
+                            </span>
+                          )}
                         </div>
-                        {latest && (latest.publicUrl || latest.previewUrl) && (
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {latest.publicUrl && (
-                              <a
-                                href={latest.publicUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded bg-success/10 text-success hover:bg-success/20 transition-colors"
-                              >
-                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                                </svg>
-                                {latest.publicUrl}
-                              </a>
-                            )}
-                            {latest.previewUrl && (
-                              <a
-                                href={latest.previewUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-                              >
-                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                </svg>
-                                preview
-                              </a>
-                            )}
-                            {latest.status && (
-                              <span className={`text-[10px] font-mono px-2 py-1 rounded ${statusColor(latest.status)}`}>
-                                {latest.status}
-                              </span>
-                            )}
-                          </div>
-                        )}
+                        </div>
                       </div>
-                      <div className="flex shrink-0 items-start gap-2 self-start" onClick={(event) => event.stopPropagation()}>
+                      <div className="flex shrink-0 items-center gap-2 self-end md:self-center" onClick={(event) => event.stopPropagation()}>
                         <div className="relative">
                           {openActionMenu === project.slug && (
                             <button
@@ -935,7 +917,7 @@ export function ProjectsPanel() {
                           )}
                           <button
                             onClick={() => setOpenActionMenu(openActionMenu === project.slug ? null : project.slug)}
-                            className="relative z-30 flex h-9 w-9 items-center justify-center rounded-lg bg-background text-lg leading-none text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+                            className="relative z-30 flex h-8 w-8 items-center justify-center rounded-md border border-border bg-bg-darker text-sm leading-none text-muted transition-colors hover:border-accent/40 hover:text-accent"
                             title="Deployment actions"
                             aria-label={`Actions for ${project.name}`}
                           >
@@ -1027,17 +1009,8 @@ export function ProjectsPanel() {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted" onClick={(event) => event.stopPropagation()}>
-                      <button
-                        onClick={() => openDeploymentDetail(project, "components")}
-                        className="rounded bg-background/50 px-2 py-1 hover:bg-accent/10 hover:text-accent"
-                      >
-                        {project.services.length} component{project.services.length === 1 ? "" : "s"}
-                      </button>
-                    </div>
-
                     {composeOutput?.slug === project.slug && composeOutput.error && (
-                      <div className="mt-3 rounded bg-error/5 p-2 text-[10px] font-mono text-error">
+                      <div className="mt-2 rounded-md border border-error/20 bg-error/5 px-2 py-1.5 text-[10px] font-mono text-error">
                         Action failed. Open Activity for output.
                       </div>
                     )}
@@ -1529,6 +1502,7 @@ export function ProjectsPanel() {
                   </div>
                 );
                 })}
+                </div>
               </section>
             )
           ))}

@@ -240,19 +240,19 @@ export default function TemplatesPage() {
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold tracking-tight mb-1">Deployment Templates</h1>
-      <p className="text-muted text-sm mb-8">Pick a template, connect your code, configure, deploy.</p>
+      <h1 className="text-2xl font-semibold tracking-tight mb-1">Templates</h1>
+      <p className="text-muted text-xs mb-8">Pick a starter, connect source, configure, and deploy into the managed root.</p>
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-8 flex-wrap">
         {steps.map((s, i) => (
           <div key={s.id} className="flex items-center gap-2">
             <button onClick={() => i <= currentStepIdx && setStep(s.id)}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-mono transition-colors ${
-                step === s.id ? "border border-accent text-accent" :
+              className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-mono transition-colors ${
+                step === s.id ? "border border-accent text-accent bg-accent/5" :
                 i < currentStepIdx ? "text-muted hover:text-foreground" : "text-muted/40"
               }`}>
-              <span className={`w-5 h-5 flex items-center justify-center text-[10px] ${
+              <span className={`w-5 h-5 flex items-center justify-center rounded-md text-[10px] ${
                 step === s.id ? "bg-accent text-white" : "bg-card border border-border"
               }`}>{i + 1}</span>
               {s.label}

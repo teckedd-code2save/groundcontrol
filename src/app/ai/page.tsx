@@ -362,6 +362,20 @@ export default function AiCoPilotPage() {
 
       {/* Messages */}
       <div ref={chatRef} className="flex-1 overflow-y-auto px-4 md:px-8 py-4 space-y-4">
+        {messages.length <= 1 && !loading && (
+          <div className="mb-2 rounded-lg border border-dashed border-border bg-card/40 px-4 py-6 text-center">
+            <pre className="mb-3 select-none font-mono text-[10px] leading-tight text-accent/60" aria-hidden>{`> list_deployments
+> inspect_deployment gc-…
+> preview_delete_deployment …`}</pre>
+            <p className="text-xs text-muted">
+              Try: <span className="font-mono text-foreground/80">list deployments</span>
+              {" · "}
+              <span className="font-mono text-foreground/80">which containers are unhealthy</span>
+              {" · "}
+              <span className="font-mono text-foreground/80">delete gc-tunnel-proof</span>
+            </p>
+          </div>
+        )}
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[85%] rounded-xl px-4 py-3 text-sm leading-relaxed ${

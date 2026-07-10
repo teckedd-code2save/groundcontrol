@@ -184,13 +184,13 @@ export default function AlertsPage() {
           <p className="mt-1 text-xs text-muted">Incident queue, alert evidence, and next actions.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted">
-          <span className="rounded-lg bg-card px-2.5 py-1.5">unread <span className="text-foreground">{unread}</span></span>
-          <span className="rounded-lg bg-error/10 px-2.5 py-1.5 text-error">critical <span>{critical}</span></span>
-          <span className="rounded-lg bg-warning/10 px-2.5 py-1.5 text-warning">warning <span>{warning}</span></span>
+          <span className="rounded-md border border-border bg-card px-2.5 py-1.5">unread <span className="text-foreground">{unread}</span></span>
+          <span className="rounded-md border border-error/20 bg-error/10 px-2.5 py-1.5 text-error">critical <span>{critical}</span></span>
+          <span className="rounded-md border border-warning/20 bg-warning/10 px-2.5 py-1.5 text-warning">warning <span>{warning}</span></span>
           {unread > 0 && (
             <button
               onClick={markAllRead}
-              className="rounded-lg bg-card px-3 py-1.5 text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+              className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-mono text-muted transition-colors hover:border-accent/40 hover:text-accent"
             >
               Mark all read
             </button>

@@ -62,13 +62,13 @@ export default function SettingsPage() {
         <p className="text-xs text-muted">{activeTabMeta.description}</p>
       </div>
 
-      <div className="mb-6 flex flex-wrap gap-1 rounded-xl bg-card p-1">
+      <div className="mb-6 flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1">
         {settingsTabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             title={tab.description}
-            className={`shrink-0 rounded-lg px-3 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
+            className={`shrink-0 rounded-md px-3 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
               activeTab === tab.key
                 ? "bg-accent/10 text-accent"
                 : "text-muted hover:bg-background hover:text-foreground"
