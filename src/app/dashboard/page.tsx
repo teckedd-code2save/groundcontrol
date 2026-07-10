@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import MemoryPanel from "@/components/MemoryPanel";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
+import { PageHeader } from "@/components/PageHeader";
 import {
   AreaChart,
   Area,
@@ -250,12 +251,13 @@ export default function DashboardPage() {
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-muted mt-1 text-xs">VPS status and deployment health.</p>
-        </div>
+        <PageHeader
+          className="mb-0"
+          title="Dashboard"
+          description="Status, priority attention, and the next safe action."
+        />
         <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
-          <span className="rounded-lg bg-card px-2.5 py-1.5">
+          <span className="rounded-md bg-card px-2.5 py-1.5">
             uptime <span className="text-foreground">{stats ? formatUptime(stats.uptime) : "—"}</span>
           </span>
           <span className="rounded-lg bg-card px-2.5 py-1.5">

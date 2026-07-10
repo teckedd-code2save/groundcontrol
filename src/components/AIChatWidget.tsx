@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useSidebar } from "./SidebarContext";
 import { renderMarkdown } from "@/lib/markdown";
+import { ToolConfirmCard } from "./ToolConfirmCard";
 
 interface ToolEvent {
   name: string;
@@ -65,21 +66,27 @@ const STORAGE_THREAD_ID = "gc:ai-chat:thread-id";
 
 function ToolChip({ tool }: { tool: ToolEvent }) {
   const [expanded, setExpanded] = useState(false);
-  const icon = tool.status === "running" ? "⏳" : tool.status === "error" ? "⚠" : "⚙";
-  const label = tool.status === "running" ? `Running ${tool.name}…` : `ran ${tool.name}`;
+  const icon = tool.status === "running" ? "⏳" : tool.status === "error" ? "⚠" : "✓";
+  const label = tool.status === "running" ? `Running ${tool.name}…` : tool.name;
+  const tone =
+    tool.status === "running"
+      ? "border-accent/30 bg-accent/10 text-accent"
+      : tool.status === "error"
+        ? "border-error/30 bg-error/10 text-error"
+        : "border-success/30 bg-success/10 text-success";
   return (
     <div className="my-1">
       <button
         onClick={() => tool.output && setExpanded((v) => !v)}
-        className="flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+        className={`flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-mono ${tone}`}
         title={tool.args ? JSON.stringify(tool.args) : undefined}
       >
         <span>{icon}</span>
-        <span className="font-mono">{label}</span>
-        {tool.output ? <span className="text-gray-400">{expanded ? "▲" : "▼"}</span> : null}
+        <span>{label}</span>
+        {tool.output ? <span className="text-muted">{expanded ? "▲" : "▼"}</span> : null}
       </button>
       {expanded && tool.output && (
-        <pre className="mt-1 max-h-48 overflow-auto rounded-lg bg-gray-900 p-2 text-[11px] leading-snug text-gray-100">
+        <pre className="mt-1 max-h-48 overflow-auto rounded-md bg-bg-darker p-2 text-[11px] leading-snug text-muted">
           {tool.output}
         </pre>
       )}
@@ -476,6 +483,18 @@ export default function AIChatWidget() {
       return next;
     });
     await runTurn({ confirmedTool: { name: confirm.name, args: confirm.args } });
+    // Refresh Services inventory after mutating deployment tools
+    if (
+      confirm.name === "delete_deployment" ||
+      confirm.name === "compose_up" ||
+      confirm.name === "compose_down"
+    ) {
+      try {
+        window.dispatchEvent(new CustomEvent("gc:services-refresh"));
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   function cancelConfirm(msgIndex: number) {
@@ -511,23 +530,23 @@ export default function AIChatWidget() {
   const threadTitle = currentThread?.title || "GroundControl AI";
 
   const header = (
-    <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+    <div className="flex items-center justify-between border-b border-border px-4 py-3">
       <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300">
+        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-accent/15 text-accent">
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
         </div>
         <div>
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{threadTitle}</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Your DevOps assistant</p>
+          <p className="text-sm font-semibold text-foreground">{threadTitle}</p>
+          <p className="text-xs text-muted font-mono">Co-Pilot</p>
         </div>
       </div>
       <div className="flex items-center gap-1">
         <div className="relative">
           <button
             onClick={() => setShowThreadMenu((v) => !v)}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            className="rounded-md p-2 text-muted hover:bg-border/40 hover:text-foreground"
             aria-label="Threads"
             title="Threads"
           >
@@ -536,32 +555,32 @@ export default function AIChatWidget() {
             </svg>
           </button>
           {showThreadMenu && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
-              <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-gray-700">
-                <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Threads</span>
+            <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-lg border border-border bg-card shadow-xl">
+              <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                <span className="text-xs font-mono text-muted">Threads</span>
                 <button
                   onClick={startNewThread}
-                  className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                  className="text-xs font-mono text-accent hover:text-accent-bright"
                 >
                   + New
                 </button>
               </div>
               <div className="max-h-60 overflow-y-auto py-1">
                 {threads.length === 0 && (
-                  <p className="px-3 py-2 text-xs text-gray-400">No saved threads yet.</p>
+                  <p className="px-3 py-2 text-xs text-muted">No saved threads yet.</p>
                 )}
                 {threads.map((t) => (
                   <div
                     key={t.id}
                     onClick={() => selectThread(t.id)}
-                    className={`group flex cursor-pointer items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 ${
-                      t.id === threadId ? "bg-blue-50 dark:bg-blue-900/20" : ""
+                    className={`group flex cursor-pointer items-center justify-between px-3 py-2 text-sm hover:bg-border/30 ${
+                      t.id === threadId ? "bg-accent/10" : ""
                     }`}
                   >
-                    <span className="truncate text-gray-800 dark:text-gray-200">{t.title}</span>
+                    <span className="truncate text-foreground">{t.title}</span>
                     <button
                       onClick={(e) => deleteThread(t.id, e)}
-                      className="ml-2 rounded p-1 text-gray-400 opacity-0 hover:bg-red-100 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-red-900/30 dark:hover:text-red-300"
+                      className="ml-2 rounded p-1 text-muted opacity-0 hover:bg-error/15 hover:text-error group-hover:opacity-100"
                       title="Delete"
                     >
                       <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -577,7 +596,7 @@ export default function AIChatWidget() {
         {open && (
           <button
             onClick={toggleExpand}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            className="rounded-md p-2 text-muted hover:bg-border/40 hover:text-foreground"
             aria-label={expanded ? "Collapse" : "Expand"}
             title={expanded ? "Collapse" : "Expand"}
           >
@@ -594,7 +613,7 @@ export default function AIChatWidget() {
         )}
         <button
           onClick={toggleOpen}
-          className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+          className="rounded-md p-2 text-muted hover:bg-border/40 hover:text-foreground"
           aria-label={open ? "Close" : "Open"}
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -610,14 +629,14 @@ export default function AIChatWidget() {
       {messages.map((m, i) => (
         <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
           <div
-            className={`rounded-2xl px-3 py-2 ${
+            className={`rounded-lg px-3 py-2 ${
               expanded ? "max-w-4xl text-base" : "max-w-[85%] text-sm"
             } ${
               m.role === "user"
-                ? "bg-blue-600 text-white rounded-br-md"
+                ? "bg-accent text-white"
                 : m.role === "error"
-                ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 rounded-bl-md"
-                : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 rounded-bl-md"
+                ? "border border-error/30 bg-error/10 text-error"
+                : "border border-border bg-card text-foreground"
             }`}
           >
             {m.tools && m.tools.length > 0 && (
@@ -631,7 +650,7 @@ export default function AIChatWidget() {
             {m.content ? (
               m.role === "assistant" ? (
                 <div
-                  className="prose-sm leading-relaxed [&_code]:break-words"
+                  className="prose-sm leading-relaxed text-foreground [&_code]:break-words"
                   dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
                 />
               ) : (
@@ -643,46 +662,24 @@ export default function AIChatWidget() {
               !(m.tools && m.tools.length) &&
               !m.confirm ? (
                 <span className="inline-flex gap-1">
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0.15s]" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0.3s]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:0.15s]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:0.3s]" />
                 </span>
               ) : null
             )}
 
             {m.confirm && (
-              <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
-                <p className="font-semibold">Confirm action</p>
-                <p className="mt-0.5 font-mono">
-                  {m.confirm.name}({Object.entries(m.confirm.args || {})
-                    .map(([k, v]) => `${k}: ${String(v)}`)
-                    .join(", ")})
-                </p>
-                <p className="mt-1 text-amber-800 dark:text-amber-300">
-                  This changes server state and won&apos;t run until you approve.
-                </p>
-                {m.confirm.resolved ? (
-                  <p className="mt-2 italic text-amber-700 dark:text-amber-400">
-                    {m.confirm.resolved === "approved" ? "Approved." : "Cancelled."}
-                  </p>
-                ) : (
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      onClick={() => approveConfirm(i)}
-                      disabled={loading}
-                      className="rounded-md bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => cancelConfirm(i)}
-                      disabled={loading}
-                      className="rounded-md border border-amber-400 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-900/30"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
+              <div className="mt-2">
+                <ToolConfirmCard
+                  name={m.confirm.name}
+                  args={m.confirm.args}
+                  description={m.confirm.description}
+                  resolved={m.confirm.resolved}
+                  loading={loading}
+                  onApprove={() => approveConfirm(i)}
+                  onCancel={() => cancelConfirm(i)}
+                />
               </div>
             )}
           </div>
@@ -693,7 +690,7 @@ export default function AIChatWidget() {
   );
 
   const inputArea = (
-    <div className="border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+    <div className="border-t border-border px-4 py-3">
       <div className={`flex items-end gap-2 ${expanded ? "mx-auto max-w-4xl" : ""}`}>
         <textarea
           value={input}
@@ -701,7 +698,7 @@ export default function AIChatWidget() {
           onKeyDown={handleKeyDown}
           placeholder="Ask about Docker, Caddy, deployments..."
           rows={expanded ? 2 : 1}
-          className={`flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500 ${
+          className={`flex-1 resize-none rounded-lg border border-border bg-bg-darker px-3 py-2 text-foreground placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent ${
             expanded ? "text-base" : "text-sm"
           }`}
           style={{ maxHeight: expanded ? "160px" : "100px" }}
@@ -709,7 +706,7 @@ export default function AIChatWidget() {
         <button
           onClick={sendMessage}
           disabled={loading || !input.trim()}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Send"
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -718,8 +715,8 @@ export default function AIChatWidget() {
         </button>
       </div>
       {expanded && (
-        <p className="mx-auto mt-2 max-w-4xl text-[11px] text-gray-500 dark:text-gray-400">
-          Tip: type <code className="rounded bg-gray-200 px-1 py-0.5 dark:bg-gray-700">/ai &lt;intent&gt;</code> in the Terminal to generate commands.
+        <p className="mx-auto mt-2 max-w-4xl text-[11px] text-muted">
+          Tip: type <code className="rounded bg-border/50 px-1 py-0.5 font-mono">/ai &lt;intent&gt;</code> in the Terminal to generate commands.
         </p>
       )}
     </div>
@@ -729,7 +726,7 @@ export default function AIChatWidget() {
     <>
       <button
         onClick={toggleOpen}
-        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors"
+        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-lg bg-accent text-white shadow-lg shadow-accent/20 hover:bg-accent-bright transition-colors"
         aria-label="Toggle AI Chat"
       >
         {open ? (
@@ -742,7 +739,7 @@ export default function AIChatWidget() {
           </svg>
         )}
         {!open && unread > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold">
+          <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-md bg-error text-xs font-bold">
             {unread}
           </span>
         )}
@@ -750,10 +747,10 @@ export default function AIChatWidget() {
 
       {open && (
         <div
-          className={`fixed flex flex-col bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 ${
+          className={`fixed flex flex-col border border-border bg-card shadow-2xl ${
             expanded
               ? "inset-0 z-[70] rounded-none"
-              : "bottom-24 right-2 sm:right-6 z-50 h-[500px] w-[calc(100vw-1rem)] sm:w-[360px] rounded-2xl border border-gray-200"
+              : "bottom-24 right-2 sm:right-6 z-50 h-[500px] w-[calc(100vw-1rem)] sm:w-[380px] rounded-lg"
           }`}
         >
           {header}

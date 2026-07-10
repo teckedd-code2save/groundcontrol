@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 :root {
@@ -14,6 +14,12 @@
   --success: #22c55e;
   --warning: #eab308;
   --error: #ef4444;
+  --ring: rgba(232,84,42,0.35);
+  --sidebar: #0D0E10;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
 
   --font-sans: 'Inter', articulat-cf, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -25,56 +31,76 @@
   --color-card: var(--bg-dark);
   --color-border: var(--line);
   --color-accent: var(--accent);
+  --color-accent-bright: var(--accent-bright);
   --color-muted: var(--text-muted);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-error: var(--error);
+  --color-bg-darker: var(--bg-darker);
+  --color-text-dim: var(--text-dim);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-xl: 0px;
-  --radius-2xl: 0px;
-  --radius-3xl: 0px;
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-lg);
+  --radius-2xl: calc(var(--radius-lg) + 4px);
+  --radius-3xl: calc(var(--radius-lg) + 8px);
 }
 
 body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
-  font-weight: 300;
+  font-weight: 400;
   overflow-x: hidden;
 }
 
-/* Zero-radius all rounded classes */
-.rounded,.rounded-sm,.rounded-md,.rounded-lg,.rounded-xl,.rounded-2xl,.rounded-3xl,.rounded-full{border-radius:0!important}
+/* Soft AdminCN-style defaults — override only where we force square accents */
+.rounded-sm { border-radius: var(--radius-sm) !important; }
+.rounded-md { border-radius: var(--radius-md) !important; }
+.rounded-lg { border-radius: var(--radius-md) !important; }
+.rounded-xl { border-radius: var(--radius-lg) !important; }
+.rounded-2xl { border-radius: calc(var(--radius-lg) + 4px) !important; }
+.rounded-3xl { border-radius: calc(var(--radius-lg) + 8px) !important; }
+/* Keep pills/circles intentional */
+.rounded-full { border-radius: 9999px !important; }
 
 /* Cards */
 .bg-card,[class*=bg-card]{background:var(--bg-dark)!important;border-color:var(--line)!important}
 
-/* Pills / badges — force square */
-[class*=rounded-full]{border-radius:0!important}
-[class*=rounded-xl]{border-radius:0!important}
-[class*=rounded-lg]{border-radius:0!important}
-
 /* Inputs */
-input,textarea,select{border-radius:0!important;background:var(--bg-darker)!important;border:1px solid var(--line)!important;color:var(--text)!important;font-family:var(--font-sans)!important;font-weight:300!important;padding:10px 14px!important;font-size:14px!important}
+input,textarea,select{
+  border-radius: var(--radius-md) !important;
+  background: var(--bg-darker) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--text) !important;
+  font-family: var(--font-sans) !important;
+  font-weight: 400 !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+}
 input::placeholder,textarea::placeholder{color:var(--text-dim)!important}
-input:focus,textarea:focus,select:focus{border-color:var(--accent)!important;outline:none!important;box-shadow:none!important}
-
-/* Buttons */
-button:not([class*=bg-]):not([class*=btn]):not([style*=background]){[style*="border-radius"]{border-radius:0!important}}
-[role=button]{border-radius:0!important}
+input:focus,textarea:focus,select:focus{
+  border-color: var(--accent) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px var(--ring) !important;
+}
 
 /* Auth card */
-.gc-home__auth-card{border-radius:0!important;background:var(--bg-dark)!important;border:1px solid var(--line)!important}
+.gc-home__auth-card{
+  border-radius: var(--radius-lg) !important;
+  background: var(--bg-dark) !important;
+  border: 1px solid var(--line) !important;
+}
 
 /* Sidebar */
-aside[class*=Sidebar],nav[class*=sidebar]{background:var(--bg-darker)!important;border-color:var(--line)!important}
+aside[class*=Sidebar],nav[class*=sidebar]{background:var(--sidebar)!important;border-color:var(--line)!important}
 
 /* Scrollbar */
-.scrollbar-thin::-webkit-scrollbar-thumb{background:var(--text-dim);border-radius:0}
+.scrollbar-thin::-webkit-scrollbar-thumb{background:var(--text-dim);border-radius:var(--radius-sm)}
 
 /* Animations */
 @keyframes pulse-glow{0%,100%{box-shadow:0 0 8px rgba(232,84,42,0.15)}50%{box-shadow:0 0 16px rgba(232,84,42,0.25)}}
@@ -82,5 +108,29 @@ aside[class*=Sidebar],nav[class*=sidebar]{background:var(--bg-darker)!important;
 @keyframes shimmer{to{transform:translateX(100%)}}
 .orb-pulse{animation:pulse-glow 3s ease-in-out infinite}
 
+/* Sharp accent bar utility (brutalist detail) */
+.gc-sharp { border-radius: 0 !important; }
+
+/* Markdown in chat */
+.markdown-body a { color: var(--accent); }
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--bg-darker);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+}
+.markdown-body pre {
+  background: var(--bg-darker);
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 12px;
+}
+
 /* Mobile */
 @media(max-width:767px){body{overflow-x:hidden;-webkit-overflow-scrolling:touch}}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb-pulse { animation: none; }
+}

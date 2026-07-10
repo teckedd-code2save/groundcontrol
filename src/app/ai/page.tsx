@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { renderMarkdown } from "@/lib/markdown";
+import { ToolConfirmCard } from "@/components/ToolConfirmCard";
+import { PageHeader } from "@/components/PageHeader";
 
 interface ToolEvent {
   name: string;
@@ -252,7 +254,19 @@ export default function AiCoPilotPage() {
     const tool = { ...pendingConfirm };
     setPendingConfirm(null);
     setMessages(prev => [...prev, { role: "tool", content: `Approved: ${tool.name}` }]);
-    handleSend({ name: tool.name, args: tool.args });
+    handleSend({ name: tool.name, args: tool.args }).then(() => {
+      if (
+        tool.name === "delete_deployment" ||
+        tool.name === "compose_up" ||
+        tool.name === "compose_down"
+      ) {
+        try {
+          window.dispatchEvent(new CustomEvent("gc:services-refresh"));
+        } catch {
+          /* ignore */
+        }
+      }
+    });
   }
 
   function handleReject() {
@@ -291,9 +305,12 @@ export default function AiCoPilotPage() {
     <div className="h-[calc(100vh-4rem)] flex flex-col">
       {/* Header + Thread selector */}
       <div className="px-4 md:px-8 py-3 border-b border-border flex items-center gap-3 shrink-0">
-        <div className="flex-1">
-          <h1 className="text-lg font-bold tracking-tight">AI Co-Pilot</h1>
-          <p className="text-[10px] text-muted font-mono">⌘K to focus · I can query, manage, and deploy</p>
+        <div className="flex-1 min-w-0">
+          <PageHeader
+            className="mb-0"
+            title="AI Co-Pilot"
+            description="Inspect the host, manage stacks, and approve mutating actions safely."
+          />
         </div>
         {guides.length > 0 && (
           <div className="hidden max-w-sm items-center gap-2 lg:flex">
@@ -302,7 +319,7 @@ export default function AiCoPilotPage() {
               <Link
                 key={guide.slug}
                 href={`/guides/${guide.slug}`}
-                className="max-w-36 truncate rounded-lg border border-border bg-card px-2.5 py-1.5 text-[11px] text-muted transition-colors hover:border-accent hover:text-accent"
+                className="max-w-36 truncate rounded-md border border-border bg-card px-2.5 py-1.5 text-[11px] text-muted transition-colors hover:border-accent hover:text-accent"
                 title={guide.title}
               >
                 {guide.title}
@@ -316,13 +333,13 @@ export default function AiCoPilotPage() {
         <div className="relative">
           <button
             onClick={() => { setShowThreadMenu(!showThreadMenu); loadThreads(); }}
-            className="px-3 py-1.5 text-xs font-mono bg-card border border-border rounded-lg hover:border-accent transition-colors flex items-center gap-2"
+            className="px-3 py-1.5 text-xs font-mono bg-card border border-border rounded-md hover:border-accent transition-colors flex items-center gap-2"
           >
             <span>{threadId ? threads.find(t => t.id === threadId)?.title || `Thread #${threadId}` : "New conversation"}</span>
             <span className="text-muted">{showThreadMenu ? "▲" : "▼"}</span>
           </button>
           {showThreadMenu && (
-            <div className="absolute right-0 top-full mt-1 w-72 bg-card border border-border rounded-xl shadow-xl z-50 max-h-80 overflow-y-auto">
+            <div className="absolute right-0 top-full mt-1 w-72 bg-card border border-border rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
               <button onClick={startNewThread} className="w-full text-left px-4 py-2.5 text-xs font-mono text-accent hover:bg-accent/5 border-b border-border">
                 + New conversation
               </button>
@@ -362,26 +379,15 @@ export default function AiCoPilotPage() {
         {/* Tool confirmation */}
         {pendingConfirm && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-xl border-2 border-accent/40 bg-accent/5 p-4 animate-in">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-                <span className="text-xs font-mono  text-accent">Approval Required</span>
-              </div>
-              <p className="text-sm font-medium mb-1">{pendingConfirm.name}</p>
-              <p className="text-xs text-muted mb-3">{pendingConfirm.description}</p>
-              <div className="bg-background/50 rounded-lg p-2 mb-3">
-                <p className="text-[10px] text-muted font-mono whitespace-pre-wrap">
-                  {JSON.stringify(pendingConfirm.args, null, 2)}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={handleConfirm} className="px-4 py-2 text-xs font-mono bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors">
-                  ✓ Approve
-                </button>
-                <button onClick={handleReject} className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-error hover:text-error transition-colors">
-                  ✕ Cancel
-                </button>
-              </div>
+            <div className="max-w-[85%] w-full sm:w-auto">
+              <ToolConfirmCard
+                name={pendingConfirm.name}
+                args={pendingConfirm.args}
+                description={pendingConfirm.description}
+                loading={loading}
+                onApprove={handleConfirm}
+                onCancel={handleReject}
+              />
             </div>
           </div>
         )}

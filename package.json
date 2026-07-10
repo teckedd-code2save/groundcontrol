@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
+    "@paper-design/shaders-react": "^0.0.77",
     "@prisma/client": "^5.22.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
@@ -30,6 +31,7 @@
     "dagre": "^0.8.5",
     "gsap": "^3.15.0",
     "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.24.0",
     "next": "16.2.6",
     "node-ssh": "^13.2.1",
     "openai": "^6.42.0",

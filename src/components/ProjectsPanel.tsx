@@ -286,21 +286,26 @@ export function ProjectsPanel() {
   }, [targets]);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/projects").then((r) => safeJson(r)),
-      fetch("/api/containers").then((r) => safeJson(r)),
-      fetch("/api/docker-images").then((r) => safeJson(r)),
-      fetch("/api/deployment-targets")
-        .then((r) => safeJson(r))
-        .catch(() => ({ ok: true, data: [], text: "" })),
-      fetch("/api/deployments")
-        .then((r) => safeJson(r))
-        .catch(() => ({ ok: true, data: [], text: "" })),
-      fetch("/api/cloudflare/zones")
-        .then((r) => safeJson(r))
-        .catch(() => ({ ok: true, data: { success: false, result: [] }, text: "" })),
-    ])
-      .then(([projectsRes, containersRes, imagesRes, targetsRes, deploymentsRes, zonesRes]) => {
+    let cancelled = false;
+
+    async function loadInventory() {
+      try {
+        const [projectsRes, containersRes, imagesRes, targetsRes, deploymentsRes, zonesRes] = await Promise.all([
+          fetch("/api/projects").then((r) => safeJson(r)),
+          fetch("/api/containers").then((r) => safeJson(r)),
+          fetch("/api/docker-images").then((r) => safeJson(r)),
+          fetch("/api/deployment-targets")
+            .then((r) => safeJson(r))
+            .catch(() => ({ ok: true, data: [], text: "" })),
+          fetch("/api/deployments")
+            .then((r) => safeJson(r))
+            .catch(() => ({ ok: true, data: [], text: "" })),
+          fetch("/api/cloudflare/zones")
+            .then((r) => safeJson(r))
+            .catch(() => ({ ok: true, data: { success: false, result: [] }, text: "" })),
+        ]);
+        if (cancelled) return;
+
         setData(projectsRes.data);
         setContainers(Array.isArray(containersRes.data) ? containersRes.data : []);
         setImages(Array.isArray(imagesRes.data) ? imagesRes.data : []);
@@ -337,13 +342,24 @@ export function ProjectsPanel() {
           };
         }
         setDeployOptions(initialOptions);
+        setLoading(false);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
+        }
+      }
+    }
 
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
-      });
+    loadInventory();
+    const onRefresh = () => {
+      loadInventory();
+    };
+    window.addEventListener("gc:services-refresh", onRefresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("gc:services-refresh", onRefresh);
+    };
   }, []);
 
   async function refreshDeployments() {
@@ -771,8 +787,25 @@ export function ProjectsPanel() {
       )}
 
       {projects.length === 0 ? (
-        <div className="bg-card rounded-xl p-6 text-muted text-sm">
-          No deployments found yet.
+        <div className="bg-card rounded-lg p-2">
+          {/* dynamic import avoided — AsciiEmpty is light */}
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border px-6 py-12 text-center">
+            <pre className="mb-4 select-none font-mono text-[10px] leading-tight text-accent/70" aria-hidden>{`┌─────────────────┐
+│  ·  ·  ·  ·  ·  │
+│  ·  [ GC ]  ·  │
+│  ·  ·  ·  ·  ·  │
+└─────────────────┘`}</pre>
+            <h3 className="text-sm font-medium text-foreground">No deployments yet</h3>
+            <p className="mt-1 max-w-sm text-xs text-muted">
+              Deploy a template or scan the managed root to populate this inventory.
+            </p>
+            <a
+              href="/templates"
+              className="mt-4 rounded-md bg-accent px-3 py-1.5 text-xs font-mono text-white hover:bg-accent-bright"
+            >
+              Browse templates
+            </a>
+          </div>
         </div>
       ) : (
         <div className="space-y-6">

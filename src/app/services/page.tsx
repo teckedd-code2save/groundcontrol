@@ -5,6 +5,7 @@ import { ContainersPanel } from "@/components/ContainersPanel";
 import { ProjectsPanel } from "@/components/ProjectsPanel";
 import { BootstrapPanel } from "@/components/BootstrapPanel";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
+import { PageHeader } from "@/components/PageHeader";
 
 type TabKey = "containers" | "deployments" | "bootstrap" | "infrastructure";
 
@@ -22,14 +23,13 @@ export default function ServicesPage() {
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto">
       <div className="mb-5 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Services</h1>
-        <p className="text-xs text-muted">{activeTabMeta.description}</p>
+        <PageHeader title="Services" description={activeTabMeta.description} className="mb-0" />
         <label className="mt-4 block md:hidden">
           <span className="mb-1 block text-[10px] font-mono text-muted">Section</span>
           <select
             value={activeTab}
             onChange={(event) => setActiveTab(event.target.value as TabKey)}
-            className="w-full rounded-lg bg-background px-3 py-2 text-sm font-mono text-foreground outline-none focus:ring-1 focus:ring-accent"
+            className="w-full rounded-md bg-background px-3 py-2 text-sm font-mono text-foreground outline-none focus:ring-1 focus:ring-accent"
           >
             {tabs.map((tab) => (
               <option key={tab.key} value={tab.key}>
@@ -38,7 +38,7 @@ export default function ServicesPage() {
             ))}
           </select>
         </label>
-        <div className="mt-4 hidden flex-wrap gap-1 rounded-xl bg-card p-1 md:flex">
+        <div className="mt-4 hidden flex-wrap gap-1 rounded-lg bg-card p-1 md:flex">
           {tabs.map((tab) => {
             const active = activeTab === tab.key;
             return (
@@ -46,7 +46,7 @@ export default function ServicesPage() {
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
                 title={tab.description}
-                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
+                className={`shrink-0 rounded-md px-3 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
                   active
                     ? "bg-accent/10 text-accent"
                     : "text-muted hover:bg-background hover:text-foreground"

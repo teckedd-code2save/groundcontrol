@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
+import { AmbientShader } from "@/components/AmbientShader";
 
 const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
 const PAGE2_X_LINES = [1.5, 17, 55, 84, 98.5];
@@ -207,10 +208,13 @@ export default function LoginPage() {
 
       {/* HERO */}
       <section className="hero-s relative min-h-screen flex items-center overflow-hidden" style={{ background: C.dark }}>
-        <div className="bg-parallax absolute inset-0" style={{ background: `radial-gradient(ellipse 80% 60% at 50% 40%, ${C.dark} 0%, ${C.bg} 60%, ${C.darker} 100%)` }} />
-        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: `linear-gradient(${C.lin} 1px, transparent 1px), linear-gradient(90deg, ${C.lin} 1px, transparent 1px)`, backgroundSize: "80px 80px" }} />
+        <AmbientShader className="bg-parallax" />
+        <div className="absolute inset-0 opacity-25 z-[1]" style={{ backgroundImage: `linear-gradient(${C.lin} 1px, transparent 1px), linear-gradient(90deg, ${C.lin} 1px, transparent 1px)`, backgroundSize: "80px 80px" }} />
         <div className="relative z-10 w-full max-w-7xl mx-auto px-6 md:px-12 py-24">
           <div style={{ maxWidth: 700 }}>
+            <pre className="fade-up mb-6 select-none font-mono text-[10px] leading-tight" style={{ color: "rgba(232,84,42,0.55)" }} aria-hidden>{`┌─ groundcontrol ─┐
+│  host · stack · ai  │
+└─────────────────────┘`}</pre>
             <div className="mb-10">
               <h1 style={{ fontSize: "clamp(36px, 6.5vw, 72px)", fontWeight: 300, lineHeight: 1.06, letterSpacing: "-0.02em", margin: 0 }}>
                 <div className="line-mask" style={{ overflow: "hidden" }}><div className="line-inner">Your VPS has an</div></div>
