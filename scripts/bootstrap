@@ -430,6 +430,7 @@ if [ -z "$HOST" ]; then
 
   echo -e "${BLUE}→ Deploying GroundControl...${NC}"
   mkdir -p /opt/groundcontrol
+  # App listens on 3000 inside the image; publish publicly on 3737.
   cat > /opt/groundcontrol/docker-compose.yml << 'EOF'
 services:
   groundcontrol:
@@ -437,24 +438,36 @@ services:
     container_name: groundcontrol
     restart: unless-stopped
     ports:
-      - '3737:3737'
+      - "3737:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - DATABASE_URL=file:/app/prisma/prod.db
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - gc-data:/app/data
-      - /:/host:ro
-    environment:
-      - DATABASE_URL=file:/app/data/gc.db
-      - NODE_ENV=production
-    pid: host
+      - groundcontrol-db:/app/prisma
+      - /opt:/opt
+      - /etc:/etc
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 volumes:
-  gc-data:
+  groundcontrol-db:
 EOF
 
   cd /opt/groundcontrol
   if docker compose version >/dev/null 2>&1; then
-    docker compose up -d
+    docker compose up -d --remove-orphans --pull always
   else
-    docker-compose up -d
+    docker-compose up -d --remove-orphans
+  fi
+  # Best-effort open firewall for bootstrap port
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow 3737/tcp >/dev/null 2>&1 || true
   fi
 
   echo ""
@@ -566,7 +579,8 @@ if ! remote "mkdir -p /opt/groundcontrol"; then
   exit 1
 fi
 
-# Write compose via base64 to avoid nested heredoc/SSH quoting issues
+# Write compose via base64 to avoid nested heredoc/SSH quoting issues.
+# IMPORTANT: container process listens on PORT 3000 — map host 3737 → 3000.
 COMPOSE_B64=$(cat <<'COMPOSE' | base64 | tr -d '\n'
 services:
   groundcontrol:
@@ -574,17 +588,25 @@ services:
     container_name: groundcontrol
     restart: unless-stopped
     ports:
-      - '3737:3737'
+      - "3737:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - DATABASE_URL=file:/app/prisma/prod.db
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - gc-data:/app/data
-      - /:/host:ro
-    environment:
-      - DATABASE_URL=file:/app/data/gc.db
-      - NODE_ENV=production
-    pid: host
+      - groundcontrol-db:/app/prisma
+      - /opt:/opt
+      - /etc:/etc
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 volumes:
-  gc-data:
+  groundcontrol-db:
 COMPOSE
 )
 
@@ -596,11 +618,24 @@ if ! remote "echo '${COMPOSE_B64}' | base64 -d > /opt/groundcontrol/docker-compo
   fi
 fi
 
-echo -e "${BLUE}→ Starting containers (docker compose up -d)...${NC}"
-if ! remote "cd /opt/groundcontrol && (docker compose up -d || docker-compose up -d)"; then
+echo -e "${BLUE}→ Starting containers (docker compose up -d --remove-orphans)...${NC}"
+if ! remote "cd /opt/groundcontrol && (docker compose up -d --remove-orphans --pull always || docker-compose up -d --remove-orphans)"; then
   echo -e "${RED}✗ docker compose up failed${NC}"
   echo -e "  SSH in and run: cd /opt/groundcontrol && docker compose logs"
   exit 1
+fi
+
+# Open bootstrap port if ufw is active (ignore errors)
+remote "command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active && ufw allow 3737/tcp || true" || true
+
+# Quick reachability check from the VPS itself
+echo -e "${BLUE}→ Verifying app responds on :3737...${NC}"
+if remote_ok "sleep 3; wget -qO- --timeout=5 http://127.0.0.1:3737/ >/dev/null 2>&1 || curl -sf --max-time 5 http://127.0.0.1:3737/ >/dev/null"; then
+  echo -e "${GREEN}✓ App is responding on port 3737${NC}"
+else
+  echo -e "${YELLOW}! Container is up but local HTTP check failed — showing logs${NC}"
+  remote "cd /opt/groundcontrol && docker compose ps && docker compose logs --tail=40" || true
+  echo -e "${YELLOW}! If the browser still refuses, open the firewall: ufw allow 3737/tcp${NC}"
 fi
 
 HOST_IP=$(echo "$HOST" | sed 's/.*@//')
@@ -616,6 +651,7 @@ if [ -n "${IDENTITY_DISPLAY:-}" ]; then
   echo -e "  Auth:     ${CYAN}${IDENTITY_DISPLAY}${NC}"
   echo ""
 fi
+echo -e "  Published: host ${CYAN}3737${NC} → container ${CYAN}3000${NC}"
 echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
 echo ""
 exit 0
