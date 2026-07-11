@@ -25,10 +25,12 @@ YELLOW='\033[0;33m'
 NC='\033[0m'
 
 IDENTITY=""
+IDENTITY_DISPLAY=""
 PORT="22"
 HOST=""
 INTERACTIVE=0
 SSH_EXTRA=()
+TMP_KEY_FILE=""
 
 usage() {
   cat <<'USAGE'
@@ -37,33 +39,41 @@ GroundControl Bootstrap
 Usage:
   bash bootstrap                              Install on this machine
   bash bootstrap user@host                    Install on remote via SSH
-  bash bootstrap -i KEY user@host             Use private key (ssh -i)
+  bash bootstrap -i KEY user@host             Use private key file (ssh -i)
   bash bootstrap -p PORT user@host            SSH port (default 22)
-  bash bootstrap --interactive                Prompt for host / key
+  bash bootstrap --interactive                Prompt for host / key path / paste
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
-  curl -fsSL .../bootstrap | bash -s -- root@128.140.12.62
-  curl -fsSL .../bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@128.140.12.62
-  curl -fsSL .../bootstrap | bash -s -- --interactive
+  curl -fsSL …/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@YOUR_IP
+  curl -fsSL …/bootstrap | bash -s -- --interactive
+
+Notes:
+  • Use the PRIVATE key (id_ed25519), not the .pub public key
+  • Paths: /Users/you/.ssh/key  or  ~/.ssh/key  or  .ssh/key
+  • Interactive mode can paste a private key (PEM) when path resolution is hard
 USAGE
 }
+
+cleanup() {
+  if [ -n "${TMP_KEY_FILE:-}" ] && [ -f "$TMP_KEY_FILE" ]; then
+    rm -f "$TMP_KEY_FILE"
+  fi
+}
+trap cleanup EXIT INT TERM
 
 # Read a line from the real terminal even when stdin is a pipe (curl | bash).
 read_tty() {
   local prompt="$1"
-  local var
+  local var=""
   if [ -r /dev/tty ]; then
+    # printf to tty; read from tty — avoid stdout mixing with command substitution
     printf "%s" "$prompt" > /dev/tty
     IFS= read -r var < /dev/tty || true
-    printf "%s" "$var"
   elif [ -t 0 ]; then
-    printf "%s" "$prompt"
+    printf "%s" "$prompt" >&2
     IFS= read -r var || true
-    printf "%s" "$var"
-  else
-    printf ""
   fi
+  printf "%s" "$var"
 }
 
 confirm_tty() {
@@ -76,36 +86,195 @@ confirm_tty() {
   esac
 }
 
-# Expand ~ in a path
-expand_path() {
-  local p="$1"
-  case "$p" in
-    "~/"*) printf "%s" "${HOME}/${p#~/}" ;;
-    "~") printf "%s" "${HOME}" ;;
-    *) printf "%s" "$p" ;;
-  esac
+trim() {
+  local s="$1"
+  # strip surrounding quotes and whitespace
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  s="${s#\"}"
+  s="${s%\"}"
+  s="${s#\'}"
+  s="${s%\'}"
+  printf "%s" "$s"
 }
 
+# Resolve a key path: ~/, $HOME, relative, ~/.ssh/basename, warn on .pub
+resolve_key_path() {
+  local p raw
+  raw=$(trim "$1")
+  p="$raw"
+
+  if [ -z "$p" ]; then
+    printf ""
+    return 1
+  fi
+
+  # Expand leading ~
+  if [ "$p" = "~" ]; then
+    p="${HOME}"
+  elif [ "${p#\~/}" != "$p" ]; then
+    # starts with ~/
+    p="${HOME}/${p#\~/}"
+  elif [ "${p#~}" != "$p" ] && [ "${p#~/}" = "$p" ]; then
+    # lone ~something odd — still try HOME/
+    p="${HOME}/${p#~}"
+  fi
+
+  # Absolute path
+  if [ "${p#/}" != "$p" ]; then
+    :
+  else
+    # Relative: try cwd, then $HOME/, then $HOME/.ssh/
+    if [ -f "$p" ]; then
+      p="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
+    elif [ -f "${HOME}/$p" ]; then
+      p="${HOME}/$p"
+    elif [ -f "${HOME}/.ssh/$p" ]; then
+      p="${HOME}/.ssh/$p"
+    elif [ -f "${HOME}/.ssh/$(basename "$p")" ]; then
+      p="${HOME}/.ssh/$(basename "$p")"
+    else
+      # Prefer showing expanded HOME-relative for errors
+      p="${HOME}/$p"
+    fi
+  fi
+
+  # User gave a .pub — try the private key sibling
+  if [ "${p%.pub}" != "$p" ]; then
+    local priv="${p%.pub}"
+    if [ -f "$priv" ]; then
+      echo -e "${YELLOW}! You pointed at a public key (.pub). Using private key: ${priv}${NC}" >&2
+      p="$priv"
+    else
+      echo -e "${YELLOW}! That looks like a public key (.pub). ssh -i needs the private key (no .pub).${NC}" >&2
+      echo -e "  Tried sibling private key: ${priv} (not found)${NC}" >&2
+    fi
+  fi
+
+  if [ ! -f "$p" ]; then
+    printf "%s" "$p"
+    return 1
+  fi
+  printf "%s" "$p"
+  return 0
+}
+
+# Write pasted PEM key to a temp file (600)
+write_pasted_key() {
+  local content="$1"
+  TMP_KEY_FILE=$(mktemp "${TMPDIR:-/tmp}/gc-ssh-key.XXXXXX")
+  # Ensure trailing newline
+  printf "%s\n" "$content" > "$TMP_KEY_FILE"
+  chmod 600 "$TMP_KEY_FILE"
+  IDENTITY="$TMP_KEY_FILE"
+  IDENTITY_DISPLAY="(pasted private key)"
+}
+
+# Prompt user to paste a multi-line PEM private key via /dev/tty
+prompt_paste_key() {
+  local line body=""
+  echo "" > /dev/tty 2>/dev/null || true
+  echo -e "${BLUE}Paste your PRIVATE key (including -----BEGIN … END----- lines).${NC}" > /dev/tty 2>/dev/null || echo -e "${BLUE}Paste PRIVATE key, then a line with only: END${NC}"
+  echo -e "When finished, type ${CYAN}END${NC} on its own line (or press Ctrl-D).${NC}" > /dev/tty 2>/dev/null || true
+  echo "" > /dev/tty 2>/dev/null || true
+
+  if [ -r /dev/tty ]; then
+    while IFS= read -r line < /dev/tty || [ -n "$line" ]; do
+      case "$line" in
+        END|end|.) break ;;
+      esac
+      body="${body}${line}
+"
+      # Auto-stop after END PRIVATE KEY line
+      case "$line" in
+        *"END OPENSSH PRIVATE KEY"*|*"END RSA PRIVATE KEY"*|*"END EC PRIVATE KEY"*|*"END PRIVATE KEY"*)
+          break
+          ;;
+      esac
+    done
+  else
+    echo -e "${RED}✗ No TTY available to paste a key.${NC}" >&2
+    return 1
+  fi
+
+  body=$(printf "%s" "$body" | sed -e 's/\r$//')
+  if ! printf "%s" "$body" | grep -q "BEGIN.*PRIVATE KEY"; then
+    echo -e "${RED}✗ Paste did not look like a private key (missing BEGIN PRIVATE KEY).${NC}" >&2
+    echo -e "  Do not paste the .pub file — use the private key without .pub${NC}" >&2
+    return 1
+  fi
+  write_pasted_key "$body"
+  echo -e "${GREEN}✓ Private key received (temporary file, deleted on exit)${NC}"
+  return 0
+}
+
+# Apply IDENTITY to SSH_EXTRA (path or already set temp file)
 build_ssh_base() {
-  SSH_EXTRA=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15)
+  SSH_EXTRA=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o BatchMode=yes)
   if [ -n "$PORT" ] && [ "$PORT" != "22" ]; then
     SSH_EXTRA+=(-p "$PORT")
   fi
   if [ -n "$IDENTITY" ]; then
-    IDENTITY=$(expand_path "$IDENTITY")
-    if [ ! -f "$IDENTITY" ]; then
-      echo -e "${RED}✗ SSH key not found: ${IDENTITY}${NC}" >&2
-      exit 1
+    # If IDENTITY still looks like a path (not our temp), resolve it
+    if [ -z "$TMP_KEY_FILE" ] || [ "$IDENTITY" != "$TMP_KEY_FILE" ]; then
+      local resolved
+      if resolved=$(resolve_key_path "$IDENTITY"); then
+        IDENTITY="$resolved"
+        IDENTITY_DISPLAY="$resolved"
+      else
+        echo -e "${RED}✗ SSH key not found: ${resolved:-$IDENTITY}${NC}" >&2
+        echo "" >&2
+        echo "  Tips:" >&2
+        echo "  • Use the PRIVATE key path, e.g. ~/.ssh/id_ed25519 (not .pub)" >&2
+        echo "  • Absolute: /Users/you/.ssh/id_ed25519" >&2
+        echo "  • Or re-run with --interactive and choose paste" >&2
+        exit 1
+      fi
     fi
-    # Avoid permission warnings / rejection on open keys
     chmod 600 "$IDENTITY" 2>/dev/null || true
     SSH_EXTRA+=(-i "$IDENTITY" -o IdentitiesOnly=yes)
   fi
 }
 
 ssh_cmd() {
-  # shellcheck disable=SC2086
   ssh "${SSH_EXTRA[@]}" "$@"
+}
+
+# Interactive helper: path or paste
+prompt_identity() {
+  local choice path
+  echo ""
+  echo "  How do you want to provide the SSH private key?"
+  echo "    1) Path to key file  (e.g. ~/.ssh/id_ed25519)"
+  echo "    2) Paste private key now"
+  echo "    3) Use ssh-agent / default keys only"
+  choice=$(read_tty "Choice [1/2/3]: ")
+  case "$choice" in
+    2|p|P|paste|Paste)
+      prompt_paste_key || return 1
+      ;;
+    3|a|A|agent|"")
+      IDENTITY=""
+      IDENTITY_DISPLAY="(ssh-agent / defaults)"
+      ;;
+    *)
+      path=$(read_tty "Path to private key: ")
+      path=$(trim "$path")
+      if [ -z "$path" ]; then
+        IDENTITY=""
+        IDENTITY_DISPLAY="(ssh-agent / defaults)"
+      else
+        IDENTITY="$path"
+        if ! resolve_key_path "$IDENTITY" >/dev/null; then
+          echo -e "${YELLOW}! Path not found yet — will re-check. You can also paste the key.${NC}"
+          if confirm_tty "Paste private key instead? [y/N] "; then
+            prompt_paste_key || return 1
+          fi
+        fi
+      fi
+      ;;
+  esac
+  return 0
 }
 
 # Parse args
@@ -173,16 +342,18 @@ echo ""
 if [ "$INTERACTIVE" -eq 1 ] || { [ -z "$HOST" ] && [ -r /dev/tty ] && confirm_tty "Install on a remote VPS via SSH? [y/N] "; }; then
   if [ -z "$HOST" ]; then
     HOST=$(read_tty "SSH target (user@host): ")
+    HOST=$(trim "$HOST")
   fi
   if [ -z "$HOST" ]; then
     echo -e "${BLUE}→ No host given — installing locally on this machine.${NC}"
   else
-    if [ -z "$IDENTITY" ]; then
-      IDENTITY=$(read_tty "Path to private key (Enter to use ssh-agent/default keys): ")
-    fi
     PORT_IN=$(read_tty "SSH port [${PORT}]: ")
+    PORT_IN=$(trim "$PORT_IN")
     if [ -n "$PORT_IN" ]; then
       PORT="$PORT_IN"
+    fi
+    if [ -z "$IDENTITY" ]; then
+      prompt_identity || exit 1
     fi
   fi
   INTERACTIVE=1
@@ -251,8 +422,8 @@ fi
 
 # ── Remote install via SSH ──────────────────────────────
 echo -e "  Target: ${BLUE}${HOST}${NC}"
-if [ -n "$IDENTITY" ]; then
-  echo -e "  Key:    ${BLUE}${IDENTITY}${NC}"
+if [ -n "${IDENTITY_DISPLAY:-$IDENTITY}" ]; then
+  echo -e "  Key:    ${BLUE}${IDENTITY_DISPLAY:-$IDENTITY}${NC}"
 fi
 if [ "$PORT" != "22" ]; then
   echo -e "  Port:   ${BLUE}${PORT}${NC}"
@@ -262,49 +433,38 @@ echo ""
 build_ssh_base
 
 echo -e "${BLUE}→ Testing SSH connection...${NC}"
-if ! ssh_cmd -o BatchMode=yes "$HOST" "echo ok" >/dev/null 2>&1; then
-  echo -e "${YELLOW}! Batch SSH failed (no agent key, or key not tried).${NC}"
+if ! ssh_cmd "$HOST" "echo ok" >/dev/null 2>&1; then
+  echo -e "${YELLOW}! SSH with current credentials failed.${NC}"
 
-  # Offer interactive key if we can talk to a TTY
-  if [ -z "$IDENTITY" ] && { [ -r /dev/tty ] || [ -t 0 ]; }; then
+  if { [ -r /dev/tty ] || [ -t 0 ]; }; then
     echo ""
-    echo "  If you normally connect with:"
-    echo -e "    ${CYAN}ssh -i ~/.ssh/your_key ${HOST}${NC}"
-    echo "  provide that key path now."
+    echo "  If you normally run:"
+    echo -e "    ${CYAN}ssh -i ~/.ssh/your_private_key ${HOST}${NC}"
+    echo "  use that same private key path (not the .pub), or paste the key."
     echo ""
-    IDENTITY=$(read_tty "Path to private key (or Enter to abort): ")
-    if [ -n "$IDENTITY" ]; then
-      build_ssh_base
-      if ssh_cmd -o BatchMode=yes "$HOST" "echo ok" >/dev/null 2>&1; then
-        echo -e "${GREEN}✓ SSH connection working (with provided key)${NC}"
-      else
-        echo -e "${RED}✗ Still cannot SSH to ${HOST}${NC}"
-        echo ""
-        echo "  Tried: ssh ${SSH_EXTRA[*]} ${HOST}"
-        echo "  Check:"
-        echo "  1. Host is reachable: ping $(echo "$HOST" | sed 's/.*@//')"
-        echo "  2. Key is authorized on the server"
-        echo "  3. Manual test: ssh -i ${IDENTITY} -p ${PORT} ${HOST}"
-        exit 1
-      fi
+    IDENTITY=""
+    TMP_KEY_FILE=""
+    prompt_identity || exit 1
+    build_ssh_base
+    if ssh_cmd "$HOST" "echo ok" >/dev/null 2>&1; then
+      echo -e "${GREEN}✓ SSH connection working${NC}"
     else
-      echo -e "${RED}✗ Cannot SSH to ${HOST}${NC}"
+      echo -e "${RED}✗ Still cannot SSH to ${HOST}${NC}"
       echo ""
-      echo "  Re-run with your key:"
-      echo -e "    ${CYAN}curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/YOUR_KEY ${HOST}${NC}"
-      echo ""
-      echo "  Or: ssh-copy-id -i ~/.ssh/YOUR_KEY.pub ${HOST}"
+      echo "  Tried: ssh ${SSH_EXTRA[*]} ${HOST}"
+      echo "  Check:"
+      echo "  1. Host is reachable"
+      echo "  2. You used the PRIVATE key (file without .pub)"
+      echo "  3. Manual test: ssh -i ${IDENTITY:-~/.ssh/id_ed25519} -p ${PORT} ${HOST}"
+      echo "  4. Install public key on server: ssh-copy-id -i KEY.pub ${HOST}"
       exit 1
     fi
   else
     echo -e "${RED}✗ Cannot SSH to ${HOST}${NC}"
     echo ""
-    echo "  Make sure:"
-    echo "  1. The host is reachable"
-    echo "  2. Your SSH key is authorized"
-    echo "  3. Pass the key explicitly:"
-    echo -e "     ${CYAN}curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 ${HOST}${NC}"
-    echo "  4. Or: ssh-copy-id ${HOST}"
+    echo "  Pass a private key explicitly:"
+    echo -e "    ${CYAN}curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 ${HOST}${NC}"
+    echo "  Or: bash -s -- --interactive   (path or paste)"
     exit 1
   fi
 else
