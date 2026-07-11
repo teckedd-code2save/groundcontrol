@@ -98,9 +98,9 @@ trim() {
   printf "%s" "$s"
 }
 
-# Resolve a key path: ~/, $HOME, relative, ~/.ssh/basename, warn on .pub
+# Resolve a key path: ~/, $HOME, relative, ~/.ssh/basename, fuzzy match, warn on .pub
 resolve_key_path() {
-  local p raw
+  local p raw base candidates c
   raw=$(trim "$1")
   p="$raw"
 
@@ -109,16 +109,18 @@ resolve_key_path() {
     return 1
   fi
 
-  # Expand leading ~
-  if [ "$p" = "~" ]; then
-    p="${HOME}"
-  elif [ "${p#\~/}" != "$p" ]; then
-    # starts with ~/
-    p="${HOME}/${p#\~/}"
-  elif [ "${p#~}" != "$p" ] && [ "${p#~/}" = "$p" ]; then
-    # lone ~something odd — still try HOME/
-    p="${HOME}/${p#~}"
-  fi
+  # Expand leading ~  (avoid [[ == ~/* ]] which tilde-expands the pattern)
+  case "$p" in
+    "~") p="${HOME}" ;;
+    "~/"*) p="${HOME}/${p#"~/"}" ;;
+    "~"*) p="${HOME}/${p#"~"}" ;;
+  esac
+
+  # Strip accidental double-home: /Users/x/~/... or $HOME/~/...
+  case "$p" in
+    "${HOME}/~/"*) p="${HOME}/${p#"${HOME}/~/"}" ;;
+    "${HOME}/~"*) p="${HOME}/${p#"${HOME}/~"}" ;;
+  esac
 
   # Absolute path
   if [ "${p#/}" != "$p" ]; then
@@ -134,7 +136,6 @@ resolve_key_path() {
     elif [ -f "${HOME}/.ssh/$(basename "$p")" ]; then
       p="${HOME}/.ssh/$(basename "$p")"
     else
-      # Prefer showing expanded HOME-relative for errors
       p="${HOME}/$p"
     fi
   fi
@@ -151,12 +152,50 @@ resolve_key_path() {
     fi
   fi
 
-  if [ ! -f "$p" ]; then
+  if [ -f "$p" ]; then
     printf "%s" "$p"
-    return 1
+    return 0
   fi
+
+  # Fuzzy: basename match in ~/.ssh (handles typos / missing trailing s)
+  base=$(basename "$p")
+  base="${base%.pub}"
+  if [ -d "${HOME}/.ssh" ] && [ -n "$base" ]; then
+    candidates=""
+    # exact private
+    [ -f "${HOME}/.ssh/${base}" ] && candidates="${HOME}/.ssh/${base}"
+    # prefix matches (private files only)
+    for c in "${HOME}/.ssh/"*; do
+      [ -f "$c" ] || continue
+      case "$c" in
+        *.pub|*.old|*.bak|*known_hosts*|*config*|*authorized_keys*) continue ;;
+      esac
+      case "$(basename "$c")" in
+        "${base}"*|*"${base}"*)
+          if [ -z "$candidates" ]; then candidates="$c"
+          else candidates="$candidates
+$c"
+          fi
+          ;;
+      esac
+    done
+    # Prefer single unique fuzzy hit
+    if [ -n "$candidates" ] && [ "$(printf '%s\n' "$candidates" | grep -c .)" -eq 1 ]; then
+      echo -e "${YELLOW}! Exact path missing; using closest private key: ${candidates}${NC}" >&2
+      printf "%s" "$candidates"
+      return 0
+    fi
+    if [ -n "$candidates" ]; then
+      echo -e "${YELLOW}! Key not found at: ${p}${NC}" >&2
+      echo -e "  Similar private keys in ~/.ssh:${NC}" >&2
+      printf '%s\n' "$candidates" | while IFS= read -r c; do
+        echo -e "    ${CYAN}$c${NC}" >&2
+      done
+    fi
+  fi
+
   printf "%s" "$p"
-  return 0
+  return 1
 }
 
 # Write pasted PEM key to a temp file (600)
@@ -257,18 +296,24 @@ prompt_identity() {
       IDENTITY=""
       IDENTITY_DISPLAY="(ssh-agent / defaults)"
       ;;
-    *)
-      path=$(read_tty "Path to private key: ")
+    1|path|Path|*)
+      path=$(read_tty "Path to private key (e.g. ~/.ssh/id_ed25519): ")
       path=$(trim "$path")
       if [ -z "$path" ]; then
         IDENTITY=""
         IDENTITY_DISPLAY="(ssh-agent / defaults)"
       else
-        IDENTITY="$path"
-        if ! resolve_key_path "$IDENTITY" >/dev/null; then
-          echo -e "${YELLOW}! Path not found yet — will re-check. You can also paste the key.${NC}"
+        resolved=""
+        if resolved=$(resolve_key_path "$path"); then
+          IDENTITY="$resolved"
+          IDENTITY_DISPLAY="$resolved"
+          echo -e "${GREEN}✓ Using key file: ${IDENTITY}${NC}"
+        else
+          echo -e "${YELLOW}! Path not found: ${resolved:-$path}${NC}"
           if confirm_tty "Paste private key instead? [y/N] "; then
             prompt_paste_key || return 1
+          else
+            return 1
           fi
         fi
       fi
@@ -421,6 +466,19 @@ EOF
 fi
 
 # ── Remote install via SSH ──────────────────────────────
+# Note: with set -e, any failing SSH probe after "connection OK" used to abort
+# the whole script. Use remote() helpers that never kill the install mid-flight.
+
+remote() {
+  # Run remote command; return ssh exit code but never trip set -e by itself
+  ssh_cmd "$HOST" "$@"
+  return $?
+}
+
+remote_ok() {
+  remote "$@" >/dev/null 2>&1
+}
+
 echo -e "  Target: ${BLUE}${HOST}${NC}"
 if [ -n "${IDENTITY_DISPLAY:-$IDENTITY}" ]; then
   echo -e "  Key:    ${BLUE}${IDENTITY_DISPLAY:-$IDENTITY}${NC}"
@@ -433,7 +491,7 @@ echo ""
 build_ssh_base
 
 echo -e "${BLUE}→ Testing SSH connection...${NC}"
-if ! ssh_cmd "$HOST" "echo ok" >/dev/null 2>&1; then
+if ! remote_ok "echo ok"; then
   echo -e "${YELLOW}! SSH with current credentials failed.${NC}"
 
   if { [ -r /dev/tty ] || [ -t 0 ]; }; then
@@ -442,11 +500,14 @@ if ! ssh_cmd "$HOST" "echo ok" >/dev/null 2>&1; then
     echo -e "    ${CYAN}ssh -i ~/.ssh/your_private_key ${HOST}${NC}"
     echo "  use that same private key path (not the .pub), or paste the key."
     echo ""
-    IDENTITY=""
-    TMP_KEY_FILE=""
-    prompt_identity || exit 1
+    # Keep existing temp key if paste already worked earlier in this run
+    if [ -z "$IDENTITY" ] || [ ! -f "$IDENTITY" ]; then
+      IDENTITY=""
+      TMP_KEY_FILE=""
+      prompt_identity || exit 1
+    fi
     build_ssh_base
-    if ssh_cmd "$HOST" "echo ok" >/dev/null 2>&1; then
+    if remote_ok "echo ok"; then
       echo -e "${GREEN}✓ SSH connection working${NC}"
     else
       echo -e "${RED}✗ Still cannot SSH to ${HOST}${NC}"
@@ -471,24 +532,37 @@ else
   echo -e "${GREEN}✓ SSH connection working${NC}"
 fi
 
-OS_ID=$(ssh_cmd "$HOST" "grep ^ID= /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"' || echo unknown")
+# Keep going even if probes fail (set -e safe)
+echo -e "${BLUE}→ Detecting remote OS...${NC}"
+OS_ID=$(remote "cat /etc/os-release 2>/dev/null | grep ^ID= | head -1 | cut -d= -f2 | tr -d '\"'" 2>/dev/null || true)
+OS_ID=$(trim "${OS_ID:-}")
+if [ -z "$OS_ID" ]; then
+  OS_ID="unknown"
+fi
 echo -e "${GREEN}✓ Remote OS: ${OS_ID}${NC}"
 
-if ssh_cmd "$HOST" "docker --version >/dev/null 2>&1"; then
+echo -e "${BLUE}→ Checking Docker...${NC}"
+if remote_ok "command -v docker >/dev/null 2>&1 && docker --version >/dev/null 2>&1"; then
   echo -e "${GREEN}✓ Docker already installed${NC}"
 else
   echo -e "${BLUE}→ Installing Docker on ${HOST}...${NC}"
-  ssh_cmd "$HOST" "curl -fsSL https://get.docker.com | sh" || {
+  if ! remote "curl -fsSL https://get.docker.com | sh"; then
     echo -e "${RED}✗ Docker install failed${NC}"
     exit 1
-  }
+  fi
+  # Some images need the daemon group / service
+  remote "command -v systemctl >/dev/null 2>&1 && systemctl enable --now docker 2>/dev/null || true" || true
   echo -e "${GREEN}✓ Docker installed${NC}"
 fi
 
 echo -e "${BLUE}→ Deploying GroundControl...${NC}"
-ssh_cmd "$HOST" "mkdir -p /opt/groundcontrol"
+if ! remote "mkdir -p /opt/groundcontrol"; then
+  echo -e "${RED}✗ Could not create /opt/groundcontrol on remote host${NC}"
+  exit 1
+fi
 
-ssh_cmd "$HOST" "cat > /opt/groundcontrol/docker-compose.yml << 'EOF'
+# Write compose via base64 to avoid nested heredoc/SSH quoting issues
+COMPOSE_B64=$(cat <<'COMPOSE' | base64 | tr -d '\n'
 services:
   groundcontrol:
     image: ghcr.io/teckedd-code2save/groundcontrol:latest
@@ -506,9 +580,23 @@ services:
     pid: host
 volumes:
   gc-data:
-EOF"
+COMPOSE
+)
 
-ssh_cmd "$HOST" "cd /opt/groundcontrol && (docker compose up -d 2>/dev/null || docker-compose up -d)"
+if ! remote "echo '${COMPOSE_B64}' | base64 -d > /opt/groundcontrol/docker-compose.yml"; then
+  # BusyBox base64 sometimes wants -d vs --decode; try openssl
+  if ! remote "echo '${COMPOSE_B64}' | openssl base64 -d -A > /opt/groundcontrol/docker-compose.yml 2>/dev/null"; then
+    echo -e "${RED}✗ Could not write docker-compose.yml on remote host${NC}"
+    exit 1
+  fi
+fi
+
+echo -e "${BLUE}→ Starting containers (docker compose up -d)...${NC}"
+if ! remote "cd /opt/groundcontrol && (docker compose up -d || docker-compose up -d)"; then
+  echo -e "${RED}✗ docker compose up failed${NC}"
+  echo -e "  SSH in and run: cd /opt/groundcontrol && docker compose logs"
+  exit 1
+fi
 
 HOST_IP=$(echo "$HOST" | sed 's/.*@//')
 echo ""
@@ -519,9 +607,10 @@ echo ""
 echo -e "  Open:     ${CYAN}http://${HOST_IP}:3737${NC}"
 echo -e "  Setup:    ${CYAN}http://${HOST_IP}:3737/onboarding${NC}"
 echo ""
-if [ -n "$IDENTITY" ]; then
-  echo -e "  Used key: ${CYAN}${IDENTITY}${NC}"
+if [ -n "${IDENTITY_DISPLAY:-}" ]; then
+  echo -e "  Auth:     ${CYAN}${IDENTITY_DISPLAY}${NC}"
   echo ""
 fi
 echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
 echo ""
+exit 0
