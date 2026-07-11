@@ -30,6 +30,9 @@ PORT="22"           # SSH port
 GC_HTTP_PORT=""     # Host port published for GC UI (never 80/443)
 HOST=""
 INTERACTIVE=0
+# When set, install side-by-side at /opt/groundcontrol-bootstrap even if
+# production /opt/groundcontrol already exists (never touch production).
+FORCE_FRESH=0
 SSH_EXTRA=()
 TMP_KEY_FILE=""
 # Candidate UI ports — high, uncommon, never edge 80/443
@@ -49,15 +52,19 @@ Usage:
   bash bootstrap -i KEY user@host             Use private key file (ssh -i)
   bash bootstrap -p PORT user@host            SSH port (default 22)
   bash bootstrap --interactive                Prompt for host / key path / paste
+  bash bootstrap --fresh user@host            Side-by-side install (never touch production)
 
 Examples:
   curl -fsSL …/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@YOUR_IP
+  curl -fsSL …/bootstrap | bash -s -- --fresh -i ~/.ssh/id_ed25519 root@YOUR_IP
   curl -fsSL …/bootstrap | bash -s -- --interactive
 
 Notes:
   • Use the PRIVATE key (id_ed25519), not the .pub public key
   • Paths: /Users/you/.ssh/key  or  ~/.ssh/key  or  .ssh/key
   • Interactive mode can paste a private key (PEM) when path resolution is hard
+  • If GroundControl is already healthy on the server, bootstrap leaves it alone
+  • --fresh installs to /opt/groundcontrol-bootstrap without touching production
   • Each fresh install creates a unique login email + password for you
 USAGE
 }
@@ -475,8 +482,6 @@ EOF
 write_production_compose_yaml() {
   cat <<'EOF'
 # GroundControl production compose
-version: "3.8"
-
 services:
   web:
     image: ghcr.io/teckedd-code2save/groundcontrol:latest
@@ -572,6 +577,10 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -y|--yes)
+      shift
+      ;;
+    --fresh|--side-by-side|--bootstrap-only)
+      FORCE_FRESH=1
       shift
       ;;
     --interactive|-I)
@@ -797,20 +806,53 @@ else
 fi
 
 # ── Existing production install at /opt/groundcontrol ──
+# Default: if production is healthy, leave it alone (no rewrite / pull / recreate).
+# Only repair when the install is clearly broken. Use --fresh for a side-by-side
+# install that never touches /opt/groundcontrol.
 echo -e "${BLUE}→ Looking for an existing GroundControl install...${NC}"
+HAS_PROD_DIR=0
 HAS_PROD_ENV=0
-HAS_PROD_VOL=0
+HAS_PROD_COMPOSE=0
+PROD_HEALTHY=0
+PROD_RUNNING=0
+remote_ok "test -d /opt/groundcontrol" && HAS_PROD_DIR=1
 remote_ok "test -f /opt/groundcontrol/.env" && HAS_PROD_ENV=1
-remote_ok "docker volume ls -q 2>/dev/null | grep -qx groundcontrol_groundcontrol-db || docker volume ls -q 2>/dev/null | grep -q groundcontrol-db" && HAS_PROD_VOL=1
+remote_ok "test -f /opt/groundcontrol/docker-compose.yml" && HAS_PROD_COMPOSE=1
+remote_ok "docker ps --format '{{.Names}}' 2>/dev/null | grep -qx groundcontrol-web" && PROD_RUNNING=1
+remote_ok "wget -qO- --timeout=4 http://127.0.0.1:3003/ >/dev/null 2>&1 || curl -sf --max-time 4 http://127.0.0.1:3003/ >/dev/null" && PROD_HEALTHY=1
 
-if [ "$HAS_PROD_ENV" -eq 1 ] || [ "$HAS_PROD_VOL" -eq 1 ] || remote_ok "test -d /opt/groundcontrol"; then
-  echo -e "${GREEN}✓ Found an existing install — bringing it back online${NC}"
+if [ "$FORCE_FRESH" -eq 1 ]; then
+  echo -e "${BLUE}→ --fresh: installing side-by-side (will not modify /opt/groundcontrol)${NC}"
+elif [ "$PROD_HEALTHY" -eq 1 ] || { [ "$PROD_RUNNING" -eq 1 ] && [ "$HAS_PROD_COMPOSE" -eq 1 ]; }; then
+  # Already installed and working — do not pull, rewrite, or recreate.
+  HOST_IP=$(echo "$HOST" | sed 's/.*@//')
+  echo -e "${GREEN}✓ GroundControl is already installed and running${NC}"
+  echo ""
+  echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║     Already installed — nothing changed          ║${NC}"
+  echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "  Path:     ${CYAN}/opt/groundcontrol${NC}"
+  echo -e "  Proxy:    ${CYAN}127.0.0.1:3003${NC} (Caddy/Nginx → this)"
+  echo -e "  Container:${CYAN}groundcontrol-web${NC}"
+  if [ "$PROD_HEALTHY" -eq 1 ]; then
+    echo -e "  Status:   ${GREEN}healthy${NC}"
+  else
+    echo -e "  Status:   container is up (HTTP check pending)"
+  fi
+  echo ""
+  echo -e "  Sign in with the account you already use on this server."
+  echo -e "  Bootstrap did ${YELLOW}not${NC} restart or rewrite your install."
+  echo ""
+  echo -e "  Want a separate trial install instead?"
+  echo -e "  ${CYAN}curl -fsSL …/bootstrap | bash -s -- --fresh -i KEY ${HOST}${NC}"
+  echo ""
+  exit 0
+elif [ "$HAS_PROD_DIR" -eq 1 ] || [ "$HAS_PROD_ENV" -eq 1 ] || [ "$HAS_PROD_COMPOSE" -eq 1 ]; then
+  # Production path exists but is not healthy — repair carefully.
+  echo -e "${YELLOW}! Found /opt/groundcontrol but it is not healthy — repairing only what is needed${NC}"
 
-  # Stop accidental bootstrap containers without touching production data
-  remote "docker rm -f groundcontrol groundcontrol-bootstrap 2>/dev/null || true" || true
-  remote "docker compose -p groundcontrol -f /opt/groundcontrol/docker-compose.yml down 2>/dev/null || true" || true
-  remote "docker compose -p gcbootstrap down 2>/dev/null || true" || true
-
+  # Ensure .env secrets without clobbering existing values
   remote "mkdir -p /opt/groundcontrol
 cd /opt/groundcontrol
 if [ ! -f .env ]; then
@@ -823,16 +865,29 @@ if ! grep -q '^HOST_PORT=' .env 2>/dev/null; then
   echo 'HOST_PORT=3003' >> .env
 fi" || true
 
-  PROD_B64=$(write_production_compose_yaml | base64 | tr -d '\n')
-  if ! remote "echo '${PROD_B64}' | base64 -d > /opt/groundcontrol/docker-compose.yml"; then
-    remote "echo '${PROD_B64}' | openssl base64 -d -A > /opt/groundcontrol/docker-compose.yml" || {
-      echo -e "${RED}✗ Could not write production docker-compose.yml${NC}"
-      exit 1
-    }
+  # Only rewrite compose when missing or clearly not production (no groundcontrol-web)
+  NEEDS_COMPOSE=0
+  if [ "$HAS_PROD_COMPOSE" -eq 0 ]; then
+    NEEDS_COMPOSE=1
+  elif ! remote_ok "grep -q 'groundcontrol-web' /opt/groundcontrol/docker-compose.yml"; then
+    NEEDS_COMPOSE=1
+    echo -e "${YELLOW}! Compose file does not look like production — restoring production layout${NC}"
   fi
 
-  echo -e "${BLUE}→ Starting GroundControl...${NC}"
-  if ! remote "cd /opt/groundcontrol && (docker compose up -d --pull always || docker-compose up -d)"; then
+  if [ "$NEEDS_COMPOSE" -eq 1 ]; then
+    PROD_B64=$(write_production_compose_yaml | base64 | tr -d '\n')
+    if ! remote "echo '${PROD_B64}' | base64 -d > /opt/groundcontrol/docker-compose.yml"; then
+      remote "echo '${PROD_B64}' | openssl base64 -d -A > /opt/groundcontrol/docker-compose.yml" || {
+        echo -e "${RED}✗ Could not write production docker-compose.yml${NC}"
+        exit 1
+      }
+    fi
+  fi
+
+  # Start without --pull always (avoid surprise upgrades during bootstrap)
+  # Do not compose down first — that recreated networks and disrupted a healthy history.
+  echo -e "${BLUE}→ Starting production container (no image pull)...${NC}"
+  if ! remote "cd /opt/groundcontrol && (docker compose up -d || docker-compose up -d)"; then
     echo -e "${RED}✗ Failed to start GroundControl${NC}"
     remote "cd /opt/groundcontrol && docker compose logs --tail=50" || true
     exit 1
@@ -844,24 +899,26 @@ fi" || true
     echo -e "${YELLOW}! Started, but the health check is still warming up${NC}"
   fi
 
-  HOST_IP=$(echo "$HOST" | sed 's/.*@//')
   echo ""
   echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
   echo -e "${GREEN}║          GroundControl is ready                  ║${NC}"
   echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
   echo ""
-  echo -e "  Your existing install is running again."
-  echo -e "  Reverse proxy target: ${CYAN}127.0.0.1:3003${NC}"
-  echo -e "  Path: ${CYAN}/opt/groundcontrol${NC}"
+  echo -e "  Path:  ${CYAN}/opt/groundcontrol${NC}"
+  echo -e "  Proxy: ${CYAN}127.0.0.1:3003${NC}"
   echo ""
   echo -e "  Sign in with the account you already created."
-  echo -e "  (Fresh side-by-side installs use ${CYAN}/opt/groundcontrol-bootstrap${NC}.)"
+  echo -e "  For a brand-new side-by-side install: add ${CYAN}--fresh${NC}"
   echo ""
   exit 0
 fi
 
 # ── Fresh install: side-by-side dir, never production path ──
-echo -e "${BLUE}→ Installing GroundControl...${NC}"
+if [ "$FORCE_FRESH" -eq 1 ]; then
+  echo -e "${BLUE}→ Side-by-side install into /opt/groundcontrol-bootstrap...${NC}"
+else
+  echo -e "${BLUE}→ Installing GroundControl...${NC}"
+fi
 GC_HTTP_PORT=$(find_free_http_port_remote)
 JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 generate_admin_credentials
