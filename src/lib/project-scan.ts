@@ -303,20 +303,27 @@ export async function scanProjectsTree(
   const dirs = Array.from(byDir.keys());
   const contentByDir = new Map<string, string>();
   if (dirs.length > 0) {
-    // Emit a delimiter + content per file so we can split reliably.
+    // Emit a delimiter on its own line BEFORE each file. Critical: many compose
+    // files omit a trailing newline, so `cat a; echo ===; cat b` glues the last
+    // line of `a` onto the delimiter and the split fails — projects then look
+    // "invalid" with 0 components (seen on optimi + groundcontrol-bootstrap).
     const catScript = dirs
       .map((dir) => {
         const file = byDir.get(dir)!.composePath;
-        return `echo "===PROJECT:${dir}==="; cat ${shQuote(file)} 2>/dev/null || true`;
+        return (
+          `printf '\\n===PROJECT:%s===\\n' ${shQuote(dir)}; ` +
+          `cat ${shQuote(file)} 2>/dev/null || true; ` +
+          `printf '\\n'`
+        );
       })
       .join("; ");
     try {
       const catOut = await execOnVps(catScript, vps);
       const chunks = catOut.stdout.split(/^===PROJECT:(.+?)===$/m);
-      // chunks: ["", dir1, content1, dir2, content2, ...]
+      // chunks: ["…", dir1, content1, dir2, content2, ...]
       for (let i = 1; i < chunks.length; i += 2) {
         const dir = chunks[i].trim();
-        const content = chunks[i + 1] ?? "";
+        const content = (chunks[i + 1] ?? "").replace(/^\n/, "");
         contentByDir.set(dir, content);
       }
     } catch {

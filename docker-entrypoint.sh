@@ -28,6 +28,13 @@ if [ -n "${GC_SETUP_PASSWORD:-}" ] && [ -f /app/ensure-admin.cjs ]; then
   node /app/ensure-admin.cjs || echo "[entrypoint] WARNING: ensure-admin failed (you can create an account at /setup)"
 fi
 
+# Always ensure a usable VPS row. Fresh bootstrap DBs have zero VpsConfig, which
+# makes every host API return "No VPS configured". Local mode uses docker.sock.
+if [ -f /app/ensure-local-vps.cjs ]; then
+  echo "[entrypoint] ensuring local VPS config..."
+  node /app/ensure-local-vps.cjs || echo "[entrypoint] WARNING: ensure-local-vps failed (add a server in Settings → Connections)"
+fi
+
 if [ "$#" -gt 0 ]; then
   exec "$@"
 fi

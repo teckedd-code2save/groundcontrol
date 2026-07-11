@@ -2,6 +2,37 @@ import { describe, expect, it } from "vitest";
 import { parseComposeServices } from "./project-scan";
 
 describe("project scan compose parser", () => {
+  it("flags glued multi-file content as invalid (missing newline regression)", () => {
+    // What the old batch-cat produced when optimi.yml had no trailing newline:
+    // last line of optimi + delimiter + bootstrap compose → duplicate "services:" keys.
+    const glued =
+      `services:\n  backend:\n    image: x\n    restart: unless-stopped` +
+      `===PROJECT:/opt/groundcontrol-bootstrap===\n` +
+      `services:\n  app:\n    image: y\n`;
+    const parsed = parseComposeServices(glued);
+    expect(parsed.valid).toBe(false);
+    expect(parsed.error || "").toMatch(/unique|mapping|parse/i);
+  });
+
+  it("parses optimi-shaped compose (build-only service, no trailing newline)", () => {
+    const content = `services:
+  backend:
+    build:
+      context: ./scraper
+      dockerfile: Dockerfile
+    container_name: optimi-backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - ./scraper/.env
+    restart: unless-stopped`;
+    const parsed = parseComposeServices(content);
+    expect(parsed.valid).toBe(true);
+    expect(parsed.services).toHaveLength(1);
+    expect(parsed.services[0].name).toBe("backend");
+    expect(parsed.services[0].build).toBe(true);
+  });
+
   it("extracts component metadata from compose services", () => {
     const parsed = parseComposeServices(`
 services:
