@@ -54,15 +54,61 @@ export function validatePassword(password: string): { valid: boolean; message?: 
   return { valid: true };
 }
 
-export function setAuthCookie(response: NextResponse, user: { id: number; username: string; role: string }) {
+/**
+ * Whether the session cookie should use the Secure flag.
+ *
+ * Browsers refuse to store Secure cookies on plain HTTP. Bootstrap and IP:port
+ * installs (http://128.x.x.x:3737) must use secure:false or login appears to
+ * succeed then immediately bounces back to the marketing/login page.
+ *
+ * Order: COOKIE_SECURE env override → request scheme → production default.
+ */
+export function cookieSecureFlag(req?: NextRequest): boolean {
+  const override = (process.env.COOKIE_SECURE || "").trim().toLowerCase();
+  if (override === "true" || override === "1" || override === "yes") return true;
+  if (override === "false" || override === "0" || override === "no") return false;
+
+  if (req) {
+    const forwarded = (req.headers.get("x-forwarded-proto") || "").split(",")[0]?.trim().toLowerCase();
+    if (forwarded === "https") return true;
+    if (forwarded === "http") return false;
+    try {
+      const proto = req.nextUrl.protocol.replace(":", "").toLowerCase();
+      if (proto === "https") return true;
+      if (proto === "http") return false;
+    } catch {
+      // ignore
+    }
+  }
+
+  // Unknown scheme: keep production cookies Secure (HTTPS reverse-proxy default).
+  return process.env.NODE_ENV === "production";
+}
+
+export function setAuthCookie(
+  response: NextResponse,
+  user: { id: number; username: string; role: string },
+  req?: NextRequest
+) {
   const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, getJwtSecret(), {
     expiresIn: "7d",
   });
   response.cookies.set("gc_token", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecureFlag(req),
     sameSite: "lax",
     maxAge: 60 * 60 * 24 * 7,
+    path: "/",
+  });
+  return response;
+}
+
+export function clearAuthCookie(response: NextResponse, req?: NextRequest) {
+  response.cookies.set("gc_token", "", {
+    httpOnly: true,
+    secure: cookieSecureFlag(req),
+    sameSite: "lax",
+    maxAge: 0,
     path: "/",
   });
   return response;

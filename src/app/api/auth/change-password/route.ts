@@ -69,11 +69,15 @@ export async function POST(req: NextRequest) {
       success: true,
       username: updated.username,
     });
-    return setAuthCookie(response, {
-      id: updated.id,
-      username: updated.username,
-      role: updated.role,
-    });
+    return setAuthCookie(
+      response,
+      {
+        id: updated.id,
+        username: updated.username,
+        role: updated.role,
+      },
+      req
+    );
   } catch (err) {
     if (err instanceof Error && err.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

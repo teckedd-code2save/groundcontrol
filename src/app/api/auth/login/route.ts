@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       // Clients can route first-time bootstrap users to the update form.
       next: user.forcePasswordChange ? "/force-password-change" : "/",
     });
-    return setAuthCookie(response, { id: user.id, username: user.username, role: user.role });
+    return setAuthCookie(response, { id: user.id, username: user.username, role: user.role }, req);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

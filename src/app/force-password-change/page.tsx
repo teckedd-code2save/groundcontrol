@@ -49,7 +49,9 @@ export default function ForcePasswordChangePage() {
       });
       const data = await res.json();
       if (res.ok) {
-        router.push("/dashboard");
+        // Full navigation after cookie refresh
+        window.location.assign("/dashboard");
+        return;
       } else {
         setError(data.error || "Failed to update account");
       }

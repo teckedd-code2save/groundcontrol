@@ -41,7 +41,11 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
       if (res.ok) {
         const d = await res.json().catch(() => ({}));
-        router.push(d.next || (d.forcePasswordChange ? "/force-password-change" : "/"));
+        // Full navigation so the Set-Cookie session is always applied (client
+        // router.push can race and land on marketing/login without auth).
+        const next = d.next || (d.forcePasswordChange ? "/force-password-change" : "/dashboard");
+        window.location.assign(next);
+        return;
       } else {
         const d = await res.json().catch(() => ({}));
         setError(d.error || "Invalid credentials");

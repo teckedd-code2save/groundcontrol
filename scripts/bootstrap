@@ -462,6 +462,9 @@ services:
       - PORT=3000
       - HOSTNAME=0.0.0.0
       - DATABASE_URL=file:/app/prisma/prod.db
+      # Bootstrap is usually reached over plain HTTP (IP:port). Without this,
+      # Secure cookies are dropped by the browser and login never sticks.
+      - COOKIE_SECURE=false
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - gcbootstrap-db:/app/prisma
