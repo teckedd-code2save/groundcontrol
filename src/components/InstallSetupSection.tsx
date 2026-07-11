@@ -15,34 +15,11 @@ export function scrollToInstall() {
   const el = document.getElementById("install");
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
-    // Focus first copy button for keyboard users
     window.setTimeout(() => {
       (document.getElementById("install-copy-key") as HTMLButtonElement | null)?.focus();
     }, 400);
   }
 }
-
-type Palette = {
-  bg: string;
-  dark: string;
-  darker: string;
-  text: string;
-  mut: string;
-  dim: string;
-  lin: string;
-  accent?: string;
-};
-
-const DEFAULT: Palette = {
-  bg: "#202427",
-  dark: "#141618",
-  darker: "#0D0E10",
-  text: "#F5F6F7",
-  mut: "rgba(245,246,247,0.45)",
-  dim: "rgba(245,246,247,0.22)",
-  lin: "rgba(245,246,247,0.08)",
-  accent: "#E8542A",
-};
 
 async function copyText(text: string) {
   try {
@@ -59,42 +36,96 @@ async function copyText(text: string) {
   }
 }
 
-function CopyRow({
+const rows: { id?: string; label: string; badge?: string; hint: string; command: string }[] = [
+  {
+    id: "install-copy-key",
+    label: "Remote with SSH key",
+    badge: "Recommended",
+    hint: "Same as ssh -i — pass your private key and user@host.",
+    command: INSTALL_COMMANDS.withKey,
+  },
+  {
+    label: "Interactive",
+    hint: "Prompts for host, key path, and port (works with curl | bash).",
+    command: INSTALL_COMMANDS.interactive,
+  },
+  {
+    label: "Local",
+    hint: "Run on the VPS when you already have a shell open.",
+    command: INSTALL_COMMANDS.local,
+  },
+];
+
+/** Full install / setup block. Anchor: #install */
+export function InstallSetupSection() {
+  return (
+    <section
+      id="install"
+      className="scroll-mt-6 border-t border-white/[0.06] bg-[#0D0E10] py-20 md:py-24"
+    >
+      <div className="mx-auto max-w-2xl px-6 md:px-8">
+        <p className="mb-3 text-[11px] font-medium tracking-[0.16em] text-[#E8542A]/90 uppercase">
+          Setup
+        </p>
+        <h2 className="mb-3 text-[clamp(1.5rem,3.5vw,2rem)] font-medium tracking-tight text-[#F5F6F7]">
+          Install on your VPS
+        </h2>
+        <p className="mb-10 max-w-lg text-[15px] leading-relaxed text-white/45">
+          One command installs Docker if needed and starts GroundControl. Replace the key path and host, then open the URL to finish onboarding.
+        </p>
+
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <InstallCommandCard key={row.label} {...row} />
+          ))}
+        </div>
+
+        <div className="mt-8 rounded-xl bg-white/[0.03] px-5 py-4 text-[13px] leading-relaxed text-white/40">
+          <p className="mb-2 font-medium text-white/70">After install</p>
+          <ol className="list-decimal space-y-1.5 pl-4">
+            <li>
+              Open{" "}
+              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-white/70">
+                http://YOUR_VPS_IP:3737
+              </code>
+            </li>
+            <li>Create your admin account and complete onboarding</li>
+            <li>Add more hosts later via Add Server or Settings → Connections</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InstallCommandCard({
   id,
   label,
+  badge,
   hint,
   command,
-  colors,
 }: {
   id?: string;
   label: string;
+  badge?: string;
   hint: string;
   command: string;
-  colors: Palette;
 }) {
   const [copied, setCopied] = useState(false);
+
   return (
-    <div
-      style={{
-        border: `1px solid ${colors.lin}`,
-        background: colors.darker,
-        padding: "16px 18px",
-        borderRadius: 10,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 8,
-          marginBottom: 10,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: colors.text }}>{label}</div>
-          <div style={{ fontSize: 11, color: colors.mut, marginTop: 4, lineHeight: 1.45 }}>{hint}</div>
+    <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-[#141618]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.05] px-4 py-3 sm:px-5">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-[#F5F6F7]">{label}</span>
+            {badge ? (
+              <span className="rounded-full bg-[#E8542A]/12 px-2 py-0.5 text-[10px] font-medium tracking-wide text-[#E8542A]">
+                {badge}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-0.5 text-[12px] text-white/40">{hint}</p>
         </div>
         <button
           id={id}
@@ -104,126 +135,18 @@ function CopyRow({
             setCopied(true);
             window.setTimeout(() => setCopied(false), 2000);
           }}
-          style={{
-            padding: "8px 14px",
-            background: "transparent",
-            color: copied ? (colors.accent || "#E8542A") : colors.text,
-            border: `1px solid ${copied ? colors.accent || "#E8542A" : colors.lin}`,
-            fontFamily: "monospace",
-            fontSize: 11,
-            cursor: "pointer",
-            borderRadius: 8,
-            whiteSpace: "nowrap",
-          }}
+          className={`shrink-0 rounded-lg px-3.5 py-2 text-[12px] font-medium transition-colors ${
+            copied
+              ? "bg-[#E8542A] text-white"
+              : "bg-white/[0.06] text-white/80 hover:bg-white/[0.1] hover:text-white"
+          }`}
         >
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <code
-        style={{
-          display: "block",
-          fontSize: 11,
-          color: colors.mut,
-          fontFamily: "ui-monospace, monospace",
-          lineHeight: 1.55,
-          overflowWrap: "anywhere",
-          whiteSpace: "pre-wrap",
-        }}
-      >
+      <pre className="overflow-x-auto px-4 py-3.5 font-mono text-[11.5px] leading-relaxed text-white/50 sm:px-5 sm:text-[12px]">
         {command}
-      </code>
+      </pre>
     </div>
-  );
-}
-
-/** Full install / setup block for marketing pages. Anchor: #install */
-export function InstallSetupSection({ colors = DEFAULT }: { colors?: Partial<Palette> }) {
-  const C = { ...DEFAULT, ...colors };
-  return (
-    <section
-      id="install"
-      style={{
-        padding: "100px 0",
-        background: C.darker,
-        borderTop: `1px solid ${C.lin}`,
-        scrollMarginTop: 24,
-      }}
-    >
-      <div className="max-w-3xl mx-auto px-6 md:px-12">
-        <p
-          style={{
-            fontSize: 11,
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            color: C.accent || "#E8542A",
-            fontFamily: "monospace",
-            marginBottom: 12,
-          }}
-        >
-          Install · Setup
-        </p>
-        <h2
-          style={{
-            fontSize: "clamp(26px, 4vw, 36px)",
-            fontWeight: 300,
-            lineHeight: 1.15,
-            margin: "0 0 12px",
-            color: C.text,
-          }}
-        >
-          Put GroundControl on your VPS
-        </h2>
-        <p style={{ fontSize: 15, color: C.mut, lineHeight: 1.65, margin: "0 0 28px", maxWidth: 520 }}>
-          One command installs Docker if needed and starts GroundControl. Then open the URL and finish
-          onboarding. Replace the key path and host with yours.
-        </p>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <CopyRow
-            id="install-copy-key"
-            label="Remote install with SSH key"
-            hint="Same idea as ssh -i ~/.ssh/… root@host — recommended."
-            command={INSTALL_COMMANDS.withKey}
-            colors={C}
-          />
-          <CopyRow
-            label="Interactive install"
-            hint="Prompts for host, private key path, and SSH port (works with curl | bash)."
-            command={INSTALL_COMMANDS.interactive}
-            colors={C}
-          />
-          <CopyRow
-            label="Local install"
-            hint="Run on the VPS itself when you already have a shell there."
-            command={INSTALL_COMMANDS.local}
-            colors={C}
-          />
-        </div>
-
-        <div
-          style={{
-            marginTop: 24,
-            padding: "14px 16px",
-            border: `1px solid ${C.lin}`,
-            borderRadius: 10,
-            fontSize: 12,
-            color: C.mut,
-            lineHeight: 1.6,
-          }}
-        >
-          <strong style={{ color: C.text, fontWeight: 500 }}>After install</strong>
-          <ol style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-            <li>
-              Open{" "}
-              <code style={{ color: C.text, fontFamily: "monospace", fontSize: 11 }}>
-                http://YOUR_VPS_IP:3737
-              </code>
-            </li>
-            <li>Create your admin account and complete onboarding (SSH or local host)</li>
-            <li>Add more servers anytime via Add Server or Settings → Connections</li>
-          </ol>
-        </div>
-      </div>
-    </section>
   );
 }

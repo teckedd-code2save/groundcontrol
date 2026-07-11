@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
-import { AmbientShader } from "@/components/AmbientShader";
 import { InstallSetupSection, scrollToInstall } from "@/components/InstallSetupSection";
 
 const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
@@ -196,38 +195,67 @@ export default function LoginPage() {
         }
       `}</style>
 
-      {/* HERO */}
+      {/* HERO — clean gradient, no animated shader / ASCII over the headline */}
       <section className="hero-s relative min-h-screen flex items-center overflow-hidden" style={{ background: C.dark }}>
-        <AmbientShader className="bg-parallax" />
-        <div className="absolute inset-0 opacity-25 z-[1]" style={{ backgroundImage: `linear-gradient(${C.lin} 1px, transparent 1px), linear-gradient(90deg, ${C.lin} 1px, transparent 1px)`, backgroundSize: "80px 80px" }} />
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 70% 50% at 15% 20%, rgba(232,84,42,0.08), transparent 55%), linear-gradient(180deg, #141618 0%, #202427 100%)",
+          }}
+        />
         <div className="relative z-10 w-full max-w-7xl mx-auto px-6 md:px-12 py-24">
-          <div style={{ maxWidth: 700 }}>
-            <pre className="fade-up mb-6 select-none font-mono text-[10px] leading-tight" style={{ color: "rgba(232,84,42,0.55)" }} aria-hidden>{`┌─ groundcontrol ─┐
-│  host · stack · ai  │
-└─────────────────────┘`}</pre>
-            <div className="mb-10">
-              <h1 style={{ fontSize: "clamp(36px, 6.5vw, 72px)", fontWeight: 300, lineHeight: 1.06, letterSpacing: "-0.02em", margin: 0 }}>
+          <div style={{ maxWidth: 560 }}>
+            <div className="mb-8">
+              <h1 style={{ fontSize: "clamp(36px, 6.5vw, 68px)", fontWeight: 500, lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
                 <div className="line-mask" style={{ overflow: "hidden" }}><div className="line-inner">Your VPS has an</div></div>
                 <div className="line-mask" style={{ overflow: "hidden" }}><div className="line-inner" style={{ color: "#E8542A" }}>AI co-pilot</div></div>
               </h1>
             </div>
-            <p className="fade-up" style={{ fontSize: 18, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server.</p>
+            <p className="fade-up" style={{ fontSize: 17, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 440 }}>
+              Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server.
+            </p>
             <div className="fade-up flex flex-wrap items-center gap-3">
-              <button onClick={() => setShowLogin(true)} style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}>Open Dashboard →</button>
               <button
                 type="button"
                 onClick={scrollToInstall}
-                style={{ padding: "14px 32px", background: "transparent", color: C.accent, border: `1px solid ${C.accent}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}
+                style={{
+                  padding: "12px 22px",
+                  background: C.accent,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  fontFamily: "inherit",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                }}
               >
                 Install on your VPS
               </button>
+              <button
+                type="button"
+                onClick={() => setShowLogin(true)}
+                style={{
+                  padding: "12px 22px",
+                  background: "transparent",
+                  color: "rgba(255,255,255,0.8)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: 8,
+                  fontFamily: "inherit",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                }}
+              >
+                Open Dashboard
+              </button>
             </div>
-            <p className="fade-up mt-3 text-[12px]" style={{ color: C.dim, maxWidth: 480, lineHeight: 1.55 }}>
-              One-command setup with SSH key or interactive prompts — jump to install below.
+            <p className="fade-up mt-4 text-[13px]" style={{ color: C.dim }}>
+              One-command setup · SSH key or interactive prompts
             </p>
           </div>
         </div>
-        <div className="fade-up absolute bottom-10 left-1/2 -translate-x-1/2" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>Scroll</div>
       </section>
 
       {/* SCREENSHOT 1 — Dashboard */}
@@ -454,23 +482,69 @@ export default function LoginPage() {
         </div>
       </section>
 
-      <InstallSetupSection colors={C} />
+      <InstallSetupSection />
 
       {/* CTA */}
-      <section style={{ padding: "120px 0", background: C.dark }}>
-        <div className="max-w-2xl mx-auto px-6 text-center">
-          <h2 style={{ fontSize: "clamp(28px, 4vw, 42px)", fontWeight: 300, lineHeight: 1.15, marginBottom: 24 }}>Ready to give your VPS an AI co-pilot?</h2>
-          <p style={{ color: C.mut, fontSize: 16, marginBottom: 40 }}>Free. Open source. Self-hosted.</p>
+      <section style={{ padding: "100px 0", background: C.dark, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        <div className="max-w-xl mx-auto px-6 text-center">
+          <h2 style={{ fontSize: "clamp(24px, 3.5vw, 36px)", fontWeight: 500, lineHeight: 1.15, marginBottom: 12, letterSpacing: "-0.02em" }}>
+            Ready to give your VPS an AI co-pilot?
+          </h2>
+          <p style={{ color: C.mut, fontSize: 15, marginBottom: 32 }}>Free. Open source. Self-hosted.</p>
           <div className="flex gap-3 justify-center flex-wrap">
             <button
               type="button"
               onClick={scrollToInstall}
-              style={{ padding: "16px 36px", background: "transparent", color: C.accent, border: `1px solid ${C.accent}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}
+              style={{
+                padding: "12px 22px",
+                background: C.accent,
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                fontFamily: "inherit",
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
             >
               Install on your VPS
             </button>
-            <button onClick={() => setShowLogin(true)} style={{ padding: "16px 36px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}>Open Dashboard</button>
-            <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ padding: "16px 36px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>GitHub</a>
+            <button
+              type="button"
+              onClick={() => setShowLogin(true)}
+              style={{
+                padding: "12px 22px",
+                background: "transparent",
+                color: "rgba(255,255,255,0.8)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 8,
+                fontFamily: "inherit",
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              Open Dashboard
+            </button>
+            <a
+              href="https://github.com/teckedd-code2save/groundcontrol"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                padding: "12px 22px",
+                background: "transparent",
+                color: C.mut,
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 8,
+                fontFamily: "inherit",
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: "pointer",
+                textDecoration: "none",
+              }}
+            >
+              GitHub
+            </a>
           </div>
         </div>
       </section>
