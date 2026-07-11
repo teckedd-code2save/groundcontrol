@@ -22,6 +22,14 @@ const WIZARD_STEPS: { id: WizardStep; label: string }[] = [
   { id: "ready", label: "Ready" },
 ];
 
+type ExistingVps = {
+  id: number;
+  name: string;
+  host: string;
+  isActive?: boolean;
+  isLocal?: boolean;
+};
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<WizardStep>("welcome");
@@ -34,6 +42,10 @@ export default function OnboardingPage() {
   >([]);
   const [chatting, setChatting] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
+
+  /** true when user clicked Add Server or ?add=1 — never auto-probe existing */
+  const [addMode, setAddMode] = useState(false);
+  const [existingServers, setExistingServers] = useState<ExistingVps[]>([]);
 
   const [serverForm, setServerForm] = useState({
     name: "primary",
@@ -57,13 +69,39 @@ export default function OnboardingPage() {
   });
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const wantAdd =
+      params.get("add") === "1" ||
+      params.get("mode") === "add" ||
+      params.get("new") === "1";
+    setAddMode(wantAdd);
+
     fetch("/api/vps")
       .then((r) => (r.ok ? r.json() : []))
-      .then((configs: unknown[]) => {
-        if (Array.isArray(configs) && configs.length > 0) {
+      .then((configs: ExistingVps[]) => {
+        const list = Array.isArray(configs) ? configs : [];
+        setExistingServers(list);
+        if (list.length > 0) {
           setHasVps(true);
-          setStep("probing");
-          runProbe();
+          if (wantAdd) {
+            // Explicitly adding another VPS — do not probe the current host
+            setServerForm((f) => ({
+              ...f,
+              name: `vps-${list.length + 1}`,
+              isLocal: false,
+            }));
+            setStep("connect");
+          } else {
+            // First-run style revisit without ?add=1: go to connect chooser for add,
+            // don't silently re-probe as if this is initial setup.
+            setServerForm((f) => ({
+              ...f,
+              name: `vps-${list.length + 1}`,
+              isLocal: false,
+            }));
+            setAddMode(true);
+            setStep("connect");
+          }
         } else {
           setHasVps(false);
           setStep("welcome");
@@ -73,7 +111,6 @@ export default function OnboardingPage() {
         setHasVps(false);
         setStep("welcome");
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -149,13 +186,24 @@ export default function OnboardingPage() {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || "Failed to save server");
       }
-      const configs = await fetch("/api/vps").then((r) => r.json());
-      if (configs.length > 0) {
+      const created = await res.json().catch(() => ({}));
+      const newId = Number(created?.id);
+      if (newId) {
         await fetch("/api/vps/activate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: configs[0].id }),
+          body: JSON.stringify({ id: newId }),
         });
+      } else {
+        // Fallback: activate most recently updated
+        const configs = await fetch("/api/vps").then((r) => r.json());
+        if (Array.isArray(configs) && configs[0]?.id) {
+          await fetch("/api/vps/activate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: configs[0].id }),
+          });
+        }
       }
       setStep("domain");
     } catch (err) {
@@ -520,10 +568,47 @@ export default function OnboardingPage() {
   if (step === "connect") {
     return (
       <WizardChrome>
-        <h1 className="text-2xl font-semibold tracking-tight">Server connection</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {addMode && existingServers.length > 0 ? "Add another server" : "Server connection"}
+        </h1>
         <p className="mt-1 text-xs text-muted">
-          We test SSH before saving credentials. Secrets are encrypted at rest.
+          {addMode && existingServers.length > 0
+            ? "Connect a second VPS. We will activate it after a successful test — your previous servers stay saved."
+            : "We test SSH before saving credentials. Secrets are encrypted at rest."}
         </p>
+
+        {existingServers.length > 0 && (
+          <div className="mt-4 rounded-md border border-border bg-card/80 p-3">
+            <p className="mb-2 text-[10px] font-mono uppercase tracking-wider text-muted">
+              Already connected ({existingServers.length})
+            </p>
+            <ul className="space-y-1.5">
+              {existingServers.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex items-center justify-between gap-2 text-xs font-mono text-muted"
+                >
+                  <span className="truncate text-foreground/90">
+                    {s.name}
+                    <span className="text-muted"> · {s.isLocal ? "local" : s.host}</span>
+                  </span>
+                  {s.isActive && (
+                    <span className="shrink-0 rounded-md bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
+                      active
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => router.push("/settings?tab=connections")}
+              className="mt-2 text-[11px] font-mono text-accent hover:text-accent-bright"
+            >
+              Manage connections in Settings →
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleConnect} className="mt-6 space-y-4 rounded-lg border border-border bg-card p-5">
           <div className="flex gap-2">
@@ -537,7 +622,11 @@ export default function OnboardingPage() {
               }`}
             >
               This server
-              <span className="mt-1 block text-[10px] font-mono text-muted">Local / same host</span>
+              <span className="mt-1 block text-[10px] font-mono text-muted">
+                {addMode && existingServers.length > 0
+                  ? "GC host machine"
+                  : "Local / same host"}
+              </span>
             </button>
             <button
               type="button"
@@ -549,7 +638,7 @@ export default function OnboardingPage() {
               }`}
             >
               Remote SSH
-              <span className="mt-1 block text-[10px] font-mono text-muted">Any VPS you can reach</span>
+              <span className="mt-1 block text-[10px] font-mono text-muted">New VPS by IP/host</span>
             </button>
           </div>
 
@@ -679,13 +768,25 @@ export default function OnboardingPage() {
             </button>
           </div>
         </form>
-        <button
-          type="button"
-          onClick={() => setStep("welcome")}
-          className="mt-4 text-xs font-mono text-muted hover:text-accent"
-        >
-          ← Back
-        </button>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          {existingServers.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => setStep("welcome")}
+              className="text-xs font-mono text-muted hover:text-accent"
+            >
+              ← Back
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard")}
+              className="text-xs font-mono text-muted hover:text-accent"
+            >
+              ← Cancel, keep current servers
+            </button>
+          )}
+        </div>
       </WizardChrome>
     );
   }

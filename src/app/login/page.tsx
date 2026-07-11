@@ -28,7 +28,8 @@ export default function LoginPage() {
   const [showLogin, setShowLogin] = useState(false);
   const [copied, setCopied] = useState(false);
   const router = useRouter();
-  const cmd = "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s root@your-vps";
+  const cmd =
+    "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@your-vps";
   async function copyCmd() {
     try {
       await navigator.clipboard.writeText(cmd);
@@ -224,8 +225,12 @@ export default function LoginPage() {
             <p className="fade-up" style={{ fontSize: 18, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server.</p>
             <div className="fade-up flex flex-wrap items-center gap-3">
               <button onClick={() => setShowLogin(true)} style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}>Open Dashboard →</button>
-              <button onClick={copyCmd} style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}>{copied ? "Copied" : "Copy command"}</button>
+              <button onClick={copyCmd} style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}>{copied ? "Copied" : "Copy install command"}</button>
             </div>
+            <p className="fade-up mt-3 font-mono text-[11px]" style={{ color: C.dim, maxWidth: 520, lineHeight: 1.5 }}>
+              Uses <span style={{ color: C.mut }}>-i ~/.ssh/…</span> like <span style={{ color: C.mut }}>ssh -i</span>. Interactive:{" "}
+              <span style={{ color: C.mut }}>bash -s -- --interactive</span>
+            </p>
           </div>
         </div>
         <div className="fade-up absolute bottom-10 left-1/2 -translate-x-1/2" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>Scroll</div>

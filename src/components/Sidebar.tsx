@@ -119,7 +119,7 @@ export function Sidebar() {
               })}
             </div>
             <div className="p-3 border-t border-border">
-              <Link href="/onboarding" className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-md hover:bg-accent/20 transition-colors">
+              <Link href="/onboarding?add=1" className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-md hover:bg-accent/20 transition-colors">
                 <Plus className="h-3.5 w-3.5" /> Add Server
               </Link>
               <div className="flex items-center justify-between px-3 py-2 mt-2">
@@ -190,7 +190,7 @@ export function Sidebar() {
         </nav>
 
         <div className="p-2 border-t border-border space-y-2">
-          <Link href="/onboarding" title="Add Server"
+          <Link href="/onboarding?add=1" title="Add another VPS"
             className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-md hover:bg-accent/20 transition-colors">
             <Plus className="h-3.5 w-3.5" />
             {!collapsed && <span>Add Server</span>}

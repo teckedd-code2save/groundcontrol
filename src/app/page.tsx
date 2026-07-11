@@ -10,7 +10,8 @@ export default function HomePage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [copied, setCopied] = useState(false);
-  const cmd = "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s root@your-vps";
+  const cmd =
+    "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@your-vps";
   async function copyCmd() {
     try {
       await navigator.clipboard.writeText(cmd);

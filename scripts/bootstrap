@@ -1,31 +1,201 @@
 #!/usr/bin/env bash
 # scripts/bootstrap — one-command GroundControl installer
-# Usage: curl -fsSL <url> | bash          (installs on this machine)
-#        bash bootstrap user@host          (installs on remote VPS via SSH)
+#
+# Local (this machine is the VPS):
+#   curl -fsSL <url> | bash
+#
+# Remote via SSH (default agent/keys):
+#   curl -fsSL <url> | bash -s -- root@YOUR_IP
+#
+# Remote with a specific private key (like ssh -i):
+#   curl -fsSL <url> | bash -s -- -i ~/.ssh/id_ed25519 root@YOUR_IP
+#   curl -fsSL <url> | bash -s -- --identity /path/to/key -p 22 root@YOUR_IP
+#
+# Interactive (prompts for host / key if needed):
+#   curl -fsSL <url> | bash -s -- --interactive
+#   bash bootstrap --interactive
+#
 set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 
-HOST="${1:-}"
+IDENTITY=""
+PORT="22"
+HOST=""
+INTERACTIVE=0
+SSH_EXTRA=()
+
+usage() {
+  cat <<'USAGE'
+GroundControl Bootstrap
+
+Usage:
+  bash bootstrap                              Install on this machine
+  bash bootstrap user@host                    Install on remote via SSH
+  bash bootstrap -i KEY user@host             Use private key (ssh -i)
+  bash bootstrap -p PORT user@host            SSH port (default 22)
+  bash bootstrap --interactive                Prompt for host / key
+
+Examples:
+  curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
+  curl -fsSL .../bootstrap | bash -s -- root@128.140.12.62
+  curl -fsSL .../bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@128.140.12.62
+  curl -fsSL .../bootstrap | bash -s -- --interactive
+USAGE
+}
+
+# Read a line from the real terminal even when stdin is a pipe (curl | bash).
+read_tty() {
+  local prompt="$1"
+  local var
+  if [ -r /dev/tty ]; then
+    printf "%s" "$prompt" > /dev/tty
+    IFS= read -r var < /dev/tty || true
+    printf "%s" "$var"
+  elif [ -t 0 ]; then
+    printf "%s" "$prompt"
+    IFS= read -r var || true
+    printf "%s" "$var"
+  else
+    printf ""
+  fi
+}
+
+confirm_tty() {
+  local prompt="$1"
+  local ans
+  ans=$(read_tty "$prompt")
+  case "$ans" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Expand ~ in a path
+expand_path() {
+  local p="$1"
+  case "$p" in
+    "~/"*) printf "%s" "${HOME}/${p#~/}" ;;
+    "~") printf "%s" "${HOME}" ;;
+    *) printf "%s" "$p" ;;
+  esac
+}
+
+build_ssh_base() {
+  SSH_EXTRA=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15)
+  if [ -n "$PORT" ] && [ "$PORT" != "22" ]; then
+    SSH_EXTRA+=(-p "$PORT")
+  fi
+  if [ -n "$IDENTITY" ]; then
+    IDENTITY=$(expand_path "$IDENTITY")
+    if [ ! -f "$IDENTITY" ]; then
+      echo -e "${RED}✗ SSH key not found: ${IDENTITY}${NC}" >&2
+      exit 1
+    fi
+    # Avoid permission warnings / rejection on open keys
+    chmod 600 "$IDENTITY" 2>/dev/null || true
+    SSH_EXTRA+=(-i "$IDENTITY" -o IdentitiesOnly=yes)
+  fi
+}
+
+ssh_cmd() {
+  # shellcheck disable=SC2086
+  ssh "${SSH_EXTRA[@]}" "$@"
+}
+
+# Parse args
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -i|--identity|--key)
+      shift
+      IDENTITY="${1:-}"
+      if [ -z "$IDENTITY" ]; then
+        echo -e "${RED}✗ -i requires a path to a private key${NC}" >&2
+        exit 1
+      fi
+      shift
+      ;;
+    -p|--port)
+      shift
+      PORT="${1:-22}"
+      shift
+      ;;
+    -y|--yes)
+      # reserved for non-interactive future use
+      shift
+      ;;
+    --interactive|-I)
+      INTERACTIVE=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo -e "${RED}✗ Unknown option: $1${NC}" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      if [ -z "$HOST" ]; then
+        HOST="$1"
+      else
+        echo -e "${YELLOW}! Ignoring extra argument: $1${NC}" >&2
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Remaining positional after --
+while [ $# -gt 0 ]; do
+  if [ -z "$HOST" ]; then
+    HOST="$1"
+  fi
+  shift
+done
 
 echo ""
 echo -e "${CYAN}◉ GroundControl Bootstrap${NC}"
 echo ""
 
+# Interactive: gather host / key if missing
+if [ "$INTERACTIVE" -eq 1 ] || { [ -z "$HOST" ] && [ -r /dev/tty ] && confirm_tty "Install on a remote VPS via SSH? [y/N] "; }; then
+  if [ -z "$HOST" ]; then
+    HOST=$(read_tty "SSH target (user@host): ")
+  fi
+  if [ -z "$HOST" ]; then
+    echo -e "${BLUE}→ No host given — installing locally on this machine.${NC}"
+  else
+    if [ -z "$IDENTITY" ]; then
+      IDENTITY=$(read_tty "Path to private key (Enter to use ssh-agent/default keys): ")
+    fi
+    PORT_IN=$(read_tty "SSH port [${PORT}]: ")
+    if [ -n "$PORT_IN" ]; then
+      PORT="$PORT_IN"
+    fi
+  fi
+  INTERACTIVE=1
+fi
+
 if [ -z "$HOST" ]; then
-  # Local install — this machine IS the VPS
+  # ── Local install ─────────────────────────────────────
   echo -e "${BLUE}→ Installing locally on this machine...${NC}"
   echo ""
 
-  # Detect OS
-  OS_ID=$(cat /etc/os-release 2>/dev/null | grep ^ID= | cut -d= -f2 | tr -d '"' || echo 'unknown')
+  OS_ID=$(grep ^ID= /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo 'unknown')
   echo -e "${GREEN}✓ OS: ${OS_ID}${NC}"
 
-  # Install Docker if missing
   if docker --version >/dev/null 2>&1; then
     echo -e "${GREEN}✓ Docker already installed${NC}"
   else
@@ -37,11 +207,9 @@ if [ -z "$HOST" ]; then
     echo -e "${GREEN}✓ Docker installed${NC}"
   fi
 
-  # Deploy GroundControl
   echo -e "${BLUE}→ Deploying GroundControl...${NC}"
   mkdir -p /opt/groundcontrol
   cat > /opt/groundcontrol/docker-compose.yml << 'EOF'
-version: '3.8'
 services:
   groundcontrol:
     image: ghcr.io/teckedd-code2save/groundcontrol:latest
@@ -61,7 +229,12 @@ volumes:
   gc-data:
 EOF
 
-  cd /opt/groundcontrol && docker compose up -d
+  cd /opt/groundcontrol
+  if docker compose version >/dev/null 2>&1; then
+    docker compose up -d
+  else
+    docker-compose up -d
+  fi
 
   echo ""
   echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
@@ -73,43 +246,89 @@ EOF
   echo ""
   echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
   echo ""
+  exit 0
+fi
 
-else
-  # Remote install via SSH
-  echo -e "  Target: ${BLUE}${HOST}${NC}"
-  echo ""
+# ── Remote install via SSH ──────────────────────────────
+echo -e "  Target: ${BLUE}${HOST}${NC}"
+if [ -n "$IDENTITY" ]; then
+  echo -e "  Key:    ${BLUE}${IDENTITY}${NC}"
+fi
+if [ "$PORT" != "22" ]; then
+  echo -e "  Port:   ${BLUE}${PORT}${NC}"
+fi
+echo ""
 
-  echo -e "${BLUE}→ Testing SSH connection...${NC}"
-  if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST" "echo ok" > /dev/null 2>&1; then
+build_ssh_base
+
+echo -e "${BLUE}→ Testing SSH connection...${NC}"
+if ! ssh_cmd -o BatchMode=yes "$HOST" "echo ok" >/dev/null 2>&1; then
+  echo -e "${YELLOW}! Batch SSH failed (no agent key, or key not tried).${NC}"
+
+  # Offer interactive key if we can talk to a TTY
+  if [ -z "$IDENTITY" ] && { [ -r /dev/tty ] || [ -t 0 ]; }; then
+    echo ""
+    echo "  If you normally connect with:"
+    echo -e "    ${CYAN}ssh -i ~/.ssh/your_key ${HOST}${NC}"
+    echo "  provide that key path now."
+    echo ""
+    IDENTITY=$(read_tty "Path to private key (or Enter to abort): ")
+    if [ -n "$IDENTITY" ]; then
+      build_ssh_base
+      if ssh_cmd -o BatchMode=yes "$HOST" "echo ok" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ SSH connection working (with provided key)${NC}"
+      else
+        echo -e "${RED}✗ Still cannot SSH to ${HOST}${NC}"
+        echo ""
+        echo "  Tried: ssh ${SSH_EXTRA[*]} ${HOST}"
+        echo "  Check:"
+        echo "  1. Host is reachable: ping $(echo "$HOST" | sed 's/.*@//')"
+        echo "  2. Key is authorized on the server"
+        echo "  3. Manual test: ssh -i ${IDENTITY} -p ${PORT} ${HOST}"
+        exit 1
+      fi
+    else
+      echo -e "${RED}✗ Cannot SSH to ${HOST}${NC}"
+      echo ""
+      echo "  Re-run with your key:"
+      echo -e "    ${CYAN}curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/YOUR_KEY ${HOST}${NC}"
+      echo ""
+      echo "  Or: ssh-copy-id -i ~/.ssh/YOUR_KEY.pub ${HOST}"
+      exit 1
+    fi
+  else
     echo -e "${RED}✗ Cannot SSH to ${HOST}${NC}"
     echo ""
     echo "  Make sure:"
     echo "  1. The host is reachable"
     echo "  2. Your SSH key is authorized"
-    echo "  3. Try: ssh-copy-id ${HOST}"
+    echo "  3. Pass the key explicitly:"
+    echo -e "     ${CYAN}curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 ${HOST}${NC}"
+    echo "  4. Or: ssh-copy-id ${HOST}"
     exit 1
   fi
+else
   echo -e "${GREEN}✓ SSH connection working${NC}"
+fi
 
-  OS_ID=$(ssh "$HOST" "cat /etc/os-release 2>/dev/null | grep ^ID= | cut -d= -f2 | tr -d '\"' || echo 'unknown'")
-  echo -e "${GREEN}✓ Remote OS: ${OS_ID}${NC}"
+OS_ID=$(ssh_cmd "$HOST" "grep ^ID= /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"' || echo unknown")
+echo -e "${GREEN}✓ Remote OS: ${OS_ID}${NC}"
 
-  if ssh "$HOST" "docker --version >/dev/null 2>&1"; then
-    echo -e "${GREEN}✓ Docker already installed${NC}"
-  else
-    echo -e "${BLUE}→ Installing Docker on ${HOST}...${NC}"
-    ssh "$HOST" "curl -fsSL https://get.docker.com | sh" || {
-      echo -e "${RED}✗ Docker install failed${NC}"
-      exit 1
-    }
-    echo -e "${GREEN}✓ Docker installed${NC}"
-  fi
+if ssh_cmd "$HOST" "docker --version >/dev/null 2>&1"; then
+  echo -e "${GREEN}✓ Docker already installed${NC}"
+else
+  echo -e "${BLUE}→ Installing Docker on ${HOST}...${NC}"
+  ssh_cmd "$HOST" "curl -fsSL https://get.docker.com | sh" || {
+    echo -e "${RED}✗ Docker install failed${NC}"
+    exit 1
+  }
+  echo -e "${GREEN}✓ Docker installed${NC}"
+fi
 
-  echo -e "${BLUE}→ Deploying GroundControl...${NC}"
-  ssh "$HOST" "mkdir -p /opt/groundcontrol"
+echo -e "${BLUE}→ Deploying GroundControl...${NC}"
+ssh_cmd "$HOST" "mkdir -p /opt/groundcontrol"
 
-  ssh "$HOST" "cat > /opt/groundcontrol/docker-compose.yml << 'EOF'
-version: '3.8'
+ssh_cmd "$HOST" "cat > /opt/groundcontrol/docker-compose.yml << 'EOF'
 services:
   groundcontrol:
     image: ghcr.io/teckedd-code2save/groundcontrol:latest
@@ -129,17 +348,20 @@ volumes:
   gc-data:
 EOF"
 
-  ssh "$HOST" "cd /opt/groundcontrol && docker compose up -d"
+ssh_cmd "$HOST" "cd /opt/groundcontrol && (docker compose up -d 2>/dev/null || docker-compose up -d)"
 
-  HOST_IP=$(echo "$HOST" | sed 's/.*@//')
-  echo ""
-  echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}║   GroundControl is running!             ║${NC}"
-  echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
-  echo ""
-  echo -e "  Open:     ${CYAN}http://${HOST_IP}:3737${NC}"
-  echo -e "  Setup:    ${CYAN}http://${HOST_IP}:3737/onboarding${NC}"
-  echo ""
-  echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
+HOST_IP=$(echo "$HOST" | sed 's/.*@//')
+echo ""
+echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   GroundControl is running!             ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "  Open:     ${CYAN}http://${HOST_IP}:3737${NC}"
+echo -e "  Setup:    ${CYAN}http://${HOST_IP}:3737/onboarding${NC}"
+echo ""
+if [ -n "$IDENTITY" ]; then
+  echo -e "  Used key: ${CYAN}${IDENTITY}${NC}"
   echo ""
 fi
+echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
+echo ""
