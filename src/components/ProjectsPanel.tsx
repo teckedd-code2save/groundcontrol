@@ -1018,16 +1018,68 @@ export function ProjectsPanel() {
                     {detailState?.slug === project.slug && (
                       <div className="fixed inset-0 z-[70] flex justify-end bg-black/70" onMouseDown={closeAllSheets} onClick={(event) => event.stopPropagation()}>
                         <div className="flex h-full w-full max-w-5xl flex-col bg-background shadow-2xl" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-                          <div className="flex items-start justify-between gap-4 p-5">
+                          <div className="flex items-start justify-between gap-4 border-b border-border p-5">
                             <div className="min-w-0">
-                              <h2 className="truncate text-xl font-semibold">{project.name}</h2>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="truncate text-xl font-semibold">{project.name}</h2>
+                                <span className={`rounded-md px-2 py-0.5 text-[10px] font-mono ${
+                                  isInvalid ? "bg-error/10 text-error" : running > 0 ? "bg-success/10 text-success" : "bg-muted/20 text-muted"
+                                }`}>
+                                  {isInvalid ? "invalid" : running > 0 ? `${running} running` : "stopped"}
+                                </span>
+                              </div>
                               <p className="mt-1 text-xs font-mono text-muted">
-                                {site?.domain || project.domain || "No route detected yet"} · {running} running · {project.services.length} components
+                                {site?.domain || project.domain || "No route"} · {project.services.length} components · {project.slug}
                               </p>
+                              {!isInvalid && (
+                                <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                                  {running > 0 ? (
+                                    <>
+                                      <button
+                                        onClick={() => { setRedeployAdvancedOpen(false); setRedeploySlug(project.slug); }}
+                                        className="rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-mono text-white hover:bg-accent-bright"
+                                      >
+                                        Redeploy
+                                      </button>
+                                      <button
+                                        onClick={() => setConfirmCompose({ slug: project.slug, type: "restart", projectName: project.name })}
+                                        className="rounded-md border border-border px-2.5 py-1.5 text-[11px] font-mono text-muted hover:border-accent hover:text-accent"
+                                      >
+                                        Restart
+                                      </button>
+                                      <button
+                                        onClick={() => setConfirmCompose({ slug: project.slug, type: "stop", projectName: project.name })}
+                                        className="rounded-md border border-border px-2.5 py-1.5 text-[11px] font-mono text-warning hover:border-warning"
+                                      >
+                                        Stop
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      onClick={() => setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name })}
+                                      className="rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-mono text-white hover:bg-accent-bright"
+                                    >
+                                      Start
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => openDeploymentDetail(project, "components")}
+                                    className="rounded-md border border-border px-2.5 py-1.5 text-[11px] font-mono text-muted hover:border-accent hover:text-accent"
+                                  >
+                                    Components
+                                  </button>
+                                  <button
+                                    onClick={() => deleteManagedDeployment(project)}
+                                    className="rounded-md border border-error/30 px-2.5 py-1.5 text-[11px] font-mono text-error hover:bg-error/10"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
                             </div>
                             <button
                               onClick={() => setDetailState(null)}
-                              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted hover:bg-background hover:text-accent"
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted hover:bg-card hover:text-accent"
                               title="Close"
                               aria-label="Close deployment details"
                             >
@@ -1035,13 +1087,15 @@ export function ProjectsPanel() {
                             </button>
                           </div>
 
-                          <div className="flex gap-1 overflow-x-auto px-5 pt-3">
+                          <div className="flex gap-1 overflow-x-auto border-b border-border px-5 pt-3">
                             {(["overview", "components", "environment", "source", "networking", "storage", "activity"] as DeploymentDetailTab[]).map((tab) => (
                               <button
                                 key={tab}
                                 onClick={() => openDeploymentDetail(project, tab)}
-                                className={`shrink-0 rounded px-3 py-2 text-xs font-mono capitalize transition-colors ${
-                                  detailState.tab === tab ? "bg-accent/10 text-accent" : "text-muted hover:bg-background hover:text-foreground"
+                                className={`shrink-0 rounded-t-md px-3 py-2 text-xs font-mono capitalize transition-colors ${
+                                  detailState.tab === tab
+                                    ? "border-b-2 border-accent bg-accent/5 text-accent"
+                                    : "text-muted hover:bg-card hover:text-foreground"
                                 }`}
                               >
                                 {tab}
@@ -1064,39 +1118,159 @@ export function ProjectsPanel() {
                             {detailState.tab === "components" && (
                               <div className="space-y-3">
                                 {isInvalid ? (
-                                  <div className="rounded-lg bg-warning/5 p-3 text-xs text-warning">
+                                  <div className="rounded-md bg-warning/5 p-3 text-xs text-warning">
                                     {project.parseError || "Compose file is invalid"}
                                   </div>
                                 ) : project.services.length === 0 ? (
-                                  <div className="rounded-lg bg-warning/5 p-3 text-xs text-warning">
+                                  <div className="rounded-md bg-warning/5 p-3 text-xs text-warning">
                                     No parseable components found.
                                   </div>
                                 ) : (
-                                  project.services.map((svc) => {
-                                    const checked = isServiceSelected(project.slug, svc.name);
-                                    return (
-                                      <button
-                                        key={svc.name}
-                                        onClick={() => setComponentState({ projectSlug: project.slug, serviceName: svc.name, tab: "overview" })}
-                                        className="flex w-full items-center justify-between gap-3 rounded-lg bg-card p-3 text-left transition-colors hover:bg-background"
-                                      >
-                                        <span className="flex min-w-0 items-center gap-3">
-                                          <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            onClick={(event) => event.stopPropagation()}
-                                            onChange={() => toggleService(project.slug, svc.name)}
-                                            className="shrink-0 accent-accent"
-                                          />
-                                          <ContainerIcon className="h-4 w-4 text-muted" type={getContainerType(svc.name, svc.image || "")} />
-                                          <span className="truncate text-sm font-mono">{svc.name}</span>
-                                        </span>
-                                        <span className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-accent/10 hover:text-accent" title="Open component">
-                                          <ChevronIcon className="h-4 w-4" />
-                                        </span>
-                                      </button>
-                                    );
-                                  })
+                                  <>
+                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+                                      <span className="font-mono">
+                                        Select components for scoped start/stop/restart, or manage one at a time.
+                                      </span>
+                                      {selectedServicesFor(project.slug).length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5">
+                                          <button
+                                            onClick={() => runCompose(project.slug, "restart", selectedServicesFor(project.slug))}
+                                            className="rounded-md border border-border px-2 py-1 font-mono hover:border-accent hover:text-accent"
+                                          >
+                                            Restart selected
+                                          </button>
+                                          <button
+                                            onClick={() => runCompose(project.slug, "stop", selectedServicesFor(project.slug))}
+                                            className="rounded-md border border-border px-2 py-1 font-mono text-warning hover:border-warning"
+                                          >
+                                            Stop selected
+                                          </button>
+                                          <button
+                                            onClick={() => runCompose(project.slug, "redeploy", selectedServicesFor(project.slug))}
+                                            className="rounded-md bg-accent/10 px-2 py-1 font-mono text-accent hover:bg-accent/20"
+                                          >
+                                            Redeploy selected
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                    {project.services.map((svc) => {
+                                      const checked = isServiceSelected(project.slug, svc.name);
+                                      const existing = meta.containers.find(
+                                        (c) =>
+                                          tokensMatch(c.composeService || "", svc.name) ||
+                                          c.name.toLowerCase().includes(svc.name.toLowerCase())
+                                      );
+                                      const isUp = existing?.state === "running";
+                                      return (
+                                        <div
+                                          key={svc.name}
+                                          className="rounded-md border border-border bg-card p-3"
+                                        >
+                                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <div className="flex min-w-0 items-start gap-3">
+                                              <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                onChange={() => toggleService(project.slug, svc.name)}
+                                                className="mt-1 shrink-0 accent-accent"
+                                              />
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setComponentState({
+                                                    projectSlug: project.slug,
+                                                    serviceName: svc.name,
+                                                    tab: "overview",
+                                                  })
+                                                }
+                                                className="min-w-0 text-left"
+                                              >
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <ContainerIcon
+                                                    className="h-4 w-4 text-muted"
+                                                    type={getContainerType(svc.name, svc.image || "")}
+                                                  />
+                                                  <span className="truncate text-sm font-mono font-medium">
+                                                    {svc.name}
+                                                  </span>
+                                                  <span
+                                                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-mono ${
+                                                      isUp
+                                                        ? "bg-success/10 text-success"
+                                                        : existing
+                                                          ? "bg-warning/10 text-warning"
+                                                          : "bg-muted/20 text-muted"
+                                                    }`}
+                                                  >
+                                                    {existing?.state || "not created"}
+                                                  </span>
+                                                </div>
+                                                <p className="mt-1 truncate text-[10px] font-mono text-muted">
+                                                  {svc.image || (svc.build ? "build context" : "no image")}
+                                                  {svc.ports?.length ? ` · ${svc.ports.join(", ")}` : ""}
+                                                </p>
+                                              </button>
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5 sm:justify-end">
+                                              <button
+                                                type="button"
+                                                onClick={() => runCompose(project.slug, isUp ? "restart" : "start", [svc.name])}
+                                                disabled={!!composeAction}
+                                                className="rounded-md border border-border px-2 py-1 text-[11px] font-mono hover:border-accent hover:text-accent disabled:opacity-50"
+                                              >
+                                                {isUp ? "Restart" : "Start"}
+                                              </button>
+                                              {isUp && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => runCompose(project.slug, "stop", [svc.name])}
+                                                  disabled={!!composeAction}
+                                                  className="rounded-md border border-border px-2 py-1 text-[11px] font-mono text-warning hover:border-warning disabled:opacity-50"
+                                                >
+                                                  Stop
+                                                </button>
+                                              )}
+                                              <button
+                                                type="button"
+                                                onClick={() => runCompose(project.slug, "redeploy", [svc.name])}
+                                                disabled={!!composeAction}
+                                                className="rounded-md border border-accent/30 bg-accent/10 px-2 py-1 text-[11px] font-mono text-accent hover:bg-accent/20 disabled:opacity-50"
+                                              >
+                                                Redeploy
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setComponentState({
+                                                    projectSlug: project.slug,
+                                                    serviceName: svc.name,
+                                                    tab: "environment",
+                                                  })
+                                                }
+                                                className="rounded-md border border-border px-2 py-1 text-[11px] font-mono text-muted hover:border-accent hover:text-accent"
+                                              >
+                                                Env
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setComponentState({
+                                                    projectSlug: project.slug,
+                                                    serviceName: svc.name,
+                                                    tab: "logs",
+                                                  })
+                                                }
+                                                className="rounded-md border border-border px-2 py-1 text-[11px] font-mono text-muted hover:border-accent hover:text-accent"
+                                              >
+                                                Logs
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </>
                                 )}
                               </div>
                             )}
@@ -1340,18 +1514,85 @@ export function ProjectsPanel() {
                                 </div>
                               )}
                               {componentState.tab === "storage" && <InfoTile label="Volumes" value={svc.volumes?.join(", ") || "No volumes declared"} />}
-                              {componentState.tab === "logs" && <InfoTile label="Logs" value={existing ? "Open Containers to stream logs" : "No linked container"} />}
+                              {componentState.tab === "logs" && (
+                                <div className="space-y-3">
+                                  {existing?.name ? (
+                                    <>
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="text-xs font-mono text-muted">
+                                          Last lines from <span className="text-foreground">{existing.name}</span>
+                                        </p>
+                                        <button
+                                          type="button"
+                                          onClick={async () => {
+                                            try {
+                                              const res = await fetch(
+                                                `/api/containers/logs?name=${encodeURIComponent(existing.name)}&tail=120`
+                                              );
+                                              const data = await res.json();
+                                              setComposeOutput({
+                                                slug: project.slug,
+                                                output: data.logs || data.output || "(empty)",
+                                                error: data.error || "",
+                                              });
+                                            } catch (err) {
+                                              setComposeOutput({
+                                                slug: project.slug,
+                                                output: "",
+                                                error: err instanceof Error ? err.message : "Failed to load logs",
+                                              });
+                                            }
+                                          }}
+                                          className="rounded-md border border-border px-2.5 py-1 text-[11px] font-mono hover:border-accent hover:text-accent"
+                                        >
+                                          Refresh logs
+                                        </button>
+                                      </div>
+                                      <pre className="max-h-72 overflow-auto rounded-md border border-border bg-bg-darker p-3 text-[11px] font-mono whitespace-pre-wrap text-muted">
+                                        {composeOutput?.slug === project.slug
+                                          ? composeOutput.error || composeOutput.output || "Click Refresh logs"
+                                          : "Click Refresh logs to load"}
+                                      </pre>
+                                    </>
+                                  ) : (
+                                    <InfoTile label="Logs" value="No linked container — start this component first" />
+                                  )}
+                                </div>
+                              )}
                               {componentState.tab === "actions" && (
                                 <div className="flex flex-wrap gap-2">
                                   <button
-                                    onClick={() => {
-                                      setSelectedServices((prev) => ({ ...prev, [project.slug]: new Set([svc.name]) }));
-                                      runCompose(project.slug, "redeploy", [svc.name]);
-                                    }}
-                              className="rounded bg-accent/10 px-3 py-2 text-xs font-mono text-accent"
+                                    onClick={() => runCompose(project.slug, existing?.state === "running" ? "restart" : "start", [svc.name])}
+                                    className="rounded-md border border-border px-3 py-2 text-xs font-mono hover:border-accent hover:text-accent"
+                                  >
+                                    {existing?.state === "running" ? "Restart" : "Start"}
+                                  </button>
+                                  {existing?.state === "running" && (
+                                    <button
+                                      onClick={() => runCompose(project.slug, "stop", [svc.name])}
+                                      className="rounded-md border border-border px-3 py-2 text-xs font-mono text-warning hover:border-warning"
+                                    >
+                                      Stop
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => runCompose(project.slug, "redeploy", [svc.name])}
+                                    className="rounded-md bg-accent/10 px-3 py-2 text-xs font-mono text-accent hover:bg-accent/20"
                                     title="Recreate this service with the saved environment."
                                   >
-                                    Redeploy component <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-current/10 text-[9px]">i</span>
+                                    Redeploy component
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      setComponentState({
+                                        projectSlug: project.slug,
+                                        serviceName: svc.name,
+                                        tab: "environment",
+                                      })
+                                    }
+                                    className="rounded-md border border-border px-3 py-2 text-xs font-mono text-muted hover:border-accent hover:text-accent"
+                                  >
+                                    Edit environment
                                   </button>
                                 </div>
                               )}

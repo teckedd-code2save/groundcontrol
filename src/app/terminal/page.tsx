@@ -9,7 +9,7 @@ import {
 } from "@/lib/server-capabilities-types";
 
 interface HistoryEntry {
-  type: "input" | "output" | "error" | "hint";
+  type: "input" | "output" | "error" | "hint" | "ai";
   text: string;
   cmd?: string;
 }
@@ -245,10 +245,23 @@ export default function TerminalPage() {
     setShowSuggestions(false);
     setAiSuggestion(null);
 
-    // AI mode.
-    if (raw.startsWith("/ai ")) {
-      const intent = raw.slice(4).trim();
-      setHistory((h) => [...h, { type: "input", text: raw }]);
+    // AI mode — /ai or /ai <intent>
+    if (raw === "/ai" || raw.startsWith("/ai ") || raw.startsWith("/ai\t")) {
+      const intent = raw === "/ai" ? "" : raw.replace(/^\/ai\s+/, "").trim();
+      setHistory((h) => [...h, { type: "ai", text: raw }]);
+      if (!intent) {
+        setAiSuggestion({
+          mode: "help",
+          help: "Terminal AI turns intent into a POSIX command on the active host. Managed stacks live under /srv/groundcontrol/deployments — not the same as docker ps.",
+          suggestions: [
+            "/ai list deployments",
+            "/ai list containers",
+            "/ai check disk space",
+            "/ai inspect <slug>",
+          ],
+        });
+        return;
+      }
       handleAiIntent(intent);
       return;
     }
@@ -386,11 +399,23 @@ export default function TerminalPage() {
     if (entry.type === "hint") {
       return <pre className="text-warning/80 whitespace-pre-wrap pl-4">{entry.text}</pre>;
     }
+    if (entry.type === "ai") {
+      return (
+        <div className="flex flex-wrap items-baseline gap-2 font-mono text-sm">
+          <span className="text-success">➜</span>
+          <span className="text-muted">{cwd}</span>
+          <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">
+            /ai
+          </span>
+          <span className="text-accent">{entry.text.replace(/^\/ai\s*/, "") || "help"}</span>
+        </div>
+      );
+    }
     if (entry.type === "input") {
       return (
-        <div className="text-accent">
+        <div className="text-foreground">
           <span className="text-success">➜</span>{" "}
-          <span className="text-primary/70">{cwd}</span> {entry.text}
+          <span className="text-muted">{cwd}</span> {entry.text}
         </div>
       );
     }
@@ -474,7 +499,10 @@ export default function TerminalPage() {
               <p className="mt-1">Type commands to execute on the VPS. Use with care.</p>
               <p className="mt-1">Mounted: /opt, /var/www, /etc, /var/run/docker.sock</p>
               <p className="mt-1 text-warning/70">Shell: sh (BusyBox) — bash is not available; `bash ...` is auto-rewritten to `sh ...`.</p>
-              <p className="mt-1 text-accent/70">Tip: type `/ai &lt;intent&gt;` to generate a command with AI.</p>
+              <p className="mt-1 text-accent/80">
+                Tip: type <span className="rounded bg-accent/15 px-1 text-accent">/ai</span>{" "}
+                <span className="text-muted">list deployments</span> for GroundControl-aware commands.
+              </p>
             </div>
           )}
           {history.map((entry, i) => (
@@ -482,36 +510,91 @@ export default function TerminalPage() {
               {formatOutput(entry)}
             </div>
           ))}
+          {aiLoading && (
+            <div className="mb-2 flex items-center gap-2 font-mono text-xs text-accent">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+              Generating command…
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
         {/* AI suggestion / help */}
         {aiSuggestion && (
-          <div className="border-t border-border bg-background/50 p-3">
-            <div className="text-xs text-muted mb-1">AI {aiSuggestion.mode === "help" ? "assistant" : "suggestion"}</div>
-            {aiSuggestion.help && <div className="text-xs text-foreground/80 mb-2 leading-relaxed">{aiSuggestion.help}</div>}
+          <div className="border-t border-accent/30 bg-accent/5 p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-white">
+                /ai
+              </span>
+              <span className="text-xs font-mono text-accent">
+                {aiSuggestion.mode === "help" ? "Help" : "Suggested command"}
+              </span>
+            </div>
+            {aiSuggestion.help && (
+              <div className="mb-2 text-xs leading-relaxed text-foreground/85">{aiSuggestion.help}</div>
+            )}
             {aiSuggestion.command && (
-              <><div className="font-mono text-sm text-accent mb-1">{aiSuggestion.command}</div>
-              {aiSuggestion.explanation && <div className="text-xs text-muted mb-2">{aiSuggestion.explanation}</div>}</>
+              <>
+                <div className="mb-1 break-all rounded-md border border-accent/20 bg-bg-darker px-2 py-1.5 font-mono text-sm text-accent">
+                  {aiSuggestion.command}
+                </div>
+                {aiSuggestion.explanation && (
+                  <div className="mb-2 text-xs text-muted">{aiSuggestion.explanation}</div>
+                )}
+              </>
             )}
             {aiSuggestion.suggestions?.length && aiSuggestion.suggestions.length > 0 && (
               <div className="mb-2 space-y-1">
                 {aiSuggestion.suggestions.map((s: string, i: number) => (
-                  <div key={i} className="text-xs text-muted font-mono pl-2">→ {s}</div>
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => {
+                      if (s.startsWith("/ai")) {
+                        setInput(s);
+                        setAiSuggestion(null);
+                        inputRef.current?.focus();
+                      } else if (s.includes("Co-Pilot")) {
+                        window.location.href = "/ai";
+                      } else {
+                        setInput(s.startsWith("/") ? s : `/ai ${s}`);
+                        inputRef.current?.focus();
+                      }
+                    }}
+                    className="block w-full rounded-md px-2 py-1 text-left text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+                  >
+                    → {s}
+                  </button>
                 ))}
               </div>
             )}
             <div className="flex gap-2">
-              {aiSuggestion.command && (<>
-                <button onClick={() => { executeCommand(aiSuggestion.command!, cwd); setAiSuggestion(null); }}
-                className="px-3 py-1 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded hover:bg-accent/20 transition-colors"
-              >
-                Run
-              </button>
-              </>)}
+              {aiSuggestion.command && (
+                <button
+                  onClick={() => {
+                    executeCommand(aiSuggestion.command!, cwd);
+                    setAiSuggestion(null);
+                  }}
+                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-mono text-white transition-colors hover:bg-accent-bright"
+                >
+                  Run
+                </button>
+              )}
+              {aiSuggestion.command && (
+                <button
+                  onClick={() => {
+                    setInput(aiSuggestion.command || "");
+                    setAiSuggestion(null);
+                    inputRef.current?.focus();
+                  }}
+                  className="rounded-md border border-border px-3 py-1.5 text-xs font-mono text-muted hover:border-accent hover:text-accent"
+                >
+                  Edit
+                </button>
+              )}
               <button
                 onClick={() => setAiSuggestion(null)}
-                className="px-3 py-1 text-xs font-mono border border-border rounded hover:border-accent transition-colors"
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-mono text-muted hover:border-accent"
               >
                 Dismiss
               </button>
@@ -521,10 +604,19 @@ export default function TerminalPage() {
 
         <form
           onSubmit={handleSubmit}
-          className="border-t border-border p-3 flex items-center gap-3 relative"
+          className={`border-t p-3 flex items-center gap-3 relative transition-colors ${
+            input.startsWith("/ai")
+              ? "border-accent/40 bg-accent/5"
+              : "border-border"
+          }`}
         >
           <span className="text-success font-mono text-sm shrink-0">➜</span>
-          <span className="text-primary/70 font-mono text-sm shrink-0 hidden sm:inline">{cwd}</span>
+          <span className="text-muted font-mono text-sm shrink-0 hidden sm:inline">{cwd}</span>
+          {input.startsWith("/ai") && (
+            <span className="hidden shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-white sm:inline">
+              AI
+            </span>
+          )}
           <div className="relative flex-1">
             <input
               ref={inputRef}
@@ -532,9 +624,11 @@ export default function TerminalPage() {
               value={input}
               onChange={(e) => onInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={working ? "Executing..." : aiLoading ? "AI is thinking..." : "Type a command or /ai ..."}
+              placeholder={working ? "Executing..." : aiLoading ? "AI is thinking..." : "command or /ai list deployments"}
               disabled={working}
-              className="w-full bg-transparent text-sm font-mono outline-none text-foreground placeholder:text-muted min-w-0"
+              className={`w-full bg-transparent text-sm font-mono outline-none placeholder:text-muted min-w-0 ${
+                input.startsWith("/ai") ? "text-accent" : "text-foreground"
+              }`}
               autoFocus
             />
             {showSuggestions && (

@@ -238,10 +238,31 @@ export default function TemplatesPage() {
 
   const currentStepIdx = steps.findIndex(s => s.id === step);
 
+  function isRecommended(t: TemplateWithId): boolean {
+    // First-time / Product Hunt friendly starters
+    return (
+      t._filename === "vps-caddy-source-build" ||
+      t._filename === "cloudflare-tunnel-private-apps"
+    );
+  }
+
+  const sortedTemplates = [...templates].sort((a, b) => {
+    const ar = isRecommended(a) ? 0 : 1;
+    const br = isRecommended(b) ? 0 : 1;
+    if (ar !== br) return ar - br;
+    return a.name.localeCompare(b.name);
+  });
+
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
       <h1 className="text-2xl font-semibold tracking-tight mb-1">Templates</h1>
-      <p className="text-muted text-xs mb-8">Pick a starter, connect source, configure, and deploy into the managed root.</p>
+      <p className="text-muted text-xs mb-2">
+        Production-shaped starters. Deploys land under the managed root and show up in Services → Deployments.
+      </p>
+      <p className="mb-8 text-[11px] font-mono text-muted">
+        New here? Start with <span className="text-accent">Source Build</span> (public app) or{" "}
+        <span className="text-accent">Tunnel Private Apps</span> (no public ports).
+      </p>
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-8 flex-wrap">
@@ -296,21 +317,39 @@ export default function TemplatesPage() {
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {templates.map(t => (
+          {sortedTemplates.map(t => (
             <button key={t._filename} onClick={() => selectTemplate(t)}
-              className="text-left p-5 bg-card border border-border hover:border-accent/30 hover:bg-accent/5 transition-colors">
+              className={`text-left p-5 bg-card border transition-colors hover:border-accent/40 hover:bg-accent/5 ${
+                isRecommended(t) ? "border-accent/35 ring-1 ring-accent/15" : "border-border"
+              }`}>
               <div className="flex items-start justify-between mb-2">
                 <div>
-                  <h3 className="font-medium text-sm">{t.name}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-medium text-sm">{t.name}</h3>
+                    {isRecommended(t) && (
+                      <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-accent">
+                        recommended
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-1 text-[10px] font-mono uppercase tracking-wider text-accent">{t.category} · {templateComplexity(t)}</p>
                 </div>
-                <span className="text-lg">{t.category === "private" ? "◎" : t.category === "kubernetes" ? "▦" : "◉"}</span>
+                <span className="text-lg text-muted">{t.category === "private" ? "◎" : t.category === "kubernetes" ? "▦" : "◉"}</span>
               </div>
               <p className="text-xs text-muted leading-relaxed mb-3">{templatePurpose(t)}</p>
               <div className="mb-3 space-y-1.5 text-[10px] text-muted/80">
                 <p><span className="font-mono text-muted">Exposure:</span> {templateExposure(t)}</p>
                 <p><span className="font-mono text-muted">Source:</span> {templateSourceModes(t).join(" or ")}</p>
-                <p><span className="font-mono text-muted">Services:</span> {t.services.map((service) => service.name).join(", ")}</p>
+                <p><span className="font-mono text-muted">Services:</span> {t.services.map((service) => service.name).join(", ") || "—"}</p>
+                <p><span className="font-mono text-muted">Needs:</span>{" "}
+                  {[
+                    t.requires?.docker && "Docker",
+                    t.requires?.caddy && "Caddy",
+                    t.requires?.nginx && "Nginx",
+                    t.requires?.traefik && "Traefik",
+                    t.requires?.k3s && "k3s",
+                  ].filter(Boolean).join(" · ") || "Docker"}
+                </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {t.requires?.docker && <Tag>Docker</Tag>}
@@ -494,8 +533,8 @@ export default function TemplatesPage() {
             </details>
           )}
           {deployResult && (
-            <div className="bg-success/5 border border-success/20 p-5">
-              <h3 className="text-sm font-medium text-success mb-2">Deploy Result</h3>
+            <div className="rounded-md border border-success/25 bg-success/5 p-5">
+              <h3 className="text-sm font-medium text-success mb-2">Deployed successfully</h3>
               <p className="text-xs text-muted font-mono">Path: {deployResult.deployPath}</p>
               {deployResult.composeProject && <p className="text-xs text-muted font-mono mt-1">Compose project: {deployResult.composeProject}</p>}
               {Boolean(deployResult.dns) && <p className="text-xs text-muted font-mono mt-1">DNS: record created</p>}
@@ -515,21 +554,34 @@ export default function TemplatesPage() {
                     : String(deployResult.upOutput.stdout || deployResult.upOutput.stderr || "").slice(0, 200)}
                 </p>
               )}
+              <p className="mt-3 text-[11px] text-muted">
+                Manage components, env, and lifecycle from Services → Deployments.
+              </p>
             </div>
           )}
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <BackBtn onClick={() => setStep("configure")} />
             {step === "preview" && (
               <button onClick={handleDeploy} disabled={loading}
-                className="px-4 py-2 text-xs font-mono bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors">
+                className="rounded-md px-4 py-2 text-xs font-mono bg-accent text-white hover:bg-accent-bright disabled:opacity-50 transition-colors">
                 {loading ? "Deploying..." : "Deploy"}
               </button>
             )}
             {step === "deploy" && (
-              <button onClick={() => router.push("/dashboard")}
-                className="px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success hover:bg-success/20 transition-colors">
-                Done → Dashboard
-              </button>
+              <>
+                <button onClick={() => router.push("/services")}
+                  className="rounded-md px-4 py-2 text-xs font-mono bg-accent text-white hover:bg-accent-bright transition-colors">
+                  Open Deployments
+                </button>
+                <button onClick={() => router.push("/dashboard")}
+                  className="rounded-md px-4 py-2 text-xs font-mono bg-success/10 border border-success/30 text-success hover:bg-success/20 transition-colors">
+                  Dashboard
+                </button>
+                <button onClick={() => { setStep("browse"); setSelected(null); setDeployResult(null); setResult(null); }}
+                  className="rounded-md px-4 py-2 text-xs font-mono border border-border text-muted hover:border-accent hover:text-accent transition-colors">
+                  Deploy another
+                </button>
+              </>
             )}
           </div>
         </div>
