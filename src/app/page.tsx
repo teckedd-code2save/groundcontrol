@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { InstallSetupSection, scrollToInstall } from "@/components/InstallSetupSection";
+import { AmbientShader } from "@/components/AmbientShader";
 
 const C = {
   bg: "#202427",
@@ -160,13 +161,15 @@ export default function HomePage() {
       className="min-h-screen overflow-x-hidden bg-[#202427] text-[#F5F6F7]"
       style={{ fontFamily: "Inter, articulat-cf, system-ui, sans-serif" }}
     >
-      {/* HERO — clean, no decorative loops / shaders over copy */}
+      {/* HERO — shader stays behind copy; no ASCII / looping ornaments on the text */}
       <section className="hero-s relative flex min-h-screen items-center overflow-hidden bg-[#141618]">
+        <AmbientShader className="z-0 opacity-90" />
+        {/* Soft left scrim so the headline stays readable over the mesh */}
         <div
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 z-[1]"
           style={{
             background:
-              "radial-gradient(ellipse 70% 50% at 15% 20%, rgba(232,84,42,0.08), transparent 55%), linear-gradient(180deg, #141618 0%, #202427 100%)",
+              "linear-gradient(90deg, rgba(13,14,16,0.88) 0%, rgba(13,14,16,0.55) 42%, rgba(13,14,16,0.2) 70%, transparent 100%)",
           }}
         />
         <div className="relative z-10 mx-auto w-full max-w-7xl px-6 py-24 md:px-12">

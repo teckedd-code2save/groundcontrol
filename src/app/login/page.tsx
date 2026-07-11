@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 import { InstallSetupSection, scrollToInstall } from "@/components/InstallSetupSection";
+import { AmbientShader } from "@/components/AmbientShader";
 
 const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
 const PAGE2_X_LINES = [1.5, 17, 55, 84, 98.5];
@@ -194,13 +195,14 @@ export default function LoginPage() {
         }
       `}</style>
 
-      {/* HERO — clean gradient, no animated shader / ASCII over the headline */}
+      {/* HERO — shader backdrop only; no ASCII / ornaments on the headline */}
       <section className="hero-s relative min-h-screen flex items-center overflow-hidden" style={{ background: C.dark }}>
+        <AmbientShader className="z-0 opacity-90" />
         <div
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 z-[1]"
           style={{
             background:
-              "radial-gradient(ellipse 70% 50% at 15% 20%, rgba(232,84,42,0.08), transparent 55%), linear-gradient(180deg, #141618 0%, #202427 100%)",
+              "linear-gradient(90deg, rgba(13,14,16,0.88) 0%, rgba(13,14,16,0.55) 42%, rgba(13,14,16,0.2) 70%, transparent 100%)",
           }}
         />
         <div className="relative z-10 w-full max-w-7xl mx-auto px-6 md:px-12 py-24">
