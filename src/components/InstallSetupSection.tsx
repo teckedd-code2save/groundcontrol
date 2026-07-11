@@ -46,7 +46,7 @@ const rows: { id?: string; label: string; badge?: string; hint: string; command:
   },
   {
     label: "Interactive",
-    hint: "Prompts for host, key path, and port (works with curl | bash).",
+    hint: "Prompts for host, key path, or paste PEM private key (curl | bash).",
     command: INSTALL_COMMANDS.interactive,
   },
   {
