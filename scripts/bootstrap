@@ -276,7 +276,12 @@ build_ssh_base() {
 }
 
 ssh_cmd() {
-  ssh "${SSH_EXTRA[@]}" "$@"
+  # CRITICAL: never let ssh steal stdin. When the script is run as
+  #   curl … | bash -s -- …
+  # stdin is the script body. OpenSSH reads stdin by default and would
+  # consume the rest of the bootstrap, so bash hits EOF right after the
+  # first successful "echo ok" and silently exits without installing.
+  ssh -n "${SSH_EXTRA[@]}" "$@" </dev/null
 }
 
 # Interactive helper: path or paste
