@@ -30,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/mai
   | bash -s -- --interactive
 ```
 
-Then open `http://YOUR_VPS_IP:3737/onboarding` and complete first-run setup. Skip to [§4 Domain & reverse proxy](#4-domain--reverse-proxy) if you already have the container running.
+Then open `http://YOUR_VPS_IP:3737/onboarding` and complete first-run setup. Skip to [§4 Put it behind Caddy](#4-put-it-behind-caddy-reverse-proxy--ssl) if you already have the container running.
 
 ---
 
