@@ -52,9 +52,8 @@ export default function LoginPage() {
       ctx = gsap.context(() => {
         // Split-text headline
         gsap.fromTo(".line-mask .line-inner", { y: "100%" }, { y: "0%", duration: 1.4, stagger: 0.18, ease: "power3.inOut", delay: 0.5 });
-        gsap.fromTo(".fade-up", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, stagger: 0.1, delay: 1.2, ease: "power2.out" });
-        gsap.to(".bg-parallax", { y: "15%", ease: "none", scrollTrigger: { trigger: ".hero-s", start: "top top", end: "bottom top", scrub: 1 } });
-        gsap.fromTo(".h-card", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, stagger: 0.1, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
+        gsap.fromTo(".fade-up", { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, stagger: 0.08, delay: 0.7, ease: "power2.out" });
+        gsap.fromTo(".h-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, stagger: 0.08, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
         gsap.fromTo(".h-card h3", { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.1, delay: 0.25, ease: "power2.out", scrollTrigger: { trigger: ".feat-s", start: "top 80%" } });
 
         // Screenshot reveals — cipherdigital expanding-on-scroll pattern
