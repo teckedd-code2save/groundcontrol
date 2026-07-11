@@ -27,6 +27,11 @@ export interface PersistTemplateDeploymentInput {
   tunnelId?: string | null;
   vpsConfigId?: number | null;
   durationMs?: number;
+  /** Project category: docker (default) or static. */
+  category?: "docker" | "static" | "app";
+  /** Deployment target type used for this template run. */
+  targetType?: "compose" | "static";
+  staticDir?: string | null;
 }
 
 export interface PersistTemplateDeploymentResult {
@@ -53,44 +58,51 @@ export async function persistTemplateDeployment(
   const primaryDomain = input.domains[0] || null;
   const publicUrl = primaryDomain ? `https://${primaryDomain}` : null;
 
+  const category = input.category || "docker";
   const project = await client.project.upsert({
     where: { slug: input.slug },
     create: {
       slug: input.slug,
       name: humanizeSlug(input.slug),
       domain: primaryDomain,
-      path: input.deployPath,
+      path: input.staticDir || input.deployPath,
       repoUrl: input.source.repoUrl || null,
-      dockerCompose: input.composeYml,
+      dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
-      category: "docker",
+      category,
       status: "success",
       lastDeploy: new Date(),
       envVars: JSON.stringify({
         templateName: input.templateName,
         composeProject: input.composeProject,
         source: input.source,
+        staticDir: input.staticDir || null,
       }),
     },
     update: {
       name: humanizeSlug(input.slug),
       domain: primaryDomain,
-      path: input.deployPath,
+      path: input.staticDir || input.deployPath,
       repoUrl: input.source.repoUrl || null,
-      dockerCompose: input.composeYml,
+      dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
-      category: "docker",
+      category,
       status: "success",
       lastDeploy: new Date(),
       envVars: JSON.stringify({
         templateName: input.templateName,
         composeProject: input.composeProject,
         source: input.source,
+        staticDir: input.staticDir || null,
       }),
     },
   });
 
-  const target = await resolveTemplateDeploymentTarget(client, input.vpsConfigId ?? null);
+  const target = await resolveTemplateDeploymentTarget(
+    client,
+    input.vpsConfigId ?? null,
+    input.targetType || "compose"
+  );
 
   const deployment = await client.deployment.create({
     data: {
@@ -104,6 +116,7 @@ export async function persistTemplateDeployment(
         templateName: input.templateName,
         deployPath: input.deployPath,
         composeProject: input.composeProject,
+        staticDir: input.staticDir || null,
         source: input.source,
         tunnelId: input.tunnelId || null,
         tunnelConfig: input.tunnelConfigResult ?? null,
@@ -126,13 +139,19 @@ export async function persistTemplateDeployment(
 
 async function resolveTemplateDeploymentTarget(
   client: TemplateDeploymentPrismaClient,
-  vpsConfigId: number | null
+  vpsConfigId: number | null,
+  targetType: "compose" | "static" = "compose"
 ) {
+  const typeFilter =
+    targetType === "static"
+      ? [{ type: "static" as const }]
+      : [{ type: "compose" as const }, { type: "docker-compose" as const }];
+
   const activeTargets = await client.deploymentTarget.findMany({
     where: {
       isActive: true,
       AND: [
-        { OR: [{ type: "compose" }, { type: "docker-compose" }] },
+        { OR: typeFilter },
         ...(vpsConfigId ? [{ OR: [{ vpsConfigId }, { vpsConfigId: null }] }] : []),
       ],
     },
@@ -141,17 +160,31 @@ async function resolveTemplateDeploymentTarget(
   const activeTarget = activeTargets.find((target) => !isTemplateManagedTargetConfig(target.configJson));
   if (activeTarget && !isTemplateManagedTargetConfig(activeTarget.configJson)) return activeTarget;
 
-  const composeTargets = await client.deploymentTarget.findMany({
+  const existingTargets = await client.deploymentTarget.findMany({
     where: {
       AND: [
-        { OR: [{ type: "compose" }, { type: "docker-compose" }] },
+        { OR: typeFilter },
         ...(vpsConfigId ? [{ OR: [{ vpsConfigId }, { vpsConfigId: null }] }] : []),
       ],
     },
     orderBy: { updatedAt: "desc" },
   });
-  const composeTarget = composeTargets.find((target) => !isTemplateManagedTargetConfig(target.configJson));
-  if (composeTarget && !isTemplateManagedTargetConfig(composeTarget.configJson)) return composeTarget;
+  const existing = existingTargets.find((target) => !isTemplateManagedTargetConfig(target.configJson));
+  if (existing && !isTemplateManagedTargetConfig(existing.configJson)) return existing;
+
+  if (targetType === "static") {
+    return client.deploymentTarget.create({
+      data: {
+        name: "VPS Static Site",
+        type: "static",
+        vpsConfigId,
+        configJson: JSON.stringify({
+          managedBy: "groundcontrol",
+        }),
+        isActive: false,
+      },
+    });
+  }
 
   return client.deploymentTarget.create({
     data: {

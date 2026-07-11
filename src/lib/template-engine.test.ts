@@ -69,13 +69,16 @@ describe("template engine", () => {
       "k3s-caddy-nodeport-platform",
       "vps-caddy-commerce-secure",
       "vps-caddy-source-build",
+      "vps-caddy-static-site",
       "vps-nginx-polyglot-secure",
       "vps-traefik-scaled-services",
     ]);
     for (const template of templates) {
       expect(template._filename).toBeTruthy();
       expect(template.name).toBeTruthy();
-      expect(template.services.length).toBeGreaterThan(0);
+      if (template.deploy_mode !== "static") {
+        expect(template.services.length).toBeGreaterThan(0);
+      }
       expect(template.inputs.length).toBeGreaterThan(0);
       expect(template.components?.length).toBeGreaterThan(0);
       expect(template.components?.every((component) => component.layer && component.kind)).toBe(true);
@@ -84,16 +87,31 @@ describe("template engine", () => {
 
   it("generates compose and proxy config for every template", () => {
     for (const template of listTemplates()) {
-      const resolved = resolveTemplate(template, inputsFor(template.inputs.map((input) => input.name)));
+      const resolved = resolveTemplate(
+        template,
+        {
+          ...inputsFor(template.inputs.map((input) => input.name)),
+          static_dir: "/var/www/static-site",
+        }
+      );
       const preview = generatePreview(resolved);
 
-      expect(resolved.dockerCompose).toContain("services:");
-      expect(resolved.dockerCompose).not.toContain("{{");
-      expect(resolved.proxyConfig).not.toContain("{{");
+      if (template.deploy_mode === "static") {
+        expect(resolved.dockerCompose).toContain("Static site");
+        expect(resolved.proxyConfig).toContain("file_server");
+        expect(resolved.proxyConfig).toContain("/var/www/static-site");
+        expect(preview).toContain("## Static site");
+        expect(preview).toContain("## Layers");
+        expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(false);
+      } else {
+        expect(resolved.dockerCompose).toContain("services:");
+        expect(resolved.dockerCompose).not.toContain("{{");
+        expect(resolved.proxyConfig).not.toContain("{{");
+        expect(preview).toContain("## Services");
+        expect(preview).toContain("## Layers");
+        expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(true);
+      }
       expect(resolved.manifest).toContain('"managedBy": "groundcontrol"');
-      expect(preview).toContain("## Services");
-      expect(preview).toContain("## Layers");
-      expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(true);
     }
   });
 

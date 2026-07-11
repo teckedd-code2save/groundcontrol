@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
+import { isStaticTemplate, loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
 import { getActiveVps, getSystemConfig, shQuote } from "@/lib/vps";
 import { execOnTarget } from "@/lib/host-exec";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
@@ -15,6 +15,10 @@ import {
   upsertEnvProfileForProject,
   validateEnv,
 } from "@/lib/env-management";
+import {
+  evaluateSourceRequirements,
+  type SourceTreeProbe,
+} from "@/lib/template-source-requirements";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -121,18 +125,28 @@ export async function POST(req: NextRequest) {
       if (ev.key) allInputs[`env_${ev.key}`] = ev.value || "";
     }
 
+    const staticMode = isStaticTemplate(template);
+    const systemConfig = await getSystemConfig();
+    const templateRoot = String(systemConfig.templateDeploymentRoot || "/srv/groundcontrol/deployments").replace(/\/+$/, "");
+    const staticRoot = String(systemConfig.staticRoot || "/var/www").replace(/\/+$/, "");
+    const slug = slugify(inputs.app_slug || allInputs.app_slug || domain || allInputs.domain || templateName);
+    const composeProject = staticMode ? "" : `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
+    const deployPath = `${templateRoot}/${slug}`;
+    const staticDir = `${staticRoot}/${slug}`;
+    if (staticMode) {
+      allInputs.static_dir = staticDir;
+      if (!allInputs.output_dir) allInputs.output_dir = ".";
+    }
+
     const resolved = resolveTemplate(template, allInputs);
-    const composeValidation = validateComposeDocument(resolved.dockerCompose);
-    if (!composeValidation.ok) {
-      return NextResponse.json({ success: false, error: composeValidation.error }, { status: 400 });
+    if (!staticMode) {
+      const composeValidation = validateComposeDocument(resolved.dockerCompose);
+      if (!composeValidation.ok) {
+        return NextResponse.json({ success: false, error: composeValidation.error }, { status: 400 });
+      }
     }
 
     // Deploy to VPS
-    const systemConfig = await getSystemConfig();
-    const templateRoot = String(systemConfig.templateDeploymentRoot || "/srv/groundcontrol/deployments").replace(/\/+$/, "");
-    const slug = slugify(inputs.app_slug || domain || allInputs.domain || templateName);
-    const composeProject = `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
-    const deployPath = `${templateRoot}/${slug}`;
     const vps = await getActiveVps();
     const startTime = Date.now();
 
@@ -142,6 +156,18 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
+    // Static / source-build need real source early — fail with a clear message.
+    if (staticMode || template.services.some((s) => s.build)) {
+      if (!repoUrl && !localPath) {
+        return NextResponse.json({
+          success: false,
+          error: staticMode
+            ? "Static Site needs a Git repository URL or a local path on the VPS."
+            : "Source Build needs a Git repository URL or a local path with a Dockerfile.",
+        }, { status: 400 });
+      }
+    }
+
     await execOnTarget(`mkdir -p ${shQuote(templateRoot)}`, vps);
     const source = await resolveTemplateSource({ repoUrl, branch, localPath, deployPath, vps })
       .catch((err) => ({ error: err instanceof Error ? err.message : "Source validation failed" }));
@@ -149,19 +175,191 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: source.error }, { status: 400 });
     }
 
+    // Probe source tree on VPS and re-check template requirements before compose/static publish
+    {
+      const list = await execOnTarget(
+        `cd ${shQuote(source.sourcePath)} && ls -1A 2>/dev/null | head -200`,
+        vps
+      );
+      const rootFiles = new Set<string>();
+      const paths = new Set<string>();
+      for (const line of list.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        rootFiles.add(line);
+        rootFiles.add(line.toLowerCase());
+        paths.add(line);
+      }
+      for (const f of ["Dockerfile", "dockerfile", "index.html", "package.json", "dist/index.html", "build/index.html", "out/index.html"]) {
+        const r = await execOnTarget(`test -e ${shQuote(`${source.sourcePath}/${f}`)} && echo yes || echo no`, vps);
+        if (r.stdout.trim() === "yes") {
+          paths.add(f);
+          const base = f.split("/").pop()!;
+          rootFiles.add(base);
+          rootFiles.add(base.toLowerCase());
+        }
+      }
+      const tree: SourceTreeProbe = { paths, rootFiles };
+      const sourceMode = repoUrl ? "github" : localPath ? "local" : ghcrImage ? "ghcr" : "none";
+      const reqCheck = evaluateSourceRequirements(template, tree, {
+        sourceMode,
+        hasImage: Boolean(ghcrImage),
+        outputDir: allInputs.output_dir || ".",
+        buildCommand: allInputs.build_command || "",
+      });
+      if (!reqCheck.ok) {
+        return NextResponse.json({
+          success: false,
+          error: reqCheck.errors[0] || "Source does not meet template requirements",
+          errors: reqCheck.errors,
+          checks: reqCheck.checks,
+          suggestion:
+            reqCheck.plan.requiresDockerfile && (paths.has("index.html") || rootFiles.has("index.html"))
+              ? "This looks like a static HTML site. Use the VPS Caddy Static Site template instead."
+              : undefined,
+        }, { status: 400 });
+      }
+    }
+
     const manifest = JSON.stringify({
       ...JSON.parse(resolved.manifest),
       deploymentRoot: deployPath,
-      composeProject,
+      composeProject: composeProject || null,
+      staticDir: staticMode ? staticDir : null,
       source,
     }, null, 2);
 
-    const usesBuild = template.services.some((service) => service.build);
-    if (usesBuild) {
-      const dockerfile = await execOnTarget(`test -f ${shQuote(source.sourcePath)}/Dockerfile && echo yes || echo no`, vps);
-      if (dockerfile.stdout.trim() !== "yes") {
-        return NextResponse.json({ success: false, error: `Template requires a Dockerfile, but none was found at ${source.sourcePath}/Dockerfile` }, { status: 400 });
+    // ── Static site path: no Docker Compose ──
+    if (staticMode) {
+      const outputDir = (allInputs.output_dir || ".").replace(/^\.\/+/, "") || ".";
+      const buildCommand = (allInputs.build_command || "").trim();
+
+      if (buildCommand) {
+        const build = await execOnTarget(
+          `cd ${shQuote(source.sourcePath)} && ${buildCommand}`,
+          vps
+        );
+        if (build.code !== 0) {
+          return NextResponse.json({
+            success: false,
+            error: build.stderr || build.stdout || "Static site build command failed",
+            upOutput: build,
+          }, { status: 500 });
+        }
       }
+
+      const publishFrom =
+        outputDir === "."
+          ? source.sourcePath
+          : `${source.sourcePath}/${outputDir}`;
+      const hasOut = await execOnTarget(`test -d ${shQuote(publishFrom)} && echo yes || echo no`, vps);
+      if (hasOut.stdout.trim() !== "yes") {
+        return NextResponse.json({
+          success: false,
+          error: `Publish directory not found: ${publishFrom}. Check output_dir${buildCommand ? " after build" : ""}.`,
+        }, { status: 400 });
+      }
+
+      const publish = await execOnTarget(
+        `rm -rf ${shQuote(`${staticDir}.prev`)} && ` +
+          `if [ -d ${shQuote(staticDir)} ]; then mv ${shQuote(staticDir)} ${shQuote(`${staticDir}.prev`)}; fi && ` +
+          `mkdir -p ${shQuote(staticDir)} && ` +
+          `cp -a ${shQuote(`${publishFrom}/.`)} ${shQuote(`${staticDir}/`)} && ` +
+          `mkdir -p ${shQuote(`${deployPath}/.groundcontrol`)} && ` +
+          `cat > ${shQuote(`${deployPath}/.groundcontrol/manifest.json`)} << 'GCEOF'\n${manifest}\nGCEOF`,
+        vps
+      );
+      if (publish.code !== 0) {
+        return NextResponse.json({
+          success: false,
+          error: publish.stderr || publish.stdout || "Failed to publish static files",
+          upOutput: publish,
+        }, { status: 500 });
+      }
+
+      const proxyPath = template.reverse_proxy.type === "caddy"
+        ? resolved.proxyConfigPath
+            .replace("/etc/caddy/sites/app.conf", `/etc/caddy/sites/${slug}.caddy`)
+            .replace(/\.conf$/, ".caddy")
+        : resolved.proxyConfigPath.replace("/etc/nginx/sites-available/app", `/etc/nginx/sites-available/${slug}`);
+      const proxyResult = await writeProxyConfig(template.reverse_proxy.type, resolved.proxyConfig, proxyPath, vps);
+
+      let dnsResult: unknown = null;
+      const domains = collectDomains(allInputs);
+      if (createDns && domains.length > 0) {
+        try {
+          const { listZones } = await import("@/lib/cloudflare");
+          const zones: CloudflareZone[] = (await listZones()).flatMap((zone) =>
+            isCloudflareZone(zone)
+              ? [{ id: zone.id, name: typeof zone.name === "string" ? zone.name : undefined }]
+              : []
+          );
+          const records = [];
+          for (const recordName of domains) {
+            const requestedZoneId = String(zoneId || "").trim();
+            const zone: CloudflareZone | undefined = requestedZoneId
+              ? { id: requestedZoneId }
+              : zones.find((z) => Boolean(z.name) && recordName.endsWith(String(z.name)));
+            if (zone) {
+              records.push(await provisionCustomDomain({
+                subdomain: recordName,
+                zoneId: String(zone.id),
+                targetHost: vps.host,
+                recordType: "A",
+                proxied: proxied === true,
+              }));
+            }
+          }
+          dnsResult = records;
+        } catch (err) {
+          dnsResult = { error: err instanceof Error ? err.message : "DNS provisioning failed" };
+        }
+      }
+
+      const healthResults = [];
+      for (const recordName of domains) {
+        const health = await execOnTarget(`curl -k -fsS -I --max-time 15 ${shQuote(`https://${recordName}/`)} 2>&1 | head -n 1 || true`, vps);
+        healthResults.push({ domain: recordName, result: health.stdout.trim() || health.stderr.trim() });
+      }
+
+      const persisted = await persistTemplateDeployment({
+        slug,
+        templateName,
+        deployPath,
+        composeProject: "",
+        source,
+        domains,
+        composeYml: "",
+        proxyConfig: resolved.proxyConfig,
+        proxyConfigPath: proxyPath,
+        proxyOutput: proxyResult,
+        dnsResult,
+        healthResults,
+        upOutput: publish,
+        manifest,
+        vpsConfigId: vps.id,
+        durationMs: Date.now() - startTime,
+        category: "static",
+        targetType: "static",
+        staticDir,
+      });
+
+      return NextResponse.json({
+        success: true,
+        ...persisted,
+        deployPath,
+        staticDir,
+        slug,
+        composeProject: null,
+        upOutput: publish,
+        dns: dnsResult,
+        proxy: proxyResult,
+        health: healthResults,
+        composeYml: "",
+        proxyConfig: resolved.proxyConfig,
+        proxyConfigPath: proxyPath,
+        manifest,
+        source,
+        message: `Published static site ${slug} to ${staticDir}.${domains.length ? ` Served at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}`,
+      });
     }
 
     const existingDeployment = await execOnTarget(`test -f ${shQuote(deployPath)}/docker-compose.yml && echo yes || echo no`, vps);

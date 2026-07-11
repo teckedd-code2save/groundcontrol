@@ -3,9 +3,17 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TemplateDefinition } from "@/lib/template-engine";
+import { getTemplateSourcePlan } from "@/lib/template-source-requirements";
 
 interface TemplateWithId extends TemplateDefinition {
   _filename: string;
+}
+
+interface SourceCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail?: string;
 }
 
 interface CloudflareTunnelOption {
@@ -31,6 +39,9 @@ type Step = "browse" | "source" | "configure" | "preview" | "deploy";
 
 function templatePurpose(template: TemplateWithId): string {
   const category = template.category.toLowerCase();
+  if (category === "static" || template.deploy_mode === "static") {
+    return "Plain HTML/CSS/JS (or a built dist folder) from Git — no Docker, Caddy serves files.";
+  }
   if (category === "source") return "Dockerfile apps built from Git, with Caddy and DNS wired after deploy.";
   if (category === "private") return "Admin and internal apps that should enter through Cloudflare Tunnel, not public host ports.";
   if (category === "commerce") return "SaaS or commerce stacks with web, API, workers, data stores, and object storage.";
@@ -43,25 +54,35 @@ function templatePurpose(template: TemplateWithId): string {
 function templateExposure(template: TemplateWithId): string {
   const usesTunnel = (template.components || []).some((component) => component.kind === "tunnel");
   if (usesTunnel) return "Cloudflare Tunnel CNAME -> cloudflared -> app service";
+  if (template.deploy_mode === "static" || template.category === "static") {
+    return "Public DNS -> Caddy file_server -> static files on disk";
+  }
   if (template.reverse_proxy.type === "traefik") return "Public 80/443 -> Traefik routers -> compose services";
   if (template.reverse_proxy.type === "nginx") return "Public DNS -> Nginx -> loopback service ports";
   return "Public DNS -> Caddy -> loopback service ports";
 }
 
 function templateSourceModes(template: TemplateWithId): string[] {
-  const hasBuild = template.services.some((service) => service.build);
-  const imageInputs = template.inputs.filter((input) => input.name.endsWith("_image") || input.name === "app_image");
-  if (hasBuild) return ["Git repo with Dockerfile", "Local VPS path"];
-  if (imageInputs.length > 0) return ["GHCR/container image", "Template defaults"];
-  return ["Template defaults"];
+  const plan = getTemplateSourcePlan(template);
+  return plan.allowedSources.map((mode) => {
+    if (mode === "github") return plan.requiresDockerfile ? "Git repo with Dockerfile" : "Git repository";
+    if (mode === "local") return "Local VPS path";
+    if (mode === "ghcr") return "GHCR / container image";
+    return mode;
+  });
 }
 
 function templateComplexity(template: TemplateWithId): string {
+  if (template.deploy_mode === "static" || template.category === "static") return "simple";
   const serviceCount = template.services.length;
   const dataCount = (template.components || []).filter((component) => component.layer === "data").length;
   if (serviceCount <= 2 && dataCount === 0) return "simple";
   if (serviceCount <= 4) return "standard";
   return "full stack";
+}
+
+function isStaticTpl(t: TemplateWithId): boolean {
+  return t.deploy_mode === "static" || t.category === "static";
 }
 
 export default function TemplatesPage() {
@@ -78,6 +99,9 @@ export default function TemplatesPage() {
   const [ghcrImage, setGhcrImage] = useState("");
   const [localPath, setLocalPath] = useState("");
   const [repoValidating, setRepoValidating] = useState(false);
+  const [sourceValidated, setSourceValidated] = useState(false);
+  const [sourceChecks, setSourceChecks] = useState<SourceCheck[]>([]);
+  const [sourceSuggestion, setSourceSuggestion] = useState("");
 
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([]);
@@ -101,26 +125,121 @@ export default function TemplatesPage() {
   function selectTemplate(t: TemplateWithId) {
     setSelected(t);
     const defaults: Record<string, string> = {};
-    (t.inputs || []).forEach(i => { if (i.default) defaults[i.name] = i.default; });
+    (t.inputs || []).forEach(i => { if (i.default != null && i.default !== undefined) defaults[i.name] = i.default; });
     setInputs(defaults);
     setEnvVars([]);
+    const plan = getTemplateSourcePlan(t);
+    const preferred = plan.allowedSources.includes("github")
+      ? "github"
+      : plan.allowedSources.includes("local")
+        ? "local"
+        : plan.allowedSources.includes("ghcr")
+          ? "ghcr"
+          : "github";
+    setSourceType(preferred);
     setStep("source");
     setResult(null);
     setPreviewText("");
     setDeployResult(null);
     setSelectedTunnelId("");
+    setSourceValidated(false);
+    setSourceChecks([]);
+    setSourceSuggestion("");
   }
 
-  async function validateRepo() {
-    if (!repoUrl) return;
+  async function validateSource(opts?: { silentOk?: boolean }): Promise<boolean> {
+    if (!selected) return false;
+    const plan = getTemplateSourcePlan(selected);
+    if (sourceType === "github" && !repoUrl.trim()) {
+      setResult({ ok: false, msg: "Enter a GitHub repository URL." });
+      setSourceValidated(false);
+      return false;
+    }
+    if (sourceType === "local" && !localPath.trim()) {
+      setResult({ ok: false, msg: "Enter a path on the VPS." });
+      setSourceValidated(false);
+      return false;
+    }
+    if (sourceType === "ghcr" && plan.requiresImage && !ghcrImage.trim()) {
+      setResult({ ok: false, msg: "Enter a container image (e.g. ghcr.io/you/app:latest)." });
+      setSourceValidated(false);
+      return false;
+    }
+    // Image-only templates with defaults: nothing to probe
+    if (!plan.requiresDockerfile && !isStaticTpl(selected) && sourceType === "ghcr" && !plan.requiresGitOrLocal) {
+      setSourceValidated(true);
+      setSourceChecks([]);
+      setSourceSuggestion("");
+      if (!opts?.silentOk) setResult({ ok: true, msg: "✓ Image source OK for this template" });
+      return true;
+    }
+    if (!plan.requiresDockerfile && !isStaticTpl(selected) && !plan.requiresGitOrLocal && sourceType !== "github" && sourceType !== "local") {
+      setSourceValidated(true);
+      setSourceChecks([]);
+      if (!opts?.silentOk) setResult({ ok: true, msg: "✓ Template uses defaults — no source tree required" });
+      return true;
+    }
+
     setRepoValidating(true);
+    setSourceSuggestion("");
     try {
-      const r = await fetch(`/api/github/validate?url=${encodeURIComponent(repoUrl)}`);
-      const d = await r.json();
-      if (d.valid) setResult({ ok: true, msg: `✓ Repo found: ${d.name || repoUrl}` });
-      else setResult({ ok: false, msg: `Repo not accessible: ${d.error}` });
-    } catch { setResult({ ok: false, msg: "Could not validate repo URL" }); }
-    finally { setRepoValidating(false); }
+      const res = await fetch("/api/templates/validate-source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateName: selected._filename,
+          sourceType,
+          repoUrl: sourceType === "github" ? repoUrl : undefined,
+          branch: sourceType === "github" ? branch : undefined,
+          localPath: sourceType === "local" ? localPath : undefined,
+          ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
+          outputDir: inputs.output_dir || ".",
+          buildCommand: inputs.build_command || "",
+        }),
+      });
+      const d = await res.json();
+      setSourceChecks(Array.isArray(d.checks) ? d.checks : []);
+      if (d.suggestion) setSourceSuggestion(String(d.suggestion));
+
+      if (d.ok) {
+        setSourceValidated(true);
+        const name = d.repo?.name || repoUrl || localPath || "source";
+        const checkSummary = (d.checks || [])
+          .filter((c: SourceCheck) => c.ok)
+          .map((c: SourceCheck) => c.label)
+          .slice(0, 2)
+          .join("; ");
+        if (!opts?.silentOk) {
+          setResult({
+            ok: true,
+            msg: `✓ Source matches this template${d.repo?.name ? `: ${d.repo.name}` : name ? `: ${name}` : ""}${checkSummary ? ` — ${checkSummary}` : ""}`,
+          });
+        }
+        if (Array.isArray(d.warnings) && d.warnings.length > 0) {
+          setResult({
+            ok: true,
+            msg: `✓ Source OK with notes: ${d.warnings[0]}`,
+          });
+        }
+        return true;
+      }
+
+      setSourceValidated(false);
+      const err = d.error || (Array.isArray(d.errors) && d.errors[0]) || "Source does not meet template requirements";
+      setResult({ ok: false, msg: err });
+      return false;
+    } catch {
+      setSourceValidated(false);
+      setResult({ ok: false, msg: "Could not validate source against this template" });
+      return false;
+    } finally {
+      setRepoValidating(false);
+    }
+  }
+
+  async function continueFromSource() {
+    const ok = await validateSource();
+    if (ok) setStep("configure");
   }
 
   function updateInput(name: string, value: string) {
@@ -163,6 +282,13 @@ export default function TemplatesPage() {
   async function handlePreview() {
     if (!selected) return;
     setLoading(true); setResult(null);
+    // Re-validate source before generating preview (catches wrong template + repo combo)
+    const sourceOk = sourceValidated || (await validateSource({ silentOk: true }));
+    if (!sourceOk) {
+      setLoading(false);
+      setStep("source");
+      return;
+    }
     try {
       const res = await fetch("/api/templates", {
         method: "POST",
@@ -193,6 +319,12 @@ export default function TemplatesPage() {
   async function handleDeploy() {
     if (!selected) return;
     setLoading(true); setResult(null);
+    const sourceOk = sourceValidated || (await validateSource({ silentOk: true }));
+    if (!sourceOk) {
+      setLoading(false);
+      setStep("source");
+      return;
+    }
     try {
       const res = await fetch("/api/templates/deploy", {
         method: "POST",
@@ -218,10 +350,14 @@ export default function TemplatesPage() {
         if (data.dns) parts.push("DNS: record created");
         setResult({ ok: true, msg: parts.join(" — ") });
         setStep("deploy");
-        setPreviewText(data.composeYml || "");
+        setPreviewText(data.composeYml || data.proxyConfig || "");
         setComposeYml(data.composeYml || "");
+        setProxyConfig(data.proxyConfig || "");
       } else {
-        setResult({ ok: false, msg: data.error || "Deploy failed — check VPS connection" });
+        const extra = data.suggestion ? ` — ${data.suggestion}` : "";
+        setResult({ ok: false, msg: `${data.error || "Deploy failed"}${extra}` });
+        if (data.checks) setSourceChecks(data.checks);
+        if (data.suggestion) setSourceSuggestion(data.suggestion);
       }
     } catch {
       setResult({ ok: false, msg: "Connection error" });
@@ -241,6 +377,7 @@ export default function TemplatesPage() {
   function isRecommended(t: TemplateWithId): boolean {
     // First-time / Product Hunt friendly starters
     return (
+      t._filename === "vps-caddy-static-site" ||
       t._filename === "vps-caddy-source-build" ||
       t._filename === "cloudflare-tunnel-private-apps"
     );
@@ -260,8 +397,9 @@ export default function TemplatesPage() {
         Production-shaped starters. Deploys land under the managed root and show up in Services → Deployments.
       </p>
       <p className="mb-8 text-[11px] font-mono text-muted">
-        New here? Start with <span className="text-accent">Source Build</span> (public app) or{" "}
-        <span className="text-accent">Tunnel Private Apps</span> (no public ports).
+        New here? <span className="text-accent">Static Site</span> for HTML pages,{" "}
+        <span className="text-accent">Source Build</span> for Dockerfile apps, or{" "}
+        <span className="text-accent">Tunnel Private Apps</span> for no public ports.
       </p>
 
       {/* Step indicator */}
@@ -297,8 +435,8 @@ export default function TemplatesPage() {
             <div className="border border-border bg-card p-4">
               <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Pick by app shape</div>
               <p className="text-[11px] text-muted/75 leading-relaxed">
-                Templates describe deployable app shapes: source builds, private tunnel apps, SaaS stacks, polyglot
-                services, Traefik microservices, and k3s edge setups.
+                Templates describe deployable app shapes: static HTML sites, Dockerfile source builds, private tunnel
+                apps, SaaS stacks, and k3s edge setups.
               </p>
             </div>
             <div className="border border-border bg-card p-4">
@@ -340,7 +478,7 @@ export default function TemplatesPage() {
               <div className="mb-3 space-y-1.5 text-[10px] text-muted/80">
                 <p><span className="font-mono text-muted">Exposure:</span> {templateExposure(t)}</p>
                 <p><span className="font-mono text-muted">Source:</span> {templateSourceModes(t).join(" or ")}</p>
-                <p><span className="font-mono text-muted">Services:</span> {t.services.map((service) => service.name).join(", ") || "—"}</p>
+                <p><span className="font-mono text-muted">Services:</span> {t.services.map((service) => service.name).join(", ") || (isStaticTpl(t) ? "static files" : "—")}</p>
                 <p><span className="font-mono text-muted">Needs:</span>{" "}
                   {[
                     t.requires?.docker && "Docker",
@@ -348,10 +486,12 @@ export default function TemplatesPage() {
                     t.requires?.nginx && "Nginx",
                     t.requires?.traefik && "Traefik",
                     t.requires?.k3s && "k3s",
-                  ].filter(Boolean).join(" · ") || "Docker"}
+                    isStaticTpl(t) && "Git or local path",
+                  ].filter(Boolean).join(" · ") || "—"}
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
+                {isStaticTpl(t) && <Tag>No Docker</Tag>}
                 {t.requires?.docker && <Tag>Docker</Tag>}
                 {t.requires?.caddy && <Tag>Caddy</Tag>}
                 {t.requires?.traefik && <Tag>Traefik</Tag>}
@@ -367,14 +507,38 @@ export default function TemplatesPage() {
       )}
 
       {/* Step 2: Source */}
-      {step === "source" && selected && (
+      {step === "source" && selected && (() => {
+        const plan = getTemplateSourcePlan(selected);
+        const allowed = plan.allowedSources.filter((m): m is "github" | "ghcr" | "local" =>
+          m === "github" || m === "ghcr" || m === "local"
+        );
+        return (
         <div className="space-y-6">
           <SelectedTemplateCard selected={selected} />
+          <div className="rounded-md border border-border bg-card/60 px-4 py-3 text-[11px] text-muted leading-relaxed">
+            <span className="font-mono text-accent">Requirements: </span>
+            {plan.summary}
+            {plan.requiresDockerfile && (
+              <span className="block mt-1">Looks for <span className="font-mono text-foreground/70">Dockerfile</span> at the repo root before you continue.</span>
+            )}
+            {isStaticTpl(selected) && (
+              <span className="block mt-1">
+                Looks for <span className="font-mono text-foreground/70">index.html</span> / HTML files (or package.json for a build). Example:{" "}
+                <span className="font-mono text-foreground/70">teckedd-code2save/pocket-models</span>
+              </span>
+            )}
+          </div>
           <div className="bg-card border border-border p-5">
             <h3 className="text-sm font-medium mb-4">Where is your code?</h3>
-            <div className="flex gap-2 mb-6">
-              {(["github", "ghcr", "local"] as const).map(t => (
-                <button key={t} onClick={() => { setSourceType(t); setResult(null); }}
+            <div className="flex gap-2 mb-6 flex-wrap">
+              {allowed.map(t => (
+                <button key={t} onClick={() => {
+                  setSourceType(t);
+                  setResult(null);
+                  setSourceValidated(false);
+                  setSourceChecks([]);
+                  setSourceSuggestion("");
+                }}
                   className={`px-4 py-2 text-xs font-mono border ${sourceType === t ? "border-accent text-accent" : "border-border hover:border-accent/50"}`}>{t === "github" ? "GitHub" : t === "ghcr" ? "GHCR" : "Local"}</button>
               ))}
             </div>
@@ -382,40 +546,70 @@ export default function TemplatesPage() {
               <div className="space-y-3">
                 <label className="block text-xs font-mono text-muted">Repo URL</label>
                 <div className="flex gap-2">
-                  <input type="text" value={repoUrl} onChange={e => setRepoUrl(e.target.value)}
-                    placeholder="https://github.com/you/repo" className="flex-1 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
-                  <button onClick={validateRepo} disabled={repoValidating || !repoUrl}
+                  <input type="text" value={repoUrl} onChange={e => {
+                    setRepoUrl(e.target.value);
+                    setSourceValidated(false);
+                  }}
+                    placeholder={isStaticTpl(selected)
+                      ? "https://github.com/teckedd-code2save/pocket-models"
+                      : "https://github.com/you/repo"}
+                    className="flex-1 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                  <button onClick={() => validateSource()} disabled={repoValidating || !repoUrl}
                     className="px-3 py-2 text-xs font-mono border border-border hover:border-accent disabled:opacity-50">
-                    {repoValidating ? "..." : "Validate"}
+                    {repoValidating ? "..." : "Check fit"}
                   </button>
                 </div>
                 <label className="block text-xs font-mono text-muted mt-3">Branch</label>
-                <input type="text" value={branch} onChange={e => setBranch(e.target.value)}
+                <input type="text" value={branch} onChange={e => { setBranch(e.target.value); setSourceValidated(false); }}
                   className="w-40 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
               </div>
             )}
             {sourceType === "ghcr" && (
               <div>
                 <label className="block text-xs font-mono text-muted mb-1">GHCR Image</label>
-                <input type="text" value={ghcrImage} onChange={e => setGhcrImage(e.target.value)}
+                <input type="text" value={ghcrImage} onChange={e => { setGhcrImage(e.target.value); setSourceValidated(false); }}
                   placeholder="ghcr.io/you/app:latest" className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
               </div>
             )}
             {sourceType === "local" && (
-              <div>
+              <div className="space-y-3">
                 <label className="block text-xs font-mono text-muted mb-1">Path on VPS</label>
-                <input type="text" value={localPath} onChange={e => setLocalPath(e.target.value)}
-                  placeholder="/opt/myapp" className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                <div className="flex gap-2">
+                  <input type="text" value={localPath} onChange={e => { setLocalPath(e.target.value); setSourceValidated(false); }}
+                    placeholder="/opt/myapp" className="flex-1 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                  <button onClick={() => validateSource()} disabled={repoValidating || !localPath}
+                    className="px-3 py-2 text-xs font-mono border border-border hover:border-accent disabled:opacity-50">
+                    {repoValidating ? "..." : "Check fit"}
+                  </button>
+                </div>
               </div>
+            )}
+            {sourceChecks.length > 0 && (
+              <ul className="mt-4 space-y-1.5 border-t border-border pt-4">
+                {sourceChecks.map((c) => (
+                  <li key={c.id} className={`text-[11px] font-mono ${c.ok ? "text-success" : "text-error"}`}>
+                    {c.ok ? "✓" : "✗"} {c.label}
+                    {c.detail ? <span className="text-muted"> — {c.detail}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {sourceSuggestion && (
+              <p className="mt-3 text-[11px] text-amber-400/90 leading-relaxed border border-amber-500/25 bg-amber-500/5 rounded-md px-3 py-2">
+                {sourceSuggestion}
+              </p>
             )}
           </div>
           <div className="flex gap-3">
             <BackBtn onClick={() => setStep("browse")} />
-            <button onClick={() => setStep("configure")}
-              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-colors">Next →</button>
+            <button onClick={continueFromSource} disabled={repoValidating}
+              className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50">
+              {repoValidating ? "Checking source…" : "Check & continue →"}
+            </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Step 3: Configure */}
       {step === "configure" && selected && (
@@ -520,11 +714,16 @@ export default function TemplatesPage() {
               <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background p-4 max-h-[50vh] overflow-y-auto leading-relaxed">{previewText}</pre>
             </div>
           )}
-          {composeYml && (
+          {composeYml && !composeYml.includes("Static site — no Docker Compose") && (
             <details className="bg-card border border-border p-5">
               <summary className="text-sm font-medium cursor-pointer">docker-compose.yml</summary>
               <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background p-4 mt-3 max-h-60 overflow-y-auto">{composeYml}</pre>
             </details>
+          )}
+          {composeYml && composeYml.includes("Static site — no Docker Compose") && (
+            <div className="bg-card border border-border p-4 text-[11px] font-mono text-muted">
+              No docker-compose.yml — static files only.
+            </div>
           )}
           {proxyConfig && (
             <details className="bg-card border border-border p-5">

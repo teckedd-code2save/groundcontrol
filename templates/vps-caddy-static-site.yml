@@ -1,0 +1,53 @@
+name: "VPS Caddy Static Site"
+description: "Host a simple static site from Git — HTML/CSS/JS or a built dist folder. No Docker, no Compose. Caddy serves files with automatic HTTPS."
+category: "static"
+deploy_mode: static
+version: "1.0"
+requires:
+  docker: false
+  caddy: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      root: "{{static_dir}}"
+components:
+  - id: git
+    label: Git source checkout
+    layer: application
+    kind: repository
+  - id: files
+    label: Static files on disk
+    layer: application
+    kind: static
+  - id: caddy
+    label: Caddy file server
+    layer: traffic
+    kind: proxy
+  - id: dns
+    label: Cloudflare DNS
+    layer: edge
+    kind: dns
+services: []
+volumes: []
+networks: []
+inputs:
+  - name: app_slug
+    prompt: "Site slug"
+    default: "static-site"
+  - name: domain
+    prompt: "Public domain"
+    example: "site.example.com"
+  - name: repo_url
+    prompt: "Git repository URL"
+    example: "https://github.com/teckedd-code2save/pocket-models"
+  - name: repo_branch
+    prompt: "Git branch, tag, or commit"
+    default: "main"
+  - name: build_command
+    prompt: "Optional build command (leave empty for plain HTML sites)"
+    default: ""
+  - name: output_dir
+    prompt: "Directory to publish (relative to repo root)"
+    default: "."
+    example: "dist"
