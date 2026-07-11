@@ -79,8 +79,15 @@ export default function HomePage() {
             <p className="fade-up" style={{ fontSize: 18, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server.</p>
             <div className="fade-up flex flex-wrap items-center gap-3">
               <Link href="/login" style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none", display: "inline-block" }}>Get Started →</Link>
-              <button onClick={copyCmd} style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}>{copied ? "Copied" : "Copy command"}</button>
+              <button onClick={copyCmd} style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}>{copied ? "Copied" : "Copy install command"}</button>
             </div>
+            <p className="fade-up mt-3 font-mono text-[11px]" style={{ color: C.dim, maxWidth: 560, lineHeight: 1.55 }}>
+              Default copy uses <span style={{ color: C.mut }}>-i ~/.ssh/…</span> (same as <span style={{ color: C.mut }}>ssh -i</span>).
+              Prefer prompts?{" "}
+              <span style={{ color: C.mut }}>
+                curl -fsSL …/bootstrap | bash -s -- --interactive
+              </span>
+            </p>
           </div>
         </div>
         <div className="fade-up absolute bottom-10 left-1/2 -translate-x-1/2" style={{ color: C.dim, fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>Scroll</div>

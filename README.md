@@ -93,7 +93,40 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 
 ## 🚀 Quick Start
 
-Run GroundControl locally in minutes. No VPS is required to explore the UI — seed the default user and click around.
+### One-command install on a VPS
+
+GroundControl can install Docker (if needed) and start itself on a remote host over SSH. The installer lives in [`scripts/bootstrap`](./scripts/bootstrap).
+
+```bash
+# Recommended: same as `ssh -i` — pass your private key path
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
+  | bash -s -- -i ~/.ssh/id_ed25519 root@YOUR_VPS_IP
+
+# Interactive: prompts for host, key path, and SSH port (works with curl|bash via /dev/tty)
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
+  | bash -s -- --interactive
+
+# Default agent keys only (fails if the host expects a non-default identity file)
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
+  | bash -s -- root@YOUR_VPS_IP
+
+# Local install (this machine is the VPS)
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
+```
+
+| Flag | Meaning |
+|------|---------|
+| `-i` / `--identity` / `--key` | Path to private key (like `ssh -i`) |
+| `-p` / `--port` | SSH port (default `22`) |
+| `--interactive` / `-I` | Prompt for host, key, and port |
+
+After install, open `http://YOUR_VPS_IP:3737` and complete **Setup** (`/onboarding`). To manage **additional** hosts later, use **Add Server** in the app (`/onboarding?add=1`) or **Settings → Connections**.
+
+See also [`DEPLOY.md`](./DEPLOY.md) for domain, reverse proxy, and production hardening.
+
+### Local development
+
+Run GroundControl on your laptop in minutes. No VPS is required to explore the UI — seed the schema and click around.
 
 ```bash
 # 1. Clone

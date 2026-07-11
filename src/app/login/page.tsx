@@ -227,9 +227,12 @@ export default function LoginPage() {
               <button onClick={() => setShowLogin(true)} style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}>Open Dashboard →</button>
               <button onClick={copyCmd} style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}>{copied ? "Copied" : "Copy install command"}</button>
             </div>
-            <p className="fade-up mt-3 font-mono text-[11px]" style={{ color: C.dim, maxWidth: 520, lineHeight: 1.5 }}>
-              Uses <span style={{ color: C.mut }}>-i ~/.ssh/…</span> like <span style={{ color: C.mut }}>ssh -i</span>. Interactive:{" "}
-              <span style={{ color: C.mut }}>bash -s -- --interactive</span>
+            <p className="fade-up mt-3 font-mono text-[11px]" style={{ color: C.dim, maxWidth: 560, lineHeight: 1.55 }}>
+              Default copy uses <span style={{ color: C.mut }}>-i ~/.ssh/…</span> (same as <span style={{ color: C.mut }}>ssh -i</span>).
+              Prefer prompts?{" "}
+              <span style={{ color: C.mut }}>
+                curl -fsSL …/bootstrap | bash -s -- --interactive
+              </span>
             </p>
           </div>
         </div>

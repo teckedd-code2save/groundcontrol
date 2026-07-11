@@ -16,7 +16,25 @@ GroundControl is designed to run **on the VPS it manages**, either in Docker or 
 
 ---
 
-## 1. Prepare the VPS
+## 0. Fastest path: bootstrap installer
+
+From your laptop, install Docker (if needed) and start GroundControl on a remote VPS:
+
+```bash
+# With private key (recommended — mirrors `ssh -i`)
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
+  | bash -s -- -i ~/.ssh/id_ed25519 root@YOUR_VPS_IP
+
+# Interactive prompts for host / key / port
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
+  | bash -s -- --interactive
+```
+
+Then open `http://YOUR_VPS_IP:3737/onboarding` and complete first-run setup. Skip to [§4 Domain & reverse proxy](#4-domain--reverse-proxy) if you already have the container running.
+
+---
+
+## 1. Prepare the VPS (manual)
 
 SSH into your server and install Docker if it is not already present:
 
