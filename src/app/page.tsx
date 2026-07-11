@@ -3,31 +3,20 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { InstallSetupSection, scrollToInstall } from "@/components/InstallSetupSection";
 
-const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)" };
+const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
 
 export default function HomePage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
-  const [copied, setCopied] = useState(false);
-  const cmd =
-    "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@your-vps";
-  async function copyCmd() {
-    try {
-      await navigator.clipboard.writeText(cmd);
-    } catch {
-      const textArea = document.createElement("textarea");
-      textArea.value = cmd;
-      textArea.style.position = "fixed";
-      textArea.style.opacity = "0";
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textArea);
+
+  useEffect(() => {
+    // Deep link: /#install
+    if (typeof window !== "undefined" && window.location.hash === "#install") {
+      window.setTimeout(() => scrollToInstall(), 100);
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
+  }, [checking]);
 
   useEffect(() => {
     fetch("/api/auth/me").then(async (res) => {
@@ -78,15 +67,17 @@ export default function HomePage() {
             </div>
             <p className="fade-up" style={{ fontSize: 18, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server.</p>
             <div className="fade-up flex flex-wrap items-center gap-3">
-              <Link href="/login" style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none", display: "inline-block" }}>Get Started →</Link>
-              <button onClick={copyCmd} style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}>{copied ? "Copied" : "Copy install command"}</button>
+              <Link href="/login" style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none", display: "inline-block" }}>Open Dashboard →</Link>
+              <button
+                type="button"
+                onClick={scrollToInstall}
+                style={{ padding: "14px 32px", background: "transparent", color: C.accent, border: `1px solid ${C.accent}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}
+              >
+                Install on your VPS
+              </button>
             </div>
-            <p className="fade-up mt-3 font-mono text-[11px]" style={{ color: C.dim, maxWidth: 560, lineHeight: 1.55 }}>
-              Default copy uses <span style={{ color: C.mut }}>-i ~/.ssh/…</span> (same as <span style={{ color: C.mut }}>ssh -i</span>).
-              Prefer prompts?{" "}
-              <span style={{ color: C.mut }}>
-                curl -fsSL …/bootstrap | bash -s -- --interactive
-              </span>
+            <p className="fade-up mt-3 text-[12px]" style={{ color: C.dim, maxWidth: 480, lineHeight: 1.55 }}>
+              One-command setup with SSH key or interactive prompts — jump to install below.
             </p>
           </div>
         </div>
@@ -134,21 +125,34 @@ export default function HomePage() {
         </div>
       </section>
 
+      <InstallSetupSection colors={C} />
+
       {/* CTA */}
       <section style={{ padding: "120px 0", background: C.dark }}>
         <div className="max-w-2xl mx-auto px-6 text-center">
           <h2 style={{ fontSize: "clamp(28px, 4vw, 42px)", fontWeight: 300, lineHeight: 1.15, marginBottom: 24 }}>Ready to give your VPS an AI co-pilot?</h2>
           <p style={{ color: C.mut, fontSize: 16, marginBottom: 40 }}>Free. Open source. Self-hosted.</p>
           <div className="flex gap-3 justify-center flex-wrap mb-8">
+            <button
+              type="button"
+              onClick={scrollToInstall}
+              style={{ padding: "16px 36px", background: "transparent", color: C.accent, border: `1px solid ${C.accent}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}
+            >
+              Install on your VPS
+            </button>
             <Link href="/login" style={{ padding: "16px 36px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>Open Dashboard</Link>
             <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ padding: "16px 36px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>GitHub</a>
           </div>
-          <div className="flex flex-wrap items-stretch justify-center gap-2">
-            <code style={{ background: C.darker, padding: "12px 16px", fontSize: 11, color: C.mut, fontFamily: "monospace", overflowWrap: "anywhere", display: "inline-block", maxWidth: "100%", textAlign: "left" }}>{cmd}</code>
-            <button onClick={copyCmd} style={{ padding: "12px 16px", background: "transparent", color: C.text, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 11, cursor: "pointer" }}>
-              {copied ? "Copied" : "Copy"}
+          <p style={{ fontSize: 12, color: C.dim, fontFamily: "monospace" }}>
+            Tip: start with the key install —{" "}
+            <button
+              type="button"
+              onClick={scrollToInstall}
+              style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontFamily: "inherit", fontSize: "inherit", textDecoration: "underline", padding: 0 }}
+            >
+              jump to setup
             </button>
-          </div>
+          </p>
         </div>
       </section>
 

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 import { AmbientShader } from "@/components/AmbientShader";
+import { InstallSetupSection, scrollToInstall } from "@/components/InstallSetupSection";
 
 const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
 const PAGE2_X_LINES = [1.5, 17, 55, 84, 98.5];
@@ -26,26 +27,14 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const [copied, setCopied] = useState(false);
   const router = useRouter();
-  const cmd =
-    "curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 root@your-vps";
-  async function copyCmd() {
-    try {
-      await navigator.clipboard.writeText(cmd);
-    } catch {
-      const textArea = document.createElement("textarea");
-      textArea.value = cmd;
-      textArea.style.position = "fixed";
-      textArea.style.opacity = "0";
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textArea);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.hash === "#install") {
+      window.setTimeout(() => scrollToInstall(), 150);
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
+  }, []);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setLoading(true); setError("");
     try {
@@ -225,14 +214,16 @@ export default function LoginPage() {
             <p className="fade-up" style={{ fontSize: 18, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>Metrics, logs, DNS, deployments, templates — managed by an AI agent that knows your server.</p>
             <div className="fade-up flex flex-wrap items-center gap-3">
               <button onClick={() => setShowLogin(true)} style={{ padding: "14px 32px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}>Open Dashboard →</button>
-              <button onClick={copyCmd} style={{ padding: "14px 32px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 12, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}>{copied ? "Copied" : "Copy install command"}</button>
+              <button
+                type="button"
+                onClick={scrollToInstall}
+                style={{ padding: "14px 32px", background: "transparent", color: C.accent, border: `1px solid ${C.accent}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", whiteSpace: "nowrap" }}
+              >
+                Install on your VPS
+              </button>
             </div>
-            <p className="fade-up mt-3 font-mono text-[11px]" style={{ color: C.dim, maxWidth: 560, lineHeight: 1.55 }}>
-              Default copy uses <span style={{ color: C.mut }}>-i ~/.ssh/…</span> (same as <span style={{ color: C.mut }}>ssh -i</span>).
-              Prefer prompts?{" "}
-              <span style={{ color: C.mut }}>
-                curl -fsSL …/bootstrap | bash -s -- --interactive
-              </span>
+            <p className="fade-up mt-3 text-[12px]" style={{ color: C.dim, maxWidth: 480, lineHeight: 1.55 }}>
+              One-command setup with SSH key or interactive prompts — jump to install below.
             </p>
           </div>
         </div>
@@ -463,7 +454,7 @@ export default function LoginPage() {
         </div>
       </section>
 
-      {/* METRICS — removed */}
+      <InstallSetupSection colors={C} />
 
       {/* CTA */}
       <section style={{ padding: "120px 0", background: C.dark }}>
@@ -471,24 +462,15 @@ export default function LoginPage() {
           <h2 style={{ fontSize: "clamp(28px, 4vw, 42px)", fontWeight: 300, lineHeight: 1.15, marginBottom: 24 }}>Ready to give your VPS an AI co-pilot?</h2>
           <p style={{ color: C.mut, fontSize: 16, marginBottom: 40 }}>Free. Open source. Self-hosted.</p>
           <div className="flex gap-3 justify-center flex-wrap">
+            <button
+              type="button"
+              onClick={scrollToInstall}
+              style={{ padding: "16px 36px", background: "transparent", color: C.accent, border: `1px solid ${C.accent}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}
+            >
+              Install on your VPS
+            </button>
             <button onClick={() => setShowLogin(true)} style={{ padding: "16px 36px", background: "transparent", color: C.text, border: `1px solid ${C.dim}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer" }}>Open Dashboard</button>
             <a href="https://github.com/teckedd-code2save/groundcontrol" target="_blank" rel="noopener" style={{ padding: "16px 36px", background: "transparent", color: C.mut, border: `1px solid ${C.lin}`, fontFamily: "inherit", fontSize: 14, fontWeight: 400, cursor: "pointer", textDecoration: "none" }}>GitHub</a>
-          </div>
-          <div style={{ marginTop: 32 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "stretch",
-                justifyContent: "center",
-                gap: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              <code style={{ background: C.darker, padding: "12px 16px", fontSize: 11, color: C.mut, fontFamily: "monospace", overflowWrap: "anywhere", display: "inline-block", maxWidth: "100%", textAlign: "left" }}>{cmd}</code>
-              <button onClick={copyCmd} style={{ padding: "12px 16px", background: "transparent", color: C.text, border: `1px solid ${C.lin}`, fontFamily: "monospace", fontSize: 11, cursor: "pointer" }}>
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
           </div>
         </div>
       </section>
