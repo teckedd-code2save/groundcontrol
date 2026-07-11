@@ -35,6 +35,10 @@ TMP_KEY_FILE=""
 # Candidate UI ports — high, uncommon, never edge 80/443
 GC_PORT_CANDIDATES="3737 3847 3947 8765 9737 10037 18080 28080 38080"
 
+# Generated per successful fresh install (printed at the end)
+GC_ADMIN_EMAIL=""
+GC_ADMIN_PASSWORD=""
+
 usage() {
   cat <<'USAGE'
 GroundControl Bootstrap
@@ -54,6 +58,7 @@ Notes:
   • Use the PRIVATE key (id_ed25519), not the .pub public key
   • Paths: /Users/you/.ssh/key  or  ~/.ssh/key  or  .ssh/key
   • Interactive mode can paste a private key (PEM) when path resolution is hard
+  • Each fresh install creates a unique login email + password for you
 USAGE
 }
 
@@ -69,7 +74,6 @@ read_tty() {
   local prompt="$1"
   local var=""
   if [ -r /dev/tty ]; then
-    # printf to tty; read from tty — avoid stdout mixing with command substitution
     printf "%s" "$prompt" > /dev/tty
     IFS= read -r var < /dev/tty || true
   elif [ -t 0 ]; then
@@ -91,7 +95,6 @@ confirm_tty() {
 
 trim() {
   local s="$1"
-  # strip surrounding quotes and whitespace
   s="${s#"${s%%[![:space:]]*}"}"
   s="${s%"${s##*[![:space:]]}"}"
   s="${s#\"}"
@@ -99,6 +102,126 @@ trim() {
   s="${s#\'}"
   s="${s%\'}"
   printf "%s" "$s"
+}
+
+# ── Unique admin credentials for each successful bootstrap ──
+# Email is unique per run; password meets app policy (12+, upper, lower, digit, symbol).
+generate_admin_credentials() {
+  local id hex1 hex2
+  id=$(openssl rand -hex 4 2>/dev/null || head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  hex1=$(openssl rand -hex 6 2>/dev/null || head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  hex2=$(openssl rand -hex 3 2>/dev/null || head -c 3 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  GC_ADMIN_EMAIL="admin-${id}@groundcontrol.local"
+  # Prefix/suffix guarantee character classes; middle is high-entropy.
+  GC_ADMIN_PASSWORD="Gc-${hex1}!${hex2}A"
+}
+
+# Write install .env (JWT + admin credentials).
+# Docker Compose env_file treats values literally — no shell quoting.
+# Credentials are generated without spaces / $ / # so unquoted values are safe.
+write_install_env() {
+  local dest="$1"
+  local jwt="$2"
+  local email="$3"
+  local pass="$4"
+  cat > "$dest" <<EOF
+JWT_SECRET=${jwt}
+GC_SETUP_USERNAME=${email}
+GC_SETUP_PASSWORD=${pass}
+EOF
+  chmod 600 "$dest" 2>/dev/null || true
+}
+
+print_credentials_banner() {
+  local url="$1"
+  local email="$2"
+  local pass="$3"
+  local cred_path="${4:-}"
+
+  echo ""
+  echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║          GroundControl is ready                  ║${NC}"
+  echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "  Open:  ${CYAN}${url}${NC}"
+  echo ""
+  echo -e "  ${BLUE}Your login (unique for this install):${NC}"
+  echo -e "  Email:    ${CYAN}${email}${NC}"
+  echo -e "  Password: ${CYAN}${pass}${NC}"
+  echo ""
+  echo -e "  After you sign in, you'll be asked to set your own"
+  echo -e "  email and password — keep those safe going forward."
+  if [ -n "$cred_path" ]; then
+    echo ""
+    echo -e "  A copy was also saved on the server at:"
+    echo -e "  ${CYAN}${cred_path}${NC}"
+  fi
+  echo ""
+  echo -e "  ${GREEN}Your VPS now has an AI co-pilot.${NC}"
+  echo ""
+}
+
+# Ensure admin inside a running container (works even if image lacks ensure-admin.cjs).
+# Uses base64 env to avoid shell-escaping issues with special characters.
+ensure_admin_in_container() {
+  local container="$1"
+  local email="$2"
+  local pass="$3"
+  local via_remote="${4:-0}"
+
+  local b64u b64p script_b64 out
+  b64u=$(printf '%s' "$email" | base64 | tr -d '\n')
+  b64p=$(printf '%s' "$pass" | base64 | tr -d '\n')
+
+  # Plain Node script shipped as base64 so curl|bash installs need no local file.
+  script_b64=$(printf '%s' 'const {PrismaClient}=require("@prisma/client");
+const bcrypt=require("bcryptjs");
+(async () => {
+  const u = Buffer.from(process.env.GC_SETUP_USERNAME_B64 || "", "base64").toString("utf8").trim();
+  const p = Buffer.from(process.env.GC_SETUP_PASSWORD_B64 || "", "base64").toString("utf8").trim();
+  if (!u || !p) { console.log("MISSING"); process.exit(1); }
+  const prisma = new PrismaClient();
+  try {
+    if (await prisma.user.count() > 0) { console.log("EXISTS"); return; }
+    await prisma.user.create({
+      data: { username: u, password: await bcrypt.hash(p, 12), role: "admin", forcePasswordChange: true },
+    });
+    console.log("CREATED:" + u);
+  } finally {
+    await prisma.$disconnect();
+  }
+})().catch((e) => { console.error(String((e && e.message) || e)); process.exit(1); });' | base64 | tr -d '\n')
+
+  if [ "$via_remote" = "1" ]; then
+    out=$(remote "echo '${script_b64}' | base64 -d > /tmp/gc-ensure-admin.cjs 2>/dev/null || echo '${script_b64}' | openssl base64 -d -A > /tmp/gc-ensure-admin.cjs
+docker cp /tmp/gc-ensure-admin.cjs ${container}:/tmp/gc-ensure-admin.cjs
+docker exec -e GC_SETUP_USERNAME_B64=${b64u} -e GC_SETUP_PASSWORD_B64=${b64p} ${container} node /tmp/gc-ensure-admin.cjs" 2>&1) || true
+  else
+    local tmp
+    tmp=$(mktemp "${TMPDIR:-/tmp}/gc-ensure-admin.XXXXXX.cjs")
+    printf '%s' "$script_b64" | base64 -d > "$tmp" 2>/dev/null || printf '%s' "$script_b64" | openssl base64 -d -A > "$tmp"
+    docker cp "$tmp" "${container}:/tmp/gc-ensure-admin.cjs" >/dev/null 2>&1 || true
+    rm -f "$tmp"
+    out=$(docker exec -e "GC_SETUP_USERNAME_B64=${b64u}" -e "GC_SETUP_PASSWORD_B64=${b64p}" "$container" node /tmp/gc-ensure-admin.cjs 2>&1) || true
+  fi
+
+  case "$out" in
+    *CREATED:*)
+      echo -e "${GREEN}✓ Admin account created${NC}"
+      return 0
+      ;;
+    *EXISTS*)
+      echo -e "${YELLOW}! An admin account already exists — use your existing login${NC}"
+      return 0
+      ;;
+    *)
+      echo -e "${YELLOW}! Could not auto-create admin yet. You can finish setup at /setup in the browser.${NC}"
+      if [ -n "$out" ]; then
+        printf '%s\n' "$out" | head -3 | sed 's/^/  /' >&2
+      fi
+      return 1
+      ;;
+  esac
 }
 
 # Resolve a key path: ~/, $HOME, relative, ~/.ssh/basename, fuzzy match, warn on .pub
@@ -112,24 +235,20 @@ resolve_key_path() {
     return 1
   fi
 
-  # Expand leading ~  (avoid [[ == ~/* ]] which tilde-expands the pattern)
   case "$p" in
     "~") p="${HOME}" ;;
     "~/"*) p="${HOME}/${p#"~/"}" ;;
     "~"*) p="${HOME}/${p#"~"}" ;;
   esac
 
-  # Strip accidental double-home: /Users/x/~/... or $HOME/~/...
   case "$p" in
     "${HOME}/~/"*) p="${HOME}/${p#"${HOME}/~/"}" ;;
     "${HOME}/~"*) p="${HOME}/${p#"${HOME}/~"}" ;;
   esac
 
-  # Absolute path
   if [ "${p#/}" != "$p" ]; then
     :
   else
-    # Relative: try cwd, then $HOME/, then $HOME/.ssh/
     if [ -f "$p" ]; then
       p="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
     elif [ -f "${HOME}/$p" ]; then
@@ -143,15 +262,14 @@ resolve_key_path() {
     fi
   fi
 
-  # User gave a .pub — try the private key sibling
   if [ "${p%.pub}" != "$p" ]; then
     local priv="${p%.pub}"
     if [ -f "$priv" ]; then
-      echo -e "${YELLOW}! You pointed at a public key (.pub). Using private key: ${priv}${NC}" >&2
+      echo -e "${YELLOW}! That path was a public key (.pub). Using the private key: ${priv}${NC}" >&2
       p="$priv"
     else
-      echo -e "${YELLOW}! That looks like a public key (.pub). ssh -i needs the private key (no .pub).${NC}" >&2
-      echo -e "  Tried sibling private key: ${priv} (not found)${NC}" >&2
+      echo -e "${YELLOW}! That looks like a public key (.pub). SSH needs the private key (no .pub).${NC}" >&2
+      echo -e "  Tried: ${priv} (not found)${NC}" >&2
     fi
   fi
 
@@ -160,14 +278,11 @@ resolve_key_path() {
     return 0
   fi
 
-  # Fuzzy: basename match in ~/.ssh (handles typos / missing trailing s)
   base=$(basename "$p")
   base="${base%.pub}"
   if [ -d "${HOME}/.ssh" ] && [ -n "$base" ]; then
     candidates=""
-    # exact private
     [ -f "${HOME}/.ssh/${base}" ] && candidates="${HOME}/.ssh/${base}"
-    # prefix matches (private files only)
     for c in "${HOME}/.ssh/"*; do
       [ -f "$c" ] || continue
       case "$c" in
@@ -182,7 +297,6 @@ $c"
           ;;
       esac
     done
-    # Prefer single unique fuzzy hit
     if [ -n "$candidates" ] && [ "$(printf '%s\n' "$candidates" | grep -c .)" -eq 1 ]; then
       echo -e "${YELLOW}! Exact path missing; using closest private key: ${candidates}${NC}" >&2
       printf "%s" "$candidates"
@@ -201,22 +315,19 @@ $c"
   return 1
 }
 
-# Write pasted PEM key to a temp file (600)
 write_pasted_key() {
   local content="$1"
   TMP_KEY_FILE=$(mktemp "${TMPDIR:-/tmp}/gc-ssh-key.XXXXXX")
-  # Ensure trailing newline
   printf "%s\n" "$content" > "$TMP_KEY_FILE"
   chmod 600 "$TMP_KEY_FILE"
   IDENTITY="$TMP_KEY_FILE"
   IDENTITY_DISPLAY="(pasted private key)"
 }
 
-# Prompt user to paste a multi-line PEM private key via /dev/tty
 prompt_paste_key() {
   local line body=""
   echo "" > /dev/tty 2>/dev/null || true
-  echo -e "${BLUE}Paste your PRIVATE key (including -----BEGIN … END----- lines).${NC}" > /dev/tty 2>/dev/null || echo -e "${BLUE}Paste PRIVATE key, then a line with only: END${NC}"
+  echo -e "${BLUE}Paste your private key (including the BEGIN / END lines).${NC}" > /dev/tty 2>/dev/null || echo -e "${BLUE}Paste private key, then a line with only: END${NC}"
   echo -e "When finished, type ${CYAN}END${NC} on its own line (or press Ctrl-D).${NC}" > /dev/tty 2>/dev/null || true
   echo "" > /dev/tty 2>/dev/null || true
 
@@ -227,7 +338,6 @@ prompt_paste_key() {
       esac
       body="${body}${line}
 "
-      # Auto-stop after END PRIVATE KEY line
       case "$line" in
         *"END OPENSSH PRIVATE KEY"*|*"END RSA PRIVATE KEY"*|*"END EC PRIVATE KEY"*|*"END PRIVATE KEY"*)
           break
@@ -235,29 +345,27 @@ prompt_paste_key() {
       esac
     done
   else
-    echo -e "${RED}✗ No TTY available to paste a key.${NC}" >&2
+    echo -e "${RED}✗ No terminal available to paste a key.${NC}" >&2
     return 1
   fi
 
   body=$(printf "%s" "$body" | sed -e 's/\r$//')
   if ! printf "%s" "$body" | grep -q "BEGIN.*PRIVATE KEY"; then
-    echo -e "${RED}✗ Paste did not look like a private key (missing BEGIN PRIVATE KEY).${NC}" >&2
-    echo -e "  Do not paste the .pub file — use the private key without .pub${NC}" >&2
+    echo -e "${RED}✗ That didn't look like a private key (missing BEGIN PRIVATE KEY).${NC}" >&2
+    echo -e "  Use the private key file, not the .pub public key.${NC}" >&2
     return 1
   fi
   write_pasted_key "$body"
-  echo -e "${GREEN}✓ Private key received (temporary file, deleted on exit)${NC}"
+  echo -e "${GREEN}✓ Private key received${NC}"
   return 0
 }
 
-# Apply IDENTITY to SSH_EXTRA (path or already set temp file)
 build_ssh_base() {
   SSH_EXTRA=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o BatchMode=yes)
   if [ -n "$PORT" ] && [ "$PORT" != "22" ]; then
     SSH_EXTRA+=(-p "$PORT")
   fi
   if [ -n "$IDENTITY" ]; then
-    # If IDENTITY still looks like a path (not our temp), resolve it
     if [ -z "$TMP_KEY_FILE" ] || [ "$IDENTITY" != "$TMP_KEY_FILE" ]; then
       local resolved
       if resolved=$(resolve_key_path "$IDENTITY"); then
@@ -267,7 +375,7 @@ build_ssh_base() {
         echo -e "${RED}✗ SSH key not found: ${resolved:-$IDENTITY}${NC}" >&2
         echo "" >&2
         echo "  Tips:" >&2
-        echo "  • Use the PRIVATE key path, e.g. ~/.ssh/id_ed25519 (not .pub)" >&2
+        echo "  • Use the private key path, e.g. ~/.ssh/id_ed25519 (not .pub)" >&2
         echo "  • Absolute: /Users/you/.ssh/id_ed25519" >&2
         echo "  • Or re-run with --interactive and choose paste" >&2
         exit 1
@@ -279,16 +387,10 @@ build_ssh_base() {
 }
 
 ssh_cmd() {
-  # CRITICAL: never let ssh steal stdin. When the script is run as
-  #   curl … | bash -s -- …
-  # stdin is the script body. OpenSSH reads stdin by default and would
-  # consume the rest of the bootstrap, so bash hits EOF right after the
-  # first successful "echo ok" and silently exits without installing.
+  # Never let ssh steal stdin when script is piped via curl | bash.
   ssh -n "${SSH_EXTRA[@]}" "$@" </dev/null
 }
 
-# Pick a free host TCP port that is not 80/443 and not already listening.
-# Works on Linux (ss/netstat). Falls back to high ephemeral range.
 find_free_http_port_local() {
   local p used
   used=$( (ss -lntH 2>/dev/null || netstat -lnt 2>/dev/null || true) | tr -s ' ' | sed -n 's/.*:\([0-9][0-9]*\) .*/\1/p' | sort -un )
@@ -323,7 +425,6 @@ echo 28173" 2>/dev/null | tr -d '\r' | tail -1)
   if [ -z "$p" ] || ! printf '%s' "$p" | grep -Eq '^[0-9]+$'; then
     p="28173"
   fi
-  # Never allow edge ports even if probe misbehaves
   if [ "$p" = "80" ] || [ "$p" = "443" ] || [ "$p" = "22" ]; then
     p="28173"
   fi
@@ -331,10 +432,9 @@ echo 28173" 2>/dev/null | tr -d '\r' | tail -1)
 }
 
 # Fresh bootstrap compose — NEVER uses /opt/groundcontrol (production path).
-# Isolated project + container names so we cannot orphan/remove groundcontrol-web.
+# Credentials and JWT live in sibling .env (env_file).
 write_bootstrap_compose_yaml() {
   local http_port="$1"
-  local jwt_secret="$2"
   cat <<EOF
 # Generated by GroundControl bootstrap (side-by-side install).
 # Project: gcbootstrap — does NOT manage production groundcontrol-web.
@@ -348,12 +448,13 @@ services:
     restart: unless-stopped
     ports:
       - "${http_port}:3000"
+    env_file:
+      - .env
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOSTNAME=0.0.0.0
       - DATABASE_URL=file:/app/prisma/prod.db
-      - JWT_SECRET=${jwt_secret}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - gcbootstrap-db:/app/prisma
@@ -371,10 +472,9 @@ volumes:
 EOF
 }
 
-# Production layout used by CI/CD (Caddy typically proxies 127.0.0.1:3003).
 write_production_compose_yaml() {
   cat <<'EOF'
-# GroundControl production compose (restored by bootstrap if clobbered)
+# GroundControl production compose
 version: "3.8"
 
 services:
@@ -408,7 +508,6 @@ volumes:
 EOF
 }
 
-# Interactive helper: path or paste
 prompt_identity() {
   local choice path
   echo ""
@@ -473,7 +572,6 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -y|--yes)
-      # reserved for non-interactive future use
       shift
       ;;
     --interactive|-I)
@@ -500,7 +598,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Remaining positional after --
 while [ $# -gt 0 ]; do
   if [ -z "$HOST" ]; then
     HOST="$1"
@@ -509,7 +606,8 @@ while [ $# -gt 0 ]; do
 done
 
 echo ""
-echo -e "${CYAN}◉ GroundControl Bootstrap${NC}"
+echo -e "${CYAN}◉ GroundControl${NC}"
+echo -e "  One-command install for your server"
 echo ""
 
 # Interactive: gather host / key if missing
@@ -519,7 +617,7 @@ if [ "$INTERACTIVE" -eq 1 ] || { [ -z "$HOST" ] && [ -r /dev/tty ] && confirm_tt
     HOST=$(trim "$HOST")
   fi
   if [ -z "$HOST" ]; then
-    echo -e "${BLUE}→ No host given — installing locally on this machine.${NC}"
+    echo -e "${BLUE}→ No host given — installing on this machine.${NC}"
   else
     PORT_IN=$(read_tty "SSH port [${PORT}]: ")
     PORT_IN=$(trim "$PORT_IN")
@@ -535,14 +633,14 @@ fi
 
 if [ -z "$HOST" ]; then
   # ── Local install ─────────────────────────────────────
-  echo -e "${BLUE}→ Installing locally on this machine...${NC}"
+  echo -e "${BLUE}→ Installing on this machine...${NC}"
   echo ""
 
   OS_ID=$(grep ^ID= /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo 'unknown')
-  echo -e "${GREEN}✓ OS: ${OS_ID}${NC}"
+  echo -e "${GREEN}✓ Server OS: ${OS_ID}${NC}"
 
   if docker --version >/dev/null 2>&1; then
-    echo -e "${GREEN}✓ Docker already installed${NC}"
+    echo -e "${GREEN}✓ Docker is ready${NC}"
   else
     echo -e "${BLUE}→ Installing Docker...${NC}"
     curl -fsSL https://get.docker.com | sh || {
@@ -552,22 +650,33 @@ if [ -z "$HOST" ]; then
     echo -e "${GREEN}✓ Docker installed${NC}"
   fi
 
-  echo -e "${BLUE}→ Deploying GroundControl...${NC}"
-  mkdir -p /opt/groundcontrol
   # Never clobber production /opt/groundcontrol
   if [ -f /opt/groundcontrol/docker-compose.yml ] && grep -q 'groundcontrol-web\|container_name: groundcontrol-web' /opt/groundcontrol/docker-compose.yml 2>/dev/null; then
-    echo -e "${YELLOW}! Production GroundControl already present at /opt/groundcontrol — leaving it alone.${NC}"
-    echo -e "  Manage it with: cd /opt/groundcontrol && docker compose up -d"
+    echo -e "${YELLOW}! GroundControl is already installed at /opt/groundcontrol.${NC}"
+    echo -e "  Open your existing site, or manage it with:"
+    echo -e "  ${CYAN}cd /opt/groundcontrol && docker compose up -d${NC}"
     exit 0
   fi
 
-  echo -e "${BLUE}→ Choosing a free UI port (will not use 80/443)...${NC}"
+  echo -e "${BLUE}→ Preparing GroundControl...${NC}"
   GC_HTTP_PORT=$(find_free_http_port_local)
   JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-  echo -e "${GREEN}✓ Publishing host port ${GC_HTTP_PORT} → container 3000${NC}"
+  generate_admin_credentials
+  echo -e "${GREEN}✓ UI will be available on port ${GC_HTTP_PORT}${NC}"
 
   mkdir -p /opt/groundcontrol-bootstrap
-  write_bootstrap_compose_yaml "$GC_HTTP_PORT" "$JWT_SECRET" > /opt/groundcontrol-bootstrap/docker-compose.yml
+  write_install_env /opt/groundcontrol-bootstrap/.env "$JWT_SECRET" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD"
+  write_bootstrap_compose_yaml "$GC_HTTP_PORT" > /opt/groundcontrol-bootstrap/docker-compose.yml
+  # Credentials file for the operator (same as printed)
+  {
+    echo "GroundControl admin login"
+    echo "Email:    ${GC_ADMIN_EMAIL}"
+    echo "Password: ${GC_ADMIN_PASSWORD}"
+    echo ""
+    echo "Sign in, then update your email and password when prompted."
+    echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)"
+  } > /opt/groundcontrol-bootstrap/ADMIN_CREDENTIALS.txt
+  chmod 600 /opt/groundcontrol-bootstrap/ADMIN_CREDENTIALS.txt 2>/dev/null || true
 
   cd /opt/groundcontrol-bootstrap
   if docker compose version >/dev/null 2>&1; then
@@ -576,30 +685,37 @@ if [ -z "$HOST" ]; then
     docker-compose -p gcbootstrap up -d
   fi
 
-  echo ""
-  echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}║   GroundControl is running!             ║${NC}"
-  echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
-  echo ""
-  echo -e "  Open:  ${CYAN}http://localhost:${GC_HTTP_PORT}${NC}"
-  echo -e "  Setup: ${CYAN}http://localhost:${GC_HTTP_PORT}/onboarding${NC}"
-  echo ""
-  echo -e "  ${YELLOW}Safe install notes:${NC}"
-  echo -e "  • Install dir: ${CYAN}/opt/groundcontrol-bootstrap${NC} (not production /opt/groundcontrol)"
-  echo -e "  • Did not bind ports 80 or 443"
-  echo -e "  • Container: ${CYAN}groundcontrol-bootstrap${NC} only"
-  echo ""
-  echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
-  echo ""
+  echo -e "${BLUE}→ Starting GroundControl...${NC}"
+  # Wait for app so we can create the admin account
+  ready=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 2
+    if wget -qO- --timeout=3 "http://127.0.0.1:${GC_HTTP_PORT}/" >/dev/null 2>&1 \
+      || curl -sf --max-time 3 "http://127.0.0.1:${GC_HTTP_PORT}/" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+  done
+
+  if [ "$ready" -eq 1 ]; then
+    echo -e "${GREEN}✓ GroundControl is online${NC}"
+  else
+    echo -e "${YELLOW}! Still starting — creating your account next${NC}"
+  fi
+
+  # Prefer entrypoint-created account; always try docker exec so current images work
+  ensure_admin_in_container "groundcontrol-bootstrap" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD" 0 || true
+
+  print_credentials_banner \
+    "http://localhost:${GC_HTTP_PORT}" \
+    "$GC_ADMIN_EMAIL" \
+    "$GC_ADMIN_PASSWORD" \
+    "/opt/groundcontrol-bootstrap/ADMIN_CREDENTIALS.txt"
   exit 0
 fi
 
 # ── Remote install via SSH ──────────────────────────────
-# Note: with set -e, any failing SSH probe after "connection OK" used to abort
-# the whole script. Use remote() helpers that never kill the install mid-flight.
-
 remote() {
-  # Run remote command; return ssh exit code but never trip set -e by itself
   ssh_cmd "$HOST" "$@"
   return $?
 }
@@ -608,7 +724,7 @@ remote_ok() {
   remote "$@" >/dev/null 2>&1
 }
 
-echo -e "  Target: ${BLUE}${HOST}${NC}"
+echo -e "  Server: ${BLUE}${HOST}${NC}"
 if [ -n "${IDENTITY_DISPLAY:-$IDENTITY}" ]; then
   echo -e "  Key:    ${BLUE}${IDENTITY_DISPLAY:-$IDENTITY}${NC}"
 fi
@@ -619,17 +735,16 @@ echo ""
 
 build_ssh_base
 
-echo -e "${BLUE}→ Testing SSH connection...${NC}"
+echo -e "${BLUE}→ Connecting to your server...${NC}"
 if ! remote_ok "echo ok"; then
-  echo -e "${YELLOW}! SSH with current credentials failed.${NC}"
+  echo -e "${YELLOW}! Could not connect with the current credentials.${NC}"
 
   if { [ -r /dev/tty ] || [ -t 0 ]; }; then
     echo ""
-    echo "  If you normally run:"
+    echo "  If you usually run:"
     echo -e "    ${CYAN}ssh -i ~/.ssh/your_private_key ${HOST}${NC}"
-    echo "  use that same private key path (not the .pub), or paste the key."
+    echo "  use that same private key (not the .pub), or paste the key."
     echo ""
-    # Keep existing temp key if paste already worked earlier in this run
     if [ -z "$IDENTITY" ] || [ ! -f "$IDENTITY" ]; then
       IDENTITY=""
       TMP_KEY_FILE=""
@@ -637,20 +752,19 @@ if ! remote_ok "echo ok"; then
     fi
     build_ssh_base
     if remote_ok "echo ok"; then
-      echo -e "${GREEN}✓ SSH connection working${NC}"
+      echo -e "${GREEN}✓ Connected${NC}"
     else
-      echo -e "${RED}✗ Still cannot SSH to ${HOST}${NC}"
+      echo -e "${RED}✗ Still cannot reach ${HOST}${NC}"
       echo ""
-      echo "  Tried: ssh ${SSH_EXTRA[*]} ${HOST}"
-      echo "  Check:"
-      echo "  1. Host is reachable"
-      echo "  2. You used the PRIVATE key (file without .pub)"
+      echo "  Check that:"
+      echo "  1. The host is online and reachable"
+      echo "  2. You used the private key (file without .pub)"
       echo "  3. Manual test: ssh -i ${IDENTITY:-~/.ssh/id_ed25519} -p ${PORT} ${HOST}"
-      echo "  4. Install public key on server: ssh-copy-id -i KEY.pub ${HOST}"
+      echo "  4. Install your public key: ssh-copy-id -i KEY.pub ${HOST}"
       exit 1
     fi
   else
-    echo -e "${RED}✗ Cannot SSH to ${HOST}${NC}"
+    echo -e "${RED}✗ Cannot reach ${HOST}${NC}"
     echo ""
     echo "  Pass a private key explicitly:"
     echo -e "    ${CYAN}curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash -s -- -i ~/.ssh/id_ed25519 ${HOST}${NC}"
@@ -658,54 +772,45 @@ if ! remote_ok "echo ok"; then
     exit 1
   fi
 else
-  echo -e "${GREEN}✓ SSH connection working${NC}"
+  echo -e "${GREEN}✓ Connected${NC}"
 fi
 
-# Keep going even if probes fail (set -e safe)
-echo -e "${BLUE}→ Detecting remote OS...${NC}"
+echo -e "${BLUE}→ Checking server environment...${NC}"
 OS_ID=$(remote "cat /etc/os-release 2>/dev/null | grep ^ID= | head -1 | cut -d= -f2 | tr -d '\"'" 2>/dev/null || true)
 OS_ID=$(trim "${OS_ID:-}")
 if [ -z "$OS_ID" ]; then
   OS_ID="unknown"
 fi
-echo -e "${GREEN}✓ Remote OS: ${OS_ID}${NC}"
+echo -e "${GREEN}✓ Server OS: ${OS_ID}${NC}"
 
 echo -e "${BLUE}→ Checking Docker...${NC}"
 if remote_ok "command -v docker >/dev/null 2>&1 && docker --version >/dev/null 2>&1"; then
-  echo -e "${GREEN}✓ Docker already installed (left as-is — not reinstalling)${NC}"
+  echo -e "${GREEN}✓ Docker is ready${NC}"
 else
-  echo -e "${BLUE}→ Installing Docker on ${HOST} (only if missing)...${NC}"
+  echo -e "${BLUE}→ Installing Docker...${NC}"
   if ! remote "curl -fsSL https://get.docker.com | sh"; then
     echo -e "${RED}✗ Docker install failed${NC}"
     exit 1
   fi
-  # Start docker only if we just installed it
   remote "command -v systemctl >/dev/null 2>&1 && systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true" || true
   echo -e "${GREEN}✓ Docker installed${NC}"
 fi
 
-# ── Protect / recover production at /opt/groundcontrol ──
-# Previous bootstrap versions wrote into /opt/groundcontrol and removed
-# groundcontrol-web via --remove-orphans. If production markers exist, restore.
-echo -e "${BLUE}→ Checking for existing production GroundControl...${NC}"
+# ── Existing production install at /opt/groundcontrol ──
+echo -e "${BLUE}→ Looking for an existing GroundControl install...${NC}"
 HAS_PROD_ENV=0
 HAS_PROD_VOL=0
-HAS_BOOTSTRAP_CT=0
 remote_ok "test -f /opt/groundcontrol/.env" && HAS_PROD_ENV=1
 remote_ok "docker volume ls -q 2>/dev/null | grep -qx groundcontrol_groundcontrol-db || docker volume ls -q 2>/dev/null | grep -q groundcontrol-db" && HAS_PROD_VOL=1
-remote_ok "docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx groundcontrol" && HAS_BOOTSTRAP_CT=1
 
 if [ "$HAS_PROD_ENV" -eq 1 ] || [ "$HAS_PROD_VOL" -eq 1 ] || remote_ok "test -d /opt/groundcontrol"; then
-  echo -e "${YELLOW}! Existing /opt/groundcontrol detected — restoring production layout (Caddy-friendly).${NC}"
-  echo -e "  This undoes bootstrap clobber of groundcontrol-web and leaves edge ports alone."
+  echo -e "${GREEN}✓ Found an existing install — bringing it back online${NC}"
 
-  # Stop the accidental bootstrap container name (not groundcontrol-web)
+  # Stop accidental bootstrap containers without touching production data
   remote "docker rm -f groundcontrol groundcontrol-bootstrap 2>/dev/null || true" || true
-  # Tear down only the mistaken bootstrap project if present
   remote "docker compose -p groundcontrol -f /opt/groundcontrol/docker-compose.yml down 2>/dev/null || true" || true
   remote "docker compose -p gcbootstrap down 2>/dev/null || true" || true
 
-  # Ensure .env has JWT_SECRET
   remote "mkdir -p /opt/groundcontrol
 cd /opt/groundcontrol
 if [ ! -f .env ]; then
@@ -713,9 +818,7 @@ if [ ! -f .env ]; then
 fi
 if ! grep -q '^JWT_SECRET=' .env 2>/dev/null; then
   echo \"JWT_SECRET=\$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \\n')\" >> .env
-  echo 'JWT_SECRET added to .env'
 fi
-# Keep HOST_PORT for Caddy → 127.0.0.1:3003
 if ! grep -q '^HOST_PORT=' .env 2>/dev/null; then
   echo 'HOST_PORT=3003' >> .env
 fi" || true
@@ -728,88 +831,109 @@ fi" || true
     }
   fi
 
-  echo -e "${BLUE}→ Starting production container groundcontrol-web on 127.0.0.1:3003...${NC}"
+  echo -e "${BLUE}→ Starting GroundControl...${NC}"
   if ! remote "cd /opt/groundcontrol && (docker compose up -d --pull always || docker-compose up -d)"; then
-    echo -e "${RED}✗ Failed to start production GroundControl${NC}"
+    echo -e "${RED}✗ Failed to start GroundControl${NC}"
     remote "cd /opt/groundcontrol && docker compose logs --tail=50" || true
     exit 1
   fi
 
   if remote_ok "sleep 3; wget -qO- --timeout=5 http://127.0.0.1:3003/ >/dev/null 2>&1 || curl -sf --max-time 5 http://127.0.0.1:3003/ >/dev/null"; then
-    echo -e "${GREEN}✓ Production GC responding on 127.0.0.1:3003 (for Caddy/Nginx)${NC}"
+    echo -e "${GREEN}✓ GroundControl is online${NC}"
   else
-    echo -e "${YELLOW}! Started groundcontrol-web but HTTP check on :3003 failed — check logs${NC}"
-    remote "cd /opt/groundcontrol && docker compose ps && docker compose logs --tail=40" || true
+    echo -e "${YELLOW}! Started, but the health check is still warming up${NC}"
   fi
 
   HOST_IP=$(echo "$HOST" | sed 's/.*@//')
   echo ""
-  echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}║   Production GroundControl restored     ║${NC}"
-  echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+  echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║          GroundControl is ready                  ║${NC}"
+  echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
   echo ""
-  echo -e "  Domain:   your Caddy/Nginx site → ${CYAN}127.0.0.1:3003${NC}"
-  echo -e "  Direct:   ${CYAN}http://${HOST_IP}:3003${NC} (loopback only — use reverse proxy)"
-  echo -e "  Path:     ${CYAN}/opt/groundcontrol${NC}"
-  echo -e "  Container:${CYAN}groundcontrol-web${NC}"
+  echo -e "  Your existing install is running again."
+  echo -e "  Reverse proxy target: ${CYAN}127.0.0.1:3003${NC}"
+  echo -e "  Path: ${CYAN}/opt/groundcontrol${NC}"
   echo ""
-  echo -e "  Bootstrap will never install into /opt/groundcontrol again."
-  echo -e "  Fresh side-by-side installs use ${CYAN}/opt/groundcontrol-bootstrap${NC}."
+  echo -e "  Sign in with the account you already created."
+  echo -e "  (Fresh side-by-side installs use ${CYAN}/opt/groundcontrol-bootstrap${NC}.)"
   echo ""
   exit 0
 fi
 
 # ── Fresh install: side-by-side dir, never production path ──
-echo -e "${BLUE}→ Fresh install into /opt/groundcontrol-bootstrap (not production path)...${NC}"
-echo -e "${BLUE}→ Choosing a free UI port (never 80/443)...${NC}"
+echo -e "${BLUE}→ Installing GroundControl...${NC}"
 GC_HTTP_PORT=$(find_free_http_port_remote)
 JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
-echo -e "${GREEN}✓ Will publish host port ${GC_HTTP_PORT} → container 3000${NC}"
+generate_admin_credentials
+echo -e "${GREEN}✓ UI will be available on port ${GC_HTTP_PORT}${NC}"
 
 if ! remote "mkdir -p /opt/groundcontrol-bootstrap"; then
   echo -e "${RED}✗ Could not create /opt/groundcontrol-bootstrap${NC}"
   exit 1
 fi
 
-COMPOSE_B64=$(write_bootstrap_compose_yaml "$GC_HTTP_PORT" "$JWT_SECRET" | base64 | tr -d '\n')
+# Write .env on remote (credentials + JWT) — unquoted Compose env_file format
+ENV_CONTENT=$(printf 'JWT_SECRET=%s\nGC_SETUP_USERNAME=%s\nGC_SETUP_PASSWORD=%s\n' \
+  "$JWT_SECRET" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD")
+ENV_B64=$(printf '%s' "$ENV_CONTENT" | base64 | tr -d '\n')
+if ! remote "echo '${ENV_B64}' | base64 -d > /opt/groundcontrol-bootstrap/.env && chmod 600 /opt/groundcontrol-bootstrap/.env"; then
+  remote "echo '${ENV_B64}' | openssl base64 -d -A > /opt/groundcontrol-bootstrap/.env && chmod 600 /opt/groundcontrol-bootstrap/.env" || {
+    echo -e "${RED}✗ Could not write install environment${NC}"
+    exit 1
+  }
+fi
+
+COMPOSE_B64=$(write_bootstrap_compose_yaml "$GC_HTTP_PORT" | base64 | tr -d '\n')
 if ! remote "echo '${COMPOSE_B64}' | base64 -d > /opt/groundcontrol-bootstrap/docker-compose.yml"; then
   if ! remote "echo '${COMPOSE_B64}' | openssl base64 -d -A > /opt/groundcontrol-bootstrap/docker-compose.yml 2>/dev/null"; then
-    echo -e "${RED}✗ Could not write bootstrap docker-compose.yml${NC}"
+    echo -e "${RED}✗ Could not write docker-compose.yml${NC}"
     exit 1
   fi
 fi
 
-echo -e "${BLUE}→ Starting container groundcontrol-bootstrap (project gcbootstrap)...${NC}"
+# Save credentials on the server
+CRED_CONTENT=$(cat <<EOF
+GroundControl admin login
+Email:    ${GC_ADMIN_EMAIL}
+Password: ${GC_ADMIN_PASSWORD}
+
+Sign in, then update your email and password when prompted.
+Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)
+EOF
+)
+CRED_B64=$(printf '%s' "$CRED_CONTENT" | base64 | tr -d '\n')
+remote "echo '${CRED_B64}' | base64 -d > /opt/groundcontrol-bootstrap/ADMIN_CREDENTIALS.txt && chmod 600 /opt/groundcontrol-bootstrap/ADMIN_CREDENTIALS.txt" || true
+
+echo -e "${BLUE}→ Starting GroundControl...${NC}"
 if ! remote "cd /opt/groundcontrol-bootstrap && (docker compose -p gcbootstrap up -d --pull always || docker-compose -p gcbootstrap up -d)"; then
-  echo -e "${RED}✗ docker compose up failed${NC}"
+  echo -e "${RED}✗ Failed to start GroundControl${NC}"
   remote "cd /opt/groundcontrol-bootstrap && docker compose -p gcbootstrap logs --tail=40" || true
   exit 1
 fi
 
-echo -e "${BLUE}→ Verifying app on :${GC_HTTP_PORT}...${NC}"
-if remote_ok "sleep 3; wget -qO- --timeout=5 http://127.0.0.1:${GC_HTTP_PORT}/ >/dev/null 2>&1 || curl -sf --max-time 5 http://127.0.0.1:${GC_HTTP_PORT}/ >/dev/null"; then
-  echo -e "${GREEN}✓ App is responding on port ${GC_HTTP_PORT}${NC}"
+echo -e "${BLUE}→ Waiting for GroundControl to come online...${NC}"
+ready=0
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if remote_ok "wget -qO- --timeout=4 http://127.0.0.1:${GC_HTTP_PORT}/ >/dev/null 2>&1 || curl -sf --max-time 4 http://127.0.0.1:${GC_HTTP_PORT}/ >/dev/null"; then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+
+if [ "$ready" -eq 1 ]; then
+  echo -e "${GREEN}✓ GroundControl is online${NC}"
 else
-  echo -e "${YELLOW}! Local HTTP check failed — logs:${NC}"
-  remote "cd /opt/groundcontrol-bootstrap && docker compose -p gcbootstrap ps && docker compose -p gcbootstrap logs --tail=40" || true
+  echo -e "${YELLOW}! Still starting — creating your account next${NC}"
 fi
 
+# Create admin even if the image hasn't been rebuilt with entrypoint seed yet
+ensure_admin_in_container "groundcontrol-bootstrap" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD" 1 || true
+
 HOST_IP=$(echo "$HOST" | sed 's/.*@//')
-echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║   GroundControl is running!             ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "  Open:     ${CYAN}http://${HOST_IP}:${GC_HTTP_PORT}${NC}"
-echo -e "  Setup:    ${CYAN}http://${HOST_IP}:${GC_HTTP_PORT}/onboarding${NC}"
-echo ""
-echo -e "  ${YELLOW}Isolation guarantees:${NC}"
-echo -e "  • Install dir: ${CYAN}/opt/groundcontrol-bootstrap${NC}"
-echo -e "  • Production path ${CYAN}/opt/groundcontrol${NC} was not modified"
-echo -e "  • Ports 80 / 443 / 22 were not claimed"
-echo -e "  • Container name: ${CYAN}groundcontrol-bootstrap${NC} only"
-echo -e "  • Firewall was not changed"
-echo ""
-echo -e "  ${GREEN}Done. Your VPS has an AI co-pilot.${NC}"
-echo ""
+print_credentials_banner \
+  "http://${HOST_IP}:${GC_HTTP_PORT}" \
+  "$GC_ADMIN_EMAIL" \
+  "$GC_ADMIN_PASSWORD" \
+  "/opt/groundcontrol-bootstrap/ADMIN_CREDENTIALS.txt"
 exit 0

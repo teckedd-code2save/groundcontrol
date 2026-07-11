@@ -9,8 +9,8 @@ const prisma = new PrismaClient();
  *
  * Security: GroundControl no longer ships a hardcoded default password.
  * The first admin must be created via the web /setup flow, OR by setting
- * GC_SETUP_PASSWORD before running this seed. If GC_SETUP_PASSWORD is used,
- * the account is flagged for a mandatory password change on first login.
+ * GC_SETUP_PASSWORD (and optional GC_SETUP_USERNAME / email) before running
+ * this seed. Bootstrap-created accounts require a password update on first login.
  */
 async function seedAdmin() {
   const userCount = await prisma.user.count();
@@ -27,18 +27,19 @@ async function seedAdmin() {
     return;
   }
 
+  const setupUsername = (process.env.GC_SETUP_USERNAME || "admin").trim();
   const hash = await bcrypt.hash(setupPassword, 12);
   await prisma.user.create({
     data: {
-      username: "admin",
+      username: setupUsername,
       password: hash,
       role: "admin",
       forcePasswordChange: true,
     },
   });
 
-  console.log("Created initial admin user 'admin' from GC_SETUP_PASSWORD.");
-  console.log("You will be forced to change this password on first login.");
+  console.log(`Created initial admin user '${setupUsername}' from GC_SETUP_PASSWORD.`);
+  console.log("You will be prompted to update this password on first login.");
 }
 
 /**

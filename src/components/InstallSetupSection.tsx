@@ -87,12 +87,12 @@ export function InstallSetupSection() {
           <p className="mb-2 font-medium text-white/70">After install</p>
           <ol className="list-decimal space-y-1.5 pl-4">
             <li>
-              Open{" "}
-              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-white/70">
-                http://YOUR_VPS_IP:3737
-              </code>
+              Open the URL printed by the installer (port is chosen automatically, not always 3737)
             </li>
-            <li>Create your admin account and complete onboarding</li>
+            <li>
+              Sign in with the unique email and password printed at the end of install
+            </li>
+            <li>Update your email and password when prompted, then finish onboarding</li>
             <li>Add more hosts later via Add Server or Settings → Connections</li>
           </ol>
         </div>

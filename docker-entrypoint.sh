@@ -21,6 +21,13 @@ else
   echo "[entrypoint] WARNING: $SCHEMA not found, skipping migration"
 fi
 
+# Bootstrap / first-run admin (optional). Set GC_SETUP_USERNAME + GC_SETUP_PASSWORD
+# on the container to create a unique admin with forcePasswordChange=true.
+if [ -n "${GC_SETUP_PASSWORD:-}" ] && [ -f /app/ensure-admin.cjs ]; then
+  echo "[entrypoint] ensuring initial admin account..."
+  node /app/ensure-admin.cjs || echo "[entrypoint] WARNING: ensure-admin failed (you can create an account at /setup)"
+fi
+
 if [ "$#" -gt 0 ]; then
   exec "$@"
 fi

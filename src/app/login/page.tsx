@@ -39,7 +39,13 @@ export default function LoginPage() {
     e.preventDefault(); setLoading(true); setError("");
     try {
       const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
-      if (res.ok) router.push("/"); else { const d = await res.json().catch(() => ({})); setError(d.error || "Invalid credentials"); }
+      if (res.ok) {
+        const d = await res.json().catch(() => ({}));
+        router.push(d.next || (d.forcePasswordChange ? "/force-password-change" : "/"));
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Invalid credentials");
+      }
     } catch { setError("Network error"); } finally { setLoading(false); }
   }
 
@@ -570,7 +576,7 @@ export default function LoginPage() {
           <div className="relative w-full max-w-sm" style={{ background: C.dark, border: `1px solid ${C.lin}`, padding: "clamp(24px, 5vw, 40px)" }}>
             <h2 style={{ fontSize: 22, fontWeight: 300, marginBottom: 24 }}>Sign in</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <AuthInput label="Username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" autoFocus />
+              <AuthInput label="Email / username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin@groundcontrol.local" autoFocus />
               <AuthInput label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
               <AuthError message={error} />
               <AuthButton loading={loading}>Sign In</AuthButton>

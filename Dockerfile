@@ -50,6 +50,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma /app/db
 
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY scripts/ensure-admin.cjs /app/ensure-admin.cjs
 RUN chmod +x /app/docker-entrypoint.sh
 
 # Ensure db directory exists for SQLite

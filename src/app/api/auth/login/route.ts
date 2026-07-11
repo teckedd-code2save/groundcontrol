@@ -65,6 +65,8 @@ export async function POST(req: NextRequest) {
       success: true,
       username: user.username,
       forcePasswordChange: user.forcePasswordChange,
+      // Clients can route first-time bootstrap users to the update form.
+      next: user.forcePasswordChange ? "/force-password-change" : "/",
     });
     return setAuthCookie(response, { id: user.id, username: user.username, role: user.role });
   } catch (err) {

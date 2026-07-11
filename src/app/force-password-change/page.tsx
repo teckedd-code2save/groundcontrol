@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AuthCard, { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 
 export default function ForcePasswordChangePage() {
+  const [email, setEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -18,7 +19,9 @@ export default function ForcePasswordChangePage() {
       .then((user) => {
         if (!user?.forcePasswordChange) {
           router.push("/dashboard");
+          return;
         }
+        if (user.username) setEmail(user.username);
       })
       .catch(() => router.push("/login"));
   }, [router]);
@@ -38,13 +41,17 @@ export default function ForcePasswordChangePage() {
       const res = await fetch("/api/auth/change-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          newUsername: email.trim() || undefined,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
         router.push("/dashboard");
       } else {
-        setError(data.error || "Failed to update password");
+        setError(data.error || "Failed to update account");
       }
     } catch {
       setError("Network error");
@@ -55,25 +62,33 @@ export default function ForcePasswordChangePage() {
 
   return (
     <AuthCard
-      title="Secure Access"
-      subtitle="Update your password to continue"
+      title="Secure your account"
+      subtitle="Choose the email and password you'll use from now on"
       badge="!"
       badgeColor="from-amber-500 via-orange-500 to-red-500"
-      footer="Your account is using a setup or legacy password that must be changed."
+      footer="These bootstrap credentials are temporary — update them before you continue."
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <AuthInput
-          label="Current Password"
+          label="Email / username"
+          type="text"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@company.com"
+          autoFocus
+        />
+
+        <AuthInput
+          label="Current password"
           type="password"
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
-          placeholder="••••••••••••"
-          autoFocus
+          placeholder="Temporary password from install"
         />
 
         <div>
           <AuthInput
-            label="New Password"
+            label="New password"
             type="password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
@@ -85,7 +100,7 @@ export default function ForcePasswordChangePage() {
         </div>
 
         <AuthInput
-          label="Confirm New Password"
+          label="Confirm new password"
           type="password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
@@ -94,7 +109,7 @@ export default function ForcePasswordChangePage() {
 
         <AuthError message={error} />
 
-        <AuthButton loading={loading}>Update Password</AuthButton>
+        <AuthButton loading={loading}>Save and continue</AuthButton>
       </form>
     </AuthCard>
   );
