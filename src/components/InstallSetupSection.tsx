@@ -71,10 +71,10 @@ export function InstallSetupSection() {
           Install on your VPS
         </h2>
         <p className="mb-10 max-w-lg text-[15px] leading-relaxed text-white/45">
-          One command installs Docker if needed and starts GroundControl. Use your{" "}
-          <span className="text-white/70">private</span> key path (not{" "}
-          <span className="font-mono text-[12px] text-white/55">.pub</span>), or run interactive
-          and choose paste. Then open the URL to finish onboarding.
+          One command installs Docker only if missing and starts GroundControl on a{" "}
+          <span className="text-white/70">free high port</span> (never 80/443). Other containers
+          and reverse proxies are left alone. Use your private key (not{" "}
+          <span className="font-mono text-[12px] text-white/55">.pub</span>), then open the printed URL.
         </p>
 
         <div className="space-y-3">
