@@ -17,16 +17,26 @@ The core promise is not “AI fixes production.” It is:
 - Require reproduction before claiming a root cause.
 - Run all model-authored commands and patches inside an isolated sandbox.
 - Preserve a complete, readable evidence trail: inputs, hypotheses, tool calls, results, tests, confidence, and remaining risk.
-- Prepare a draft pull request only after a human confirms the repository and proposed change.
+- Produce a signed evidence handoff for Convoy. Convoy owns PR creation, review steering, approval, merge, promotion, and subsequent production steps.
 - Make provider boundaries replaceable. Gemini and Daytona are the first adapters, not hard-coded assumptions throughout the application.
 
 ## Non-goals for the first release
 
 - No model access to a production shell, production credentials, or the GroundControl host namespace.
-- No automatic deploy, merge, restart, rollback, or configuration change.
+- No merge, promotion, deploy, restart, rollback, or configuration change inside Rehearsal. Those delivery transitions belong to Convoy and remain approval-gated.
 - No “root cause” result when the failure cannot be reproduced or the evidence is inconclusive.
 - No arbitrary internet access from the sandbox.
 - No multi-agent swarm. One orchestrated investigation is enough to test the product thesis.
+
+## Boundary with Convoy
+
+GroundControl Rehearsal and Convoy are complementary, but they do not share ownership of the same state machine.
+
+- **Rehearsal owns investigation:** production context, sanitization, isolated reproduction, evidence, a tested candidate change, and explicit uncertainty.
+- **Convoy owns delivery:** the coding agent opens the PR; review feedback steers an improvement loop; approval permits merge; promotion then advances through canary, observation, and subsequent production stages.
+- **GroundControl observes the handoff:** it can display Convoy status and evidence links, but it cannot silently approve or skip Convoy gates.
+
+Convoy currently performs its coding loop through Claude because that is how the hackathon implementation was built. The delivery protocol should remain model-adaptable: open PR → review steering → approval → merge → promote → canary/observe → production or rollback.
 
 ## Operator flow
 
@@ -38,8 +48,9 @@ The core promise is not “AI fixes production.” It is:
 6. The orchestrator installs dependencies and runs a deterministic reproduction recipe. If the failure does not reproduce, the run stops as `inconclusive`.
 7. Gemini inspects the repository with scoped tools, records hypotheses, and must reject or verify each hypothesis with tool output.
 8. If a candidate patch is warranted, it is applied only inside the sandbox and the relevant test suite plus reproduction recipe are rerun.
-9. GroundControl renders an evidence card. The operator may export the report or request a draft pull request.
-10. The sandbox expires automatically. Production remains untouched throughout.
+9. GroundControl renders an evidence card. The operator may export the report or hand the verified candidate to Convoy.
+10. Convoy opens the PR through its active coding agent (Claude today). Review feedback steers an improved revision; explicit approval permits merge and promotion, followed by guarded canary, observation, and production steps.
+11. The sandbox expires automatically. Production remains untouched by Rehearsal throughout.
 
 ## System boundary
 
@@ -56,7 +67,7 @@ Rehearsal API ──► Orchestrator ──► Daytona adapter ──► isolate
                  Evidence store / audit log
                          │
                          ▼ human approval only
-                 Draft pull request adapter
+                 Signed Convoy handoff
 ```
 
 The orchestrator owns state transitions and policy. Providers never update run state directly. API routes authenticate, validate, call the orchestrator, and return serialized results; they do not contain provider logic.
@@ -71,7 +82,7 @@ src/
     api/rehearsal/runs/[id]/route.ts
     api/rehearsal/runs/[id]/cancel/route.ts
     api/rehearsal/runs/[id]/events/route.ts
-    api/rehearsal/runs/[id]/pull-request/route.ts
+    api/rehearsal/runs/[id]/handoff/route.ts
   components/rehearsal/
     RehearsalLauncher.tsx
     RehearsalTimeline.tsx
@@ -87,7 +98,7 @@ src/
     evidence.ts
     providers/daytona.ts
     providers/gemini.ts
-    providers/github.ts
+    providers/convoy.ts
     tools/read-file.ts
     tools/search-repo.ts
     tools/run-command.ts
@@ -112,8 +123,11 @@ queued
   → patching (optional)
   → verifying
   → evidence_ready
-      → pr_preparing (human action)
+      → handoff_ready (human action)
       → complete
+
+Convoy (outside the Rehearsal state machine):
+  pr_opened → review_steering ↺ → approved → merged → promoted → canary → observed → production
 
 Any active state → failed | cancelled | expired
 ```
@@ -265,9 +279,9 @@ SSE stream backed by persisted events. Reconnection uses `Last-Event-ID`; the da
 
 Idempotently cancels active work and requests sandbox cleanup.
 
-### `POST /api/rehearsal/runs/:id/pull-request`
+### `POST /api/rehearsal/runs/:id/handoff`
 
-Requires `evidence_ready`, an operator confirmation, a candidate diff, and a configured GitHub repository credential. Creates a draft PR only and stores its URL as an event.
+Requires `evidence_ready`, operator confirmation, a candidate diff, verification artifacts, and a configured Convoy connection. Creates an idempotent signed handoff; Convoy then owns PR creation and the review/approval lifecycle. GroundControl records Convoy's run URL and read-only status updates but cannot approve, merge, promote, or deploy on Convoy's behalf.
 
 ## Feature flags and configuration
 
@@ -311,7 +325,7 @@ When disabled or incompletely configured, launch controls are hidden and Setting
 
 ### M4 — Human handoff and evaluation
 
-- Add draft PR creation, evidence report export, evaluation fixtures, metrics, and operational dashboards.
+- Add the Convoy handoff adapter, evidence report export, evaluation fixtures, metrics, and operational dashboards.
 - Run the release gate below before enabling by default.
 
 ## Test plan
@@ -335,7 +349,7 @@ Use Vitest for unit and integration tests. Provider adapters must be injectable 
 - Bad patch: tests fail; evidence reports remaining risk and no PR action is offered.
 - Model abstains: run completes as inconclusive with the abstention reason.
 - Timeout/cancel: sandbox destroy is called exactly once.
-- Provider retry: idempotency prevents duplicate sandboxes and PRs.
+- Provider retry: idempotency prevents duplicate sandboxes and Convoy handoffs.
 - Bundle mutation after approval: orchestration refuses to start.
 
 ### Seeded evaluation incidents
@@ -359,7 +373,7 @@ Each fixture includes the incident bundle, expected reproduction signal, accepta
 6. Confirm the sandbox has no production credentials and cannot reach non-allowlisted hosts.
 7. Confirm the original fixture failure reproduces.
 8. Confirm every claim in the evidence card opens a matching artifact.
-9. Request the draft PR and confirm no branch is merged and no deploy begins.
+9. Send the candidate to Convoy; confirm Convoy opens the PR, review feedback can steer an improved revision, and no merge or promotion occurs without explicit approval.
 10. Cancel a second run and confirm its sandbox disappears.
 
 ## Release acceptance criteria
@@ -372,7 +386,7 @@ Each fixture includes the incident bundle, expected reproduction signal, accepta
 - Sandbox cleanup succeeds on complete, cancel, failure, timeout, and process recovery paths.
 - At least 80% of deterministic seeded incidents reproduce across ten consecutive runs.
 - At least 80% of reproducible, single-cause fixtures reach the expected diagnosis concept; the ambiguous fixture must abstain.
-- Draft PR creation is human-triggered, idempotent, and disabled when verification fails.
+- Convoy handoff is human-triggered, idempotent, and disabled when verification fails; Convoy independently enforces approval before merge and promotion.
 - `npm test`, `npm run lint`, and `npm run build` pass before the flag is enabled outside development.
 
 ## Product metrics
@@ -384,7 +398,7 @@ Collect aggregate counts only; never incident content.
 - Verified, candidate-only, inconclusive, failed, and abstained outcomes.
 - Median tool calls and runtime by stage.
 - Candidate patches passing reproduction and regression tests.
-- Operator evidence opens, report exports, and draft PR requests.
+- Operator evidence opens, report exports, and Convoy handoff requests.
 - Sandbox cleanup failures and orphan age.
 
 ## Open decisions
