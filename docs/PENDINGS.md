@@ -8,17 +8,17 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 
 ---
 
-## Phase 5 — GroundControl Rehearsal
+## Phase 5 — GroundControl Loop
 
-The proposed implementation and evaluation contract lives in [`REHEARSAL.md`](./REHEARSAL.md). The public website experience is a product preview, not a claim that these integrations are already live.
+The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.md). The public website experience is a product preview, not a claim that these integrations are already live.
 
 | # | Work | Impact | Fix size | Status |
 |---|------|--------|----------|--------|
-| 5.1 | **Seeded Rehearsal UI and feature flag** | Makes the workflow testable without implying a live provider integration. | Medium | specified |
-| 5.2 | **Incident bundle, sanitizer, and evidence state machine** | Establishes the safety and audit boundary before external providers are added. | Large | specified |
-| 5.3 | **Daytona sandbox adapter and deterministic reproduction** | Moves model-authored work away from production and requires a reproduced failure. | Large | specified |
-| 5.4 | **Gemini investigation adapter and evidence gate** | Adds scoped diagnosis, tested candidate patches, and explicit abstention. | Large | specified |
-| 5.5 | **Human-triggered draft PR and evaluation harness** | Turns verified evidence into a reviewable handoff and measures reliability. | Medium–Large | specified |
+| 5.1 | **Seeded Loop UI and deterministic adapters** | Demonstrates the complete customer-journey, repair, and canary lifecycle without implying live integrations. | Medium | specified |
+| 5.2 | **CI token, artifact identity, sanitizer, and state machine** | Establishes a recoverable evidence chain from immutable artifact to result. | Large | specified |
+| 5.3 | **Daytona Release Twin and journey execution** | Exercises affected customer flows safely with synthetic data before production. | Large | specified |
+| 5.4 | **Gemini impact graph, repair loop, and draft PR** | Turns reproducible functional failures into tested, reviewable corrections. | Large | specified |
+| 5.5 | **Compose canary, observation, promotion, and rollback** | Adds the guarded real-production cycle on infrastructure the operator owns. | Large | specified |
 
 ---
 
@@ -88,11 +88,11 @@ The proposed implementation and evaluation contract lives in [`REHEARSAL.md`](./
 
 ## Recommended next 3 (updated)
 
-1. **Rehearsal M0–M1** (5.1–5.2) — prove the operator flow, redaction boundary, and evidence model with deterministic adapters.
-2. **Daytona reproduction slice** (5.3) — prove a selected incident can be reproduced safely away from production.
-3. **Gemini investigation evaluation** (5.4) — benchmark evidence quality and abstention before adding PR creation.
+1. **Loop M0** (5.1) — prove the full state machine and payment journey with deterministic fake adapters.
+2. **CI-to-Daytona slice** (5.2–5.3) — accept an immutable artifact and execute one confirmed customer journey in a Release Twin.
+3. **Gemini repair evaluation** (5.4) — reproduce a seeded defect, verify a minimal candidate, and prepare a human-triggered draft PR.
 
-Or, if you want the fastest demo polish:
+Or, if you want the fastest existing-product polish:
 
 1. **Auto-install cloudflared** (1.1) — removes a manual bootstrap step.
 2. **Nginx support for static sites** (1.3) — broadens VPS compatibility.
