@@ -4,7 +4,7 @@
 
 ## Product statement
 
-GroundControl Rehearsal turns a production incident into a safe, reproducible investigation. It packages selected operational context, creates an isolated Daytona sandbox, gives Gemini a narrow set of investigation tools, and returns an evidence card plus an optional draft pull request for human review.
+GroundControl Rehearsal turns a production incident into a safe, reproducible investigation. It packages selected operational context, creates an isolated Daytona sandbox, gives Gemini a narrow set of investigation tools, and returns an evidence card plus an optional signed handoff to Convoy for human-controlled delivery.
 
 The core promise is not “AI fixes production.” It is:
 
@@ -132,7 +132,7 @@ Convoy (outside the Rehearsal state machine):
 Any active state → failed | cancelled | expired
 ```
 
-Invalid transitions must throw before a provider call. Retrying a stage must be idempotent by `(runId, stage, attempt)` and must not create a second sandbox or pull request.
+Invalid transitions must throw before a provider call. Retrying a stage must be idempotent by `(runId, stage, attempt)` and must not create a second sandbox or Convoy handoff.
 
 ## Data model
 
