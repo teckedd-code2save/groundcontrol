@@ -4,7 +4,21 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 
 > **New:** For a step-by-step guide on installing and testing every integration, see [`INTEGRATION-GUIDE.md`](./INTEGRATION-GUIDE.md).
 
-> Last updated: 2026-06-23
+> Last updated: 2026-07-12
+
+---
+
+## Phase 5 — GroundControl Rehearsal
+
+The proposed implementation and evaluation contract lives in [`REHEARSAL.md`](./REHEARSAL.md). The public website experience is a product preview, not a claim that these integrations are already live.
+
+| # | Work | Impact | Fix size | Status |
+|---|------|--------|----------|--------|
+| 5.1 | **Seeded Rehearsal UI and feature flag** | Makes the workflow testable without implying a live provider integration. | Medium | specified |
+| 5.2 | **Incident bundle, sanitizer, and evidence state machine** | Establishes the safety and audit boundary before external providers are added. | Large | specified |
+| 5.3 | **Daytona sandbox adapter and deterministic reproduction** | Moves model-authored work away from production and requires a reproduced failure. | Large | specified |
+| 5.4 | **Gemini investigation adapter and evidence gate** | Adds scoped diagnosis, tested candidate patches, and explicit abstention. | Large | specified |
+| 5.5 | **Human-triggered draft PR and evaluation harness** | Turns verified evidence into a reviewable handoff and measures reliability. | Medium–Large | specified |
 
 ---
 
@@ -74,9 +88,9 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 
 ## Recommended next 3 (updated)
 
-1. **AWS/Azure managed-target adapters** (3.3) — prove the pluggable target model works across clouds.
-2. **Cloud Run custom domains** (3.5) — wire Cloudflare DNS to the service URL.
-3. **Registry mode for k3s** (2.2) — push images to a registry so multi-node clusters work.
+1. **Rehearsal M0–M1** (5.1–5.2) — prove the operator flow, redaction boundary, and evidence model with deterministic adapters.
+2. **Daytona reproduction slice** (5.3) — prove a selected incident can be reproduced safely away from production.
+3. **Gemini investigation evaluation** (5.4) — benchmark evidence quality and abstention before adding PR creation.
 
 Or, if you want the fastest demo polish:
 

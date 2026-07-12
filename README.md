@@ -69,6 +69,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 | 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
+| 🧪 | **Rehearsal (proposed)** | Reproduce selected incidents in an isolated Daytona sandbox, test diagnoses with Gemini, and return evidence for human review. See the implementation contract below. |
 | 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
 | 💓 | **Container Health Scheduler** | Periodic container health checks on a configurable interval. Alerts when containers go down or become unhealthy — runs independently of the dashboard. |
 | 🔀 | **Services** | Containers, reverse proxy, projects, deployments, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
@@ -286,6 +287,7 @@ GroundControl is a from-scratch, full-stack DevOps product, not a tutorial clone
 - [x] k3s / Kubernetes deploy target
 - [x] Google Cloud Run managed deploy target
 - [x] Terraform-first infrastructure control plane
+- [ ] GroundControl Rehearsal: isolated incident reproduction and evidence-guided diagnosis ([implementation contract](./docs/REHEARSAL.md))
 - [ ] AWS Fargate / Azure Container Apps deploy targets
 - [ ] Background job queue + real-time deploy logs
 - [ ] Auto-create VPS connections from Terraform output
@@ -306,6 +308,7 @@ Dev setup, project structure map, code conventions, and how to add a page or API
 - [DEPLOY.md](./DEPLOY.md) — full self-deployment guide (VPS, domain, Caddy, SSL, Cloudflare)
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup & project map
 - [SECURITY.md](./SECURITY.md) — disclosure policy & threat model
+- [docs/REHEARSAL.md](./docs/REHEARSAL.md) — proposed Rehearsal architecture, safety boundary, milestones, and test plan
 - [docs/PENDINGS.md](./docs/PENDINGS.md) — known sharp edges, pending work, and recommended next steps
 - [docs/DEMO.md](./docs/DEMO.md) — click-by-click demo recording script
 - [docs/demo-data.md](./docs/demo-data.md) — safe demo seed data (no real VPS needed)
