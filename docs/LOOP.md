@@ -1,6 +1,6 @@
 # GroundControl Loop
 
-> Status: proposed GroundControl capability. This document is the implementation and evaluation contract. Public demonstrations remain labelled as product direction until their acceptance criteria pass.
+> Status: implemented product-direction foundation with seeded fixtures and opt-in live adapters. This document remains the implementation and evaluation contract; public demonstrations stay labelled until their acceptance criteria pass, and guarded autopilot is not generally enabled.
 
 ## Product hierarchy
 
@@ -493,4 +493,3 @@ Every fixture defines acceptable diagnosis concepts, required evidence, forbidde
 > A Docker or proxy change occurs → GroundControl maps the affected public service → one confirmed journey runs → an evidence-backed diagnosis identifies the fault → a guided reversible repair is prepared.
 
 Automatic mutation follows only after read-only diagnosis is reliable on deterministic fixtures and real opt-in hosts.
-

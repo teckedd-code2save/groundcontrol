@@ -29,9 +29,27 @@ interface DiscoveredEnvEntry {
   source: string;
   scope: "deployment" | "component";
   component?: string;
+  container?: string;
+  state?: string;
+  runtime?: boolean;
+  resolved?: boolean;
   masked: string;
   hasValue: boolean;
 }
+
+interface DiscoverySummary {
+  containerCount: number;
+  runningContainerCount: number;
+  runtimeKeyCount: number;
+  declaredKeyCount: number;
+}
+
+const EMPTY_SUMMARY: DiscoverySummary = {
+  containerCount: 0,
+  runningContainerCount: 0,
+  runtimeKeyCount: 0,
+  declaredKeyCount: 0,
+};
 
 async function json(res: Response) {
   const text = await res.text();
@@ -51,6 +69,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [providers, setProviders] = useState<Provider[]>([]);
   const [profile, setProfile] = useState<EnvProfile | null>(null);
   const [discovered, setDiscovered] = useState<DiscoveredEnvEntry[]>([]);
+  const [discoveredValues, setDiscoveredValues] = useState<Record<string, string>>({});
+  const [scopedDiscoveredValues, setScopedDiscoveredValues] = useState<Record<string, string>>({});
+  const [discoverySummary, setDiscoverySummary] = useState<DiscoverySummary>(EMPTY_SUMMARY);
   const [localValues, setLocalValues] = useState<Record<string, string>>({});
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
@@ -73,6 +94,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     setProviders(Array.isArray(providersRes.providers) ? providersRes.providers : []);
     setProfile(profileRes.profile || null);
     setDiscovered(Array.isArray(profileRes.discovered?.entries) ? profileRes.discovered.entries : []);
+    setDiscoveredValues(reveal && profileRes.discovered?.values ? profileRes.discovered.values : {});
+    setScopedDiscoveredValues(reveal && profileRes.discovered?.scopedValues ? profileRes.discovered.scopedValues : {});
+    setDiscoverySummary(profileRes.discovered?.summary || EMPTY_SUMMARY);
     const initial: Record<string, string> = {};
     for (const entry of profileRes.profile?.schema || []) initial[entry.key] = "";
     for (const key of Object.keys(profileRes.profile?.values || {})) initial[key] = "";
@@ -87,7 +111,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   }, [load]);
 
   async function saveProfile(patch: Partial<EnvProfile> = {}, values?: Record<string, string>, importCurrentServerEnv = false) {
-    if (!profile) return;
+    if (!profile) return false;
     setLoading(true);
     setMessage("");
     try {
@@ -97,6 +121,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
         body: JSON.stringify({
           projectId,
           deploymentId,
+          componentName,
           providerType: patch.providerType || profile.providerType,
           providerAccountId: patch.providerAccountId ?? profile.providerAccountId,
           environment: patch.environment ?? profile.environment,
@@ -108,10 +133,13 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
         }),
       });
       const data = await json(res);
-      if (!res.ok || data.error) setMessage(data.error || "Save failed");
-      else {
+      if (!res.ok || data.error) {
+        setMessage(data.error || "Save failed");
+        return false;
+      } else {
         setProfile(data.profile);
         setDiscovered(Array.isArray(data.discovered?.entries) ? data.discovered.entries : discovered);
+        setDiscoverySummary(data.discovered?.summary || discoverySummary);
         const nextValues: Record<string, string> = {};
         for (const entry of data.profile?.schema || []) nextValues[entry.key] = "";
         for (const key of Object.keys(data.profile?.values || {})) nextValues[key] = "";
@@ -119,7 +147,13 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           if (!componentName || !entry.component || entry.component === componentName) nextValues[entry.key] ||= "";
         }
         setLocalValues(nextValues);
-        setMessage(importCurrentServerEnv ? "Current server env saved to source" : "Environment saved");
+        if (revealEnvPreview) {
+          setRevealEnvPreview(false);
+          setDiscoveredValues({});
+          setScopedDiscoveredValues({});
+        }
+        setMessage(importCurrentServerEnv ? "Running environment imported into the encrypted source" : "Environment saved");
+        return true;
       }
     } finally {
       setLoading(false);
@@ -134,6 +168,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     ? discovered.filter((entry) => entry.component === componentName || (entry.scope === "deployment" && entry.source === ".env"))
     : discovered;
   const discoveredByKey = new Map(visibleDiscovered.map((entry) => [entry.key, entry]));
+  const runningEntries = visibleDiscovered.filter((entry) => entry.runtime);
   const envKeys = Array.from(new Set([
     ...(profile.schema || []).map((entry) => entry.key),
     ...Object.keys(profile.values || {}),
@@ -142,7 +177,19 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const hasSavedSource = profile.providerType === "local"
     ? Object.keys(profile.values || {}).length > 0 || profile.schema.length > 0
     : !!profile.providerAccountId;
-  const envPreview = buildEnvPreview(envKeys, localValues, profile, discoveredByKey, revealEnvPreview);
+  const envPreview = buildEnvPreview(
+    envKeys,
+    localValues,
+    profile,
+    discoveredByKey,
+    discoveredValues,
+    scopedDiscoveredValues,
+    componentName,
+    revealEnvPreview
+  );
+  const pendingValues = Object.fromEntries(
+    Object.entries(localValues).filter(([, value]) => value)
+  );
 
   return (
     <div className="space-y-3 rounded-lg bg-background/40 p-3">
@@ -156,27 +203,38 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!hasSavedSource && (
+          {profile.providerType === "local" && runningEntries.length > 0 && (
             <button
-              onClick={() => {
-                if (!sourceOpen) {
-                  setSourceOpen(true);
-                  return;
-                }
-                saveProfile({}, undefined, profile.providerType === "local");
-              }}
+              onClick={() => saveProfile({}, undefined, true)}
               disabled={loading}
               className="rounded bg-background px-2 py-1 text-[10px] font-mono hover:bg-accent/10 hover:text-accent"
-              title="Choose where environment values live. Local source imports current server values without exposing raw secrets in the browser."
+              title="Import the effective environment from running containers into GroundControl's encrypted local source."
             >
-              Connect source <InfoMark />
+              Import running <InfoMark />
             </button>
           )}
           <button
-            onClick={() => {
-              const changed = Object.fromEntries(Object.entries(localValues).filter(([, value]) => value));
-              saveProfile({}, changed);
+            onClick={async () => {
+              const next = !revealEnvPreview;
+              setRevealEnvPreview(next);
+              await load(next);
             }}
+            disabled={loading}
+            className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
+            title="Explicitly reveal or mask saved and running values for this authenticated session."
+          >
+            {revealEnvPreview ? "Mask values" : "Reveal values"}
+          </button>
+          <button
+            onClick={() => load(revealEnvPreview)}
+            disabled={loading}
+            className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
+            title="Refresh Compose declarations, resolved configuration, and running container values."
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => saveProfile({}, pendingValues)}
             disabled={loading}
             className="rounded bg-accent/10 px-2 py-1 text-[10px] font-mono text-accent hover:bg-accent/20"
             title="Store edited values in the selected environment source. It does not restart containers."
@@ -185,12 +243,15 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           </button>
           {onRedeploy && (
             <button
-              onClick={onRedeploy}
+              onClick={async () => {
+                const saved = await saveProfile({}, pendingValues);
+                if (saved) onRedeploy();
+              }}
               disabled={loading}
               className="rounded bg-success/10 px-2 py-1 text-[10px] font-mono text-success hover:bg-success/20"
-              title="Redeploy the selected component or deployment so the runtime picks up saved env."
+              title="Save edited values, then open the redeploy flow so the runtime can pick them up."
             >
-              Redeploy <InfoMark />
+              Save &amp; redeploy <InfoMark />
             </button>
           )}
           <button
@@ -204,6 +265,26 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
         </div>
       </div>
 
+      <div className="grid gap-px overflow-hidden rounded-lg bg-border sm:grid-cols-3">
+        <EnvSummary
+          label="Running now"
+          value={`${componentName ? new Set(runningEntries.map((entry) => entry.key)).size : discoverySummary.runtimeKeyCount} keys`}
+          detail={`${discoverySummary.runningContainerCount}/${discoverySummary.containerCount} containers running`}
+          tone={discoverySummary.runningContainerCount > 0 ? "good" : "muted"}
+        />
+        <EnvSummary
+          label="Next deploy"
+          value={`${discoverySummary.declaredKeyCount} declared`}
+          detail="Compose + env files resolved"
+        />
+        <EnvSummary
+          label="Saved source"
+          value={`${Object.keys(profile.values || {}).length} keys`}
+          detail={profile.validation?.ok ? "required values present" : `${profile.validation?.missing?.length || 0} required missing`}
+          tone={profile.validation?.ok ? "good" : "warn"}
+        />
+      </div>
+
       {message && <div className="rounded bg-card p-2 text-[10px] font-mono text-muted">{message}</div>}
 
       {envPreviewOpen && (
@@ -213,10 +294,10 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  if (!revealEnvPreview) load(true);
-                  else load(false);
-                  setRevealEnvPreview((value) => !value);
+                onClick={async () => {
+                  const next = !revealEnvPreview;
+                  setRevealEnvPreview(next);
+                  await load(next);
                 }}
                 className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent"
               >
@@ -282,16 +363,17 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
 
       {!hasSavedSource && visibleDiscovered.length > 0 && (
         <div className="rounded-lg bg-accent/5 p-3 text-xs text-muted">
-          Current server env is available and can be imported into the selected source without exposing raw secrets in the browser.
+          GroundControl found environment values outside its saved source. Import the running values to make future redeploys reproducible.
         </div>
       )}
 
       {profile.providerType === "local" && (
         <div className="space-y-2">
           <div className="overflow-hidden rounded-lg bg-card">
-            <div className="grid grid-cols-[1fr_1fr] bg-card px-3 py-2 text-[10px] font-mono text-muted">
+            <div className="hidden bg-card px-3 py-2 text-[10px] font-mono text-muted md:grid md:grid-cols-[minmax(170px,.8fr)_minmax(220px,1fr)_minmax(220px,1fr)] md:gap-3">
               <span>Key</span>
-              <span>Value</span>
+              <span>Effective now</span>
+              <span>New value</span>
             </div>
             {envKeys.length === 0 ? (
               <div className="px-3 py-4 text-xs text-muted">No environment keys found yet.</div>
@@ -299,16 +381,38 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               envKeys.map((key) => {
                 const schemaEntry = profile.schema.find((entry) => entry.key === key);
                 const discoveredEntry = discoveredByKey.get(key);
+                const revealedRunning = getDiscoveredValue(
+                  key,
+                  componentName,
+                  discoveredValues,
+                  scopedDiscoveredValues
+                );
+                const currentValue = revealEnvPreview
+                  ? revealedRunning ?? profile.values?.[key]?.masked ?? ""
+                  : discoveredEntry?.masked || profile.values?.[key]?.masked || "";
+                const source = discoveredEntry?.source || (profile.values?.[key]?.hasValue ? "saved source" : "unset");
                 return (
-                  <div key={key} className="grid grid-cols-[1fr_auto] gap-2 px-3 py-2 items-center">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono">{key}{schemaEntry?.required ? " *" : ""}</span>
+                  <div key={key} className="grid gap-2 border-t border-border/60 px-3 py-3 md:grid-cols-[minmax(170px,.8fr)_minmax(220px,1fr)_minmax(220px,1fr)] md:items-center md:gap-3">
+                    <div>
+                      <div className="text-xs font-mono">{key}{schemaEntry?.required ? " *" : ""}</div>
+                      <div className="mt-1 text-[9px] font-mono text-muted">
+                        {discoveredEntry?.component ? `${discoveredEntry.component} · ` : ""}{source}
+                        {discoveredEntry?.state ? ` · ${discoveredEntry.state}` : ""}
+                      </div>
+                    </div>
+                    <div className="min-w-0 rounded bg-background/70 px-2 py-1.5">
+                      <div className="mb-1 text-[9px] font-mono uppercase tracking-wide text-muted md:hidden">Effective now</div>
+                      <code className="block truncate text-[11px] text-foreground/80" title={revealEnvPreview ? currentValue : undefined}>
+                        {currentValue || "<unset>"}
+                      </code>
                     </div>
                     <div className="flex items-center gap-1">
+                      <span className="sr-only">New value for {key}</span>
                       <input
                         type={shownFields[key] ? "text" : "password"}
                         value={localValues[key] || ""}
-                        placeholder={profile.values?.[key]?.hasValue ? "••••••••" : "set value"}
+                        aria-label={`New value for ${key}`}
+                        placeholder={currentValue ? "leave unchanged" : "set value"}
                         onChange={(event) => setLocalValues({ ...localValues, [key]: event.target.value })}
                         className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
                       />
@@ -420,6 +524,9 @@ function buildEnvPreview(
   localValues: Record<string, string>,
   profile: EnvProfile,
   discoveredByKey: Map<string, DiscoveredEnvEntry>,
+  discoveredValues: Record<string, string>,
+  scopedDiscoveredValues: Record<string, string>,
+  componentName: string | undefined,
   reveal: boolean
 ): string {
   return keys
@@ -429,8 +536,13 @@ function buildEnvPreview(
       if (entered) return `${key}=${quoteEnvValue(entered)}`;
       if (reveal && saved?.hasValue) return `${key}=${quoteEnvValue(saved.masked)}`;
       if (reveal) {
-        const discovered = discoveredByKey.get(key);
-        if (discovered?.hasValue) return `${key}=${quoteEnvValue(discovered.masked)}`;
+        const discovered = getDiscoveredValue(
+          key,
+          componentName,
+          discoveredValues,
+          scopedDiscoveredValues
+        );
+        if (discovered !== undefined) return `${key}=${quoteEnvValue(discovered)}`;
       }
       if (saved?.hasValue || discoveredByKey.get(key)?.hasValue) {
         return `${key}=••••••••`;
@@ -438,6 +550,19 @@ function buildEnvPreview(
       return `${key}=<unset>`;
     })
     .join("\n");
+}
+
+function getDiscoveredValue(
+  key: string,
+  componentName: string | undefined,
+  discoveredValues: Record<string, string>,
+  scopedDiscoveredValues: Record<string, string>
+): string | undefined {
+  if (componentName) {
+    const scoped = scopedDiscoveredValues[`${componentName}:${key}`];
+    if (scoped !== undefined) return scoped;
+  }
+  return discoveredValues[key];
 }
 
 function quoteEnvValue(value: string): string {
@@ -448,6 +573,26 @@ function quoteEnvValue(value: string): string {
 
 function InfoMark() {
   return <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-current/10 text-[9px]">i</span>;
+}
+
+function EnvSummary({ label, value, detail, tone = "muted" }: {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: "good" | "warn" | "muted";
+}) {
+  const valueClass = tone === "good"
+    ? "text-success"
+    : tone === "warn"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-foreground";
+  return (
+    <div className="bg-card px-3 py-2.5">
+      <div className="text-[9px] font-mono uppercase tracking-wide text-muted">{label}</div>
+      <div className={`mt-1 text-xs font-mono ${valueClass}`}>{value}</div>
+      <div className="mt-0.5 text-[9px] text-muted">{detail}</div>
+    </div>
+  );
 }
 
 function Input({ label, value, onChange, onBlur }: {
