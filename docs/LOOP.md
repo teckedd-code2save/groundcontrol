@@ -1,378 +1,496 @@
 # GroundControl Loop
 
-> Status: proposed capability. This document is the implementation and evaluation contract. The website experience is a labelled product preview until the acceptance criteria below pass.
+> Status: proposed GroundControl capability. This document is the implementation and evaluation contract. Public demonstrations remain labelled as product direction until their acceptance criteria pass.
+
+## Product hierarchy
+
+GroundControl is the product. Loop is its intelligence and recovery engine. A Loop Run is one evidence chain from a meaningful operational change or detected failure through customer-facing verification.
+
+Loop is not a separate deployment platform, testing framework, monitoring product, or unrestricted production agent.
 
 ## Product statement
 
-GroundControl Loop takes an immutable release artifact from CI to verified production on infrastructure the operator owns. It creates an isolated execution environment in Daytona, uses Gemini to discover and execute the customer journeys affected by the change, repairs reproducible failures through a reviewable pull request, and controls a bounded production canary before promotion.
+GroundControl continuously understands applications running on operator-owned infrastructure. When code, containers, reverse proxies, networks, environment configuration, certificates, or host state change, Loop determines the affected services, exercises the relevant customer journeys, investigates regressions, and selects the least disruptive route back to verified health.
 
-The product promise is:
+> GroundControl understands what is running on your VPS, tests what a meaningful change can affect, and safely guides or performs recovery when the customer experience breaks.
 
-> Every release exercises the customer journeys it can affect. A failure enters a repair loop instead of becoming a dead end.
+The first supported environment is a lean team running Docker Compose behind Caddy or Nginx on one to five VPS hosts.
 
-Loop begins where CI ends. It does not replace the developer's IDE, source host, test suite, container registry, or GitHub Actions pipeline.
-
-## Core principles
-
-- **Customer behaviour first.** Functional customer journeys gate performance and production rollout.
-- **Failures become work.** A failed test moves the run into reproduce, diagnose, repair, and verify stages.
-- **One evidence chain.** Commit SHA, artifact digest, test evidence, fix PR, approval, canary, and production result remain connected.
-- **Build once, promote exactly.** Canary and production use the same immutable artifact digest.
-- **Real approval.** Gemini may prepare and revise a fix, but it cannot approve or merge its own work.
-- **Deterministic safety.** Hard health policies decide promotion and rollback. Model confidence never overrides them.
-- **Infrastructure ownership.** Production stays on the operator's VPS or chosen deployment target; no Serendepify SaaS is required.
-
-## Where Loop enters the pipeline
+## Core cycle
 
 ~~~text
-Developer IDE
-    ↓ push / pull request
-GitHub Actions: existing tests and artifact build
-    ↓ SHA + immutable artifact digest + service ID
-GroundControl Loop
-    ↓ isolated Daytona environment
-Customer journey validation
-    ├─ fail → reproduce → repair → draft PR → review → rebuild ↺
-    └─ pass → human release approval
-                ↓
-          bounded production canary
-                ├─ unhealthy → rollback → investigate ↺
-                └─ healthy → promote → soak → verified
+meaningful host or release change
+    ↓
+update live service graph and change ledger
+    ↓
+calculate affected services and journeys
+    ↓
+wait for stabilization
+    ↓
+exercise targeted internal and external probes
+    ├─ healthy → record verified state
+    └─ unhealthy
+         ↓
+       collect evidence and diagnose
+         ↓
+       select least disruptive recovery
+         ├─ guide a human
+         ├─ request approval
+         └─ execute inside explicit policy
+         ↓
+       verify from outside the host
+         ├─ failed → roll back and continue investigation
+         └─ healthy → record confirmed operational memory
 ~~~
 
-The first integration is a small GitHub Action step after the image is published. A GitHub App may later add native PR checks and review steering, but it is not required for the first useful release.
+Loop can also begin from an alert, scheduled verification, manual investigation, or CI artifact. Host-change intelligence is the primary MVP trigger.
 
-## Loop execution environment
+## Principles
 
-Each Loop Run gets a disposable execution environment for one commit and one artifact digest. Daytona is the first provider.
+- **Customer outcome over process health.** A green container is not proof that a public application works.
+- **Relationships over isolated signals.** Domain, DNS, TLS, proxy, network, container, process, dependency and customer journey form one service graph.
+- **Changes explain incidents.** Compare current state with the last verified healthy state.
+- **Evidence before mutation.** Findings cite supporting and contradictory evidence, confidence and uncertainty.
+- **Least disruptive recovery.** Restore or patch the smallest reversible surface before rebuilding topology.
+- **Deterministic safety.** Policy and verification—not model confidence—authorize execution and decide success.
+- **Infrastructure ownership.** Existing VPS hosts, GitHub Actions and registries remain in place.
+- **Safe abstention.** Unknown, destructive and stateful failures stop automation and produce a guided plan.
+- **No arbitrary production shell.** Gemini receives scoped functions; production mutations use allowlisted GroundControl actions.
+- **Honest product state.** Seeded experiences are visibly marked as demos until real adapters pass evaluation.
 
-The Loop environment contains:
+## Live service graph
 
-- The exact repository commit and release artifact.
-- Synthetic users, fixtures, queues, databases, and provider test modes.
-- Environment variable names and safe test values, never production secret values.
-- The service topology and dependency contracts selected by GroundControl.
-- Browser, HTTP, process, filesystem, Git, log, and test tools exposed through a narrow policy.
-- A snapshot retained across diagnosis and repair attempts for the duration of the Loop Run.
-
-The Loop environment is not production and must never be described as an exact clone. The production canary is the bounded real-world verification.
-
-## Change-aware customer journeys
-
-Gemini builds an impact graph from:
-
-- Changed files, functions, routes, schemas, and deployment configuration.
-- Existing unit, integration, browser, and contract tests.
-- OpenAPI, GraphQL, event, database, and environment schemas.
-- GroundControl's live service topology and deployment history.
-- Previously confirmed customer journeys and prior Loop evidence.
-
-For a payment change, an impact graph might include:
+The service graph is GroundControl's operational model:
 
 ~~~text
-Checkout
-  → payment authorization
-      → success / decline / retry / duplicate request
-  → order creation
-  → inventory reservation
-  → receipt and notification
-  → refund or cancellation
+repository / commit / artifact
+            ↓
+deployment event
+            ↓
+VPS host → Docker project → service → container → process
+                                ↓
+domain → DNS → TLS → Caddy/Nginx route → Docker network → internal port
+                                ↓
+database / Redis / queue / external dependency
+                                ↓
+customer journey and verification history
 ~~~
 
-The operator can see why each journey was selected. Gemini may propose a new journey, but the run records whether it was inferred, repository-defined, or previously confirmed.
+Initial nodes include Host, DockerProject, Service, Container, Process, Domain, Certificate, Proxy, ProxyRoute, Network, Port, Volume, Artifact, RepositoryRevision, Dependency and Journey.
 
-Use realistic synthetic accounts and payment-provider test mode. Never use real customer data or real transactions inside a Loop environment.
+Initial relationships include RUNS_ON, DEPLOYS, ROUTES_TO, RESOLVES_TO, TERMINATES_TLS_FOR, LISTENS_ON, PUBLISHES, JOINS_NETWORK, DEPENDS_ON, VERIFIED_BY and CHANGED_BY.
 
-## Test order
+Every node and relationship records its source, observation time, confidence and last verified healthy value.
 
-### 1. Functional journeys
+## Change ledger
 
-Validate customer-visible correctness first:
+Loop consumes normalized operational events rather than raw logs alone.
 
-- Expected successful path.
-- Relevant negative and retry paths.
-- Idempotency and duplicate-event behaviour.
-- Cross-service state consistency.
-- UI, API, event, and database outcomes.
+Initial event sources:
 
-If a critical functional journey fails, performance work and production rollout stop while the repair loop begins.
-
-### 2. Integration and contract checks
-
-- API and event compatibility.
-- Database migration compatibility.
-- Dependency timeout and retry behaviour.
-- Environment schema compatibility.
-- Backward compatibility with the currently deployed version.
-
-### 3. Non-functional checks
-
-Only after functional correctness:
-
-- Latency compared with the current production baseline.
-- Throughput and bounded concurrency.
-- CPU, memory, disk, and process behaviour.
-- Dependency failure and recovery behaviour.
-- Startup, readiness, and graceful shutdown.
-
-### 4. Production canary
-
-Deploy the exact artifact digest with limited exposure, observe hard health policies, then promote, pause, or roll back.
-
-## Repair loop
-
-A failed test is classified before code changes begin:
-
-- `product_defect`: behaviour contradicts an established journey or contract.
-- `test_defect`: expectation or fixture is incorrect.
-- `environment_defect`: Loop environment setup does not represent the required dependency.
-- `inconclusive`: evidence is insufficient or reproduction is unstable.
-
-Only a reproducible `product_defect` may produce an application fix.
-
-~~~text
-journey_failed
-  → reproducing
-  → diagnosing
-  → candidate_ready
-  → verifying_candidate
-      ├─ failed → diagnosing ↺
-      └─ passed → draft_pr_ready
-  → review_steering ↺
-  → approved
-  → merged
-  → artifact_rebuilt
-  → twin_validation
-  → canary
-  → observing
-      ├─ unhealthy → rolled_back → diagnosing ↺
-      └─ healthy → promoted → verified
-~~~
-
-Gemini applies the smallest evidence-supported candidate inside Daytona, reruns the failed journey, then runs all related journeys and regression checks. A passing candidate becomes a draft PR containing:
-
-- The customer journey that failed.
-- Exact reproduction steps and artifacts.
-- Root-cause hypothesis and linked evidence.
-- Candidate diff and why it is scoped.
-- Tests run before and after the change.
-- Remaining uncertainty and rollback considerations.
-
-Review comments steer another revision. Every revision must rerun validation. The coding agent cannot approve or merge the PR. If the iteration, time, or cost budget is exhausted, Loop stops with an evidence package for a human.
-
-For a failed open pull request, the first implementation should create a separate repair branch and draft fix PR targeting the source branch. For a failed canary or post-merge run, it creates a draft fix PR targeting the default branch. Writing directly to a developer's branch may be added only as an explicit opt-in.
-
-## Gemini's role
-
-Use the Google GenAI SDK directly for the first implementation. Do not add an agent framework until the core evaluation loop is proven.
-
-Gemini receives scoped functions such as:
-
-- `inspect_change`
-- `inspect_topology`
-- `search_repository`
-- `read_file`
-- `start_service`
-- `run_existing_test`
-- `run_http_probe`
-- `run_browser_journey`
-- `inspect_screenshot`
-- `read_sanitized_logs`
-- `compare_environment_schema`
-- `apply_candidate_patch`
-- `record_hypothesis`
-- `resolve_hypothesis`
-
-GroundControl executes these functions through the Daytona adapter. Gemini never receives a production shell or arbitrary command execution.
-
-All decisions use schema-constrained output. A release decision includes:
+- Docker events and periodic reconciliation
+- Compose file fingerprint and parsed topology changes
+- Container image and immutable digest changes
+- Caddy or Nginx configuration revision
+- Environment schema fingerprint, never secret values
+- Domain, DNS and TLS observations
+- GroundControl service actions and terminal audit records
+- GitHub deployment or workflow metadata
+- External endpoint checks
+- Host resource and filesystem thresholds
 
 ~~~ts
-type ReleaseDecision = {
-  verdict: 'blocked' | 'needs_review' | 'ready_for_canary';
-  impactedJourneys: JourneyResult[];
-  findings: Finding[];
-  expectedSignals: SignalPolicy[];
-  canaryPlan: CanaryPlan;
+type OperationalEvent = {
+  id: string;
+  hostId: string;
+  serviceIds: string[];
+  kind:
+    | 'artifact_changed'
+    | 'container_replaced'
+    | 'compose_changed'
+    | 'proxy_changed'
+    | 'environment_schema_changed'
+    | 'network_changed'
+    | 'certificate_changed'
+    | 'resource_threshold_crossed'
+    | 'external_probe_failed'
+    | 'manual_action';
+  observedAt: string;
+  source: 'agent' | 'github' | 'probe' | 'groundcontrol';
+  beforeRef?: string;
+  afterRef?: string;
   evidenceArtifactIds: string[];
-  remainingUncertainty: string[];
 };
 ~~~
 
-Validate the response in application code. A valid schema is not proof that the values are correct.
+Events are debounced into a change set. Loop waits for configurable stabilization before running affected journeys. A rapid container rollout must not create duplicate runs.
+
+## Targeted synthetic journeys
+
+A journey represents a stable customer or operational outcome. It may be operator-authored, imported from existing tests, proposed by Gemini and accepted, or inferred for one investigation and clearly marked as inferred.
+
+Gemini may select and explain journeys. Stored execution remains deterministic and inspectable.
+
+~~~yaml
+journeys:
+  - id: checkout-completes
+    criticality: critical
+    triggers:
+      - payments-api.changed
+      - checkout-ui.changed
+      - proxy.changed
+      - certificate.changed
+    steps:
+      - open: https://example.com/checkout
+      - authenticate: synthetic-buyer
+      - submit: provider-test-payment
+      - expect:
+          page: order-confirmation
+          api_status: 200
+          latency_under_ms: 1200
+    cleanup:
+      - remove_synthetic_order
+~~~
+
+### Journey safety
+
+- Use dedicated synthetic accounts and isolated tenants.
+- Use provider test modes for payments and notifications.
+- Never submit real transactions or customer data.
+- Require cleanup and idempotency for mutating journeys.
+- Rate-limit external probes.
+- Mark journeys that cannot safely run against production.
+- Redact secrets, tokens, headers and personal data from evidence.
+
+## Trigger and blast-radius rules
+
+The service graph determines which journeys run.
+
+| Change | Initial checks |
+|---|---|
+| Container image or artifact | Service health, public endpoint and confirmed service journeys |
+| Compose topology | Ports, networks, dependencies, startup and public journeys |
+| Caddy/Nginx config | Syntax, domains, TLS, redirects, upstreams and affected journeys |
+| Environment schema | Startup and dependent integrations; never reveal values |
+| Certificate or DNS | Resolution, chain, expiry, redirects and public endpoints |
+| Host firewall or network | Internal and external reachability |
+| Database migration | Compatibility, read/write journey and rollback readiness |
+| Resource threshold | Latency, process stability and capacity risk |
+
+A change set with no mapped journey runs a minimal service verification and asks the operator to confirm missing coverage.
+
+## Reverse-proxy intelligence
+
+Caddy and Nginx are the first deep infrastructure adapters.
+
+The adapter must:
+
+1. Parse configuration into a normalized route model.
+2. Map domains and paths to upstream services and ports.
+3. Validate syntax with the native validator.
+4. Test name resolution and connectivity from the proxy network.
+5. Compare the proposed state with the last verified healthy revision.
+6. Identify affected domains and journeys.
+7. Prepare an exact diff and rollback revision.
+8. Prefer reload over restart when supported.
+9. Verify all affected public routes after mutation.
+10. Restore the previous revision if verification fails.
+
+A text diff alone is insufficient. Loop reasons over parsed route semantics and preserves unrecognized directives.
+
+## Structured investigation
+
+Gemini receives sanitized evidence and scoped functions such as inspect_change_set, inspect_service_graph, compare_last_healthy_state, inspect_container, inspect_proxy_route, validate_proxy_candidate, inspect_dns, inspect_certificate, run_internal_probe, run_external_probe, run_confirmed_journey, read_sanitized_logs, inspect_resource_pressure, create_daytona_reproduction, record_hypothesis and resolve_hypothesis.
+
+~~~ts
+type Investigation = {
+  symptom: string;
+  customerImpact: string;
+  hypotheses: Array<{
+    statement: string;
+    supportingEvidenceIds: string[];
+    contradictingEvidenceIds: string[];
+    confidence: number;
+    status: 'open' | 'confirmed' | 'rejected';
+  }>;
+  confirmedCause?: string;
+  uncertainty: string[];
+  recommendedAction?: ActionPlan;
+};
+~~~
+
+Application code validates the schema. A valid schema is not evidence that its claims are correct.
+
+## Recovery ladder
+
+Loop attempts the least disruptive eligible action:
+
+1. Refresh evidence and wait for stabilization.
+2. Restore a last-known-healthy proxy or application configuration.
+3. Restart one stateless unhealthy component.
+4. Apply a validated configuration correction.
+5. Redeploy the previous healthy immutable artifact.
+6. Prepare a Compose or infrastructure patch.
+7. Reproduce an application defect and prepare a code repair PR.
+8. Propose migration to an approved resilient blueprint.
+9. Stop automation and guide the operator.
+
+Every action plan contains preconditions, affected graph nodes, supporting evidence, risk classification, exact proposed diff or command intent, expected result, verification journeys, rollback action, approval requirement and execution budget.
+
+## Resilient deployment blueprints
+
+Blueprints describe approved characteristics, not blind replacements.
+
+Initial blueprints:
+
+- single web application behind Caddy
+- frontend plus API
+- API plus PostgreSQL and Redis
+- worker and queue
+- replicated stateless application
+- stateful application with backup preconditions
+
+Blueprint checks may recommend explicit internal ports, private application networks, health checks, restart policies, resource limits, log rotation, named volumes, graceful shutdown, dependency readiness, immutable image digests, previous-artifact retention, proxy timeouts and backup hooks.
+
+Loop presents the semantic difference between current topology and blueprint. Operators may accept individual improvements. Automatic blueprint migration is outside the MVP.
+
+## Autonomy policy
+
+Each service selects a mode:
+
+- monitor: observe changes and run journeys
+- guide: diagnose and prepare recovery steps
+- approve: execute one reversible plan after approval
+- autopilot: execute only allowlisted low-risk actions
+- locked: never mutate
+
+~~~yaml
+autopilot:
+  allowed:
+    - restore_proxy_revision
+    - reload_validated_proxy
+    - restart_stateless_service
+    - redeploy_previous_healthy_artifact
+  approval_required:
+    - change_environment_schema
+    - modify_compose_topology
+    - change_firewall
+    - apply_code_patch
+    - restart_database
+  prohibited:
+    - delete_persistent_volume
+    - destructive_database_operation
+    - expose_secret
+    - execute_model_authored_shell
+~~~
+
+Policies are enforced outside Gemini. Model confidence cannot widen permissions.
 
 ## Daytona's role
 
-The Daytona adapter is the only module allowed to call Daytona. It must support:
+Daytona is used when a failure can be reproduced through repository code, container topology, configuration or deployment behaviour. It is not an exact production clone and is not required for every recovery.
 
-- Create from a pinned image or snapshot.
-- Clone or mount the exact repository commit.
-- Filesystem and Git operations.
-- Process execution and log streaming.
-- Preview URL for browser journeys.
-- Snapshot/fork for repair attempts.
-- CPU, memory, disk, network, tool-call, and wall-clock budgets.
-- Cleanup on success, failure, cancellation, expiry, and process recovery.
+The Daytona adapter may open the exact commit, use the exact artifact digest, construct a sanitized topology, validate a Compose or proxy candidate, reproduce a journey, fork repair attempts, run tests, prepare a minimal patch, enforce budgets and clean up safely.
 
-Network access is denied by default and allowlisted during dependency setup. Commands run as an unprivileged user inside a fixed workspace root.
+Network access is denied by default and allowlisted per dependency. Daytona never receives production secret values.
 
-## Production decisions
+## Guided recovery
 
-Gemini proposes probes and explains anomalies. GroundControl policy decides:
+When policy blocks automation or evidence is incomplete, Loop produces an interactive plan containing a plain-language problem, evidence and uncertainty, proposed repair, reason automation paused, reviewable diff, ordered steps, preflight, verification, rollback and stop conditions.
 
-- Whether all required journeys passed.
-- Whether a release requires human approval.
-- Canary traffic or instance scope.
-- Minimum observation duration.
-- Maximum error rate, latency regression, and resource regression.
-- Automatic rollback conditions.
+GroundControl may execute each approved step and attach its result. The operator should not need to translate generic advice into commands.
 
-The first supported production target should be Docker Compose because it matches GroundControl's current lean-founder wedge. Run the candidate beside the stable version, route only synthetic probes or a configured small traffic share, and retain the stable version for immediate rollback. Add k3s and Cloud Run after the state machine is proven.
+## State machine
 
-## Minimal GitHub Actions integration
-
-~~~yaml
-- name: Start GroundControl Loop
-  uses: teckedd-code2save/groundcontrol-loop-action@v1
-  with:
-    endpoint: ${{ secrets.GROUNDCONTROL_URL }}
-    token: ${{ secrets.GROUNDCONTROL_LOOP_TOKEN }}
-    service: payments-api
-    repository: ${{ github.repository }}
-    commit-sha: ${{ github.sha }}
-    artifact: ghcr.io/acme/payments@sha256:...
+~~~text
+observed
+  → correlating
+  → stabilized
+  → exercising
+      ├─ passed → verified_healthy
+      └─ failed → investigating
+                    ├─ inconclusive → guided
+                    └─ cause_confirmed → planning
+                                          ├─ policy_blocked → guided
+                                          └─ authorized → applying
+                                                           → verifying
+                                                               ├─ failed → rolling_back → investigating
+                                                               └─ passed → recovered → remembered
 ~~~
 
-The action sends metadata and waits for the Loop result. It never receives VPS credentials. The token is scoped to one project and can only create/read Loop Runs.
-
-## Proposed API
-
-- `POST /api/loop/runs` — create idempotently from repository, SHA, artifact digest, service, and target.
-- `GET /api/loop/runs/:id` — sanitized state and evidence summary.
-- `GET /api/loop/runs/:id/events` — resumable SSE event stream.
-- `POST /api/loop/runs/:id/cancel` — cancel and clean up.
-- `POST /api/loop/runs/:id/approve-canary` — explicit release approval.
-- `POST /api/loop/runs/:id/retry` — retry an eligible failed stage.
-- `POST /api/loop/runs/:id/draft-fix` — explicitly authorize draft repair PR creation.
-
-Every route calls `requireAuth(req)` except the token-authenticated CI endpoint. CI token authentication must be separate, narrowly scoped, rate-limited, and audited.
+A process restart must resume without duplicating journeys, mutations, rollbacks, PRs or memory records.
 
 ## Proposed code map
 
 ~~~text
+src/lib/intelligence/
+  events.ts
+  change-set.ts
+  service-graph.ts
+  graph-reconciler.ts
+  last-healthy.ts
+  blast-radius.ts
+  journey-selector.ts
+  investigation.ts
+  operational-memory.ts
+
 src/lib/loop/
   types.ts
   state-machine.ts
   orchestrator.ts
   policy.ts
+  recovery-ladder.ts
+  verifier.ts
   sanitizer.ts
-  impact-graph.ts
-  journey-planner.ts
-  release-decision.ts
-  repair-loop.ts
   providers/gemini.ts
   providers/daytona.ts
-  providers/github.ts
-  targets/compose-canary.ts
+  adapters/docker.ts
+  adapters/compose.ts
+  adapters/caddy.ts
+  adapters/nginx.ts
+  adapters/github.ts
+  actions/restart-stateless.ts
+  actions/restore-proxy.ts
+  actions/redeploy-artifact.ts
 
-src/app/api/loop/runs/...
-src/app/loop/page.tsx
-src/components/loop/...
+src/app/api/intelligence/...
+src/app/intelligence/...
+src/components/intelligence/...
 ~~~
 
-API routes remain thin. Existing managed-host operations continue through `execOnVps()` and `shQuote()`. Model-authored work executes only through the Daytona adapter, never `execOnVps()`.
+Existing host actions continue through execOnVps() and shQuote(). Model-authored content never passes directly to execOnVps().
+
+## Proposed API
+
+- POST /api/intelligence/events — ingest idempotent events
+- GET /api/intelligence/graph — sanitized service graph
+- GET /api/intelligence/changes — change ledger
+- POST /api/loop/runs — create a manual or external Loop Run
+- GET /api/loop/runs/:id — state and evidence summary
+- GET /api/loop/runs/:id/events — resumable SSE stream
+- POST /api/loop/runs/:id/approve — approve current action plan
+- POST /api/loop/runs/:id/reject — block execution and retain guidance
+- POST /api/loop/runs/:id/cancel — cancel and clean up
+- POST /api/loop/runs/:id/rollback — request eligible rollback
+- POST /api/journeys — create an operator-confirmed journey
+- POST /api/journeys/:id/run — run manually
+
+Every route calls requireAuth(req) except narrowly scoped agent and CI ingestion endpoints. Tokens are project-scoped, rate-limited and audited.
+
+## MVP: unreachable Docker Compose application
+
+The first release supports one incident family:
+
+> A Docker Compose web application behind Caddy or Nginx becomes unreachable or returns 502/503 after a meaningful change.
+
+### Inputs
+
+- Docker events and reconciled container state
+- Compose topology and fingerprint
+- proxy route model and configuration revision
+- domain, DNS and TLS observations
+- internal and external HTTP probes
+- recent GroundControl and deployment events
+- selected sanitized logs
+- one operator-confirmed customer journey
+
+### Outcomes
+
+- locate failure at domain, TLS, proxy, network, container or process layer
+- compare with last verified healthy state
+- cite evidence and uncertainty
+- prepare the smallest reversible repair
+- restore a known-good proxy revision or artifact after approval
+- verify the public journey
+- roll back on failed verification
+- create a guided plan when automation is unsafe
+
+### Deterministic fixtures
+
+- container running but proxy targets the wrong port
+- host/container networking mismatch
+- broken Compose port mapping
+- unhealthy or crash-looping application
+- invalid Caddy/Nginx configuration
+- certificate or DNS mismatch
+- missing environment variable name
+- disk pressure caused by disposable logs
+- stale container after a failed deployment
+- ambiguous external dependency failure requiring abstention
+
+## Evaluation
+
+Measure root-cause accuracy, journey-selection precision and recall, change-to-verification time, alert-to-diagnosis time, verified recovery rate, rollback correctness, safe abstention, destructive actions, unsupported claims and duplicate side effects after restart.
+
+Every fixture defines acceptable diagnosis concepts, required evidence, forbidden claims, eligible actions, expected verification and rollback.
 
 ## Milestones
 
-### M0 — Demonstrable vertical slice
+### M0 — Seeded vertical slice
 
-- Seeded Loop UI with payment journey example.
-- Deterministic fake Gemini and Daytona adapters.
-- Complete state machine including repair and canary outcomes.
-- Label all fixture data as demo data.
+- interactive change → test → investigate → recover → verify UI
+- deterministic service graph and fixture events
+- fake Gemini, agent, journey and action adapters
+- fixture data visibly labelled as demo data
 
-### M1 — CI to Loop environment
+### M1 — Read-only intelligence
 
-- Loop token, GitHub Action, immutable artifact identity, sanitizer, Daytona adapter.
-- Existing repository tests plus one operator-confirmed customer journey.
-- Structured Gemini impact graph and release decision.
-- No production deployment yet.
+- Docker and Compose discovery
+- Caddy adapter
+- domain-to-container service graph
+- change ledger and last-known-healthy snapshots
+- internal and external probes
+- no mutations
 
-### M2 — Functional journeys and draft repairs
+### M2 — Targeted journeys and investigation
 
-- Browser/API journey tools and related-flow selection.
-- Failure classification, reproduction, candidate patch, full revalidation.
-- Human-triggered draft repair PR and review steering.
+- operator-confirmed HTTP and browser journey
+- event debouncing and blast-radius selection
+- structured Gemini investigation
+- evidence, contradiction and uncertainty UI
+- deterministic fixture evaluation
 
-### M3 — Compose canary
+### M3 — Approved recovery
 
-- Side-by-side stable/candidate deployment.
-- Synthetic probes, baseline comparison, observation window, promotion and rollback.
-- Exact artifact digest carried across all stages.
+- proxy revision retention
+- native configuration validation
+- reversible action plans
+- approval, execution, public verification and rollback
+- process-restart idempotency
 
-### M4 — Learning and additional targets
+### M4 — Reproduction and repair
 
-- Retrieve similar local Loop Runs using Gemini embeddings.
-- k3s and Cloud Run canary targets.
-- Optional GitHub App for native checks and comments.
-- Evaluation dashboard and cost/runtime controls.
+- Daytona reproduction for eligible failures
+- Compose and proxy candidate validation
+- optional application repair PR
+- resilient blueprint comparison
+- operational memory retrieval
 
-## Test plan
+### M5 — Guarded autopilot
 
-Provider adapters are injectable. The default test suite makes no network calls.
-
-### Unit
-
-- State transition matrix, retries, cancellation, expiry, and recovery.
-- Artifact digest validation and idempotency.
-- Sanitizer corpus for keys, tokens, connection strings, headers, and logs.
-- Impact graph selection from changed files and schemas.
-- Journey-plan and release-decision schema validation.
-- Functional gate ordering before non-functional tests.
-- Failure classification and repair budget enforcement.
-- Candidate diff scope and forbidden-path policy.
-- Canary promotion and rollback policy.
-
-### Integration with fake providers
-
-- Functional pass → non-functional pass → approval → canary → promotion.
-- Journey failure → reproduce → candidate → related journeys pass → draft PR ready.
-- Review feedback → revised candidate → complete revalidation.
-- Flaky reproduction → inconclusive, no application PR.
-- Candidate fails regression → return to diagnosis, no PR.
-- Canary fails hard threshold → rollback exactly once → investigation evidence retained.
-- Restart mid-run → resumes without duplicate sandbox, PR, canary, or promotion.
-
-### Seeded payment fixture
-
-Create a small fixture service with checkout, payment-provider test mode, order creation, inventory, receipt, and refund flows. Seed defects for:
-
-- Duplicate webhook creates a second order.
-- Declined payment incorrectly reserves inventory.
-- Receipt total differs from the completed order.
-- Retry path introduces a bounded latency regression.
-- Ambiguous failure where the correct outcome is `inconclusive`.
-
-Each fixture defines required journeys, acceptable diagnosis concepts, forbidden claims, expected artifacts, and verification commands.
+- per-service autonomy policy
+- allowlisted low-risk actions
+- action budgets and stop conditions
+- policy audit and evaluation dashboard
 
 ## Release acceptance criteria
 
-- No real customer data, transactions, or production secret values enter a Loop environment.
-- No model-authored command executes on a managed production host.
-- Every blocking claim links to reproducible evidence.
-- Functional failures prevent non-functional and canary stages.
-- A repair PR is created only for a reproducible product defect and only after explicit authorization.
-- Every repair revision reruns the failed journey, related journeys, and regression suite.
-- Gemini cannot approve or merge its own PR.
-- Canary promotion and rollback depend on deterministic policy, not model confidence.
-- Complete, cancel, failure, timeout, and recovery paths clean up the Daytona sandbox.
-- Process restart cannot duplicate sandboxes, PRs, deployments, or promotions.
-- `npm test`, `npm run lint`, and `npm run build` pass before enabling the feature outside development.
+- Public product state is represented honestly.
+- No production secrets or customer data enter prompts or Daytona.
+- No model-authored shell command executes on a managed host.
+- Every diagnosis cites evidence and exposes uncertainty.
+- Every mutation is allowlisted, audited and bounded.
+- Every executed action has verification and rollback.
+- Customer-facing verification decides recovery.
+- Failed verification triggers rollback or safe escalation.
+- Stateful and destructive actions cannot run in autopilot.
+- Process restart cannot duplicate tests, actions, rollbacks, PRs or memory.
+- Complete, failed, cancelled and expired runs clean up resources.
+- npm test, npm run lint and npm run build pass before enabling real adapters.
 
-## MVP boundary
+## First build boundary
 
-The first real release is one path:
+> A Docker or proxy change occurs → GroundControl maps the affected public service → one confirmed journey runs → an evidence-backed diagnosis identifies the fault → a guided reversible repair is prepared.
 
-> GitHub Actions artifact → one confirmed customer journey in Daytona → structured Gemini decision → evidence report.
+Automatic mutation follows only after read-only diagnosis is reliable on deterministic fixtures and real opt-in hosts.
 
-Draft repair PRs follow once reproduction is reliable. Compose canary follows once artifact identity and state recovery are reliable. The product may show the complete seeded experience early, but it must label unimplemented stages as preview data.
