@@ -71,7 +71,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 | 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
-| 🔁 | **Loop (proposed)** | Correlate host and release changes, run targeted customer journeys, investigate failures across Docker and reverse-proxy topology, then guide or perform reversible recovery by policy. |
+| 🔁 | **Loop (M1–M5)** | Service graph, change ledger, journeys, Gemini/deterministic investigation, approved recovery with verify/rollback, live Caddy apply (`GC_LOOP_LIVE=1`), Daytona/local reproduction, resilient blueprints, and guarded autopilot. **Intelligence** at `/intelligence`. |
 | 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
 | 💓 | **Container Health Scheduler** | Periodic container health checks on a configurable interval. Alerts when containers go down or become unhealthy — runs independently of the dashboard. |
 | 🔀 | **Services** | Containers, reverse proxy, projects, deployments, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |

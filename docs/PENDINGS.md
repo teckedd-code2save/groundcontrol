@@ -14,13 +14,13 @@ The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.
 
 | # | Work | Impact | Fix size | Status |
 |---|------|--------|----------|--------|
-| 5.1 | **Seeded host-change Loop UI and deterministic fixtures** | Demonstrates change → targeted journey → diagnosis → guided repair → verification without implying live integrations. | Medium | specified |
-| 5.2 | **Read-only service graph and change ledger** | Connects Docker, Compose, Caddy, domains, ports, networks, deployments, and last-known-healthy state. | Large | specified |
-| 5.3 | **Targeted customer journeys and blast-radius selection** | Runs only the confirmed HTTP/browser journeys affected by a meaningful host or release change. | Large | specified |
-| 5.4 | **Gemini investigation and reverse-proxy intelligence** | Produces evidence-backed diagnoses across DNS, TLS, Caddy/Nginx, Docker networks, containers, processes, and changes. | Large | specified |
-| 5.5 | **Approved reversible recovery** | Restores known-good proxy revisions or immutable artifacts, verifies publicly, and rolls back failed repairs. | Large | specified |
-| 5.6 | **Daytona reproduction and resilient blueprint comparison** | Reproduces eligible code/config failures and compares current topology with approved resilient patterns. | Large | specified |
-| 5.7 | **Guarded autopilot policy** | Allows only evaluated low-risk actions while keeping stateful, destructive, and uncertain work guided or approval-gated. | Large | specified |
+| 5.1 | **Seeded host-change Loop UI and deterministic fixtures** | Demonstrates change → targeted journey → diagnosis → guided repair → verification without implying live integrations. | Medium | **done** — `/intelligence` + fixture load APIs |
+| 5.2 | **Read-only service graph and change ledger** | Connects Docker, Compose, Caddy, domains, ports, networks, deployments, and last-known-healthy state. | Large | **done** — pure reconciler + APIs (`src/lib/intelligence/`); live host adapters still thin |
+| 5.3 | **Targeted customer journeys and blast-radius selection** | Runs only the confirmed HTTP/browser journeys affected by a meaningful host or release change. | Large | **done** — confirmed journeys + selector |
+| 5.4 | **Gemini investigation and reverse-proxy intelligence** | Produces evidence-backed diagnoses across DNS, TLS, Caddy/Nginx, Docker networks, containers, processes, and changes. | Large | **done** — deterministic + Gemini hybrid (`providers/gemini.ts`); action plans stay allowlisted |
+| 5.5 | **Approved reversible recovery** | Restores known-good proxy revisions or immutable artifacts, verifies publicly, and rolls back failed repairs. | Large | **done** — approve + verify + real rollback; live Caddy via `GC_LOOP_LIVE=1` |
+| 5.6 | **Daytona reproduction and resilient blueprint comparison** | Reproduces eligible code/config failures and compares current topology with approved resilient patterns. | Large | **done** — local sanitized + optional Daytona API; blueprint compare API |
+| 5.7 | **Guarded autopilot policy** | Allows only evaluated low-risk actions while keeping stateful, destructive, and uncertain work guided or approval-gated. | Large | **done** — policy engine + approve route `autopilot` flag |
 
 ---
 

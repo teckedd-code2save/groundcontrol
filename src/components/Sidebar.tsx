@@ -15,6 +15,7 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
+  Radar,
   type LucideProps,
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
@@ -30,6 +31,7 @@ type NavItem = {
 
 const primaryItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, section: "operate" },
+  { href: "/intelligence", label: "Intelligence", icon: Radar, section: "operate" },
   { href: "/ai", label: "Co-Pilot", icon: Sparkles, section: "operate" },
   { href: "/services", label: "Services", icon: Boxes, section: "operate" },
   { href: "/templates", label: "Templates", icon: LayoutTemplate, section: "build" },

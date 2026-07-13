@@ -1,0 +1,12 @@
+interface:
+  display_name: Shape GroundControl
+  short_description: Keep GroundControl product and design work coherent
+  default_prompt: Apply the GroundControl product direction, intelligence UX, and
+    Serendepify visual system to this task.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
