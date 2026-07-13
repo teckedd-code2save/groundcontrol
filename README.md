@@ -311,6 +311,7 @@ Dev setup, project structure map, code conventions, and how to add a page or API
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup & project map
 - [SECURITY.md](./SECURITY.md) — disclosure policy & threat model
 - [docs/LOOP.md](./docs/LOOP.md) — proposed service graph, change ledger, synthetic journeys, reverse-proxy intelligence, recovery policy, milestones, and evaluation
+- [docs/PRODUCT-DESIGN.md](./docs/PRODUCT-DESIGN.md) — interface evolution, current-to-future navigation, intelligence screens, visual system, motion, and staged adoption
 - [docs/PENDINGS.md](./docs/PENDINGS.md) — known sharp edges, pending work, and recommended next steps
 - [docs/DEMO.md](./docs/DEMO.md) — click-by-click demo recording script
 - [docs/demo-data.md](./docs/demo-data.md) — safe demo seed data (no real VPS needed)
