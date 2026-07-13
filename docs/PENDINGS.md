@@ -16,7 +16,7 @@ The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.
 |---|------|--------|----------|--------|
 | 5.1 | **Seeded Loop UI and deterministic adapters** | Demonstrates the complete customer-journey, repair, and canary lifecycle without implying live integrations. | Medium | specified |
 | 5.2 | **CI token, artifact identity, sanitizer, and state machine** | Establishes a recoverable evidence chain from immutable artifact to result. | Large | specified |
-| 5.3 | **Daytona Release Twin and journey execution** | Exercises affected customer flows safely with synthetic data before production. | Large | specified |
+| 5.3 | **Daytona execution and customer-journey validation** | Exercises affected customer flows safely with synthetic data before production. | Large | specified |
 | 5.4 | **Gemini impact graph, repair loop, and draft PR** | Turns reproducible functional failures into tested, reviewable corrections. | Large | specified |
 | 5.5 | **Compose canary, observation, promotion, and rollback** | Adds the guarded real-production cycle on infrastructure the operator owns. | Large | specified |
 
@@ -89,7 +89,7 @@ The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.
 ## Recommended next 3 (updated)
 
 1. **Loop M0** (5.1) — prove the full state machine and payment journey with deterministic fake adapters.
-2. **CI-to-Daytona slice** (5.2–5.3) — accept an immutable artifact and execute one confirmed customer journey in a Release Twin.
+2. **CI-to-Daytona slice** (5.2–5.3) — accept an immutable artifact and execute one confirmed customer journey inside Loop.
 3. **Gemini repair evaluation** (5.4) — reproduce a seeded defect, verify a minimal candidate, and prepare a human-triggered draft PR.
 
 Or, if you want the fastest existing-product polish:
