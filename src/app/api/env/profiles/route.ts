@@ -10,7 +10,22 @@ import {
   setLocalEnvValues,
   upsertEnvProfileForProject,
 } from "@/lib/env-management";
-import { discoverProjectEnv } from "@/lib/env-discovery";
+import {
+  discoverProjectEnv,
+  type DiscoveredEnvResult,
+} from "@/lib/env-discovery";
+
+const EMPTY_DISCOVERY: DiscoveredEnvResult = {
+  entries: [],
+  values: {},
+  scopedValues: {},
+  summary: {
+    containerCount: 0,
+    runningContainerCount: 0,
+    runtimeKeyCount: 0,
+    declaredKeyCount: 0,
+  },
+};
 
 function normalizeSchema(value: unknown) {
   if (Array.isArray(value)) return value.flatMap((entry) => {
@@ -37,12 +52,12 @@ export async function GET(req: NextRequest) {
     if (!project) return NextResponse.json({ error: "projectId or deploymentId is required" }, { status: 400 });
     const profile = await upsertEnvProfileForProject({ projectId: project.id, deploymentId: deploymentId || undefined });
     const values = await getProfileValues(profile.id);
-    const discovered = await discoverProjectEnv(project).catch(() => ({ entries: [], values: {} }));
+    const discovered = await discoverProjectEnv(project).catch(() => EMPTY_DISCOVERY);
     return NextResponse.json({
       profile: reveal
         ? { ...profile, schema: parseEnvJson(profile.schemaJson), values: Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { masked: v, hasValue: !!v }])) }
         : publicProfile(profile, values, parseEnvJson(profile.schemaJson)),
-      discovered: { entries: discovered.entries },
+      discovered: publicDiscovery(discovered, reveal),
     });
   } catch (err) {
     return handleApiError(err);
@@ -70,7 +85,12 @@ export async function POST(req: NextRequest) {
       const project = await prisma.project.findUnique({ where: { id: projectId } });
       if (!project) return NextResponse.json({ error: "project not found" }, { status: 404 });
       const discovered = await discoverProjectEnv(project);
-      const nextSchema = mergeSchema(schema, Object.keys(discovered.values));
+      const importValues = selectImportableValues(
+        discovered,
+        schema,
+        typeof body.componentName === "string" ? body.componentName : undefined
+      );
+      const nextSchema = mergeSchema(schema, Object.keys(importValues));
       const updated = await upsertEnvProfileForProject({
         projectId,
         deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
@@ -81,11 +101,11 @@ export async function POST(req: NextRequest) {
         secretPath: body.secretPath || "/",
         projectRef: body.projectRef || "",
       });
-      await setLocalEnvValues(updated.id, discovered.values, nextSchema);
+      await setLocalEnvValues(updated.id, importValues, nextSchema);
       const values = await getProfileValues(updated.id);
       return NextResponse.json({
         profile: publicProfile(updated, values, parseEnvJson(updated.schemaJson)),
-        discovered: { entries: discovered.entries },
+        discovered: publicDiscovery(discovered, false),
       });
     }
     if (body.values && typeof body.values === "object") {
@@ -93,14 +113,60 @@ export async function POST(req: NextRequest) {
     }
     const values = await getProfileValues(profile.id);
     const project = await prisma.project.findUnique({ where: { id: projectId } });
-    const discovered = project ? await discoverProjectEnv(project).catch(() => ({ entries: [], values: {} })) : { entries: [], values: {} };
+    const discovered = project
+      ? await discoverProjectEnv(project).catch(() => EMPTY_DISCOVERY)
+      : EMPTY_DISCOVERY;
     return NextResponse.json({
       profile: publicProfile(profile, values, parseEnvJson(profile.schemaJson)),
-      discovered: { entries: discovered.entries },
+      discovered: publicDiscovery(discovered, false),
     });
   } catch (err) {
     return handleApiError(err);
   }
+}
+
+function publicDiscovery(discovered: DiscoveredEnvResult, reveal: boolean) {
+  return {
+    entries: discovered.entries,
+    summary: discovered.summary,
+    ...(reveal
+      ? {
+          values: discovered.values,
+          scopedValues: discovered.scopedValues,
+        }
+      : {}),
+  };
+}
+
+function selectImportableValues(
+  discovered: DiscoveredEnvResult,
+  schema: { key: string; required: boolean }[],
+  componentName?: string
+) {
+  const declared = new Set([
+    ...schema.map((entry) => entry.key),
+    ...discovered.entries
+      .filter((entry) => (
+        !entry.runtime
+        && (!componentName || !entry.component || entry.component === componentName)
+      ))
+      .map((entry) => entry.key),
+  ]);
+
+  const effectiveValues = componentName
+    ? Object.fromEntries(
+        Object.entries(discovered.scopedValues).flatMap(([scopedKey, value]) => {
+          const prefix = `${componentName}:`;
+          return scopedKey.startsWith(prefix)
+            ? [[scopedKey.slice(prefix.length), value]]
+            : [];
+        })
+      )
+    : discovered.values;
+
+  return Object.fromEntries(
+    Object.entries(effectiveValues).filter(([key]) => declared.has(key))
+  );
 }
 
 function mergeSchema(schema: { key: string; required: boolean }[], keys: string[]) {
