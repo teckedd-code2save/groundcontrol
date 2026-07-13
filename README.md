@@ -69,7 +69,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 | 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
-| 🔁 | **Loop (proposed)** | Exercise change-aware customer journeys in a Daytona Release Twin, repair reproducible failures with Gemini, then control canary promotion or rollback. |
+| 🔁 | **Loop (proposed)** | Exercise change-aware customer journeys in an isolated Daytona environment, repair reproducible failures with Gemini, then control canary promotion or rollback. |
 | 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
 | 💓 | **Container Health Scheduler** | Periodic container health checks on a configurable interval. Alerts when containers go down or become unhealthy — runs independently of the dashboard. |
 | 🔀 | **Services** | Containers, reverse proxy, projects, deployments, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
@@ -308,7 +308,7 @@ Dev setup, project structure map, code conventions, and how to add a page or API
 - [DEPLOY.md](./DEPLOY.md) — full self-deployment guide (VPS, domain, Caddy, SSL, Cloudflare)
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup & project map
 - [SECURITY.md](./SECURITY.md) — disclosure policy & threat model
-- [docs/LOOP.md](./docs/LOOP.md) — proposed Loop architecture, Release Twin, repair lifecycle, milestones, and test plan
+- [docs/LOOP.md](./docs/LOOP.md) — proposed Loop architecture, Daytona execution, repair lifecycle, milestones, and test plan
 - [docs/PENDINGS.md](./docs/PENDINGS.md) — known sharp edges, pending work, and recommended next steps
 - [docs/DEMO.md](./docs/DEMO.md) — click-by-click demo recording script
 - [docs/demo-data.md](./docs/demo-data.md) — safe demo seed data (no real VPS needed)
