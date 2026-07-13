@@ -4,7 +4,7 @@
 
 ## Product statement
 
-GroundControl Loop takes an immutable release artifact from CI to verified production on infrastructure the operator owns. It creates a disposable Release Twin in Daytona, uses Gemini to discover and execute the customer journeys affected by the change, repairs reproducible failures through a reviewable pull request, and controls a bounded production canary before promotion.
+GroundControl Loop takes an immutable release artifact from CI to verified production on infrastructure the operator owns. It creates an isolated execution environment in Daytona, uses Gemini to discover and execute the customer journeys affected by the change, repairs reproducible failures through a reviewable pull request, and controls a bounded production canary before promotion.
 
 The product promise is:
 
@@ -30,7 +30,7 @@ Developer IDE
 GitHub Actions: existing tests and artifact build
     ↓ SHA + immutable artifact digest + service ID
 GroundControl Loop
-    ↓ Release Twin in Daytona
+    ↓ isolated Daytona environment
 Customer journey validation
     ├─ fail → reproduce → repair → draft PR → review → rebuild ↺
     └─ pass → human release approval
@@ -42,11 +42,11 @@ Customer journey validation
 
 The first integration is a small GitHub Action step after the image is published. A GitHub App may later add native PR checks and review steering, but it is not required for the first useful release.
 
-## Release Twin
+## Loop execution environment
 
-A Release Twin is a disposable execution environment created for one commit and one artifact digest. Daytona is the first provider.
+Each Loop Run gets a disposable execution environment for one commit and one artifact digest. Daytona is the first provider.
 
-The twin contains:
+The Loop environment contains:
 
 - The exact repository commit and release artifact.
 - Synthetic users, fixtures, queues, databases, and provider test modes.
@@ -55,7 +55,7 @@ The twin contains:
 - Browser, HTTP, process, filesystem, Git, log, and test tools exposed through a narrow policy.
 - A snapshot retained across diagnosis and repair attempts for the duration of the Loop Run.
 
-The twin is not production and must never be described as an exact clone. The production canary is the bounded real-world verification.
+The Loop environment is not production and must never be described as an exact clone. The production canary is the bounded real-world verification.
 
 ## Change-aware customer journeys
 
@@ -81,7 +81,7 @@ Checkout
 
 The operator can see why each journey was selected. Gemini may propose a new journey, but the run records whether it was inferred, repository-defined, or previously confirmed.
 
-Use realistic synthetic accounts and payment-provider test mode. Never use real customer data or real transactions inside a Release Twin.
+Use realistic synthetic accounts and payment-provider test mode. Never use real customer data or real transactions inside a Loop environment.
 
 ## Test order
 
@@ -125,7 +125,7 @@ A failed test is classified before code changes begin:
 
 - `product_defect`: behaviour contradicts an established journey or contract.
 - `test_defect`: expectation or fixture is incorrect.
-- `environment_defect`: twin setup does not represent the required dependency.
+- `environment_defect`: Loop environment setup does not represent the required dependency.
 - `inconclusive`: evidence is insufficient or reproduction is unstable.
 
 Only a reproducible `product_defect` may produce an application fix.
@@ -291,7 +291,7 @@ API routes remain thin. Existing managed-host operations continue through `execO
 - Complete state machine including repair and canary outcomes.
 - Label all fixture data as demo data.
 
-### M1 — CI to Release Twin
+### M1 — CI to Loop environment
 
 - Loop token, GitHub Action, immutable artifact identity, sanitizer, Daytona adapter.
 - Existing repository tests plus one operator-confirmed customer journey.
@@ -357,7 +357,7 @@ Each fixture defines required journeys, acceptable diagnosis concepts, forbidden
 
 ## Release acceptance criteria
 
-- No real customer data, transactions, or production secret values enter a Release Twin.
+- No real customer data, transactions, or production secret values enter a Loop environment.
 - No model-authored command executes on a managed production host.
 - Every blocking claim links to reproducible evidence.
 - Functional failures prevent non-functional and canary stages.
