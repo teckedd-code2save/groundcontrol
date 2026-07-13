@@ -4,21 +4,23 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 
 > **New:** For a step-by-step guide on installing and testing every integration, see [`INTEGRATION-GUIDE.md`](./INTEGRATION-GUIDE.md).
 
-> Last updated: 2026-07-12
+> Last updated: 2026-07-13
 
 ---
 
-## Phase 5 — GroundControl Loop
+## Phase 5 — GroundControl intelligence and Loop
 
 The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.md). The public website experience is a product preview, not a claim that these integrations are already live.
 
 | # | Work | Impact | Fix size | Status |
 |---|------|--------|----------|--------|
-| 5.1 | **Seeded Loop UI and deterministic adapters** | Demonstrates the complete customer-journey, repair, and canary lifecycle without implying live integrations. | Medium | specified |
-| 5.2 | **CI token, artifact identity, sanitizer, and state machine** | Establishes a recoverable evidence chain from immutable artifact to result. | Large | specified |
-| 5.3 | **Daytona execution and customer-journey validation** | Exercises affected customer flows safely with synthetic data before production. | Large | specified |
-| 5.4 | **Gemini impact graph, repair loop, and draft PR** | Turns reproducible functional failures into tested, reviewable corrections. | Large | specified |
-| 5.5 | **Compose canary, observation, promotion, and rollback** | Adds the guarded real-production cycle on infrastructure the operator owns. | Large | specified |
+| 5.1 | **Seeded host-change Loop UI and deterministic fixtures** | Demonstrates change → targeted journey → diagnosis → guided repair → verification without implying live integrations. | Medium | specified |
+| 5.2 | **Read-only service graph and change ledger** | Connects Docker, Compose, Caddy, domains, ports, networks, deployments, and last-known-healthy state. | Large | specified |
+| 5.3 | **Targeted customer journeys and blast-radius selection** | Runs only the confirmed HTTP/browser journeys affected by a meaningful host or release change. | Large | specified |
+| 5.4 | **Gemini investigation and reverse-proxy intelligence** | Produces evidence-backed diagnoses across DNS, TLS, Caddy/Nginx, Docker networks, containers, processes, and changes. | Large | specified |
+| 5.5 | **Approved reversible recovery** | Restores known-good proxy revisions or immutable artifacts, verifies publicly, and rolls back failed repairs. | Large | specified |
+| 5.6 | **Daytona reproduction and resilient blueprint comparison** | Reproduces eligible code/config failures and compares current topology with approved resilient patterns. | Large | specified |
+| 5.7 | **Guarded autopilot policy** | Allows only evaluated low-risk actions while keeping stateful, destructive, and uncertain work guided or approval-gated. | Large | specified |
 
 ---
 
@@ -88,9 +90,9 @@ The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.
 
 ## Recommended next 3 (updated)
 
-1. **Loop M0** (5.1) — prove the full state machine and payment journey with deterministic fake adapters.
-2. **CI-to-Daytona slice** (5.2–5.3) — accept an immutable artifact and execute one confirmed customer journey inside Loop.
-3. **Gemini repair evaluation** (5.4) — reproduce a seeded defect, verify a minimal candidate, and prepare a human-triggered draft PR.
+1. **Read-only intelligence slice** (5.1–5.2) — detect a Docker/Caddy change and render the domain-to-container path plus last-known-healthy comparison.
+2. **One confirmed public journey** (5.3) — exercise an unreachable-app fixture after stabilization and retain deterministic evidence.
+3. **Guided proxy recovery** (5.4–5.5) — diagnose a stale upstream port, validate a reversible Caddy correction, and prove recovery without automatic mutation.
 
 Or, if you want the fastest existing-product polish:
 
