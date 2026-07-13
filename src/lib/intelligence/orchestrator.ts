@@ -58,7 +58,7 @@ export function createEngineState(): LoopEngineState {
       nodes: [],
       edges: [],
       reconciledAt: new Date().toISOString(),
-      source: "fixture",
+      source: "live",
     },
     events: [],
     changeSets: [],

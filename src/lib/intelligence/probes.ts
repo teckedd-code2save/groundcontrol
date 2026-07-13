@@ -14,6 +14,36 @@ export interface ProbeExecutor {
   fetchStatus(url: string): Promise<{ statusCode: number; latencyMs: number }>;
 }
 
+/** Real HTTP probe used by production Loop runs. It never reads or logs a body. */
+export function createHttpProbeExecutor(timeoutMs = 10_000): ProbeExecutor {
+  return {
+    async fetchStatus(target: string) {
+      const url = new URL(target);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error(`Unsupported probe protocol: ${url.protocol}`);
+      }
+      if (url.username || url.password) {
+        throw new Error("Probe URLs cannot contain credentials");
+      }
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          redirect: "manual",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { "user-agent": "GroundControl-Loop/1.0" },
+        });
+        return { statusCode: response.status, latencyMs: Date.now() - startedAt };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
 /**
  * Run probe targets through an executor. Pure orchestration — executor does I/O.
  */

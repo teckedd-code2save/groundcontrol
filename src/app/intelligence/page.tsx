@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   GitBranch,
-  Loader2,
   Play,
   Shield,
   Undo2,
@@ -77,7 +76,6 @@ export default function IntelligencePage() {
   const [maturity, setMaturity] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fixtureNote, setFixtureNote] = useState<string | null>(null);
   const [graphSource, setGraphSource] = useState<string>("");
 
   const refreshGraph = useCallback(async () => {
@@ -120,29 +118,6 @@ export default function IntelligencePage() {
     };
   }, []);
 
-  async function loadFixture() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/intelligence/fixtures/load", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fixture: "wrong_upstream" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to load fixture");
-      setFixtureNote(
-        `${data.label} (${data.fixture}) — product fixture, not live host data.`
-      );
-      setRun(null);
-      await refreshGraph();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function startInvestigation() {
     setLoading(true);
     setError(null);
@@ -153,14 +128,13 @@ export default function IntelligencePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           changeSetId,
-          domain: paths[0]?.domain || "app.example.com",
-          probeStatus: 502,
+          domain: paths[0]?.domain,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to start Loop run");
       setRun(data.run);
-      setMaturity(data.maturity || "fixture");
+      setMaturity(data.maturity || "early_access");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -176,7 +150,7 @@ export default function IntelligencePage() {
       const res = await fetch(`/api/loop/runs/${run.id}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ probeStatus: 200 }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Approve failed");
@@ -206,12 +180,9 @@ export default function IntelligencePage() {
           {maturity || graphSource || "empty"}
         </span>
         <span className="text-muted">
-          Live and opt-in paths: service graph · change ledger · confirmed journeys · evidence-backed recovery.
-          Fixtures remain labelled. Gemini and Daytona require configuration; guarded autopilot stays disabled by default.
+          Live service graph · real change ledger · confirmed journeys · evidence-backed recovery.
+          Gemini and Daytona require configuration; guarded autopilot stays disabled by default.
         </span>
-        {fixtureNote && (
-          <span className="text-amber-700 dark:text-amber-400">{fixtureNote}</span>
-        )}
       </div>
 
       {error && (
@@ -223,17 +194,8 @@ export default function IntelligencePage() {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={loadFixture}
-          disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted/40 disabled:opacity-50"
-        >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitBranch className="h-3.5 w-3.5" />}
-          Load 502 fixture
-        </button>
-        <button
-          type="button"
           onClick={startInvestigation}
-          disabled={loading || changeSets.length === 0}
+          disabled={loading || changeSets.length === 0 || paths.length === 0}
           className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-sm text-background hover:opacity-90 disabled:opacity-50"
         >
           <Play className="h-3.5 w-3.5" />
@@ -259,7 +221,7 @@ export default function IntelligencePage() {
           </h2>
           {paths.length === 0 ? (
             <p className="text-sm text-muted">
-              No graph loaded. Load the fixture to see domain → proxy → container paths.
+              No live service graph yet. Enrol a deployment and reconcile the host to map its domain, proxy, container, and process path.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -362,7 +324,7 @@ export default function IntelligencePage() {
 
         {!run ? (
           <p className="text-sm text-muted">
-            Load a fixture, then run investigation to create a Loop run.
+            A Loop run will appear when a real host change affects an enrolled deployment and its customer journey.
           </p>
         ) : (
           <div className="space-y-4">

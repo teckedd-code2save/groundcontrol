@@ -16,10 +16,10 @@ export async function GET(req: NextRequest) {
     const summary = getGraphSummary(state);
     return NextResponse.json({
       ...summary,
-      maturity: state.graph.source === "fixture" ? "fixture" : "live",
+      maturity: state.graph.nodes.length > 0 ? "live" : "awaiting_observation",
       note:
         state.graph.nodes.length === 0
-          ? "No graph loaded. POST /api/intelligence/fixtures/load or reconcile from host."
+          ? "No live service graph has been reconciled from the host yet."
           : undefined,
     });
   } catch (err) {

@@ -238,7 +238,10 @@ function discoverComposeEnvValuesByService(
   return found;
 }
 
-export function discoverRuntimeEnvFromInspectContent(content: string): RuntimeEnvDiscovery {
+export function discoverRuntimeEnvFromInspectContent(
+  content: string,
+  processEnvByContainerId: Record<string, Record<string, string>> = {}
+): RuntimeEnvDiscovery {
   let containers: Array<Record<string, unknown>> = [];
   try {
     const parsed = JSON.parse(content || "[]") as unknown;
@@ -258,26 +261,39 @@ export function discoverRuntimeEnvFromInspectContent(content: string): RuntimeEn
     const config = asRecord(container.Config);
     const labels = asRecord(config.Labels);
     const state = asRecord(container.State);
+    const containerId = String(container.Id || "");
     const component = String(labels["com.docker.compose.service"] || "").trim() || undefined;
     const containerName = String(container.Name || "").replace(/^\//, "") || undefined;
     const stateLabel = String(state.Status || (state.Running ? "running" : "unknown"));
     if (state.Running === true) runningContainerCount += 1;
 
-    const env = Array.isArray(config.Env) ? config.Env : [];
-    for (const raw of env) {
-      const [key, ...rest] = String(raw || "").split("=");
-      if (!key || rest.length === 0) continue;
-      const value = rest.join("=");
+    const processEnv = containerId ? processEnvByContainerId[containerId] : undefined;
+    const configuredEnv = Object.fromEntries(
+      (Array.isArray(config.Env) ? config.Env : []).flatMap((raw) => {
+        const [key, ...rest] = String(raw || "").split("=");
+        return key && rest.length > 0 ? [[key, rest.join("=")]] : [];
+      })
+    );
+    const effectiveEnv = state.Running === true && processEnv
+      ? processEnv
+      : configuredEnv;
+    const source = state.Running === true && processEnv
+      ? "running process"
+      : state.Running === true
+        ? "running container"
+        : "container configuration";
+
+    for (const [key, value] of Object.entries(effectiveEnv)) {
       values[key] = value;
       scopedValues[scopedEnvKey(component, key)] = value;
       entries.push({
         key,
-        source: "running container",
+        source,
         scope: component ? "component" : "deployment",
         component,
         container: containerName,
         state: stateLabel,
-        runtime: true,
+        runtime: state.Running === true,
         masked: maskSecret(value),
         hasValue: !!value,
       });
@@ -291,6 +307,30 @@ export function discoverRuntimeEnvFromInspectContent(content: string): RuntimeEn
     containerCount: containers.length,
     runningContainerCount,
   };
+}
+
+export function parseProcessEnvSnapshotContent(content: string): Record<string, Record<string, string>> {
+  const snapshots: Record<string, Record<string, string>> = {};
+  for (const line of String(content || "").split(/\r?\n/)) {
+    const separator = line.indexOf("\t");
+    if (separator <= 0) continue;
+    const containerId = line.slice(0, separator).trim();
+    const encoded = line.slice(separator + 1).trim();
+    if (!containerId || !encoded) continue;
+    try {
+      const decoded = Buffer.from(encoded, "base64").toString("utf8");
+      const values: Record<string, string> = {};
+      for (const raw of decoded.split("\0")) {
+        const equals = raw.indexOf("=");
+        if (equals <= 0) continue;
+        values[raw.slice(0, equals)] = raw.slice(equals + 1);
+      }
+      snapshots[containerId] = values;
+    } catch {
+      // Ignore malformed or unavailable process snapshots and use Docker config.
+    }
+  }
+  return snapshots;
 }
 
 async function readResolvedComposeConfig(
@@ -317,9 +357,22 @@ async function readRuntimeContainerEnv(
     `cd ${shQuote(projectPath)} 2>/dev/null || exit 0`,
     `ids=$(${compose} ps -q 2>/dev/null || true)`,
     `if [ -z "$ids" ]; then printf '[]'; else docker inspect $ids 2>/dev/null || printf '[]'; fi`,
+    `printf '\n__GC_PROCESS_ENV__\n'`,
+    `for id in $ids; do`,
+    `  pid=$(docker inspect -f '{{.State.Pid}}' "$id" 2>/dev/null || printf '0')`,
+    `  if [ "$pid" -gt 0 ] 2>/dev/null && [ -r "/proc/$pid/environ" ]; then`,
+    `    printf '%s\t' "$id"`,
+    `    base64 < "/proc/$pid/environ" 2>/dev/null | tr -d '\n'`,
+    `    printf '\n'`,
+    `  fi`,
+    `done`,
   ].join("\n");
   const result = await execOnVps(command, vps);
-  return discoverRuntimeEnvFromInspectContent(result.stdout || "[]");
+  const [inspectContent, processContent = ""] = (result.stdout || "[]").split("\n__GC_PROCESS_ENV__\n", 2);
+  return discoverRuntimeEnvFromInspectContent(
+    inspectContent,
+    parseProcessEnvSnapshotContent(processContent)
+  );
 }
 
 function emptyRuntimeDiscovery(): RuntimeEnvDiscovery {

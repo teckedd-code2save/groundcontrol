@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   discoverEnvFromComposeContent,
   discoverRuntimeEnvFromInspectContent,
+  parseProcessEnvSnapshotContent,
 } from "./env-discovery";
 
 describe("env discovery", () => {
@@ -66,6 +67,32 @@ services:
       scopedValues: {},
       containerCount: 0,
       runningContainerCount: 0,
+    });
+  });
+
+  it("prefers the environment of the running process over container configuration", () => {
+    const processPayload = Buffer.from("DATABASE_URL=postgres://db/live\0AGENT_TOKEN=injected\0", "utf8").toString("base64");
+    const snapshots = parseProcessEnvSnapshotContent(`container-123\t${processPayload}\n`);
+    const result = discoverRuntimeEnvFromInspectContent(JSON.stringify([
+      {
+        Id: "container-123",
+        Name: "/agent-deployed-api",
+        Config: {
+          Labels: { "com.docker.compose.service": "api" },
+          Env: ["DATABASE_URL=postgres://db/configured", "CONFIG_ONLY=yes"],
+        },
+        State: { Running: true, Status: "running", Pid: 4242 },
+      },
+    ]), snapshots);
+
+    expect(result.values).toEqual({
+      DATABASE_URL: "postgres://db/live",
+      AGENT_TOKEN: "injected",
+    });
+    expect(result.entries.find((entry) => entry.key === "AGENT_TOKEN")).toMatchObject({
+      source: "running process",
+      runtime: true,
+      component: "api",
     });
   });
 });

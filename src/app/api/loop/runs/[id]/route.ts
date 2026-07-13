@@ -19,9 +19,12 @@ export async function GET(
     if (!run) {
       return NextResponse.json({ error: "Run not found" }, { status: 404 });
     }
+    if (run.isFixture) {
+      return NextResponse.json({ error: "Test-only runs are not available in the production intelligence workspace" }, { status: 404 });
+    }
     return NextResponse.json({
       run,
-      maturity: run.isFixture ? "fixture" : "early_access",
+      maturity: "early_access",
     });
   } catch (err) {
     return errorResponse(err);

@@ -107,7 +107,6 @@ const ACTION_PAST: Record<string, string> = {
   remove: "removed",
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function safeJson(res: Response): Promise<{ ok: boolean; data: any; text: string }> {
   const text = await res.text();
   try {
@@ -135,6 +134,7 @@ export function ContainersPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [bulkRemoveConfirm, setBulkRemoveConfirm] = useState(false);
+  const [openContainerMenu, setOpenContainerMenu] = useState<string | null>(null);
 
   const containersAbort = useRef<AbortController | null>(null);
   const imagesAbort = useRef<AbortController | null>(null);
@@ -855,46 +855,70 @@ export function ContainersPanel() {
                         </div>
                       )}
 
-                      <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+                      <div className="relative flex w-full justify-end sm:w-auto">
                         <button
-                          onClick={() => viewLogs(container.name)}
-                          className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors"
-                        >
-                          logs
-                        </button>
-                        {container.state === "running" ? (
-                          <>
-                            <button
-                              onClick={() => setPendingAction({ action: "restart", name: container.name })}
-                              disabled={actionLoading === container.name}
-                              className="px-3 py-1.5 text-xs font-mono border border-border rounded hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
-                            >
-                              restart
-                            </button>
-                            <button
-                              onClick={() => setPendingAction({ action: "stop", name: container.name })}
-                              disabled={actionLoading === container.name}
-                              className="px-3 py-1.5 text-xs font-mono border border-error/30 text-error rounded hover:bg-error/10 transition-colors disabled:opacity-50"
-                            >
-                              stop
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={() => setPendingAction({ action: "start", name: container.name })}
-                            disabled={actionLoading === container.name}
-                            className="px-3 py-1.5 text-xs font-mono border border-success/30 text-success rounded hover:bg-success/10 transition-colors disabled:opacity-50"
-                          >
-                            start
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setRemoveTarget(container.name)}
+                          type="button"
+                          onClick={() => setOpenContainerMenu(openContainerMenu === container.name ? null : container.name)}
+                          aria-expanded={openContainerMenu === container.name}
+                          aria-label={`Actions for ${container.name}`}
                           disabled={actionLoading === container.name}
-                          className="px-3 py-1.5 text-xs font-mono border border-muted/30 text-muted rounded hover:border-error hover:text-error transition-colors disabled:opacity-50"
+                          className="flex h-8 w-9 items-center justify-center rounded-md border border-border text-sm text-muted transition-colors hover:border-accent hover:text-foreground disabled:opacity-50"
                         >
-                          remove
+                          ⋯
                         </button>
+                        {openContainerMenu === container.name && (
+                          <div className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-md border border-border bg-background py-1 shadow-xl">
+                            <button
+                              type="button"
+                              onClick={() => { setOpenContainerMenu(null); void viewLogs(container.name); }}
+                              className="w-full px-3 py-2 text-left text-xs hover:bg-card"
+                            >
+                              View logs
+                            </button>
+                            {container.state === "running" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => { setOpenContainerMenu(null); setPendingAction({ action: "restart", name: container.name }); }}
+                                  className="w-full px-3 py-2 text-left text-xs hover:bg-card"
+                                >
+                                  Restart
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setOpenContainerMenu(null); setPendingAction({ action: "stop", name: container.name }); }}
+                                  className="w-full px-3 py-2 text-left text-xs hover:bg-card"
+                                >
+                                  Stop
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => { setOpenContainerMenu(null); setPendingAction({ action: "start", name: container.name }); }}
+                                className="w-full px-3 py-2 text-left text-xs text-success hover:bg-success/10"
+                              >
+                                Start
+                              </button>
+                            )}
+                            {container.composeWorkingDir && (
+                              <button
+                                type="button"
+                                onClick={() => { window.location.href = "/deployments"; }}
+                                className="w-full px-3 py-2 text-left text-xs hover:bg-card"
+                              >
+                                Open deployment
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { setOpenContainerMenu(null); setRemoveTarget(container.name); }}
+                              className="w-full border-t border-border px-3 py-2 text-left text-xs text-error hover:bg-error/10"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

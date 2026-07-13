@@ -6,11 +6,9 @@ import {
   setLoopEngine,
   getRun,
   approveAndRecover,
-  createFixtureRecoveryExecutor,
   createLiveRecoveryExecutor,
   shouldUseLiveRecovery,
-  createMapProbeExecutor,
-  fixtureWrongUpstreamPort,
+  createHttpProbeExecutor,
   evaluatePolicy,
   canAutopilotApply,
   DEFAULT_AUTOPILOT_POLICY,
@@ -35,8 +33,6 @@ export async function POST(
     const user = requireAuth(req);
     const { id } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as {
-      forceVerifyFail?: boolean;
-      probeStatus?: number;
       /** Request autopilot path when policy allows (default false). */
       autopilot?: boolean;
       autonomyMode?: AutonomyMode;
@@ -55,7 +51,7 @@ export async function POST(
       ) {
         return NextResponse.json({
           run: existing,
-          maturity: existing.isFixture ? "fixture" : "early_access",
+          maturity: "early_access",
           note: "Run already past approval gate",
         });
       }
@@ -65,26 +61,19 @@ export async function POST(
       );
     }
 
+    if (existing.isFixture) {
+      return NextResponse.json({ error: "Fixture runs cannot execute recovery." }, { status: 409 });
+    }
+    const live = shouldUseLiveRecovery();
+    if (!live) {
+      return NextResponse.json(
+        { error: "Live recovery is disabled. Enable it only after host actions and verification are configured." },
+        { status: 503 }
+      );
+    }
     const state = getLoopEngine();
-    const fx = fixtureWrongUpstreamPort();
-    const proxyContent =
-      state.proxyContentByHost.get(existing.hostId) ||
-      fx.brokenRevision.content;
-
-    const live = shouldUseLiveRecovery() && !existing.isFixture;
-    const fixtureExecutor = createFixtureRecoveryExecutor({
-      proxyContent,
-      containerStates: { web: "running", api: "running" },
-    });
-    const recoveryExecutor = live
-      ? createLiveRecoveryExecutor()
-      : fixtureExecutor;
-
-    const probeStatus = body.probeStatus ?? (body.forceVerifyFail ? 502 : 200);
-    const probeExecutor = createMapProbeExecutor({
-      [fx.publicUrl]: probeStatus,
-      "https://api.example.com/health": probeStatus,
-    });
+    const recoveryExecutor = createLiveRecoveryExecutor();
+    const probeExecutor = createHttpProbeExecutor();
 
     const policy = {
       ...DEFAULT_AUTOPILOT_POLICY,
@@ -112,19 +101,10 @@ export async function POST(
       approvedBy: skipApprovalGate ? `autopilot:${user.username}` : user.username,
       recoveryExecutor,
       probeExecutor,
-      forceVerifyFail: body.forceVerifyFail,
       skipApprovalGate,
     });
 
-    // Engine state already re-reconciles graph; mirror fixture executor content if used
-    if (!live && "state" in fixtureExecutor) {
-      const proxyContentByHost = new Map(result.state.proxyContentByHost);
-      proxyContentByHost.set(existing.hostId, fixtureExecutor.state.proxyContent);
-      // applyProxyRevisionToState already ran inside orchestrator when revision known
-      setLoopEngine({ ...result.state, proxyContentByHost });
-    } else {
-      setLoopEngine(result.state);
-    }
+    setLoopEngine(result.state);
 
     try {
       await auditLog({
@@ -144,7 +124,7 @@ export async function POST(
 
     return NextResponse.json({
       run: result.run,
-      maturity: result.run.isFixture ? "fixture" : live ? "live" : "early_access",
+      maturity: "live",
       policyDecision,
       autopilot: skipApprovalGate,
       liveRecovery: live,

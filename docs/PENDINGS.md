@@ -14,7 +14,7 @@ The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.
 
 | # | Work | Impact | Fix size | Status |
 |---|------|--------|----------|--------|
-| 5.1 | **Seeded host-change Loop UI and deterministic fixtures** | Demonstrates change → targeted journey → diagnosis → guided repair → verification without implying live integrations. | Medium | **done** — `/intelligence` + fixture load APIs |
+| 5.1 | **Host-change Loop UI and deterministic test coverage** | Demonstrates change → targeted journey → diagnosis → guided repair → verification without exposing fixture data in the production workspace. | Medium | **done** — `/intelligence`; fixtures remain test-only |
 | 5.2 | **Read-only service graph and change ledger** | Connects Docker, Compose, Caddy, domains, ports, networks, deployments, and last-known-healthy state. | Large | **done** — pure reconciler + APIs (`src/lib/intelligence/`); live host adapters still thin |
 | 5.3 | **Targeted customer journeys and blast-radius selection** | Runs only the confirmed HTTP/browser journeys affected by a meaningful host or release change. | Large | **done** — confirmed journeys + selector |
 | 5.4 | **Gemini investigation and reverse-proxy intelligence** | Produces evidence-backed diagnoses across DNS, TLS, Caddy/Nginx, Docker networks, containers, processes, and changes. | Large | **done** — deterministic + Gemini hybrid (`providers/gemini.ts`); action plans stay allowlisted |
