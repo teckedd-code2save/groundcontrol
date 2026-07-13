@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 export default function DeployRedirectPage() {
   const router = useRouter();
   useEffect(() => {
-    router.replace("/projects");
+    router.replace("/deployments");
   }, [router]);
 
   return (

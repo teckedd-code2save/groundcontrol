@@ -5,8 +5,7 @@ import {
   setLoopEngine,
   listRuns,
   advanceToInvestigation,
-  createMapProbeExecutor,
-  fixtureWrongUpstreamPort,
+  createHttpProbeExecutor,
 } from "@/lib/intelligence";
 
 function errorResponse(err: unknown, status = 500) {
@@ -25,8 +24,7 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * Create / advance a Loop run through journey execution and investigation.
- * Uses fixture probe map when graph source is fixture.
+ * Create / advance a Loop run through real journey execution and investigation.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -35,27 +33,26 @@ export async function POST(req: NextRequest) {
       changeSetId?: string;
       runId?: string;
       domain?: string;
-      /** Fixture HTTP status for public URL (default 502 for broken demos). */
-      probeStatus?: number;
     };
 
     const state = getLoopEngine();
     const changeSetId = body.changeSetId || state.changeSets[0]?.id;
     if (!changeSetId) {
       return NextResponse.json(
-        { error: "No change set available. Load a fixture or ingest events first." },
+        { error: "No real change set is available yet." },
         { status: 400 }
       );
     }
 
     const runId = body.runId || `run_${Date.now()}`;
-    const domain = body.domain || "app.example.com";
-    const fx = fixtureWrongUpstreamPort();
-    const status = body.probeStatus ?? 502;
-    const probeExecutor = createMapProbeExecutor({
-      [fx.publicUrl]: status,
-      "https://api.example.com/health": status,
-    });
+    const domain = String(body.domain || "").trim();
+    if (!domain) {
+      return NextResponse.json({ error: "A live service domain is required." }, { status: 400 });
+    }
+    if (state.graph.source === "fixture") {
+      return NextResponse.json({ error: "Fixture graph data cannot start production Loop runs." }, { status: 409 });
+    }
+    const probeExecutor = createHttpProbeExecutor();
 
     const result = await advanceToInvestigation({
       state,
@@ -68,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       run: result.run,
-      maturity: result.run.isFixture ? "fixture" : "early_access",
+      maturity: "early_access",
     });
   } catch (err) {
     return errorResponse(err);

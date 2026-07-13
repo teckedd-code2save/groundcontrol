@@ -18,6 +18,7 @@ const mockProject = {
   category: "static",
   status: "unknown",
   lastDeploy: null,
+  projectGroupId: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 } satisfies Project;

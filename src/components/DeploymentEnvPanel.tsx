@@ -73,6 +73,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [scopedDiscoveredValues, setScopedDiscoveredValues] = useState<Record<string, string>>({});
   const [discoverySummary, setDiscoverySummary] = useState<DiscoverySummary>(EMPTY_SUMMARY);
   const [localValues, setLocalValues] = useState<Record<string, string>>({});
+  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [pastedEnv, setPastedEnv] = useState("");
@@ -81,7 +82,6 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [sourceOpen, setSourceOpen] = useState(false);
   const [envPreviewOpen, setEnvPreviewOpen] = useState(false);
   const [revealEnvPreview, setRevealEnvPreview] = useState(false);
-  const [shownFields, setShownFields] = useState<Record<string, boolean>>({});
 
   const providerOptions = useMemo(() => providers.filter((provider) => provider.provider !== "local"), [providers]);
   const selectedProvider = providers.find((provider) => provider.id === profile?.providerAccountId);
@@ -98,12 +98,27 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     setScopedDiscoveredValues(reveal && profileRes.discovered?.scopedValues ? profileRes.discovered.scopedValues : {});
     setDiscoverySummary(profileRes.discovered?.summary || EMPTY_SUMMARY);
     const initial: Record<string, string> = {};
-    for (const entry of profileRes.profile?.schema || []) initial[entry.key] = "";
-    for (const key of Object.keys(profileRes.profile?.values || {})) initial[key] = "";
+    const scopedValues = reveal && profileRes.discovered?.scopedValues
+      ? profileRes.discovered.scopedValues as Record<string, string>
+      : {};
+    const deploymentValues = reveal && profileRes.discovered?.values
+      ? profileRes.discovered.values as Record<string, string>
+      : {};
+    const savedValues = profileRes.profile?.values || {};
+    const keys = new Set<string>();
+    for (const entry of profileRes.profile?.schema || []) keys.add(entry.key);
+    for (const key of Object.keys(savedValues)) keys.add(key);
     for (const entry of profileRes.discovered?.entries || []) {
-      if (!componentName || !entry.component || entry.component === componentName) initial[entry.key] ||= "";
+      if (!componentName || !entry.component || entry.component === componentName) keys.add(entry.key);
+    }
+    for (const key of keys) {
+      const scoped = componentName ? scopedValues[`${componentName}:${key}`] : undefined;
+      initial[key] = reveal
+        ? scoped ?? deploymentValues[key] ?? savedValues[key]?.masked ?? ""
+        : "";
     }
     setLocalValues(initial);
+    setDirtyKeys(new Set());
   }, [projectId, deploymentId, componentName]);
 
   useEffect(() => {
@@ -147,6 +162,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           if (!componentName || !entry.component || entry.component === componentName) nextValues[entry.key] ||= "";
         }
         setLocalValues(nextValues);
+        setDirtyKeys(new Set());
         if (revealEnvPreview) {
           setRevealEnvPreview(false);
           setDiscoveredValues({});
@@ -188,8 +204,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     revealEnvPreview
   );
   const pendingValues = Object.fromEntries(
-    Object.entries(localValues).filter(([, value]) => value)
+    Object.entries(localValues).filter(([key]) => dirtyKeys.has(key))
   );
+  const hasPendingChanges = dirtyKeys.size > 0;
 
   return (
     <div className="space-y-3 rounded-lg bg-background/40 p-3">
@@ -203,64 +220,25 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {profile.providerType === "local" && runningEntries.length > 0 && (
-            <button
-              onClick={() => saveProfile({}, undefined, true)}
-              disabled={loading}
-              className="rounded bg-background px-2 py-1 text-[10px] font-mono hover:bg-accent/10 hover:text-accent"
-              title="Import the effective environment from running containers into GroundControl's encrypted local source."
-            >
-              Import running <InfoMark />
-            </button>
-          )}
           <button
             onClick={async () => {
               const next = !revealEnvPreview;
               setRevealEnvPreview(next);
               await load(next);
             }}
-            disabled={loading}
+            disabled={loading || hasPendingChanges}
             className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
-            title="Explicitly reveal or mask saved and running values for this authenticated session."
+            title={hasPendingChanges ? "Save or discard your edits before changing visibility." : "Explicitly reveal or mask saved and running values for this authenticated session."}
           >
-            {revealEnvPreview ? "Mask values" : "Reveal values"}
+            {revealEnvPreview ? "Mask current" : "Reveal current"}
           </button>
           <button
-            onClick={() => load(revealEnvPreview)}
+            onClick={() => setSourceOpen((open) => !open)}
             disabled={loading}
-            className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
-            title="Refresh Compose declarations, resolved configuration, and running container values."
+            aria-expanded={sourceOpen}
+            className="rounded bg-foreground px-2.5 py-1 text-[10px] font-mono text-background hover:opacity-90 disabled:opacity-50"
           >
-            Refresh
-          </button>
-          <button
-            onClick={() => saveProfile({}, pendingValues)}
-            disabled={loading}
-            className="rounded bg-accent/10 px-2 py-1 text-[10px] font-mono text-accent hover:bg-accent/20"
-            title="Store edited values in the selected environment source. It does not restart containers."
-          >
-            Save <InfoMark />
-          </button>
-          {onRedeploy && (
-            <button
-              onClick={async () => {
-                const saved = await saveProfile({}, pendingValues);
-                if (saved) onRedeploy();
-              }}
-              disabled={loading}
-              className="rounded bg-success/10 px-2 py-1 text-[10px] font-mono text-success hover:bg-success/20"
-              title="Save edited values, then open the redeploy flow so the runtime can pick them up."
-            >
-              Save &amp; redeploy <InfoMark />
-            </button>
-          )}
-          <button
-            onClick={() => setEnvPreviewOpen((open) => !open)}
-            disabled={loading}
-            className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
-            title="View and copy the environment file preview. Saved secrets stay masked until revealed."
-          >
-            .env <InfoMark />
+            {sourceOpen ? "Close management" : "Manage environment"}
           </button>
         </div>
       </div>
@@ -287,7 +265,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
 
       {message && <div className="rounded bg-card p-2 text-[10px] font-mono text-muted">{message}</div>}
 
-      {envPreviewOpen && (
+      {sourceOpen && envPreviewOpen && (
         <div className="space-y-2 rounded-lg bg-card p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs font-medium">.env preview</div>
@@ -321,37 +299,83 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => setSourceOpen((open) => !open)}
-        className="flex w-full items-center justify-between rounded-lg bg-card px-3 py-2 text-left text-xs font-mono text-muted transition-colors hover:bg-accent/5 hover:text-accent"
-      >
-        <span>Source: {selectedProvider && profile.providerType !== "local" ? selectedProvider.name : "Local encrypted .env"}</span>
-        <span aria-hidden="true">{sourceOpen ? "−" : "+"}</span>
-      </button>
-
       {sourceOpen && (
-        <div className="grid grid-cols-1 gap-2 rounded-lg bg-card p-3 md:grid-cols-4">
-          <label className="block">
-            <span className="mb-1 block text-[10px] font-mono text-muted">Provider</span>
-            <select
-              value={profile.providerType === "infisical" ? String(profile.providerAccountId || "") : "local"}
-              onChange={(event) => {
-                const value = event.target.value;
-                if (value === "local") saveProfile({ providerType: "local", providerAccountId: null });
-                else saveProfile({ providerType: "infisical", providerAccountId: Number(value) });
-              }}
-              className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="local">Local encrypted .env</option>
-              {providerOptions.map((provider) => (
-                <option key={provider.id} value={provider.id}>{provider.name}</option>
-              ))}
-            </select>
-          </label>
-          <Input label="Project ID" value={profile.projectRef || ""} onChange={(value) => setProfile({ ...profile, projectRef: value })} onBlur={() => saveProfile({ projectRef: profile.projectRef })} />
-          <Input label="Environment" value={profile.environment || "prod"} onChange={(value) => setProfile({ ...profile, environment: value })} onBlur={() => saveProfile({ environment: profile.environment })} />
-          <Input label="Path" value={profile.secretPath || "/"} onChange={(value) => setProfile({ ...profile, secretPath: value })} onBlur={() => saveProfile({ secretPath: profile.secretPath })} />
+        <div className="space-y-4 rounded-lg border border-border bg-card p-3">
+          <div className="flex flex-col gap-3 border-b border-border/70 pb-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-xs font-medium">Manage environment</div>
+              <div className="mt-0.5 text-[10px] font-mono text-muted">
+                {selectedProvider && profile.providerType !== "local" ? selectedProvider.name : "Local encrypted source"}
+                {hasPendingChanges ? ` · ${dirtyKeys.size} unsaved change${dirtyKeys.size === 1 ? "" : "s"}` : " · no pending changes"}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {profile.providerType === "local" && runningEntries.length > 0 && (
+                <button
+                  onClick={() => saveProfile({}, undefined, true)}
+                  disabled={loading}
+                  className="rounded bg-background px-2.5 py-1.5 text-[10px] font-mono text-muted hover:text-accent disabled:opacity-50"
+                >
+                  Import running
+                </button>
+              )}
+              <button
+                onClick={() => load(revealEnvPreview)}
+                disabled={loading}
+                className="rounded bg-background px-2.5 py-1.5 text-[10px] font-mono text-muted hover:text-accent disabled:opacity-50"
+              >
+                Refresh
+              </button>
+              <button
+                onClick={() => setEnvPreviewOpen((open) => !open)}
+                disabled={loading}
+                className="rounded bg-background px-2.5 py-1.5 text-[10px] font-mono text-muted hover:text-accent disabled:opacity-50"
+              >
+                {envPreviewOpen ? "Hide .env" : "Preview .env"}
+              </button>
+              <button
+                onClick={() => saveProfile({}, pendingValues)}
+                disabled={loading || !hasPendingChanges}
+                className="rounded bg-accent/10 px-2.5 py-1.5 text-[10px] font-mono text-accent hover:bg-accent/20 disabled:opacity-40"
+              >
+                Save
+              </button>
+              {onRedeploy && (
+                <button
+                  onClick={async () => {
+                    const saved = await saveProfile({}, pendingValues);
+                    if (saved) onRedeploy();
+                  }}
+                  disabled={loading || !hasPendingChanges}
+                  className="rounded bg-success/10 px-2.5 py-1.5 text-[10px] font-mono text-success hover:bg-success/20 disabled:opacity-40"
+                >
+                  Save &amp; redeploy
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-mono text-muted">Source</span>
+              <select
+                value={profile.providerType === "infisical" ? String(profile.providerAccountId || "") : "local"}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "local") saveProfile({ providerType: "local", providerAccountId: null });
+                  else saveProfile({ providerType: "infisical", providerAccountId: Number(value) });
+                }}
+                className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="local">Local encrypted</option>
+                {providerOptions.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.name}</option>
+                ))}
+              </select>
+            </label>
+            <Input label="Provider project" value={profile.projectRef || ""} onChange={(value) => setProfile({ ...profile, projectRef: value })} onBlur={() => saveProfile({ projectRef: profile.projectRef })} />
+            <Input label="Environment" value={profile.environment || "prod"} onChange={(value) => setProfile({ ...profile, environment: value })} onBlur={() => saveProfile({ environment: profile.environment })} />
+            <Input label="Secret path" value={profile.secretPath || "/"} onChange={(value) => setProfile({ ...profile, secretPath: value })} onBlur={() => saveProfile({ secretPath: profile.secretPath })} />
+          </div>
         </div>
       )}
 
@@ -370,10 +394,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       {profile.providerType === "local" && (
         <div className="space-y-2">
           <div className="overflow-hidden rounded-lg bg-card">
-            <div className="hidden bg-card px-3 py-2 text-[10px] font-mono text-muted md:grid md:grid-cols-[minmax(170px,.8fr)_minmax(220px,1fr)_minmax(220px,1fr)] md:gap-3">
+            <div className="grid grid-cols-[minmax(150px,.8fr)_minmax(180px,1.2fr)] gap-3 bg-card px-3 py-2 text-[10px] font-mono text-muted">
               <span>Key</span>
-              <span>Effective now</span>
-              <span>New value</span>
+              <span>Value</span>
             </div>
             {envKeys.length === 0 ? (
               <div className="px-3 py-4 text-xs text-muted">No environment keys found yet.</div>
@@ -392,37 +415,29 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   : discoveredEntry?.masked || profile.values?.[key]?.masked || "";
                 const source = discoveredEntry?.source || (profile.values?.[key]?.hasValue ? "saved source" : "unset");
                 return (
-                  <div key={key} className="grid gap-2 border-t border-border/60 px-3 py-3 md:grid-cols-[minmax(170px,.8fr)_minmax(220px,1fr)_minmax(220px,1fr)] md:items-center md:gap-3">
+                  <div key={key} className="grid grid-cols-[minmax(150px,.8fr)_minmax(180px,1.2fr)] items-center gap-3 border-t border-border/60 px-3 py-3">
                     <div>
-                      <div className="text-xs font-mono">{key}{schemaEntry?.required ? " *" : ""}</div>
+                      <div className="flex items-center gap-2 text-xs font-mono">
+                        <span className="truncate">{key}{schemaEntry?.required ? " *" : ""}</span>
+                        {dirtyKeys.has(key) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" title="Unsaved change" />}
+                      </div>
                       <div className="mt-1 text-[9px] font-mono text-muted">
                         {discoveredEntry?.component ? `${discoveredEntry.component} · ` : ""}{source}
                         {discoveredEntry?.state ? ` · ${discoveredEntry.state}` : ""}
                       </div>
                     </div>
-                    <div className="min-w-0 rounded bg-background/70 px-2 py-1.5">
-                      <div className="mb-1 text-[9px] font-mono uppercase tracking-wide text-muted md:hidden">Effective now</div>
-                      <code className="block truncate text-[11px] text-foreground/80" title={revealEnvPreview ? currentValue : undefined}>
-                        {currentValue || "<unset>"}
-                      </code>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="sr-only">New value for {key}</span>
+                    <div className="min-w-0">
                       <input
-                        type={shownFields[key] ? "text" : "password"}
+                        type={revealEnvPreview ? "text" : "password"}
                         value={localValues[key] || ""}
-                        aria-label={`New value for ${key}`}
-                        placeholder={currentValue ? "leave unchanged" : "set value"}
-                        onChange={(event) => setLocalValues({ ...localValues, [key]: event.target.value })}
-                        className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
+                        aria-label={`Value for ${key}`}
+                        placeholder={currentValue || "<unset>"}
+                        onChange={(event) => {
+                          setLocalValues({ ...localValues, [key]: event.target.value });
+                          setDirtyKeys((current) => new Set(current).add(key));
+                        }}
+                        className="w-full rounded-md border border-transparent bg-background px-2.5 py-2 text-xs font-mono outline-none transition-colors placeholder:text-muted/70 focus:border-accent/50 focus:ring-1 focus:ring-accent/30"
                       />
-                      <button
-                        onClick={() => setShownFields({ ...shownFields, [key]: !shownFields[key] })}
-                        className="px-1.5 py-1.5 text-xs text-muted hover:text-foreground"
-                        title={shownFields[key] ? "Hide" : "Show"}
-                      >
-                        {shownFields[key] ? "🙈" : "👁"}
-                      </button>
                     </div>
                   </div>
                 );
@@ -492,6 +507,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   }
                 }
                 setLocalValues({ ...localValues, ...parsed });
+                setDirtyKeys((current) => new Set([...current, ...keys]));
                 setProfile({ ...profile, schema: nextSchema });
                 setMessage(`${keys.length} value${keys.length === 1 ? "" : "s"} loaded from pasted env`);
               }}
@@ -569,10 +585,6 @@ function quoteEnvValue(value: string): string {
   if (!value) return "";
   if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
   return JSON.stringify(value);
-}
-
-function InfoMark() {
-  return <span aria-hidden="true" className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-current/10 text-[9px]">i</span>;
 }
 
 function EnvSummary({ label, value, detail, tone = "muted" }: {

@@ -7,6 +7,8 @@ import {
   LayoutDashboard,
   Sparkles,
   Boxes,
+  FolderKanban,
+  Rocket,
   LayoutTemplate,
   Terminal,
   Bell,
@@ -31,12 +33,18 @@ type NavItem = {
 
 const primaryItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, section: "operate" },
+  { href: "/projects", label: "Projects", icon: FolderKanban, section: "operate" },
+  { href: "/deployments", label: "Deployments", icon: Rocket, section: "operate" },
+  { href: "/containers", label: "Runtime", icon: Boxes, section: "operate" },
   { href: "/intelligence", label: "Intelligence", icon: Radar, section: "operate" },
   { href: "/ai", label: "Co-Pilot", icon: Sparkles, section: "operate" },
-  { href: "/services", label: "Services", icon: Boxes, section: "operate" },
   { href: "/templates", label: "Templates", icon: LayoutTemplate, section: "build" },
   { href: "/terminal", label: "Terminal", icon: Terminal, section: "operate" },
 ];
+
+const mobilePrimaryItems = primaryItems.filter((item) =>
+  ["/dashboard", "/projects", "/deployments", "/containers", "/intelligence"].includes(item.href)
+);
 
 const secondaryItems: NavItem[] = [
   { href: "/alerts", label: "Alerts", icon: Bell, section: "system" },
@@ -68,7 +76,7 @@ export function Sidebar() {
     <>
       {/* ── Mobile: bottom tab bar ── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 grid grid-cols-6 bg-card/95 backdrop-blur border-t border-border py-1.5 safe-area-bottom">
-        {primaryItems.map(item => {
+        {mobilePrimaryItems.map(item => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
           return (
@@ -142,7 +150,7 @@ export function Sidebar() {
             {!collapsed && (
               <div>
                 <h1 className="font-bold text-sm tracking-tight">GroundControl</h1>
-                <p className="text-[10px] text-muted font-mono">VPS Command</p>
+                <p className="text-[10px] text-muted font-mono">Operational control</p>
               </div>
             )}
           </Link>

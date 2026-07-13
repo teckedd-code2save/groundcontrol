@@ -72,9 +72,27 @@ model Project {
   lastDeploy  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  projectGroupId Int?
 
   deployments Deployment[]
   envProfiles DeploymentEnvProfile[]
+  projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
+
+  @@index([projectGroupId])
+}
+
+// A Project is intentionally only an operator-created group of deployments.
+// The legacy Project model above remains the deployed workload record until the
+// deployment/revision table rename is completed in a backwards-compatible step.
+model ProjectGroup {
+  id          Int      @id @default(autoincrement())
+  slug        String   @unique
+  name        String
+  description String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deployments Project[]
 }
 
 model DeploymentTarget {
