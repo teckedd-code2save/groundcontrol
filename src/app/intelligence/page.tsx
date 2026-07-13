@@ -206,9 +206,8 @@ export default function IntelligencePage() {
           {maturity || graphSource || "empty"}
         </span>
         <span className="text-muted">
-          M1–M5: graph · journeys · recovery · Daytona · guarded autopilot. Live Caddy when{" "}
-          <span className="font-mono">GC_LOOP_LIVE=1</span>. Gemini when{" "}
-          <span className="font-mono">GEMINI_API_KEY</span> set.
+          Live and opt-in paths: service graph · change ledger · confirmed journeys · evidence-backed recovery.
+          Fixtures remain labelled. Gemini and Daytona require configuration; guarded autopilot stays disabled by default.
         </span>
         {fixtureNote && (
           <span className="text-amber-700 dark:text-amber-400">{fixtureNote}</span>
