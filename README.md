@@ -2,9 +2,9 @@
 
 # 🛰️ GroundControl
 
-### The self-hosted cockpit and deployment control plane for your VPS fleet.
+### Operational intelligence for applications running on infrastructure you own.
 
-**One dashboard to see every container, proxy, deployment, and metric across all your servers — then build, deploy, and expose apps on Docker Compose, Kubernetes, Cloud Run, or Terraform-provisioned infra, with an AI ops assistant riding shotgun.**
+**See every container, proxy, deployment, domain, and service relationship across your servers today — with a proposed intelligence layer that tests meaningful host changes and safely guides recovery when customer journeys break.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
@@ -20,6 +20,8 @@
 ---
 
 GroundControl is a self-hosted infrastructure dashboard and deployment control plane: a single pane of glass for the servers you actually run. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and Kubernetes, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
+
+The next product direction deepens that existing advantage rather than replacing it. GroundControl Loop is the proposed intelligence and recovery engine: it correlates meaningful host changes, maps their likely blast radius, runs targeted customer-facing journeys, investigates regressions with evidence, and prepares the least disruptive reversible recovery. See the [implementation and evaluation contract](./docs/LOOP.md).
 
 It also builds and deploys your applications to multiple targets — Docker Compose, static sites, k3s Kubernetes, Google Cloud Run, or Terraform-provisioned infrastructure — and can provision custom domains and ephemeral preview URLs through Cloudflare automatically.
 
@@ -69,6 +71,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 | 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
+| 🔁 | **Loop (proposed)** | Correlate host and release changes, run targeted customer journeys, investigate failures across Docker and reverse-proxy topology, then guide or perform reversible recovery by policy. |
 | 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
 | 💓 | **Container Health Scheduler** | Periodic container health checks on a configurable interval. Alerts when containers go down or become unhealthy — runs independently of the dashboard. |
 | 🔀 | **Services** | Containers, reverse proxy, projects, deployments, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
@@ -286,6 +289,7 @@ GroundControl is a from-scratch, full-stack DevOps product, not a tutorial clone
 - [x] k3s / Kubernetes deploy target
 - [x] Google Cloud Run managed deploy target
 - [x] Terraform-first infrastructure control plane
+- [ ] GroundControl Loop: host-change intelligence, targeted synthetic journeys, evidence-based diagnosis, guided recovery, and guarded autopilot ([implementation contract](./docs/LOOP.md))
 - [ ] AWS Fargate / Azure Container Apps deploy targets
 - [ ] Background job queue + real-time deploy logs
 - [ ] Auto-create VPS connections from Terraform output
@@ -306,6 +310,7 @@ Dev setup, project structure map, code conventions, and how to add a page or API
 - [DEPLOY.md](./DEPLOY.md) — full self-deployment guide (VPS, domain, Caddy, SSL, Cloudflare)
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup & project map
 - [SECURITY.md](./SECURITY.md) — disclosure policy & threat model
+- [docs/LOOP.md](./docs/LOOP.md) — proposed service graph, change ledger, synthetic journeys, reverse-proxy intelligence, recovery policy, milestones, and evaluation
 - [docs/PENDINGS.md](./docs/PENDINGS.md) — known sharp edges, pending work, and recommended next steps
 - [docs/DEMO.md](./docs/DEMO.md) — click-by-click demo recording script
 - [docs/demo-data.md](./docs/demo-data.md) — safe demo seed data (no real VPS needed)

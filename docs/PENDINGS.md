@@ -4,7 +4,23 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 
 > **New:** For a step-by-step guide on installing and testing every integration, see [`INTEGRATION-GUIDE.md`](./INTEGRATION-GUIDE.md).
 
-> Last updated: 2026-06-23
+> Last updated: 2026-07-13
+
+---
+
+## Phase 5 — GroundControl intelligence and Loop
+
+The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.md). The public website experience is a product preview, not a claim that these integrations are already live.
+
+| # | Work | Impact | Fix size | Status |
+|---|------|--------|----------|--------|
+| 5.1 | **Seeded host-change Loop UI and deterministic fixtures** | Demonstrates change → targeted journey → diagnosis → guided repair → verification without implying live integrations. | Medium | specified |
+| 5.2 | **Read-only service graph and change ledger** | Connects Docker, Compose, Caddy, domains, ports, networks, deployments, and last-known-healthy state. | Large | specified |
+| 5.3 | **Targeted customer journeys and blast-radius selection** | Runs only the confirmed HTTP/browser journeys affected by a meaningful host or release change. | Large | specified |
+| 5.4 | **Gemini investigation and reverse-proxy intelligence** | Produces evidence-backed diagnoses across DNS, TLS, Caddy/Nginx, Docker networks, containers, processes, and changes. | Large | specified |
+| 5.5 | **Approved reversible recovery** | Restores known-good proxy revisions or immutable artifacts, verifies publicly, and rolls back failed repairs. | Large | specified |
+| 5.6 | **Daytona reproduction and resilient blueprint comparison** | Reproduces eligible code/config failures and compares current topology with approved resilient patterns. | Large | specified |
+| 5.7 | **Guarded autopilot policy** | Allows only evaluated low-risk actions while keeping stateful, destructive, and uncertain work guided or approval-gated. | Large | specified |
 
 ---
 
@@ -74,11 +90,11 @@ This file tracks the known gaps, rough edges, and follow-up work from the four-p
 
 ## Recommended next 3 (updated)
 
-1. **AWS/Azure managed-target adapters** (3.3) — prove the pluggable target model works across clouds.
-2. **Cloud Run custom domains** (3.5) — wire Cloudflare DNS to the service URL.
-3. **Registry mode for k3s** (2.2) — push images to a registry so multi-node clusters work.
+1. **Read-only intelligence slice** (5.1–5.2) — detect a Docker/Caddy change and render the domain-to-container path plus last-known-healthy comparison.
+2. **One confirmed public journey** (5.3) — exercise an unreachable-app fixture after stabilization and retain deterministic evidence.
+3. **Guided proxy recovery** (5.4–5.5) — diagnose a stale upstream port, validate a reversible Caddy correction, and prove recovery without automatic mutation.
 
-Or, if you want the fastest demo polish:
+Or, if you want the fastest existing-product polish:
 
 1. **Auto-install cloudflared** (1.1) — removes a manual bootstrap step.
 2. **Nginx support for static sites** (1.3) — broadens VPS compatibility.
