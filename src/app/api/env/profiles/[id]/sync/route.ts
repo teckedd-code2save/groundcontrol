@@ -27,7 +27,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({
       profile: updated,
       validation: resolved.validation,
-      count: Object.keys(resolved.values).length,
+      count: Object.keys(resolved.values).length + Object.values(resolved.componentValues)
+        .reduce((total, values) => total + Object.keys(values).length, 0),
     });
   } catch (err) {
     return handleApiError(err);
