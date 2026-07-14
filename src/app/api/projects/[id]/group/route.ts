@@ -16,7 +16,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (projectGroupId !== null && !Number.isFinite(projectGroupId)) {
       return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
     }
-    const deployment = await prisma.project.update({
+    const deployment = await prisma.enrolledDeployment.update({
       where: { id: deploymentId },
       data: { projectGroupId },
     });

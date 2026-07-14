@@ -52,6 +52,7 @@ model VpsConfig {
 
   systemConfig SystemConfig?
   deploymentTargets DeploymentTarget[]
+  enrolledDeployments EnrolledDeployment[]
 }
 
 model Project {
@@ -77,6 +78,7 @@ model Project {
   deployments Deployment[]
   envProfiles DeploymentEnvProfile[]
   projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
+  inventoryRecord EnrolledDeployment?
 
   @@index([projectGroupId])
 }
@@ -93,6 +95,38 @@ model ProjectGroup {
   updatedAt   DateTime @updatedAt
 
   deployments Project[]
+  enrolledDeployments EnrolledDeployment[]
+}
+
+// Stable operator-owned identity for a workload discovered on a host. This is
+// deliberately separate from Deployment, which records individual releases.
+model EnrolledDeployment {
+  id              Int      @id @default(autoincrement())
+  name            String
+  slug            String   @unique
+  kind            String
+  managementMode  String   @default("track") // track | managed
+  sourcePath      String?
+  composePath     String?
+  containerName   String?
+  systemdUnit     String?
+  status          String   @default("unknown")
+  metadataJson    String   @default("{}")
+  lastSeenAt      DateTime?
+  projectGroupId  Int?
+  vpsConfigId     Int?
+  legacyProjectId Int?     @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  projectGroup  ProjectGroup? @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
+  vpsConfig     VpsConfig?    @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
+  legacyProject Project?      @relation(fields: [legacyProjectId], references: [id], onDelete: SetNull)
+
+  @@unique([vpsConfigId, sourcePath])
+  @@unique([vpsConfigId, containerName])
+  @@index([projectGroupId, updatedAt])
+  @@index([vpsConfigId, status])
 }
 
 model DeploymentTarget {

@@ -1,6 +1,6 @@
 # GroundControl Loop
 
-> Status: implemented product-direction foundation with seeded fixtures and opt-in live adapters. This document remains the implementation and evaluation contract; public demonstrations stay labelled until their acceptance criteria pass, and guarded autopilot is not generally enabled.
+> Status: implemented product-direction foundation with a production workspace driven by enrolled services, recorded changes and live public-path probes. Deterministic fixtures remain test-only evaluation assets; guarded autopilot is not generally enabled.
 
 ## Product hierarchy
 

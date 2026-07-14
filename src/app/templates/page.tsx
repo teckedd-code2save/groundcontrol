@@ -449,8 +449,7 @@ export default function TemplatesPage() {
             <div className="border border-border bg-card p-4">
               <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Then deploy</div>
               <p className="text-[11px] text-muted/75 leading-relaxed">
-                Successful deployments are managed under <span className="font-mono">/srv/groundcontrol/deployments</span>{" "}
-                and appear on the Deployments page.
+                Successful deployments use the active host&apos;s managed workspace and appear as candidates until explicitly enrolled.
               </p>
             </div>
           </div>

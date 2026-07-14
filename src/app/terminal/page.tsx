@@ -252,7 +252,7 @@ export default function TerminalPage() {
       if (!intent) {
         setAiSuggestion({
           mode: "help",
-          help: "Terminal AI turns intent into a POSIX command on the active host. Managed stacks live under /srv/groundcontrol/deployments — not the same as docker ps.",
+          help: "Terminal AI turns intent into a POSIX command on the active host. Enrolled deployments can live anywhere; containers are runtime instances, not deployment identity.",
           suggestions: [
             "/ai list deployments",
             "/ai list containers",

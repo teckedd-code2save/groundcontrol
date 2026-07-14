@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ContainersPanel } from "@/components/ContainersPanel";
-import { ProjectsPanel } from "@/components/ProjectsPanel";
+import { DeploymentWorkspace } from "@/components/DeploymentWorkspace";
 import { BootstrapPanel } from "@/components/BootstrapPanel";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
 import { PageHeader } from "@/components/PageHeader";
@@ -60,7 +60,7 @@ export default function ServicesPage() {
       </div>
 
       {activeTab === "containers" && <ContainersPanel />}
-      {activeTab === "deployments" && <ProjectsPanel />}
+      {activeTab === "deployments" && <DeploymentWorkspace />}
       {activeTab === "bootstrap" && <BootstrapPanel />}
       {activeTab === "infrastructure" && <TerraformStacksTab />}
     </div>
