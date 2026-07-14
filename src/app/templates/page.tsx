@@ -33,6 +33,7 @@ interface TemplateDeployResult {
   upOutput?: string | { stdout?: string; stderr?: string };
   tunnelId?: string | null;
   tunnelConfig?: unknown;
+  enrolled?: boolean;
 }
 
 type Step = "browse" | "source" | "configure" | "preview" | "deploy";
@@ -114,6 +115,7 @@ export default function TemplatesPage() {
   const [composeYml, setComposeYml] = useState("");
   const [proxyConfig, setProxyConfig] = useState("");
   const [deployResult, setDeployResult] = useState<TemplateDeployResult | null>(null);
+  const [deployStatus, setDeployStatus] = useState("");
 
   useEffect(() => {
     fetch("/api/templates").then(r => r.json())
@@ -281,7 +283,7 @@ export default function TemplatesPage() {
 
   async function handlePreview() {
     if (!selected) return;
-    setLoading(true); setResult(null);
+    setLoading(true); setResult(null); setDeployStatus("Validating source and required inputs…");
     // Re-validate source before generating preview (catches wrong template + repo combo)
     const sourceOk = sourceValidated || (await validateSource({ silentOk: true }));
     if (!sourceOk) {
@@ -326,6 +328,7 @@ export default function TemplatesPage() {
       return;
     }
     try {
+      setDeployStatus("Creating the workspace, applying runtime configuration and checking the public route…");
       const res = await fetch("/api/templates/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -345,6 +348,7 @@ export default function TemplatesPage() {
       });
       const data = await res.json();
       if (data.success) {
+        setDeployStatus("Deployment created, enrolled and attached to its environment source.");
         setDeployResult(data);
         const parts = [data.message];
         if (data.dns) parts.push("DNS: record created");
@@ -354,12 +358,14 @@ export default function TemplatesPage() {
         setComposeYml(data.composeYml || "");
         setProxyConfig(data.proxyConfig || "");
       } else {
+        setDeployStatus("");
         const extra = data.suggestion ? ` — ${data.suggestion}` : "";
         setResult({ ok: false, msg: `${data.error || "Deploy failed"}${extra}` });
         if (data.checks) setSourceChecks(data.checks);
         if (data.suggestion) setSourceSuggestion(data.suggestion);
       }
     } catch {
+      setDeployStatus("");
       setResult({ ok: false, msg: "Connection error" });
     } finally { setLoading(false); }
   }
@@ -394,7 +400,7 @@ export default function TemplatesPage() {
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
       <h1 className="text-2xl font-semibold tracking-tight mb-1">Templates</h1>
       <p className="text-muted text-xs mb-2">
-        Production-shaped starters. Deploys land under the managed root and show up in Services → Deployments.
+        Production-shaped workflows that create, validate and enrol a deployment—not loose boilerplate files.
       </p>
       <p className="mb-8 text-[11px] font-mono text-muted">
         New here? <span className="text-accent">Static Site</span> for HTML pages,{" "}
@@ -428,6 +434,13 @@ export default function TemplatesPage() {
         </div>
       )}
 
+      {deployStatus && (
+        <div className="mb-6 border-l-2 border-accent bg-card px-3 py-2 text-xs font-mono text-muted">
+          {loading ? <span className="text-accent">Working · </span> : <span className="text-success">Complete · </span>}
+          {deployStatus}
+        </div>
+      )}
+
       {/* Step 1: Browse */}
       {step === "browse" && (
         <div className="space-y-4">
@@ -449,7 +462,7 @@ export default function TemplatesPage() {
             <div className="border border-border bg-card p-4">
               <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Then deploy</div>
               <p className="text-[11px] text-muted/75 leading-relaxed">
-                Successful deployments use the active host&apos;s managed workspace and appear as candidates until explicitly enrolled.
+                Successful template runs create a managed deployment identity, save its environment source and enrol it automatically.
               </p>
             </div>
           </div>
@@ -735,6 +748,7 @@ export default function TemplatesPage() {
               <h3 className="text-sm font-medium text-success mb-2">Deployed successfully</h3>
               <p className="text-xs text-muted font-mono">Path: {deployResult.deployPath}</p>
               {deployResult.composeProject && <p className="text-xs text-muted font-mono mt-1">Compose project: {deployResult.composeProject}</p>}
+              {deployResult.enrolled && <p className="mt-1 text-xs font-mono text-success">Enrolled in GroundControl inventory</p>}
               {Boolean(deployResult.dns) && <p className="text-xs text-muted font-mono mt-1">DNS: record created</p>}
               {Array.isArray(deployResult.health) && deployResult.health.length > 0 && (
                 <div className="mt-2 space-y-1">
@@ -753,7 +767,7 @@ export default function TemplatesPage() {
                 </p>
               )}
               <p className="mt-3 text-[11px] text-muted">
-                Manage components, env, and lifecycle from Services → Deployments.
+                Manage environment, evidence and runtime context from Deployments.
               </p>
             </div>
           )}
