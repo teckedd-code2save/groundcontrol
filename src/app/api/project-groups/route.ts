@@ -15,38 +15,34 @@ function slugify(value: string) {
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
-    const [projects, ungrouped] = await Promise.all([
+    const [projectGroups, ungroupedDeployments] = await Promise.all([
       prisma.projectGroup.findMany({
         orderBy: { name: "asc" },
         include: {
-          deployments: {
+          enrolledDeployments: {
             orderBy: { name: "asc" },
-            select: {
-              id: true,
-              slug: true,
-              name: true,
-              path: true,
-              domain: true,
-              status: true,
-              lastDeploy: true,
-            },
           },
         },
       }),
-      prisma.project.findMany({
+      prisma.enrolledDeployment.findMany({
         where: { projectGroupId: null },
         orderBy: { name: "asc" },
-        select: {
-          id: true,
-          slug: true,
-          name: true,
-          path: true,
-          domain: true,
-          status: true,
-          lastDeploy: true,
-        },
       }),
     ]);
+    const summarize = (deployment: (typeof ungroupedDeployments)[number]) => ({
+      id: deployment.id,
+      slug: deployment.slug,
+      name: deployment.name,
+      path: deployment.sourcePath || deployment.containerName || "",
+      domain: null,
+      status: deployment.status,
+      lastDeploy: deployment.lastSeenAt,
+    });
+    const projects = projectGroups.map(({ enrolledDeployments, ...project }) => ({
+      ...project,
+      deployments: enrolledDeployments.map(summarize),
+    }));
+    const ungrouped = ungroupedDeployments.map(summarize);
     return NextResponse.json({ projects, ungrouped });
   } catch (error) {
     return handleApiError(error);
@@ -67,7 +63,7 @@ export async function POST(req: NextRequest) {
         slug,
         description: String(body.description || "").trim(),
       },
-      include: { deployments: true },
+      include: { enrolledDeployments: true },
     });
     return NextResponse.json({ project }, { status: 201 });
   } catch (error) {
