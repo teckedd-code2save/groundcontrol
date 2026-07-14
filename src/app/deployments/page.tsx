@@ -1,6 +1,6 @@
 "use client";
 
-import { ProjectsPanel } from "@/components/ProjectsPanel";
+import { DeploymentWorkspace } from "@/components/DeploymentWorkspace";
 import { PageHeader } from "@/components/PageHeader";
 
 export default function DeploymentsPage() {
@@ -10,7 +10,7 @@ export default function DeploymentsPage() {
         title="Deployments"
         description="Enrol, operate, configure, and verify the workloads running across your hosts."
       />
-      <ProjectsPanel />
+      <DeploymentWorkspace />
     </div>
   );
 }
