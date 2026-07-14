@@ -31,7 +31,15 @@ const EMPTY_DISCOVERY: DiscoveredEnvResult = {
 };
 
 const RUNTIME_NOISE_KEYS = new Set([
-  "HOME", "HOSTNAME", "PATH", "PWD", "SHLVL", "TERM", "USER", "LOGNAME", "_",
+  "HOME",
+  "HOSTNAME",
+  "PATH",
+  "PWD",
+  "SHLVL",
+  "TERM",
+  "USER",
+  "LOGNAME",
+  "_",
 ]);
 
 function normalizeSchema(value: unknown): EnvSchemaEntry[] {
