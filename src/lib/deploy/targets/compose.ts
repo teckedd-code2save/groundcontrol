@@ -16,6 +16,7 @@ import {
   shQuote,
   getDockerComposeCommand,
   resolveComposeProjectPath,
+  buildManagedComposeInvocation,
 } from "@/lib/vps";
 
 export interface ComposeTargetConfig {
@@ -70,9 +71,11 @@ export function createComposeTarget(
         .join(" ");
 
       const result = await execOnVps(
-        `cd ${shQuote(projectPath)} && ${composeCmd} ${fileFlag(
+        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
+          composeCmd,
+          `build ${buildArgs}`,
           config.composeFile
-        )} build ${buildArgs}`,
+        )}`,
         ctx.vps
       );
       if (result.code !== 0) {
@@ -89,11 +92,15 @@ export function createComposeTarget(
       ctx.log(`[compose] deploying ${project.slug}`);
 
       const result = await execOnVps(
-        `cd ${shQuote(projectPath)} && ${composeCmd} ${fileFlag(
+        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
+          composeCmd,
+          "pull",
           config.composeFile
-        )} pull && ${composeCmd} ${fileFlag(
+        )} && ${buildManagedComposeInvocation(
+          composeCmd,
+          "up -d --remove-orphans",
           config.composeFile
-        )} up -d --remove-orphans`,
+        )}`,
         ctx.vps
       );
       if (result.code !== 0) {
@@ -113,9 +120,11 @@ export function createComposeTarget(
       // previously this will still restart with the previous image until the
       // next build+deploy cycle.
       const result = await execOnVps(
-        `cd ${shQuote(projectPath)} && ${composeCmd} ${fileFlag(
+        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
+          composeCmd,
+          "down",
           config.composeFile
-        )} down && ${composeCmd} ${fileFlag(config.composeFile)} up -d`,
+        )} && ${buildManagedComposeInvocation(composeCmd, "up -d", config.composeFile)}`,
         ctx.vps
       );
       if (result.code !== 0) {
@@ -130,9 +139,11 @@ export function createComposeTarget(
       ctx.log(`[compose] destroying ${project.slug}`);
 
       const result = await execOnVps(
-        `cd ${shQuote(projectPath)} && ${composeCmd} ${fileFlag(
+        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
+          composeCmd,
+          "down -v",
           config.composeFile
-        )} down -v`,
+        )}`,
         ctx.vps
       );
       if (result.code !== 0) {
@@ -196,9 +207,4 @@ async function cloneOrPull(
       throw new Error(result.stderr || "git clone failed");
     }
   }
-}
-
-function fileFlag(composeFile?: string): string {
-  if (!composeFile) return "";
-  return `-f ${shQuote(composeFile)}`;
 }
