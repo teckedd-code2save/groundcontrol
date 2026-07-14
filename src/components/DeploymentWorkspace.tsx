@@ -27,6 +27,7 @@ type Enrolled = {
   projectId?: number | null;
   project?: Group | null;
   legacyProjectId?: number | null;
+  legacyProjectSlug?: string | null;
   observedStatus: string;
 };
 
@@ -91,6 +92,34 @@ export function DeploymentWorkspace() {
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
       return false;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function redeploy(item: Enrolled, component?: string) {
+    if (!item.legacyProjectSlug) return;
+    const scope = component ? `${item.name} / ${component}` : item.name;
+    setBusy(`redeploy-${item.id}`);
+    setMessage({ tone: "info", text: `Redeploying ${scope} with its managed environment…` });
+    try {
+      const response = await fetch("/api/projects/compose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectSlug: item.legacyProjectSlug,
+          action: "redeploy",
+          services: component ? [component] : undefined,
+        }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error || data.success === false) {
+        throw new Error(data.error || "Redeploy failed");
+      }
+      setMessage({ tone: "success", text: `${scope} redeployed with the synchronized environment.` });
+      await load();
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
       setBusy(null);
     }
@@ -264,7 +293,10 @@ export function DeploymentWorkspace() {
                   {expanded && (
                     <div className="border-t border-border bg-background/40 px-4 py-4">
                       {item.legacyProjectId ? (
-                        <DeploymentEnvPanel projectId={item.legacyProjectId} />
+                        <DeploymentEnvPanel
+                          projectId={item.legacyProjectId}
+                          onRedeploy={(component) => void redeploy(item, component)}
+                        />
                       ) : (
                         <div className="flex flex-col gap-3 text-xs text-muted md:flex-row md:items-center md:justify-between">
                           <span>This standalone container has no saved deployment source yet. Runtime actions remain available in Runtime.</span>
