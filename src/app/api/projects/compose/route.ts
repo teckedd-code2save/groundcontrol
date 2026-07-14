@@ -3,14 +3,12 @@ import { execOnVps, resolveComposeProjectPath, runDockerCompose, shQuote } from 
 import { parseComposeServices } from "@/lib/project-scan";
 import { prisma } from "@/lib/prisma";
 import { applyEnvToDeployment } from "@/lib/env-management";
-
-function errorResponse(err: unknown, status = 500) {
-  const message = err instanceof Error ? err.message : String(err);
-  return NextResponse.json({ error: message }, { status });
-}
+import { requireAuth } from "@/lib/auth";
+import { handleApiError } from "@/lib/errors";
 
 export async function GET(req: NextRequest) {
   try {
+    requireAuth(req);
     const { searchParams } = new URL(req.url);
     const slug = searchParams.get("slug");
     // Nested projects (e.g. agent-flow/RentAWeekend) can't be resolved by slug
@@ -48,7 +46,7 @@ export async function GET(req: NextRequest) {
     const { services, domain } = parseComposeServices(result.stdout);
     return NextResponse.json({ services, domain, raw: result.stdout, projectPath, source });
   } catch (err: unknown) {
-    return errorResponse(err);
+    return handleApiError(err);
   }
 }
 
@@ -65,6 +63,7 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
+    requireAuth(req);
     const { projectSlug, services, action } = await req.json();
     if (!projectSlug) {
       return NextResponse.json({ error: "projectSlug required" }, { status: 400 });
@@ -102,6 +101,6 @@ export async function POST(req: NextRequest) {
       projectPath: target.projectPath,
     });
   } catch (err: unknown) {
-    return errorResponse(err);
+    return handleApiError(err);
   }
 }

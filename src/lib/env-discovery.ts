@@ -2,6 +2,7 @@ import type { Project } from "@prisma/client";
 import { parse } from "yaml";
 import {
   execOnVps,
+  buildManagedComposeInvocation,
   getDockerComposeCommand,
   shQuote,
   type VpsConnection,
@@ -341,7 +342,7 @@ async function readResolvedComposeConfig(
   const compose = await getDockerComposeCommand(vps);
   const command = [
     `cd ${shQuote(projectPath)} 2>/dev/null || exit 0`,
-    `${compose} config --format json 2>/dev/null || ${compose} config 2>/dev/null || true`,
+    `${buildManagedComposeInvocation(compose, "config --format json")} 2>/dev/null || ${buildManagedComposeInvocation(compose, "config")} 2>/dev/null || true`,
   ].join("\n");
   const result = await execOnVps(command, vps);
   return result.stdout || "";

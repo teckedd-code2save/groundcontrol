@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { handleApiError } from "@/lib/errors";
-import { materializeEnvFile, resolveDeploymentEnv } from "@/lib/env-management";
+import { materializeEnvBundle, resolveDeploymentEnv } from "@/lib/env-management";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -18,7 +18,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!resolved.validation.ok) {
       return NextResponse.json({ error: `Missing required env keys: ${resolved.validation.missing.join(", ")}`, validation: resolved.validation }, { status: 400 });
     }
-    const result = await materializeEnvFile(profile.project.path, resolved.values);
+    const result = await materializeEnvBundle(
+      profile.project.path,
+      resolved.values,
+      resolved.componentValues
+    );
     const updated = await prisma.deploymentEnvProfile.update({
       where: { id: profile.id },
       data: {

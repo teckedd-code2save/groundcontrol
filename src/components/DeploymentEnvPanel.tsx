@@ -1,12 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Check,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  FileKey,
+  Layers3,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  Save,
+} from "lucide-react";
 
 interface Provider {
   id: number;
   name: string;
   provider: string;
-  configJson: string;
+}
+
+interface EnvValue {
+  masked: string;
+  hasValue: boolean;
 }
 
 interface EnvProfile {
@@ -19,9 +35,11 @@ interface EnvProfile {
   projectRef: string;
   status: string;
   lastHash?: string | null;
-  schema: { key: string; required: boolean }[];
+  lastSyncedAt?: string | null;
+  schema: Array<{ key: string; required: boolean; component?: string }>;
   validation?: { ok: boolean; missing: string[]; hash: string };
-  values?: Record<string, { masked: string; hasValue: boolean }>;
+  values: Record<string, EnvValue>;
+  componentValues: Record<string, Record<string, EnvValue>>;
 }
 
 interface DiscoveredEnvEntry {
@@ -51,8 +69,8 @@ const EMPTY_SUMMARY: DiscoverySummary = {
   declaredKeyCount: 0,
 };
 
-async function json(res: Response) {
-  const text = await res.text();
+async function readJson(response: Response) {
+  const text = await response.text();
   try {
     return text ? JSON.parse(text) : {};
   } catch {
@@ -64,496 +82,556 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   projectId: number;
   deploymentId?: number;
   componentName?: string;
-  onRedeploy?: () => void;
+  onRedeploy?: (component?: string) => void;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [profile, setProfile] = useState<EnvProfile | null>(null);
   const [discovered, setDiscovered] = useState<DiscoveredEnvEntry[]>([]);
   const [discoveredValues, setDiscoveredValues] = useState<Record<string, string>>({});
   const [scopedDiscoveredValues, setScopedDiscoveredValues] = useState<Record<string, string>>({});
-  const [discoverySummary, setDiscoverySummary] = useState<DiscoverySummary>(EMPTY_SUMMARY);
-  const [localValues, setLocalValues] = useState<Record<string, string>>({});
+  const [summary, setSummary] = useState<DiscoverySummary>(EMPTY_SUMMARY);
+  const [components, setComponents] = useState<string[]>(componentName ? [componentName] : []);
+  const [selectedComponent, setSelectedComponent] = useState(componentName || "");
+  const [draft, setDraft] = useState<Record<string, string>>({});
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [pastedEnv, setPastedEnv] = useState("");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [sourceOpen, setSourceOpen] = useState(false);
-  const [envPreviewOpen, setEnvPreviewOpen] = useState(false);
-  const [revealEnvPreview, setRevealEnvPreview] = useState(false);
-  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+  const [reconcileOpen, setReconcileOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
 
-  const providerOptions = useMemo(() => providers.filter((provider) => provider.provider !== "local"), [providers]);
-  const selectedProvider = providers.find((provider) => provider.id === profile?.providerAccountId);
+  const fixedScope = !!componentName;
+  const scopeLabel = selectedComponent || "Shared deployment";
 
-  const load = useCallback(async (reveal?: boolean) => {
-    const [providersRes, profileRes] = await Promise.all([
-      fetch("/api/env/providers").then(json),
-      fetch(`/api/env/profiles?projectId=${projectId}${deploymentId ? `&deploymentId=${deploymentId}` : ""}${reveal ? "&reveal=true" : ""}`).then(json),
-    ]);
-    setProviders(Array.isArray(providersRes.providers) ? providersRes.providers : []);
-    setProfile(profileRes.profile || null);
-    setDiscovered(Array.isArray(profileRes.discovered?.entries) ? profileRes.discovered.entries : []);
-    setDiscoveredValues(reveal && profileRes.discovered?.values ? profileRes.discovered.values : {});
-    setScopedDiscoveredValues(reveal && profileRes.discovered?.scopedValues ? profileRes.discovered.scopedValues : {});
-    setDiscoverySummary(profileRes.discovered?.summary || EMPTY_SUMMARY);
-    const initial: Record<string, string> = {};
-    const scopedValues = reveal && profileRes.discovered?.scopedValues
-      ? profileRes.discovered.scopedValues as Record<string, string>
-      : {};
-    const deploymentValues = reveal && profileRes.discovered?.values
-      ? profileRes.discovered.values as Record<string, string>
-      : {};
-    const savedValues = profileRes.profile?.values || {};
-    const keys = new Set<string>();
-    for (const entry of profileRes.profile?.schema || []) keys.add(entry.key);
-    for (const key of Object.keys(savedValues)) keys.add(key);
-    for (const entry of profileRes.discovered?.entries || []) {
-      if (!componentName || !entry.component || entry.component === componentName) keys.add(entry.key);
-    }
-    for (const key of keys) {
-      const scoped = componentName ? scopedValues[`${componentName}:${key}`] : undefined;
-      initial[key] = reveal
-        ? scoped ?? deploymentValues[key] ?? savedValues[key]?.masked ?? ""
-        : "";
-    }
-    setLocalValues(initial);
+  const hydrate = useCallback((data: Record<string, unknown>, reveal: boolean) => {
+    const nextProfile = data.profile as EnvProfile | undefined;
+    const discovery = data.discovered as {
+      entries?: DiscoveredEnvEntry[];
+      values?: Record<string, string>;
+      scopedValues?: Record<string, string>;
+      summary?: DiscoverySummary;
+    } | undefined;
+    if (nextProfile) setProfile(nextProfile);
+    setDiscovered(Array.isArray(discovery?.entries) ? discovery.entries : []);
+    setDiscoveredValues(reveal ? discovery?.values || {} : {});
+    setScopedDiscoveredValues(reveal ? discovery?.scopedValues || {} : {});
+    setSummary(discovery?.summary || EMPTY_SUMMARY);
+    if (!fixedScope) setComponents(Array.isArray(data.components) ? data.components as string[] : []);
     setDirtyKeys(new Set());
-  }, [projectId, deploymentId, componentName]);
+    setRevealedKeys(reveal ? new Set(["*"]) : new Set());
+    setDraft({});
+  }, [fixedScope]);
+
+  const load = useCallback(async (reveal = false) => {
+    setBusy("load");
+    try {
+      const query = new URLSearchParams({ projectId: String(projectId) });
+      if (deploymentId) query.set("deploymentId", String(deploymentId));
+      if (reveal) query.set("reveal", "true");
+      const [providersResponse, profileResponse] = await Promise.all([
+        fetch("/api/env/providers", { cache: "no-store" }),
+        fetch(`/api/env/profiles?${query.toString()}`, { cache: "no-store" }),
+      ]);
+      const [providerData, profileData] = await Promise.all([
+        readJson(providersResponse),
+        readJson(profileResponse),
+      ]);
+      if (!profileResponse.ok || profileData.error) throw new Error(profileData.error || "Environment load failed");
+      setProviders(Array.isArray(providerData.providers) ? providerData.providers : []);
+      hydrate(profileData, reveal);
+    } catch (error) {
+      setNotice({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(null);
+    }
+  }, [deploymentId, hydrate, projectId]);
 
   useEffect(() => {
-    void Promise.resolve().then(() => load(undefined)).catch(() => undefined);
+    void load(false);
   }, [load]);
 
-  async function toggleKeyReveal(key: string) {
-    if (revealedKeys.has(key)) {
-      setRevealedKeys((current) => {
-        const next = new Set(current);
-        next.delete(key);
-        return next;
-      });
-      return;
-    }
-    if (hasPendingChanges) {
-      setMessage("Save or discard pending edits before revealing a current value.");
-      return;
-    }
-    setLoading(true);
-    try {
-      await load(true);
-      setRevealedKeys((current) => new Set(current).add(key));
-      setMessage(`${key} revealed for this authenticated session.`);
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    setDraft({});
+    setDirtyKeys(new Set());
+    setRevealedKeys(new Set());
+    setNotice(null);
+  }, [selectedComponent]);
 
-  async function saveProfile(patch: Partial<EnvProfile> = {}, values?: Record<string, string>, importCurrentServerEnv = false) {
+  const selectedSavedValues = useMemo(() => selectedComponent
+    ? profile?.componentValues?.[selectedComponent] || {}
+    : profile?.values || {}, [profile?.componentValues, profile?.values, selectedComponent]);
+  const selectedSchema = useMemo(() =>
+    (profile?.schema || []).filter((entry) => (entry.component || "") === selectedComponent),
+    [profile?.schema, selectedComponent]
+  );
+  const selectedDiscovered = useMemo(() => discovered.filter((entry) =>
+    selectedComponent ? entry.component === selectedComponent : !entry.component
+  ), [discovered, selectedComponent]);
+  const keys = useMemo(() => Array.from(new Set([
+    ...selectedSchema.map((entry) => entry.key),
+    ...Object.keys(selectedSavedValues),
+    ...selectedDiscovered.map((entry) => entry.key),
+  ])).sort(), [selectedDiscovered, selectedSavedValues, selectedSchema]);
+  const discoveredByKey = useMemo(() => {
+    const map = new Map<string, DiscoveredEnvEntry[]>();
+    for (const entry of selectedDiscovered) map.set(entry.key, [...(map.get(entry.key) || []), entry]);
+    return map;
+  }, [selectedDiscovered]);
+  const providerOptions = providers.filter((provider) => provider.provider !== "local");
+  const allRevealed = revealedKeys.has("*");
+  const hasPendingChanges = dirtyKeys.size > 0;
+
+  async function saveEnvironment(options: {
+    values?: Record<string, string>;
+    schema?: EnvProfile["schema"];
+    reconcile?: boolean;
+    success?: string;
+  } = {}) {
     if (!profile) return false;
-    setLoading(true);
-    setMessage("");
+    setBusy(options.reconcile ? "reconcile" : "save");
+    setNotice({
+      tone: "info",
+      text: options.reconcile
+        ? `Reconciling ${selectedComponent || "the whole deployment"}…`
+        : `Saving ${scopeLabel} and materializing its managed environment…`,
+    });
     try {
-      const res = await fetch("/api/env/profiles", {
+      const response = await fetch("/api/env/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
           deploymentId,
-          componentName,
-          providerType: patch.providerType || profile.providerType,
-          providerAccountId: patch.providerAccountId ?? profile.providerAccountId,
-          environment: patch.environment ?? profile.environment,
-          secretPath: patch.secretPath ?? profile.secretPath,
-          projectRef: patch.projectRef ?? profile.projectRef,
-          schema: patch.schema || profile.schema || [],
-          values,
-          importCurrentServerEnv,
+          componentName: selectedComponent || undefined,
+          providerType: profile.providerType,
+          providerAccountId: profile.providerAccountId,
+          environment: profile.environment,
+          secretPath: profile.secretPath,
+          projectRef: profile.projectRef,
+          schema: options.schema || profile.schema,
+          values: options.values,
+          reconcile: options.reconcile,
         }),
       });
-      const data = await json(res);
-      if (!res.ok || data.error) {
-        setMessage(data.error || "Save failed");
-        return false;
-      } else {
-        setProfile(data.profile);
-        setDiscovered(Array.isArray(data.discovered?.entries) ? data.discovered.entries : discovered);
-        setDiscoverySummary(data.discovered?.summary || discoverySummary);
-        const nextValues: Record<string, string> = {};
-        for (const entry of data.profile?.schema || []) nextValues[entry.key] = "";
-        for (const key of Object.keys(data.profile?.values || {})) nextValues[key] = "";
-        for (const entry of data.discovered?.entries || []) {
-          if (!componentName || !entry.component || entry.component === componentName) nextValues[entry.key] ||= "";
-        }
-        setLocalValues(nextValues);
-        setDirtyKeys(new Set());
-        if (revealEnvPreview) {
-          setRevealEnvPreview(false);
-          setDiscoveredValues({});
-          setScopedDiscoveredValues({});
-        }
-        setMessage(importCurrentServerEnv ? "Running environment imported into the encrypted source" : "Environment saved");
-        return true;
-      }
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Environment save failed");
+      hydrate(data, false);
+      const files = Array.isArray(data.materialized?.files) ? data.materialized.files.join(", ") : "managed source";
+      setNotice({
+        tone: "success",
+        text: options.success || (options.reconcile
+          ? `Reconciled ${scopeLabel}. GroundControl now owns a reproducible source in ${files}.`
+          : `Saved ${scopeLabel}. Materialized ${files}.`),
+      });
+      return true;
+    } catch (error) {
+      setNotice({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      return false;
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
   }
 
-  if (!profile) {
-    return <div className="rounded-lg bg-background/40 p-3 text-xs text-muted">Loading env profile...</div>;
+  async function reveal(key?: string) {
+    if (hasPendingChanges) {
+      setNotice({ tone: "info", text: "Save or discard pending edits before revealing current values." });
+      return;
+    }
+    if (key && revealedKeys.has(key)) {
+      const next = new Set(revealedKeys);
+      next.delete(key);
+      setRevealedKeys(next);
+      return;
+    }
+    await load(true);
+    if (key) setRevealedKeys(new Set([key]));
   }
 
-  const visibleDiscovered = componentName
-    ? discovered.filter((entry) => entry.component === componentName || (entry.scope === "deployment" && entry.source === ".env"))
-    : discovered;
-  const discoveredByKey = new Map(visibleDiscovered.map((entry) => [entry.key, entry]));
-  const runningEntries = visibleDiscovered.filter((entry) => entry.runtime);
-  const envKeys = Array.from(new Set([
-    ...(profile.schema || []).map((entry) => entry.key),
-    ...Object.keys(profile.values || {}),
-    ...visibleDiscovered.map((entry) => entry.key),
-  ])).sort();
-  const hasSavedSource = profile.providerType === "local"
-    ? Object.keys(profile.values || {}).length > 0 || profile.schema.length > 0
-    : !!profile.providerAccountId;
-  const envPreview = buildEnvPreview(
-    envKeys,
-    localValues,
-    profile,
-    discoveredByKey,
-    discoveredValues,
-    scopedDiscoveredValues,
-    componentName,
-    revealEnvPreview
-  );
-  const pendingValues = Object.fromEntries(
-    Object.entries(localValues).filter(([key]) => dirtyKeys.has(key))
-  );
-  const hasPendingChanges = dirtyKeys.size > 0;
+  function currentValue(key: string) {
+    if (dirtyKeys.has(key)) return draft[key] || "";
+    if (!allRevealed && !revealedKeys.has(key)) return "";
+    if (selectedComponent) {
+      return profile?.componentValues?.[selectedComponent]?.[key]?.masked
+        ?? scopedDiscoveredValues[`${selectedComponent}:${key}`]
+        ?? "";
+    }
+    return profile?.values?.[key]?.masked ?? discoveredValues[key] ?? "";
+  }
+
+  function placeholderFor(key: string) {
+    const entries = discoveredByKey.get(key) || [];
+    return selectedSavedValues[key]?.masked || entries.find((entry) => entry.hasValue)?.masked || "Not set";
+  }
+
+  function schemaWith(keysToAdd: string[]) {
+    const next = [...(profile?.schema || [])];
+    const seen = new Set(next.map((entry) => `${entry.component || ""}:${entry.key}`));
+    for (const key of keysToAdd) {
+      const id = `${selectedComponent}:${key}`;
+      if (!seen.has(id)) next.push({ key, required: true, component: selectedComponent || undefined });
+    }
+    return next;
+  }
+
+  if (!profile) {
+    return (
+      <div className="gc-work-surface flex min-h-36 items-center justify-center text-xs text-muted">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Resolving environment sources…
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-3 rounded-lg bg-background/40 p-3">
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="text-xs font-medium">Environment</div>
-          <div className="text-[10px] font-mono text-muted">
-            {componentName ? `${componentName} · ` : ""}
-            {profile.providerType} · {profile.status || "unknown"}
-            {profile.lastHash ? ` · ${profile.lastHash.slice(0, 12)}` : ""}
+    <div className="gc-work-surface overflow-hidden">
+      <div className="border-b border-border px-4 py-4 md:px-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="gc-eyebrow">Deployment configuration</div>
+            <h3 className="mt-1 text-base font-semibold tracking-tight">Environment</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
+              Values are grouped by the component that consumes them. Saving writes the encrypted source and its managed environment file immediately.
+            </p>
           </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={async () => {
-              const next = !revealEnvPreview;
-              setRevealEnvPreview(next);
-              if (!next) setRevealedKeys(new Set());
-              await load(next);
-            }}
-            disabled={loading || hasPendingChanges}
-            className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
-            title={hasPendingChanges ? "Save or discard your edits before changing visibility." : "Explicitly reveal or mask saved and running values for this authenticated session."}
-          >
-            {revealEnvPreview ? "Mask all values" : "Reveal all values"}
-          </button>
-          <button
-            onClick={() => setSourceOpen((open) => !open)}
-            disabled={loading}
-            aria-expanded={sourceOpen}
-            className="rounded bg-foreground px-2.5 py-1 text-[10px] font-mono text-background hover:opacity-90 disabled:opacity-50"
-          >
-            {sourceOpen ? "Close management" : "Manage environment"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <ActionButton onClick={() => void load(false)} disabled={!!busy} icon={RefreshCw}>Refresh</ActionButton>
+            <ActionButton onClick={() => void reveal()} disabled={!!busy || hasPendingChanges} icon={allRevealed ? EyeOff : Eye}>
+              {allRevealed ? "Mask values" : "Reveal values"}
+            </ActionButton>
+          </div>
         </div>
       </div>
 
-      <div className="grid gap-px overflow-hidden rounded-lg bg-border sm:grid-cols-3">
-        <EnvSummary
-          label="Running now"
-          value={`${componentName ? new Set(runningEntries.map((entry) => entry.key)).size : discoverySummary.runtimeKeyCount} keys`}
-          detail={`${discoverySummary.runningContainerCount}/${discoverySummary.containerCount} containers running`}
-          tone={discoverySummary.runningContainerCount > 0 ? "good" : "muted"}
-        />
-        <EnvSummary
-          label="Next deploy"
-          value={`${discoverySummary.declaredKeyCount} declared`}
-          detail="Compose + env files resolved"
-        />
-        <EnvSummary
-          label="Saved source"
-          value={`${Object.keys(profile.values || {}).length} keys`}
-          detail={profile.validation?.ok ? "required values present" : `${profile.validation?.missing?.length || 0} required missing`}
-          tone={profile.validation?.ok ? "good" : "warn"}
-        />
-      </div>
-
-      {message && <div className="rounded bg-card p-2 text-[10px] font-mono text-muted">{message}</div>}
-
-      {sourceOpen && envPreviewOpen && (
-        <div className="space-y-2 rounded-lg bg-card p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs font-medium">.env preview</div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  const next = !revealEnvPreview;
-                  setRevealEnvPreview(next);
-                  await load(next);
-                }}
-                className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent"
-              >
-                {revealEnvPreview ? "Mask" : "Reveal"}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  await navigator.clipboard?.writeText(envPreview);
-                  setMessage("Environment preview copied");
-                }}
-                className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent"
-              >
-                Copy
-              </button>
-            </div>
-          </div>
-          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-[10px] font-mono text-foreground/80 whitespace-pre-wrap">
-            {envPreview || "No environment keys found yet."}
-          </pre>
+      {notice && (
+        <div className={`mx-4 mt-4 border px-3 py-2 text-xs md:mx-5 ${
+          notice.tone === "success"
+            ? "border-success/30 bg-success/10 text-success"
+            : notice.tone === "error"
+              ? "border-error/30 bg-error/10 text-error"
+              : "border-border bg-background text-muted"
+        }`} role="status">
+          {notice.text}
         </div>
       )}
 
-      {sourceOpen && (
-        <div className="space-y-4 rounded-lg border border-border bg-card p-3">
-          <div className="flex flex-col gap-3 border-b border-border/70 pb-3 md:flex-row md:items-center md:justify-between">
+      <div className={`grid ${fixedScope ? "" : "md:grid-cols-[220px_minmax(0,1fr)]"}`}>
+        {!fixedScope && (
+          <aside className="border-b border-border bg-background/35 p-3 md:border-b-0 md:border-r">
+            <div className="px-2 pb-2 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">Configuration scope</div>
+            <ScopeButton
+              active={!selectedComponent}
+              label="Shared deployment"
+              detail={`${Object.keys(profile.values || {}).length} saved`}
+              onClick={() => setSelectedComponent("")}
+            />
+            {components.map((component) => (
+              <ScopeButton
+                key={component}
+                active={selectedComponent === component}
+                label={component}
+                detail={`${Object.keys(profile.componentValues?.[component] || {}).length} saved`}
+                onClick={() => setSelectedComponent(component)}
+              />
+            ))}
+            {components.length === 0 && (
+              <div className="px-2 py-3 text-[11px] leading-4 text-muted">No Compose components discovered yet.</div>
+            )}
+          </aside>
+        )}
+
+        <div className="min-w-0 p-4 md:p-5">
+          <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div className="text-xs font-medium">Manage environment</div>
-              <div className="mt-0.5 text-[10px] font-mono text-muted">
-                {selectedProvider && profile.providerType !== "local" ? selectedProvider.name : "Local encrypted source"}
-                {hasPendingChanges ? ` · ${dirtyKeys.size} unsaved change${dirtyKeys.size === 1 ? "" : "s"}` : " · no pending changes"}
+              <div className="flex items-center gap-2">
+                {selectedComponent ? <Layers3 className="h-4 w-4 text-accent" /> : <FileKey className="h-4 w-4 text-accent" />}
+                <h4 className="text-sm font-medium">{scopeLabel}</h4>
+              </div>
+              <div className="mt-1 font-mono text-[10px] text-muted">
+                {selectedComponent ? `.groundcontrol/env/${selectedComponent}.env` : ".env"}
+                {profile.lastSyncedAt ? ` · synced ${new Date(profile.lastSyncedAt).toLocaleString()}` : " · not synchronized"}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {profile.providerType === "local" && runningEntries.length > 0 && (
-                <button
-                  onClick={() => saveProfile({}, undefined, true)}
-                  disabled={loading}
-                  className="rounded bg-background px-2.5 py-1.5 text-[10px] font-mono text-muted hover:text-accent disabled:opacity-50"
-                >
-                  Import running
-                </button>
-              )}
-              <button
-                onClick={() => load(revealEnvPreview)}
-                disabled={loading}
-                className="rounded bg-background px-2.5 py-1.5 text-[10px] font-mono text-muted hover:text-accent disabled:opacity-50"
+              <ActionButton onClick={() => setReconcileOpen((open) => !open)} disabled={!!busy} icon={RotateCcw}>
+                Reconcile sources
+              </ActionButton>
+              <ActionButton
+                primary
+                onClick={() => void saveEnvironment({ values: Object.fromEntries([...dirtyKeys].map((key) => [key, draft[key] || ""])) })}
+                disabled={!!busy || !hasPendingChanges}
+                icon={Save}
               >
-                Refresh
-              </button>
-              <button
-                onClick={() => setEnvPreviewOpen((open) => !open)}
-                disabled={loading}
-                className="rounded bg-background px-2.5 py-1.5 text-[10px] font-mono text-muted hover:text-accent disabled:opacity-50"
-              >
-                {envPreviewOpen ? "Hide .env" : "Preview .env"}
-              </button>
-              <button
-                onClick={() => saveProfile({}, pendingValues)}
-                disabled={loading || !hasPendingChanges}
-                className="rounded bg-accent/10 px-2.5 py-1.5 text-[10px] font-mono text-accent hover:bg-accent/20 disabled:opacity-40"
-              >
-                Save
-              </button>
+                Save changes
+              </ActionButton>
               {onRedeploy && (
-                <button
+                <ActionButton
+                  success
                   onClick={async () => {
-                    const saved = await saveProfile({}, pendingValues);
-                    if (saved) onRedeploy();
+                    const saved = hasPendingChanges
+                      ? await saveEnvironment({ values: Object.fromEntries([...dirtyKeys].map((key) => [key, draft[key] || ""])) })
+                      : true;
+                    if (saved) onRedeploy(selectedComponent || undefined);
                   }}
-                  disabled={loading || !hasPendingChanges}
-                  className="rounded bg-success/10 px-2.5 py-1.5 text-[10px] font-mono text-success hover:bg-success/20 disabled:opacity-40"
+                  disabled={!!busy}
+                  icon={ChevronRight}
                 >
-                  Save &amp; redeploy
-                </button>
+                  Redeploy {selectedComponent || "deployment"}
+                </ActionButton>
               )}
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-            <label className="block">
-              <span className="mb-1 block text-[10px] font-mono text-muted">Source</span>
-              <select
-                value={profile.providerType === "infisical" ? String(profile.providerAccountId || "") : "local"}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === "local") saveProfile({ providerType: "local", providerAccountId: null });
-                  else saveProfile({ providerType: "infisical", providerAccountId: Number(value) });
-                }}
-                className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-              >
-                <option value="local">Local encrypted</option>
-                {providerOptions.map((provider) => (
-                  <option key={provider.id} value={provider.id}>{provider.name}</option>
-                ))}
-              </select>
-            </label>
-            <Input label="Provider project" value={profile.projectRef || ""} onChange={(value) => setProfile({ ...profile, projectRef: value })} onBlur={() => saveProfile({ projectRef: profile.projectRef })} />
-            <Input label="Environment" value={profile.environment || "prod"} onChange={(value) => setProfile({ ...profile, environment: value })} onBlur={() => saveProfile({ environment: profile.environment })} />
-            <Input label="Secret path" value={profile.secretPath || "/"} onChange={(value) => setProfile({ ...profile, secretPath: value })} onBlur={() => saveProfile({ secretPath: profile.secretPath })} />
-          </div>
-        </div>
-      )}
 
-      {selectedProvider && profile.providerType !== "local" && (
-        <div className="text-[10px] font-mono text-muted">
-          External provider selected: {selectedProvider.name}
-        </div>
-      )}
-
-      {!hasSavedSource && visibleDiscovered.length > 0 && (
-        <div className="rounded-lg bg-accent/5 p-3 text-xs text-muted">
-          GroundControl found environment values outside its saved source. Import the running values to make future redeploys reproducible.
-        </div>
-      )}
-
-      {profile.providerType === "local" && (
-        <div className="space-y-2">
-          <div className="overflow-hidden rounded-lg bg-card">
-            <div className="grid grid-cols-[minmax(150px,.8fr)_minmax(180px,1.2fr)] gap-3 bg-card px-3 py-2 text-[10px] font-mono text-muted">
-              <span>Key</span>
-              <span>Value</span>
+          {reconcileOpen && (
+            <div className="mt-4 border border-accent/25 bg-accent/5 p-4">
+              <div className="text-sm font-medium">Create one reproducible source</div>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">
+                GroundControl will read declared files, resolved Compose values and the running process, then copy effective application values into its encrypted store. Existing source files are retained. System variables such as PATH and HOSTNAME are excluded.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <ActionButton
+                  primary
+                  onClick={() => void saveEnvironment({ reconcile: true })}
+                  disabled={!!busy}
+                  icon={busy === "reconcile" ? Loader2 : Check}
+                >
+                  {busy === "reconcile" ? "Reconciling…" : `Reconcile ${selectedComponent || "all components"}`}
+                </ActionButton>
+                <span className="font-mono text-[10px] text-muted">No container is restarted until you choose redeploy.</span>
+              </div>
             </div>
-            {envKeys.length === 0 ? (
-              <div className="px-3 py-4 text-xs text-muted">No environment keys found yet.</div>
-            ) : (
-              envKeys.map((key) => {
-                const schemaEntry = profile.schema.find((entry) => entry.key === key);
-                const discoveredEntry = discoveredByKey.get(key);
-                const revealedRunning = getDiscoveredValue(
-                  key,
-                  componentName,
-                  discoveredValues,
-                  scopedDiscoveredValues
-                );
-                const currentValue = revealEnvPreview
-                  ? revealedRunning ?? profile.values?.[key]?.masked ?? ""
-                  : discoveredEntry?.masked || profile.values?.[key]?.masked || "";
-                const source = discoveredEntry?.source || (profile.values?.[key]?.hasValue ? "saved source" : "unset");
-                return (
-                  <div key={key} className="grid grid-cols-[minmax(150px,.8fr)_minmax(180px,1.2fr)] items-center gap-3 border-t border-border/60 px-3 py-3">
-                    <div>
-                      <div className="flex items-center gap-2 text-xs font-mono">
-                        <span className="truncate">{key}{schemaEntry?.required ? " *" : ""}</span>
-                        {dirtyKeys.has(key) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" title="Unsaved change" />}
-                      </div>
-                      <div className="mt-1 text-[9px] font-mono text-muted">
-                        {discoveredEntry?.component ? `${discoveredEntry.component} · ` : ""}{source}
-                        {discoveredEntry?.state ? ` · ${discoveredEntry.state}` : ""}
-                      </div>
+          )}
+
+          <div className="mt-4 grid gap-px border border-border bg-border sm:grid-cols-3">
+            <Metric label="Running" value={`${new Set(selectedDiscovered.filter((entry) => entry.runtime).map((entry) => entry.key)).size} keys`} detail={`${summary.runningContainerCount}/${summary.containerCount} containers`} />
+            <Metric label="Declared" value={`${new Set(selectedDiscovered.filter((entry) => !entry.runtime).map((entry) => entry.key)).size} keys`} detail="Compose and env files" />
+            <Metric label="Managed" value={`${Object.keys(selectedSavedValues).length} keys`} detail={profile.validation?.ok ? "Ready for redeploy" : `${profile.validation?.missing?.length || 0} required missing`} tone={profile.validation?.ok ? "success" : "warning"} />
+          </div>
+
+          <div className="mt-4 overflow-hidden border border-border">
+            <div className="grid grid-cols-[minmax(130px,.8fr)_minmax(180px,1.2fr)] gap-3 bg-background/60 px-3 py-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted">
+              <span>Variable and provenance</span>
+              <span>Managed value</span>
+            </div>
+            {keys.length === 0 ? (
+              <div className="px-4 py-10 text-center">
+                <div className="text-sm">No environment variables found</div>
+                <p className="mt-1 text-xs text-muted">Add the first variable or reconcile values already running on this component.</p>
+              </div>
+            ) : keys.map((key) => {
+              const entries = discoveredByKey.get(key) || [];
+              const required = selectedSchema.find((entry) => entry.key === key)?.required;
+              const isRevealed = allRevealed || revealedKeys.has(key);
+              return (
+                <div key={key} className="grid grid-cols-[minmax(130px,.8fr)_minmax(180px,1.2fr)] items-center gap-3 border-t border-border px-3 py-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 font-mono text-xs">
+                      <span className="truncate">{key}</span>
+                      {required && <span className="text-accent" title="Required">*</span>}
+                      {dirtyKeys.has(key) && <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Unsaved" />}
                     </div>
-                    <div className="flex min-w-0 gap-2">
-                      <input
-                        type={revealEnvPreview || revealedKeys.has(key) ? "text" : "password"}
-                        value={localValues[key] || ""}
-                        aria-label={`Value for ${key}`}
-                        placeholder={currentValue || "<unset>"}
-                        onChange={(event) => {
-                          setLocalValues({ ...localValues, [key]: event.target.value });
-                          setDirtyKeys((current) => new Set(current).add(key));
-                        }}
-                        className="w-full rounded-md border border-transparent bg-background px-2.5 py-2 text-xs font-mono outline-none transition-colors placeholder:text-muted/70 focus:border-accent/50 focus:ring-1 focus:ring-accent/30"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void toggleKeyReveal(key)}
-                        disabled={loading || hasPendingChanges}
-                        className="shrink-0 rounded-md border border-border px-2.5 py-2 text-[10px] font-mono text-muted hover:border-accent/50 hover:text-accent disabled:opacity-40"
-                        aria-label={`${revealedKeys.has(key) || revealEnvPreview ? "Hide" : "Reveal"} ${key}`}
-                      >
-                        {revealedKeys.has(key) || revealEnvPreview ? "Hide" : "Reveal"}
-                      </button>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {entries.length > 0 ? entries.slice(0, 3).map((entry, index) => (
+                        <span key={`${entry.source}-${index}`} className="border border-border bg-background px-1.5 py-0.5 font-mono text-[9px] text-muted">
+                          {entry.source}{entry.runtime ? " · live" : ""}
+                        </span>
+                      )) : <span className="font-mono text-[9px] text-muted">managed only</span>}
                     </div>
                   </div>
-                );
-              })
-            )}
+                  <div className="flex min-w-0 gap-2">
+                    <input
+                      type={isRevealed ? "text" : "password"}
+                      value={currentValue(key)}
+                      placeholder={placeholderFor(key)}
+                      onChange={(event) => {
+                        setDraft((current) => ({ ...current, [key]: event.target.value }));
+                        setDirtyKeys((current) => new Set(current).add(key));
+                      }}
+                      aria-label={`Value for ${key} in ${scopeLabel}`}
+                      className="gc-field gc-field--compact min-w-0 flex-1 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void reveal(key)}
+                      disabled={!!busy || hasPendingChanges}
+                      className="gc-icon-button"
+                      aria-label={`${isRevealed ? "Hide" : "Reveal"} ${key}`}
+                      title={`${isRevealed ? "Hide" : "Reveal"} current value`}
+                    >
+                      {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <div className="grid gap-2 rounded-lg bg-card p-3 md:grid-cols-[1fr_1fr_auto]">
-            <input
-              value={newKey}
-              onChange={(event) => setNewKey(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
-              placeholder="NEW_KEY"
-              className="rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-            />
-            <input
-              type="password"
-              value={newValue}
-              onChange={(event) => setNewValue(event.target.value)}
-              placeholder="value"
-              className="rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-            />
-            <button
-              onClick={() => {
-                if (!newKey) return;
-                const nextSchema = profile.schema.some((entry) => entry.key === newKey)
-                  ? profile.schema
-                  : [...profile.schema, { key: newKey, required: true }];
-                saveProfile({ schema: nextSchema }, newValue ? { [newKey]: newValue } : undefined);
-                setNewKey("");
-                setNewValue("");
-              }}
-              disabled={loading || !newKey}
-              className="rounded bg-background px-3 py-2 text-xs font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
-            >
-              Add variable
-            </button>
-          </div>
-          <div className="space-y-2 rounded-lg bg-card p-3">
-            <input
-              type="file"
-              accept=".env,text/plain"
-              onChange={async (event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                setPastedEnv(await file.text());
-                event.currentTarget.value = "";
-              }}
-              className="block w-full text-xs font-mono text-muted file:mr-3 file:rounded file:border-0 file:bg-background file:px-3 file:py-2 file:text-xs file:font-mono file:text-muted hover:file:bg-accent/10 hover:file:text-accent"
-            />
-            <textarea
-              value={pastedEnv}
-              onChange={(event) => setPastedEnv(event.target.value)}
-              placeholder="Paste .env contents"
-              rows={4}
-              className="w-full resize-y rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-            />
-            <button
-              onClick={() => {
-                const parsed = parseEnvText(pastedEnv);
-                const keys = Object.keys(parsed);
-                if (keys.length === 0) return;
-                const nextSchema = [...profile.schema];
-                const seen = new Set(nextSchema.map((entry) => entry.key));
-                for (const key of keys) {
-                  if (!seen.has(key)) {
-                    seen.add(key);
-                    nextSchema.push({ key, required: true });
-                  }
-                }
-                setLocalValues({ ...localValues, ...parsed });
-                setDirtyKeys((current) => new Set([...current, ...keys]));
-                setProfile({ ...profile, schema: nextSchema });
-                setMessage(`${keys.length} value${keys.length === 1 ? "" : "s"} loaded from pasted env`);
-              }}
-              disabled={!pastedEnv.trim()}
-              className="rounded bg-background px-3 py-2 text-xs font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
-            >
-              Fill from pasted env
-            </button>
-          </div>
+
+          {profile.providerType === "local" && (
+            <div className="mt-4 grid gap-4 xl:grid-cols-2">
+              <div className="border border-border p-4">
+                <div className="gc-eyebrow">Add variable</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(120px,.8fr)_minmax(160px,1fr)_auto]">
+                  <input
+                    value={newKey}
+                    onChange={(event) => setNewKey(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+                    placeholder="VARIABLE_NAME"
+                    className="gc-field gc-field--compact font-mono"
+                  />
+                  <input
+                    type="password"
+                    value={newValue}
+                    onChange={(event) => setNewValue(event.target.value)}
+                    placeholder="Value"
+                    className="gc-field gc-field--compact font-mono"
+                  />
+                  <ActionButton
+                    primary
+                    disabled={!!busy || !newKey}
+                    onClick={async () => {
+                      const key = newKey;
+                      const ok = await saveEnvironment({
+                        values: { [key]: newValue },
+                        schema: schemaWith([key]),
+                        success: `${key} added to ${scopeLabel} and written to its managed environment file.`,
+                      });
+                      if (ok) {
+                        setNewKey("");
+                        setNewValue("");
+                      }
+                    }}
+                    icon={Check}
+                  >
+                    Add
+                  </ActionButton>
+                </div>
+              </div>
+
+              <div className="border border-border p-4">
+                <div className="gc-eyebrow">Import dotenv</div>
+                <textarea
+                  value={pastedEnv}
+                  onChange={(event) => setPastedEnv(event.target.value)}
+                  placeholder={"DATABASE_URL=…\nAPI_TOKEN=…"}
+                  rows={3}
+                  className="gc-field mt-3 w-full resize-y font-mono"
+                />
+                <div className="mt-2 flex justify-end">
+                  <ActionButton
+                    disabled={!!busy || !pastedEnv.trim()}
+                    onClick={() => {
+                      const parsed = parseEnvText(pastedEnv);
+                      const importedKeys = Object.keys(parsed);
+                      setDraft((current) => ({ ...current, ...parsed }));
+                      setDirtyKeys((current) => new Set([...current, ...importedKeys]));
+                      setProfile((current) => current ? { ...current, schema: schemaWith(importedKeys) } : current);
+                      setNotice({ tone: "info", text: `${importedKeys.length} values staged for ${scopeLabel}. Review and save them.` });
+                    }}
+                  >
+                    Stage values
+                  </ActionButton>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <details className="mt-4 border border-border">
+            <summary className="cursor-pointer list-none px-4 py-3 text-xs font-medium hover:bg-background/40">
+              Source provider and advanced settings
+            </summary>
+            <div className="grid gap-3 border-t border-border p-4 md:grid-cols-4">
+              <label className="block">
+                <span className="gc-label">Source</span>
+                <select
+                  value={profile.providerType === "infisical" ? String(profile.providerAccountId || "") : "local"}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setProfile({
+                      ...profile,
+                      providerType: value === "local" ? "local" : "infisical",
+                      providerAccountId: value === "local" ? null : Number(value),
+                    });
+                  }}
+                  className="gc-field w-full"
+                >
+                  <option value="local">GroundControl encrypted</option>
+                  {providerOptions.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+                </select>
+              </label>
+              <Field label="Provider project" value={profile.projectRef} onChange={(value) => setProfile({ ...profile, projectRef: value })} />
+              <Field label="Environment" value={profile.environment} onChange={(value) => setProfile({ ...profile, environment: value })} />
+              <Field label="Secret path" value={profile.secretPath} onChange={(value) => setProfile({ ...profile, secretPath: value })} />
+              <div className="md:col-span-4 flex justify-end">
+                <ActionButton onClick={() => void saveEnvironment()} disabled={!!busy} icon={Save}>Save provider settings</ActionButton>
+              </div>
+            </div>
+          </details>
         </div>
-      )}
+      </div>
     </div>
+  );
+}
+
+function ScopeButton({ active, label, detail, onClick }: {
+  active: boolean;
+  label: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`mb-1 flex w-full items-center justify-between border px-2.5 py-2 text-left transition-colors ${
+        active ? "border-accent/40 bg-accent/10 text-foreground" : "border-transparent text-muted hover:border-border hover:bg-background/50 hover:text-foreground"
+      }`}
+    >
+      <span className="min-w-0">
+        <span className="block truncate text-xs font-medium">{label}</span>
+        <span className="mt-0.5 block font-mono text-[9px] opacity-70">{detail}</span>
+      </span>
+      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+    </button>
+  );
+}
+
+function Metric({ label, value, detail, tone }: {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: "success" | "warning";
+}) {
+  return (
+    <div className="bg-card px-3 py-3">
+      <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted">{label}</div>
+      <div className={`mt-1 text-sm font-medium ${tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : ""}`}>{value}</div>
+      <div className="mt-0.5 text-[10px] text-muted">{detail}</div>
+    </div>
+  );
+}
+
+function ActionButton({ children, icon: Icon, primary, success, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  icon?: React.ComponentType<{ className?: string }>;
+  primary?: boolean;
+  success?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={`gc-button ${primary ? "gc-button--primary" : success ? "gc-button--success" : "gc-button--secondary"} ${props.className || ""}`}
+    >
+      {Icon && <Icon className={`h-3.5 w-3.5 ${Icon === Loader2 ? "animate-spin" : ""}`} />}
+      {children}
+    </button>
+  );
+}
+
+function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="block">
+      <span className="gc-label">{label}</span>
+      <input value={value || ""} onChange={(event) => onChange(event.target.value)} className="gc-field w-full" />
+    </label>
   );
 }
 
@@ -567,95 +645,4 @@ function parseEnvText(content: string): Record<string, string> {
     values[match[1]] = match[2].replace(/^["']|["']$/g, "");
   }
   return values;
-}
-
-function buildEnvPreview(
-  keys: string[],
-  localValues: Record<string, string>,
-  profile: EnvProfile,
-  discoveredByKey: Map<string, DiscoveredEnvEntry>,
-  discoveredValues: Record<string, string>,
-  scopedDiscoveredValues: Record<string, string>,
-  componentName: string | undefined,
-  reveal: boolean
-): string {
-  return keys
-    .map((key) => {
-      const entered = localValues[key];
-      const saved = profile.values?.[key];
-      if (entered) return `${key}=${quoteEnvValue(entered)}`;
-      if (reveal && saved?.hasValue) return `${key}=${quoteEnvValue(saved.masked)}`;
-      if (reveal) {
-        const discovered = getDiscoveredValue(
-          key,
-          componentName,
-          discoveredValues,
-          scopedDiscoveredValues
-        );
-        if (discovered !== undefined) return `${key}=${quoteEnvValue(discovered)}`;
-      }
-      if (saved?.hasValue || discoveredByKey.get(key)?.hasValue) {
-        return `${key}=••••••••`;
-      }
-      return `${key}=<unset>`;
-    })
-    .join("\n");
-}
-
-function getDiscoveredValue(
-  key: string,
-  componentName: string | undefined,
-  discoveredValues: Record<string, string>,
-  scopedDiscoveredValues: Record<string, string>
-): string | undefined {
-  if (componentName) {
-    const scoped = scopedDiscoveredValues[`${componentName}:${key}`];
-    if (scoped !== undefined) return scoped;
-  }
-  return discoveredValues[key];
-}
-
-function quoteEnvValue(value: string): string {
-  if (!value) return "";
-  if (/^[A-Za-z0-9_./:@-]+$/.test(value)) return value;
-  return JSON.stringify(value);
-}
-
-function EnvSummary({ label, value, detail, tone = "muted" }: {
-  label: string;
-  value: string;
-  detail: string;
-  tone?: "good" | "warn" | "muted";
-}) {
-  const valueClass = tone === "good"
-    ? "text-success"
-    : tone === "warn"
-      ? "text-amber-600 dark:text-amber-400"
-      : "text-foreground";
-  return (
-    <div className="bg-card px-3 py-2.5">
-      <div className="text-[9px] font-mono uppercase tracking-wide text-muted">{label}</div>
-      <div className={`mt-1 text-xs font-mono ${valueClass}`}>{value}</div>
-      <div className="mt-0.5 text-[9px] text-muted">{detail}</div>
-    </div>
-  );
-}
-
-function Input({ label, value, onChange, onBlur }: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  onBlur?: () => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[10px] font-mono text-muted">{label}</span>
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={onBlur}
-        className="w-full rounded bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
-      />
-    </label>
-  );
 }

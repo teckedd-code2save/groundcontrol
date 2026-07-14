@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
       prisma.projectGroup.findMany({ orderBy: { name: "asc" } }),
       prisma.enrolledDeployment.findMany({
         where: { vpsConfigId: vps?.id ?? null },
-        include: { projectGroup: true },
+        include: { projectGroup: true, legacyProject: true },
         orderBy: [{ projectGroupId: "asc" }, { name: "asc" }],
       }),
     ]);
@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
         ...item,
         project: item.projectGroup,
         projectId: item.projectGroupId,
+        legacyProjectSlug: item.legacyProject?.slug || null,
         observedStatus: item.containerName
           ? liveNames.has(item.containerName) ? "present" : "missing"
           : tree.projects.some((candidate) => candidate.path === item.sourcePath) ? "present" : "missing",
