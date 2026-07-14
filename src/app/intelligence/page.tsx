@@ -64,6 +64,8 @@ type LoopRun = {
   approvedBy?: string;
 };
 
+type ReadinessCheck = { id: string; label: string; ready: boolean; detail: string };
+
 export default function IntelligencePage() {
   const [paths, setPaths] = useState<ServicePath[]>([]);
   const [changeSets, setChangeSets] = useState<
@@ -77,46 +79,41 @@ export default function IntelligencePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [graphSource, setGraphSource] = useState<string>("");
+  const [readiness, setReadiness] = useState<ReadinessCheck[]>([]);
+  const [reconciledAt, setReconciledAt] = useState<string>("");
+  const [activityMessage, setActivityMessage] = useState<string>("");
 
-  const refreshGraph = useCallback(async () => {
-    const [g, c] = await Promise.all([
-      fetch("/api/intelligence/graph").then((r) => r.json()),
-      fetch("/api/intelligence/changes").then((r) => r.json()),
-    ]);
+  const refreshGraph = useCallback(async (reconcile = false) => {
+    if (reconcile) {
+      setLoading(true);
+      setActivityMessage("Collecting containers, Compose projects and proxy routes from the active host…");
+    }
+    const g = await fetch("/api/intelligence/graph", reconcile ? { method: "POST" } : undefined).then((r) => r.json());
+    const c = await fetch("/api/intelligence/changes").then((r) => r.json());
     if (g.error) throw new Error(g.error);
     setPaths(g.paths || []);
     setGraphSource(g.source || g.maturity || "");
     setMaturity(g.maturity || "");
     setChangeSets(c.changeSets || []);
     setEvents(c.events || []);
+    setReadiness(g.readiness || []);
+    setReconciledAt(g.reconciledAt || "");
+    if (reconcile) setActivityMessage(g.newEvents ? `${g.newEvents} new operational event${g.newEvents === 1 ? "" : "s"} recorded.` : "Evidence refreshed. No meaningful host change detected.");
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const [g, c] = await Promise.all([
-          fetch("/api/intelligence/graph").then((r) => r.json()),
-          fetch("/api/intelligence/changes").then((r) => r.json()),
-        ]);
-        if (cancelled) return;
-        if (g.error) {
-          setError(g.error);
-          return;
-        }
-        setPaths(g.paths || []);
-        setGraphSource(g.source || g.maturity || "");
-        setMaturity(g.maturity || "");
-        setChangeSets(c.changeSets || []);
-        setEvents(c.events || []);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+    void refreshGraph(true).catch((e) => {
+      if (!cancelled) {
+        setError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
       }
-    })();
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshGraph]);
 
   async function startInvestigation() {
     setLoading(true);
@@ -170,7 +167,7 @@ export default function IntelligencePage() {
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
       <PageHeader
         title="Intelligence"
-        description="Loop maps host changes, runs confirmed customer journeys, investigates with evidence, and prepares approved reversible recovery. Autopilot is not enabled."
+        description="Loop connects a host change to customer impact, evidence, a reversible response and verification. It begins by reading the active host; it does not invent activity."
       />
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-xs">
@@ -180,10 +177,12 @@ export default function IntelligencePage() {
           {maturity || graphSource || "empty"}
         </span>
         <span className="text-muted">
-          Live service graph · real change ledger · confirmed journeys · evidence-backed recovery.
-          Gemini and Daytona require configuration; guarded autopilot stays disabled by default.
+          {reconciledAt ? `Last evidence ${new Date(reconciledAt).toLocaleString()}. ` : "No evidence collected yet. "}
+          Host collection is read-only. Recovery remains separately policy-gated.
         </span>
       </div>
+
+      {activityMessage && <div className="border-l-2 border-accent bg-card px-3 py-2 text-xs text-muted">{activityMessage}</div>}
 
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
@@ -192,6 +191,18 @@ export default function IntelligencePage() {
       )}
 
       <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void refreshGraph(true).catch((e) => {
+            setError(e instanceof Error ? e.message : String(e));
+            setLoading(false);
+          })}
+          disabled={loading}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:border-accent/50 disabled:opacity-50"
+        >
+          <Activity className="h-3.5 w-3.5" />
+          {loading ? "Collecting evidence…" : "Collect host evidence"}
+        </button>
         <button
           type="button"
           onClick={startInvestigation}
@@ -211,6 +222,25 @@ export default function IntelligencePage() {
           Approve recovery
         </button>
       </div>
+
+      <section className="border border-border bg-card">
+        <div className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Testing readiness and current limits</h2>
+          <p className="mt-1 text-xs text-muted">These checks separate what Loop can prove now from the integrations needed for fuller production testing.</p>
+        </div>
+        <div className="grid md:grid-cols-2">
+          {readiness.map((check) => (
+            <div key={check.id} className="flex gap-3 border-b border-border px-4 py-3 md:odd:border-r">
+              <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${check.ready ? "bg-success" : "bg-warning"}`} />
+              <div>
+                <div className="text-xs font-medium">{check.label}</div>
+                <div className="mt-1 text-[11px] leading-relaxed text-muted">{check.detail}</div>
+              </div>
+            </div>
+          ))}
+          {readiness.length === 0 && <div className="p-4 text-xs text-muted">Collect host evidence to evaluate readiness.</div>}
+        </div>
+      </section>
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* Service paths */}
