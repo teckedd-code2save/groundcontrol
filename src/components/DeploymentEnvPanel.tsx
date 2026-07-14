@@ -82,6 +82,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [sourceOpen, setSourceOpen] = useState(false);
   const [envPreviewOpen, setEnvPreviewOpen] = useState(false);
   const [revealEnvPreview, setRevealEnvPreview] = useState(false);
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
 
   const providerOptions = useMemo(() => providers.filter((provider) => provider.provider !== "local"), [providers]);
   const selectedProvider = providers.find((provider) => provider.id === profile?.providerAccountId);
@@ -124,6 +125,29 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   useEffect(() => {
     void Promise.resolve().then(() => load(undefined)).catch(() => undefined);
   }, [load]);
+
+  async function toggleKeyReveal(key: string) {
+    if (revealedKeys.has(key)) {
+      setRevealedKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+      return;
+    }
+    if (hasPendingChanges) {
+      setMessage("Save or discard pending edits before revealing a current value.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await load(true);
+      setRevealedKeys((current) => new Set(current).add(key));
+      setMessage(`${key} revealed for this authenticated session.`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function saveProfile(patch: Partial<EnvProfile> = {}, values?: Record<string, string>, importCurrentServerEnv = false) {
     if (!profile) return false;
@@ -224,13 +248,14 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             onClick={async () => {
               const next = !revealEnvPreview;
               setRevealEnvPreview(next);
+              if (!next) setRevealedKeys(new Set());
               await load(next);
             }}
             disabled={loading || hasPendingChanges}
             className="rounded bg-background px-2 py-1 text-[10px] font-mono text-muted hover:bg-accent/10 hover:text-accent disabled:opacity-50"
             title={hasPendingChanges ? "Save or discard your edits before changing visibility." : "Explicitly reveal or mask saved and running values for this authenticated session."}
           >
-            {revealEnvPreview ? "Mask current" : "Reveal current"}
+            {revealEnvPreview ? "Mask all values" : "Reveal all values"}
           </button>
           <button
             onClick={() => setSourceOpen((open) => !open)}
@@ -426,9 +451,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                         {discoveredEntry?.state ? ` · ${discoveredEntry.state}` : ""}
                       </div>
                     </div>
-                    <div className="min-w-0">
+                    <div className="flex min-w-0 gap-2">
                       <input
-                        type={revealEnvPreview ? "text" : "password"}
+                        type={revealEnvPreview || revealedKeys.has(key) ? "text" : "password"}
                         value={localValues[key] || ""}
                         aria-label={`Value for ${key}`}
                         placeholder={currentValue || "<unset>"}
@@ -438,6 +463,15 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                         }}
                         className="w-full rounded-md border border-transparent bg-background px-2.5 py-2 text-xs font-mono outline-none transition-colors placeholder:text-muted/70 focus:border-accent/50 focus:ring-1 focus:ring-accent/30"
                       />
+                      <button
+                        type="button"
+                        onClick={() => void toggleKeyReveal(key)}
+                        disabled={loading || hasPendingChanges}
+                        className="shrink-0 rounded-md border border-border px-2.5 py-2 text-[10px] font-mono text-muted hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                        aria-label={`${revealedKeys.has(key) || revealEnvPreview ? "Hide" : "Reveal"} ${key}`}
+                      >
+                        {revealedKeys.has(key) || revealEnvPreview ? "Hide" : "Reveal"}
+                      </button>
                     </div>
                   </div>
                 );

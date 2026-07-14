@@ -470,7 +470,10 @@ function ServerLayoutTab() {
       if (res.ok) {
         setConfig(data);
         setWarnings(data.warnings || []);
-        setResult({ success: true, message: "System paths updated" });
+        const created = Array.isArray(data.createdPaths) && data.createdPaths.length > 0
+          ? ` Created ${data.createdPaths.join(", ")} on the active host.`
+          : " No host folders needed to be created.";
+        setResult({ success: true, message: `Host configuration saved.${created}` });
       } else {
         setResult({ success: false, message: data.error || "Failed to update" });
       }
@@ -520,17 +523,33 @@ function ServerLayoutTab() {
     );
   }
 
-  const fields: { key: keyof SystemConfig; label: string; placeholder: string; desc: string }[] = [
-    { key: "projectRoot", label: "Discovery Location", placeholder: "/opt", desc: "Optional location inspected for deployment candidates. Discovery never enrols anything automatically." },
-    { key: "templateDeploymentRoot", label: "Managed Workspace", placeholder: "Choose a location", desc: "Optional location used only when GroundControl creates a deployment. Existing workloads remain where they are." },
-    { key: "caddySitesDir", label: "Caddy Sites Directory", placeholder: "/etc/caddy/sites", desc: "Directory containing individual Caddy site config files" },
-    { key: "caddyFile", label: "Caddy Main Config", placeholder: "/etc/caddy/Caddyfile", desc: "Path to the main Caddyfile if sites are defined there instead of separate files" },
-    { key: "nginxSitesDir", label: "Nginx Sites Directory", placeholder: "/etc/nginx/sites-available", desc: "Directory containing Nginx virtual host configs" },
-    { key: "nginxLogPath", label: "Nginx Error Log", placeholder: "/var/log/nginx/error.log", desc: "Path to Nginx error log for debugging" },
-    { key: "staticRoot", label: "Static Files Root", placeholder: "/var/www", desc: "Directory served for static websites and file hosting" },
-    { key: "sshDefaultCwd", label: "SSH Default Working Directory", placeholder: "/root", desc: "Default directory when opening the terminal" },
-    { key: "certDomain", label: "SSL Certificate Domain", placeholder: "yourdomain.com (optional)", desc: "Primary domain for SSL certificate generation and monitoring" },
-    { key: "composeCommand", label: "Docker Compose Command", placeholder: "auto", desc: "Override the docker compose command. Leave empty for auto-detect." },
+  const fieldSections: Array<{
+    title: string;
+    description: string;
+    fields: { key: keyof SystemConfig; label: string; placeholder: string; desc: string }[];
+  }> = [
+    {
+      title: "Deployment discovery",
+      description: "These are search and creation locations—not deployment ownership. Enrolment remains an explicit operator decision.",
+      fields: [
+        { key: "projectRoot", label: "Look for existing workloads in", placeholder: "/opt", desc: "GroundControl scans this location for Compose folders. It does not enrol or move them." },
+        { key: "templateDeploymentRoot", label: "Create template deployments in", placeholder: "/opt/groundcontrol", desc: "Used only for workloads created from Templates. Existing deployments can remain anywhere." },
+      ],
+    },
+    {
+      title: "Runtime adapters",
+      description: "Paths GroundControl reads when building topology, validating proxy changes and opening the terminal.",
+      fields: [
+        { key: "caddySitesDir", label: "Caddy sites directory", placeholder: "/etc/caddy/sites", desc: "Individual Caddy site configuration files." },
+        { key: "caddyFile", label: "Caddy main config", placeholder: "/etc/caddy/Caddyfile", desc: "Main Caddyfile used for topology and validation." },
+        { key: "nginxSitesDir", label: "Nginx sites directory", placeholder: "/etc/nginx/sites-available", desc: "Nginx virtual host configurations." },
+        { key: "nginxLogPath", label: "Nginx error log", placeholder: "/var/log/nginx/error.log", desc: "Evidence source for proxy investigations." },
+        { key: "staticRoot", label: "Static files root", placeholder: "/var/www", desc: "Base location used by static-site templates." },
+        { key: "sshDefaultCwd", label: "Terminal starting directory", placeholder: "/root", desc: "Starting location for an operator terminal session." },
+        { key: "certDomain", label: "Primary certificate domain", placeholder: "yourdomain.com (optional)", desc: "Optional domain used by certificate monitoring." },
+        { key: "composeCommand", label: "Compose command override", placeholder: "auto", desc: "Leave empty to detect docker compose or docker-compose." },
+      ],
+    },
   ];
 
   return (
@@ -553,10 +572,14 @@ function ServerLayoutTab() {
         containers and processes can live anywhere on the active host.
       </p>
 
-      <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {fields.map((f) => (
-            <div key={f.key}>
+      <form onSubmit={handleSave} className="max-w-3xl space-y-6">
+        {fieldSections.map((section) => (
+          <section key={section.title} className="border-t border-border pt-4 first:border-t-0 first:pt-0">
+            <h3 className="text-sm font-medium">{section.title}</h3>
+            <p className="mb-4 mt-1 max-w-2xl text-[11px] leading-relaxed text-muted">{section.description}</p>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {section.fields.map((f) => (
+                <div key={f.key}>
               <label className="block text-xs font-mono text-muted mb-1">{f.label}</label>
               <p className="text-[10px] text-muted/60 mb-1.5 leading-relaxed">{f.desc}</p>
               <div className="flex gap-2">
@@ -578,9 +601,11 @@ function ServerLayoutTab() {
                   </svg>
                 </button>
               </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </section>
+        ))}
 
         {warnings.length > 0 && (
           <div className="p-3 rounded-lg text-sm bg-warning/10 border border-warning/30 text-warning">
@@ -598,7 +623,7 @@ function ServerLayoutTab() {
           disabled={saving}
           className="px-4 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg hover:bg-accent/20 transition-colors disabled:opacity-50"
         >
-          Save Paths
+          Save host configuration
         </button>
         {result && (
           <div

@@ -2,6 +2,10 @@
 
 > Status: implemented product-direction foundation with a production workspace driven by enrolled services, recorded changes and live public-path probes. Deterministic fixtures remain test-only evaluation assets; guarded autopilot is not generally enabled.
 
+## Current implementation boundary
+
+The production Intelligence workspace can read the active host, reconcile Docker/Compose and Caddy/Nginx evidence, record meaningful changes, derive public HTTP journeys, and run evidence-backed investigations. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Gemini requires a Google API key, Daytona reproduction requires Daytona credentials, and host mutation remains disabled unless the allowlisted live-recovery adapter is explicitly enabled. The workspace exposes these prerequisites as readiness checks instead of silently appearing empty.
+
 ## Product hierarchy
 
 GroundControl is the product. Loop is its intelligence and recovery engine. A Loop Run is one evidence chain from a meaningful operational change or detected failure through customer-facing verification.
