@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMaterializeEnvBundleCommand,
   buildMaterializeEnvCommand,
+  hashEnvBundle,
   hashEnv,
   maskSecret,
   normalizeProviderRuntimeEnv,
@@ -8,7 +10,9 @@ import {
   parseEnvSchema,
   serializeDotenv,
   validateEnv,
+  validateEnvBundle,
 } from "./env-management";
+import { buildManagedComposeInvocation } from "./vps";
 
 describe("env management", () => {
   it("parses env schemas into required keys", () => {
@@ -69,5 +73,47 @@ DATABASE_URL=duplicate
       REDIS_URL: "redis://cache",
       API_URL: "https://api.example.com",
     });
+  });
+
+  it("validates and hashes deployment and component scopes independently", () => {
+    const schema = [
+      { key: "PUBLIC_URL", required: true },
+      { key: "DATABASE_URL", required: true, component: "api" },
+      { key: "DATABASE_URL", required: true, component: "worker" },
+    ];
+    const components = {
+      api: { DATABASE_URL: "postgres://api" },
+      worker: { DATABASE_URL: "postgres://worker" },
+    };
+
+    expect(validateEnvBundle(schema, { PUBLIC_URL: "https://app.example.com" }, components)).toEqual({
+      ok: true,
+      missing: [],
+      hash: hashEnvBundle({ PUBLIC_URL: "https://app.example.com" }, components),
+    });
+    expect(validateEnvBundle(schema, { PUBLIC_URL: "https://app.example.com" }, { api: components.api }).missing)
+      .toEqual(["worker:DATABASE_URL"]);
+  });
+
+  it("materializes component files and a managed Compose override", () => {
+    const command = buildMaterializeEnvBundleCommand(
+      "/srv/app",
+      { PUBLIC_URL: "https://app.example.com" },
+      { api: { DATABASE_URL: "postgres://db" }, worker: { QUEUE: "critical" } }
+    );
+
+    expect(command).toContain(".groundcontrol/env/api.env");
+    expect(command).toContain(".groundcontrol/env/worker.env");
+    expect(command).toContain(".groundcontrol/compose.env.override.yml");
+    expect(command).toContain("base64 -d");
+    expect(command).not.toContain("postgres://db");
+  });
+
+  it("adds the managed override to Compose only when the file exists", () => {
+    const command = buildManagedComposeInvocation("docker compose", "up -d", "compose.yml");
+
+    expect(command).toContain(".groundcontrol/compose.env.override.yml");
+    expect(command).toContain('set -- -f "$gc_compose_base" -f .groundcontrol/compose.env.override.yml');
+    expect(command).toContain('docker compose "$@" up -d');
   });
 });
