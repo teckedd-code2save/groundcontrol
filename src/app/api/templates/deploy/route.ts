@@ -46,6 +46,44 @@ function collectHostPorts(compose: string): string[] {
   return Array.from(new Set(matches.map((match) => match.match(/:(\d+):/)?.[1]).filter(Boolean) as string[]));
 }
 
+async function enrolTemplateDeployment(args: {
+  projectId: number;
+  name: string;
+  slug: string;
+  kind: string;
+  sourcePath: string;
+  composePath?: string;
+  vpsConfigId: number;
+  templateName: string;
+}) {
+  return prisma.enrolledDeployment.upsert({
+    where: { legacyProjectId: args.projectId },
+    create: {
+      name: args.name,
+      slug: args.slug,
+      kind: args.kind,
+      managementMode: "managed",
+      sourcePath: args.sourcePath,
+      composePath: args.composePath,
+      status: "active",
+      lastSeenAt: new Date(),
+      vpsConfigId: args.vpsConfigId,
+      legacyProjectId: args.projectId,
+      metadataJson: JSON.stringify({ source: "template", templateName: args.templateName }),
+    },
+    update: {
+      name: args.name,
+      kind: args.kind,
+      sourcePath: args.sourcePath,
+      composePath: args.composePath,
+      managementMode: "managed",
+      status: "active",
+      lastSeenAt: new Date(),
+      metadataJson: JSON.stringify({ source: "template", templateName: args.templateName }),
+    },
+  });
+}
+
 interface CloudflareZone {
   id: string;
   name?: string;
@@ -341,6 +379,15 @@ export async function POST(req: NextRequest) {
         targetType: "static",
         staticDir,
       });
+      await enrolTemplateDeployment({
+        projectId: persisted.projectId,
+        name: slug,
+        slug,
+        kind: "static",
+        sourcePath: deployPath,
+        vpsConfigId: vps.id,
+        templateName,
+      });
 
       return NextResponse.json({
         success: true,
@@ -358,6 +405,7 @@ export async function POST(req: NextRequest) {
         proxyConfigPath: proxyPath,
         manifest,
         source,
+        enrolled: true,
         message: `Published static site ${slug} to ${staticDir}.${domains.length ? ` Served at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}`,
       });
     }
@@ -537,6 +585,16 @@ export async function POST(req: NextRequest) {
         envStatus: envValidation.ok ? "valid" : "missing",
       },
     });
+    await enrolTemplateDeployment({
+      projectId: persisted.projectId,
+      name: slug,
+      slug,
+      kind: "compose",
+      sourcePath: deployPath,
+      composePath: `${deployPath}/docker-compose.yml`,
+      vpsConfigId: vps.id,
+      templateName,
+    });
 
     return NextResponse.json({
       success: true,
@@ -555,6 +613,7 @@ export async function POST(req: NextRequest) {
       manifest,
       source,
       tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
+      enrolled: true,
       message: `Deployed ${slug} to ${deployPath}. ${domains.length ? `Served at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}`,
     });
   } catch (err) {
