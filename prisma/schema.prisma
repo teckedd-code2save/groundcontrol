@@ -8,27 +8,27 @@ datasource db {
 }
 
 model User {
-  id                 Int      @id @default(autoincrement())
-  username           String   @unique
-  password           String   // bcrypt hash
-  role               String   @default("admin")
-  forcePasswordChange Boolean @default(false)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                  Int      @id @default(autoincrement())
+  username            String   @unique
+  password            String // bcrypt hash
+  role                String   @default("admin")
+  forcePasswordChange Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  auditLogs AuditLog[]
-  aiThreads AiThread[]
+  auditLogs     AuditLog[]
+  aiThreads     AiThread[]
   guideProgress UserGuideProgress[]
 }
 
 model AuditLog {
-  id          Int      @id @default(autoincrement())
-  userId      Int
-  action      String   // login | logout | password_change | login_failed
-  ip          String   @default("")
-  userAgent   String   @default("")
-  metadata    String   @default("") // JSON string for extra context
-  createdAt   DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  action    String // login | logout | password_change | login_failed
+  ip        String   @default("")
+  userAgent String   @default("")
+  metadata  String   @default("") // JSON string for extra context
+  createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -37,47 +37,47 @@ model AuditLog {
 }
 
 model VpsConfig {
-  id        Int      @id @default(autoincrement())
-  name      String   @default("primary")
-  host      String
-  port      Int      @default(22)
-  username  String   @default("root")
+  id         Int      @id @default(autoincrement())
+  name       String   @default("primary")
+  host       String
+  port       Int      @default(22)
+  username   String   @default("root")
   privateKey String? // AES-256-GCM encrypted at rest (see src/lib/crypto.ts)
-  authType  String   @default("key") // key | password
-  password  String? // AES-256-GCM encrypted at rest (see src/lib/crypto.ts)
-  isLocal   Boolean  @default(false) // true = running on VPS, exec directly
-  isActive  Boolean  @default(false) // exactly one active VPS; all pages target it
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  authType   String   @default("key") // key | password
+  password   String? // AES-256-GCM encrypted at rest (see src/lib/crypto.ts)
+  isLocal    Boolean  @default(false) // true = running on VPS, exec directly
+  isActive   Boolean  @default(false) // exactly one active VPS; all pages target it
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  systemConfig SystemConfig?
-  deploymentTargets DeploymentTarget[]
+  systemConfig        SystemConfig?
+  deploymentTargets   DeploymentTarget[]
   enrolledDeployments EnrolledDeployment[]
 }
 
 model Project {
-  id          Int      @id @default(autoincrement())
-  slug        String   @unique
-  name        String
-  domain      String?
-  path        String   // /opt/slug or /var/www/slug
-  repoUrl     String?
-  buildCommand String?
-  outputDir   String?
-  dockerfile  String?
-  envVars     String?  // JSON object of default env vars
-  caddyFile   String?
-  dockerCompose String?
-  category    String   @default("app") // app | static | docker
-  status      String   @default("unknown")
-  lastDeploy  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             Int       @id @default(autoincrement())
+  slug           String    @unique
+  name           String
+  domain         String?
+  path           String // /opt/slug or /var/www/slug
+  repoUrl        String?
+  buildCommand   String?
+  outputDir      String?
+  dockerfile     String?
+  envVars        String? // JSON object of default env vars
+  caddyFile      String?
+  dockerCompose  String?
+  category       String    @default("app") // app | static | docker
+  status         String    @default("unknown")
+  lastDeploy     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
   projectGroupId Int?
 
-  deployments Deployment[]
-  envProfiles DeploymentEnvProfile[]
-  projectGroup ProjectGroup? @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
+  deployments     Deployment[]
+  envProfiles     DeploymentEnvProfile[]
+  projectGroup    ProjectGroup?          @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
   inventoryRecord EnrolledDeployment?
 
   @@index([projectGroupId])
@@ -94,30 +94,30 @@ model ProjectGroup {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  deployments Project[]
+  deployments         Project[]
   enrolledDeployments EnrolledDeployment[]
 }
 
 // Stable operator-owned identity for a workload discovered on a host. This is
 // deliberately separate from Deployment, which records individual releases.
 model EnrolledDeployment {
-  id              Int      @id @default(autoincrement())
+  id              Int       @id @default(autoincrement())
   name            String
-  slug            String   @unique
+  slug            String    @unique
   kind            String
-  managementMode  String   @default("track") // track | managed
+  managementMode  String    @default("track") // track | managed
   sourcePath      String?
   composePath     String?
   containerName   String?
   systemdUnit     String?
-  status          String   @default("unknown")
-  metadataJson    String   @default("{}")
+  status          String    @default("unknown")
+  metadataJson    String    @default("{}")
   lastSeenAt      DateTime?
   projectGroupId  Int?
   vpsConfigId     Int?
-  legacyProjectId Int?     @unique
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  legacyProjectId Int?      @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   projectGroup  ProjectGroup? @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
   vpsConfig     VpsConfig?    @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
@@ -130,37 +130,37 @@ model EnrolledDeployment {
 }
 
 model DeploymentTarget {
-  id           Int      @id @default(autoincrement())
-  name         String
-  type         String   // docker-compose | static | nixpacks | custom
-  vpsConfigId  Int?
+  id                     Int      @id @default(autoincrement())
+  name                   String
+  type                   String // docker-compose | static | nixpacks | custom
+  vpsConfigId            Int?
   cloudProviderAccountId Int? // GCP/AWS/Azure account for cloud targets
-  configJson   String   @default("") // target-specific configuration
-  isActive     Boolean  @default(false)
-  dnsRecordId  String?  // Cloudflare DNS record created by this target
-  dnsRecordName String? // Name of the Cloudflare DNS record created by this target
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  configJson             String   @default("") // target-specific configuration
+  isActive               Boolean  @default(false)
+  dnsRecordId            String? // Cloudflare DNS record created by this target
+  dnsRecordName          String? // Name of the Cloudflare DNS record created by this target
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: SetNull)
+  vps          VpsConfig?            @relation(fields: [vpsConfigId], references: [id], onDelete: SetNull)
   cloudAccount CloudProviderAccount? @relation(fields: [cloudProviderAccountId], references: [id], onDelete: SetNull)
-  deployments Deployment[]
+  deployments  Deployment[]
 
   @@index([type, isActive])
 }
 
 model Job {
-  id          Int      @id @default(autoincrement())
-  type        String   // deploy | build | rollback | terraform_apply
-  status      String   @default("pending") // pending | running | success | failed | cancelled
-  payload     String   // JSON
-  output      String   @default("")
-  result      String?  // JSON
-  error       String?
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         Int       @id @default(autoincrement())
+  type       String // deploy | build | rollback | terraform_apply
+  status     String    @default("pending") // pending | running | success | failed | cancelled
+  payload    String // JSON
+  output     String    @default("")
+  result     String? // JSON
+  error      String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   deployments Deployment[]
 
@@ -172,14 +172,14 @@ model Deployment {
   id                 Int      @id @default(autoincrement())
   projectId          Int
   targetId           Int
-  jobId              Int?     // Background job tracking real-time logs
+  jobId              Int? // Background job tracking real-time logs
   status             String   @default("pending") // pending | building | deploying | success | failed | rolled_back
   branch             String   @default("main")
   commitSha          String?
   imageTag           String?
   publicUrl          String?
   previewUrl         String?
-  previewProcessInfo String?  // PID/log path for ephemeral quick tunnels
+  previewProcessInfo String? // PID/log path for ephemeral quick tunnels
   idempotencyKey     String?
   output             String?
   error              String?
@@ -191,9 +191,9 @@ model Deployment {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  target  DeploymentTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
-  job     Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  project     Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target      DeploymentTarget       @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  job         Job?                   @relation(fields: [jobId], references: [id], onDelete: SetNull)
   envProfiles DeploymentEnvProfile[]
 
   @@index([projectId, createdAt])
@@ -217,26 +217,26 @@ model EnvProviderAccount {
 }
 
 model DeploymentEnvProfile {
-  id                Int      @id @default(autoincrement())
+  id                Int       @id @default(autoincrement())
   projectId         Int
   deploymentId      Int?
-  providerType      String   @default("local")
+  providerType      String    @default("local")
   providerAccountId Int?
-  environment       String   @default("prod")
-  secretPath        String   @default("/")
-  projectRef        String   @default("") // Infisical workspace/project ID or provider-specific ref
-  schemaJson        String   @default("[]")
-  status            String   @default("unknown") // unknown | missing | valid | synced | stale | failed
+  environment       String    @default("prod")
+  secretPath        String    @default("/")
+  projectRef        String    @default("") // Infisical workspace/project ID or provider-specific ref
+  schemaJson        String    @default("[]")
+  status            String    @default("unknown") // unknown | missing | valid | synced | stale | failed
   lastHash          String?
   lastSyncedAt      DateTime?
   lastError         String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  deployment Deployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
-  providerAccount EnvProviderAccount? @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
-  values DeploymentEnvValue[]
+  project         Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deployment      Deployment?          @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  providerAccount EnvProviderAccount?  @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
+  values          DeploymentEnvValue[]
 
   @@index([projectId, providerType])
   @@index([deploymentId])
@@ -246,6 +246,7 @@ model DeploymentEnvProfile {
 model DeploymentEnvValue {
   id        Int      @id @default(autoincrement())
   profileId Int
+  component String   @default("") // empty = deployment-wide; otherwise Compose service name
   key       String
   value     String   @default("") // encrypted at rest
   required  Boolean  @default(false)
@@ -255,21 +256,21 @@ model DeploymentEnvValue {
 
   profile DeploymentEnvProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
-  @@unique([profileId, key])
-  @@index([profileId])
+  @@unique([profileId, component, key])
+  @@index([profileId, component])
 }
 
 model DeploymentLog {
-  id        Int      @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   projectSlug String
-  status    String   @default("running") // running | success | failed | rolled_back
-  commitSha String?
-  branch    String   @default("main")
-  output    String?
-  error     String?
-  durationMs Int?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status      String   @default("running") // running | success | failed | rolled_back
+  commitSha   String?
+  branch      String   @default("main")
+  output      String?
+  error       String?
+  durationMs  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Alert {
@@ -283,20 +284,20 @@ model Alert {
 }
 
 model MetricSnapshot {
-  id        Int      @id @default(autoincrement())
-  cpuLoad1  Float
-  cpuLoad5  Float
-  cpuLoad15 Float
-  memUsed   Float
-  memTotal  Float
-  memPercent Float
-  diskUsed  Float
-  diskTotal Float
-  diskPercent Float
-  containerCount Int
-  runningContainers Int
+  id                  Int      @id @default(autoincrement())
+  cpuLoad1            Float
+  cpuLoad5            Float
+  cpuLoad15           Float
+  memUsed             Float
+  memTotal            Float
+  memPercent          Float
+  diskUsed            Float
+  diskTotal           Float
+  diskPercent         Float
+  containerCount      Int
+  runningContainers   Int
   unhealthyContainers Int
-  createdAt DateTime @default(now())
+  createdAt           DateTime @default(now())
 }
 
 model SiteContainerMap {
@@ -309,19 +310,19 @@ model SiteContainerMap {
 }
 
 model SystemConfig {
-  id             Int    @id @default(autoincrement())
-  vpsConfigId    Int?   @unique // links this filesystem layout to a specific VPS; null = global/legacy default
-  projectRoot    String @default("/opt")
-  templateDeploymentRoot String @default("/srv/groundcontrol/deployments")
-  caddySitesDir  String @default("/etc/caddy/sites")
-  caddyFile      String @default("/etc/caddy/Caddyfile")
-  nginxSitesDir  String @default("/etc/nginx/sites-available")
-  nginxLogPath   String @default("/var/log/nginx/error.log")
-  staticRoot     String @default("/var/www")
-  sshDefaultCwd  String @default("/root")
-  certDomain     String @default("")
-  composeCommand String? // override docker compose command: "docker compose", "docker-compose", "podman-compose"
-  updatedAt      DateTime @updatedAt
+  id                     Int      @id @default(autoincrement())
+  vpsConfigId            Int?     @unique // links this filesystem layout to a specific VPS; null = global/legacy default
+  projectRoot            String   @default("/opt")
+  templateDeploymentRoot String   @default("/srv/groundcontrol/deployments")
+  caddySitesDir          String   @default("/etc/caddy/sites")
+  caddyFile              String   @default("/etc/caddy/Caddyfile")
+  nginxSitesDir          String   @default("/etc/nginx/sites-available")
+  nginxLogPath           String   @default("/var/log/nginx/error.log")
+  staticRoot             String   @default("/var/www")
+  sshDefaultCwd          String   @default("/root")
+  certDomain             String   @default("")
+  composeCommand         String? // override docker compose command: "docker compose", "docker-compose", "podman-compose"
+  updatedAt              DateTime @updatedAt
 
   vps VpsConfig? @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
 }
@@ -329,8 +330,8 @@ model SystemConfig {
 model CloudProviderAccount {
   id          Int      @id @default(autoincrement())
   name        String
-  provider    String   // gcp | aws | azure
-  credentials String   // encrypted JSON
+  provider    String // gcp | aws | azure
+  credentials String // encrypted JSON
   isActive    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -343,12 +344,12 @@ model CloudProviderAccount {
 model TerraformStack {
   id           Int      @id @default(autoincrement())
   name         String
-  provider     String   // hetzner | aws | gcp | azure
+  provider     String // hetzner | aws | gcp | azure
   workspace    String   @default("default")
-  hcl          String   // generated Terraform configuration
+  hcl          String // generated Terraform configuration
   varsJson     String   @default("") // encrypted terraform.tfvars
   stateBackend String   @default("local") // local | s3 | gcs
-  statePath    String?  // where state is stored
+  statePath    String? // where state is stored
   lastPlan     String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -357,39 +358,39 @@ model TerraformStack {
 }
 
 model CloudflareAccount {
-  id          Int      @id @default(autoincrement())
-  name        String   @default("Cloudflare")
-  apiToken    String   // encrypted at rest
-  accountId   String?
-  email       String?
-  isActive    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        Int      @id @default(autoincrement())
+  name      String   @default("Cloudflare")
+  apiToken  String // encrypted at rest
+  accountId String?
+  email     String?
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   tunnels CloudflareTunnel[]
 }
 
 model CloudflareTunnel {
-  id          Int      @id @default(autoincrement())
-  tunnelId    String   @unique // Cloudflare tunnel ID (UUID)
-  name        String
+  id           Int      @id @default(autoincrement())
+  tunnelId     String   @unique // Cloudflare tunnel ID (UUID)
+  name         String
   tunnelSecret String? // base64 secret for cloudflared
-  connectorId String?  // optional running container id
-  status      String   @default("inactive") // active | inactive | error
-  domains     String   @default("") // comma-separated list
-  configJson  String   @default("") // ingress JSON snapshot
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  connectorId  String? // optional running container id
+  status       String   @default("inactive") // active | inactive | error
+  domains      String   @default("") // comma-separated list
+  configJson   String   @default("") // ingress JSON snapshot
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  account CloudflareAccount @relation(fields: [cloudflareAccountId], references: [id], onDelete: Cascade)
+  account             CloudflareAccount @relation(fields: [cloudflareAccountId], references: [id], onDelete: Cascade)
   cloudflareAccountId Int
 }
 
 model AlertRule {
   id          Int      @id @default(autoincrement())
   name        String
-  metric      String   // cpu_load_1 | mem_percent | disk_percent | unhealthy_containers | container_down
-  operator    String   // > | < | == | >= | <=
+  metric      String // cpu_load_1 | mem_percent | disk_percent | unhealthy_containers | container_down
+  operator    String // > | < | == | >= | <=
   threshold   Float
   durationSec Int      @default(60) // must breach for this long
   enabled     Boolean  @default(true)
@@ -410,14 +411,14 @@ model HealthCheckConfig {
   enabled     Boolean   @default(true)
   severity    String    @default("error") // info | warning | error | critical
   lastRunAt   DateTime?
-  lastStatus  String?   // ok | degraded | down
+  lastStatus  String? // ok | degraded | down
   updatedAt   DateTime  @updatedAt
 }
 
 model HealthCheckResult {
   id            Int      @id @default(autoincrement())
   containerName String
-  status        String   // healthy | unhealthy | down
+  status        String // healthy | unhealthy | down
   detail        String   @default("")
   checkedAt     DateTime @default(now())
 
@@ -445,7 +446,7 @@ model AiThread {
 model AiMessage {
   id        Int      @id @default(autoincrement())
   threadId  Int
-  role      String   // user | assistant | system | tool
+  role      String // user | assistant | system | tool
   content   String   @default("")
   sortOrder Int      @default(0)
   metadata  String   @default("{}") // JSON: confirmation state, provider, model, etc.
@@ -497,9 +498,9 @@ model Guide {
   slug        String   @unique
   title       String
   description String   @default("")
-  category    String   // integration | incident | concept | checklist
+  category    String // integration | incident | concept | checklist
   sourceRef   String   @default("") // e.g. docs/INTEGRATION-GUIDE.md
-  stepsJson   String   // JSON array of GuideStep objects
+  stepsJson   String // JSON array of GuideStep objects
   isPublished Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -511,15 +512,15 @@ model Guide {
 }
 
 model UserGuideProgress {
-  id               Int      @id @default(autoincrement())
+  id               Int       @id @default(autoincrement())
   userId           Int
   guideId          Int
-  currentStepId    String   @default("")
-  completedStepIds String   @default("[]") // JSON array of step ids
-  status           String   @default("not_started") // not_started | in_progress | completed
+  currentStepId    String    @default("")
+  completedStepIds String    @default("[]") // JSON array of step ids
+  status           String    @default("not_started") // not_started | in_progress | completed
   startedAt        DateTime?
   completedAt      DateTime?
-  updatedAt        DateTime @updatedAt
+  updatedAt        DateTime  @updatedAt
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   guide Guide @relation(fields: [guideId], references: [id], onDelete: Cascade)
