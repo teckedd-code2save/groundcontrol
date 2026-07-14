@@ -521,8 +521,8 @@ function ServerLayoutTab() {
   }
 
   const fields: { key: keyof SystemConfig; label: string; placeholder: string; desc: string }[] = [
-    { key: "projectRoot", label: "Legacy Project Root", placeholder: "/opt", desc: "Base directory scanned for existing/manual apps. Templates do not deploy here by default." },
-    { key: "templateDeploymentRoot", label: "Template Deployment Root", placeholder: "/srv/groundcontrol/deployments", desc: "Managed root where new template deployments are created" },
+    { key: "projectRoot", label: "Discovery Location", placeholder: "/opt", desc: "Optional location inspected for deployment candidates. Discovery never enrols anything automatically." },
+    { key: "templateDeploymentRoot", label: "Managed Workspace", placeholder: "Choose a location", desc: "Optional location used only when GroundControl creates a deployment. Existing workloads remain where they are." },
     { key: "caddySitesDir", label: "Caddy Sites Directory", placeholder: "/etc/caddy/sites", desc: "Directory containing individual Caddy site config files" },
     { key: "caddyFile", label: "Caddy Main Config", placeholder: "/etc/caddy/Caddyfile", desc: "Path to the main Caddyfile if sites are defined there instead of separate files" },
     { key: "nginxSitesDir", label: "Nginx Sites Directory", placeholder: "/etc/nginx/sites-available", desc: "Directory containing Nginx virtual host configs" },
@@ -538,7 +538,7 @@ function ServerLayoutTab() {
       <LoaderOverlay3D open={detecting || saving} variant="generic" title={detecting ? "Detecting server layout..." : "Saving paths..."} />
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-mono text-muted">
-          System Paths <span className="text-accent normal-case">(for the active VPS)</span>
+          Host Configuration <span className="text-accent normal-case">(active host)</span>
         </h2>
         <button
           onClick={autoDetect}
@@ -549,8 +549,8 @@ function ServerLayoutTab() {
         </button>
       </div>
       <p className="text-[11px] text-muted/70 mb-6 leading-relaxed max-w-2xl">
-        These paths describe the filesystem layout of the <strong>currently active</strong> server. Each VPS keeps its
-        own set, so a second server with a different layout can be adapted independently.
+        Discovery locations help GroundControl find candidates; they do not define deployment identity. Enrolled folders,
+        containers and processes can live anywhere on the active host.
       </p>
 
       <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
