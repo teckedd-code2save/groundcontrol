@@ -460,7 +460,7 @@ export async function runDockerCompose(
 
   for (const composeCmd of candidates) {
     const result = await execOnVps(
-      `cd ${shQuote(projectPath)} && ${composeCmd} ${args}`,
+      `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(composeCmd, args)}`,
       conn
     );
     if (result.code === 0) return result;
@@ -483,7 +483,9 @@ export async function runDockerComposePipeline(
   let last = { stdout: "", stderr: "", code: 127 };
 
   for (const composeCmd of candidates) {
-    const command = steps.map((step) => `${composeCmd} ${step}`).join(" && ");
+    const command = steps
+      .map((step) => buildManagedComposeInvocation(composeCmd, step))
+      .join(" && ");
     const result = await execOnVps(`cd ${shQuote(projectPath)} && ${command}`, conn);
     if (result.code === 0) return result;
     last = result;
@@ -513,12 +515,12 @@ export async function runDockerComposeDown(
     if (svcArgs) {
       // Stopping specific services is more portable than `down <service>`.
       result = await execOnVps(
-        `cd ${shQuote(projectPath)} && ${composeCmd} stop ${svcArgs} && ${composeCmd} rm -f ${svcArgs}`,
+        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(composeCmd, `stop ${svcArgs}`)} && ${buildManagedComposeInvocation(composeCmd, `rm -f ${svcArgs}`)}`,
         conn
       );
     } else {
       result = await execOnVps(
-        `cd ${shQuote(projectPath)} && ${composeCmd} down`,
+        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(composeCmd, "down")}`,
         conn
       );
     }
@@ -526,6 +528,35 @@ export async function runDockerComposeDown(
     last = result;
   }
   return last;
+}
+
+/**
+ * Build a POSIX-sh Compose invocation that includes GroundControl's managed
+ * component environment override when it exists. Without the override it
+ * behaves exactly like the repository's normal Compose command.
+ */
+export function buildManagedComposeInvocation(
+  composeCommand: string,
+  args: string,
+  composeFile?: string
+): string {
+  const selectBase = composeFile
+    ? `gc_compose_base=${shQuote(composeFile)}`
+    : [
+        `gc_compose_base=''`,
+        `for gc_file in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do`,
+        `  if [ -f "$gc_file" ]; then gc_compose_base="$gc_file"; break; fi`,
+        `done`,
+      ].join(" ");
+  return [
+    `(${selectBase};`,
+    `if [ -n "$gc_compose_base" ] && [ -f .groundcontrol/compose.env.override.yml ]; then`,
+    `  set -- -f "$gc_compose_base" -f .groundcontrol/compose.env.override.yml;`,
+    `elif [ -n "$gc_compose_base" ] && [ -n ${shQuote(composeFile || "")} ]; then`,
+    `  set -- -f "$gc_compose_base";`,
+    `else set --; fi;`,
+    `${composeCommand} "$@" ${args})`,
+  ].join(" ");
 }
 
 export async function resolveComposeProjectPath(
