@@ -45,7 +45,7 @@ export interface LoopEngineState {
   revisions: Map<string, ProxyRevision>;
   lastHealthy: LastHealthyStore;
   runs: Map<string, LoopRun>;
-  /** Current proxy content after mutations (fixture/live mirror). */
+  /** Current proxy content after observed or approved live mutations. */
   proxyContentByHost: Map<string, string>;
   /** Last ingested observation — used to re-reconcile graph after proxy recovery. */
   lastObservation?: HostObservation;
