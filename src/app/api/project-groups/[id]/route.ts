@@ -30,7 +30,7 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
     const projectId = Number(id);
     if (!Number.isFinite(projectId)) return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
     await prisma.$transaction([
-      prisma.project.updateMany({ where: { projectGroupId: projectId }, data: { projectGroupId: null } }),
+      prisma.enrolledDeployment.updateMany({ where: { projectGroupId: projectId }, data: { projectGroupId: null } }),
       prisma.projectGroup.delete({ where: { id: projectId } }),
     ]);
     return NextResponse.json({ ok: true });
