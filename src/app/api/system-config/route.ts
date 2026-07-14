@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getActiveVps, getSystemConfig, invalidateSystemConfigCache, execOnVps } from "@/lib/vps";
+import { requireAuth } from "@/lib/auth";
 
 // Whitelist of editable path fields so a request can't set vpsConfigId/id directly.
 const PATH_FIELDS = [
@@ -61,15 +62,16 @@ const DIR_FIELDS = [
   "sshDefaultCwd",
 ] as const;
 
-async function validateDirectories(data: PathData): Promise<string[]> {
+async function validateDirectories(data: PathData): Promise<{ warnings: string[]; createdPaths: string[] }> {
   const warnings: string[] = [];
+  const createdPaths: string[] = [];
   let conn;
   try {
     conn = await getActiveVps();
   } catch {
-    return ["No active VPS to validate paths against"];
+    return { warnings: ["No active VPS to validate paths against"], createdPaths };
   }
-  if (!conn) return ["No active VPS to validate paths against"];
+  if (!conn) return { warnings: ["No active VPS to validate paths against"], createdPaths };
 
   for (const key of DIR_FIELDS) {
     const path = data[key];
@@ -81,6 +83,7 @@ async function validateDirectories(data: PathData): Promise<string[]> {
         if (key === "templateDeploymentRoot") {
           const mkdir = await execOnVps(`mkdir -p ${quoted} && chmod 755 ${quoted} && echo yes || echo no`, conn);
           if (mkdir.stdout.trim() !== "yes") warnings.push(`${key}: ${path} does not exist and could not be created on the active VPS`);
+          else createdPaths.push(path);
         } else {
           warnings.push(`${key}: ${path} does not exist on the active VPS`);
         }
@@ -89,11 +92,12 @@ async function validateDirectories(data: PathData): Promise<string[]> {
       warnings.push(`${key}: could not verify ${path}`);
     }
   }
-  return warnings;
+  return { warnings, createdPaths };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    requireAuth(req);
     // Resolves the config for the active VPS (per-VPS filesystem layout).
     const config = await getSystemConfig();
     return NextResponse.json(config);
@@ -104,6 +108,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    requireAuth(req);
     const data = pickPathFields(await req.json());
     const prismaData = toPrismaData(data);
     const { searchParams } = new URL(req.url);
@@ -119,8 +124,11 @@ export async function POST(req: NextRequest) {
     }
 
     let warnings: string[] = [];
+    let createdPaths: string[] = [];
     if (shouldValidate) {
-      warnings = await validateDirectories(data);
+      const validation = await validateDirectories(data);
+      warnings = validation.warnings;
+      createdPaths = validation.createdPaths;
     }
 
     let config;
@@ -168,7 +176,7 @@ export async function POST(req: NextRequest) {
       config = { ...prismaData, id: 0, updatedAt: new Date() };
     }
     invalidateSystemConfigCache();
-    return NextResponse.json({ ...config, warnings });
+    return NextResponse.json({ ...config, warnings, createdPaths });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Server error" }, { status: 500 });
   }
