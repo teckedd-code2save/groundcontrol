@@ -1,7 +1,7 @@
 /**
  * Process-local Loop engine store.
  * Persists across requests in the same Node process (dev/server).
- * Fixture-friendly and avoids requiring a Prisma migration for the core loop path.
+ * Transitional process-local store. Production UI never seeds or simulates evidence.
  */
 
 import {
