@@ -14,6 +14,7 @@ import {
 export interface EnvSchemaEntry {
   key: string;
   required: boolean;
+  component?: string;
   defaultValue?: string;
 }
 
@@ -27,6 +28,7 @@ export interface ResolvedDeploymentEnv {
   profile: DeploymentEnvProfile;
   provider?: EnvProviderAccount | null;
   values: Record<string, string>;
+  componentValues: Record<string, Record<string, string>>;
   validation: EnvValidationResult;
 }
 
@@ -158,14 +160,20 @@ export async function upsertEnvProfileForProject(input: {
 export async function setLocalEnvValues(
   profileId: number,
   values: Record<string, string>,
-  schema: EnvSchemaEntry[] = []
+  schema: EnvSchemaEntry[] = [],
+  component = ""
 ) {
-  const required = new Set(schema.filter((entry) => entry.required).map((entry) => entry.key));
+  const required = new Set(
+    schema
+      .filter((entry) => entry.required && (entry.component || "") === component)
+      .map((entry) => entry.key)
+  );
   for (const [key, value] of Object.entries(values)) {
     await prisma.deploymentEnvValue.upsert({
-      where: { profileId_key: { profileId, key } },
+      where: { profileId_component_key: { profileId, component, key } },
       create: {
         profileId,
+        component,
         key,
         value: encryptIfNeeded(value) || "",
         required: required.has(key),
@@ -181,8 +189,24 @@ export async function setLocalEnvValues(
 }
 
 export async function getProfileValues(profileId: number): Promise<Record<string, string>> {
-  const rows = await prisma.deploymentEnvValue.findMany({ where: { profileId } });
+  const rows = await prisma.deploymentEnvValue.findMany({ where: { profileId, component: "" } });
   return Object.fromEntries(rows.map((row) => [row.key, decryptMaybe(row.value) || ""]));
+}
+
+export async function getProfileValuesByComponent(
+  profileId: number
+): Promise<Record<string, Record<string, string>>> {
+  const rows = await prisma.deploymentEnvValue.findMany({
+    where: { profileId, component: { not: "" } },
+    orderBy: [{ component: "asc" }, { key: "asc" }],
+  });
+  const result: Record<string, Record<string, string>> = {};
+  for (const row of rows) {
+    const values = result[row.component] || {};
+    values[row.key] = decryptMaybe(row.value) || "";
+    result[row.component] = values;
+  }
+  return result;
 }
 
 function parseConfig<T>(value?: string | null): T {
@@ -204,6 +228,7 @@ export async function resolveDeploymentEnv(project: Project): Promise<ResolvedDe
     : null;
   const schema = parseEnvJson(profile.schemaJson);
   let values: Record<string, string> = {};
+  const componentValues = await getProfileValuesByComponent(profile.id);
   if (profile.providerType === "infisical") {
     if (!provider) throw new Error("Infisical env profile has no provider account");
     const config = {
@@ -219,8 +244,41 @@ export async function resolveDeploymentEnv(project: Project): Promise<ResolvedDe
   } else {
     values = await getProfileValues(profile.id);
   }
-  const validation = validateEnv(schema, values);
-  return { profile, provider, values, validation };
+  const validation = validateEnvBundle(schema, values, componentValues);
+  return { profile, provider, values, componentValues, validation };
+}
+
+export function validateEnvBundle(
+  schema: EnvSchemaEntry[],
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>
+): EnvValidationResult {
+  const missing = schema.flatMap((entry) => {
+    const source = entry.component ? componentValues[entry.component] || {} : values;
+    return entry.required && !source[entry.key]
+      ? [entry.component ? `${entry.component}:${entry.key}` : entry.key]
+      : [];
+  });
+  return {
+    ok: missing.length === 0,
+    missing,
+    hash: hashEnvBundle(values, componentValues),
+  };
+}
+
+export function hashEnvBundle(
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>
+): string {
+  const content = [
+    "[deployment]",
+    serializeDotenv(values),
+    ...Object.keys(componentValues).sort().flatMap((component) => [
+      `[component:${component}]`,
+      serializeDotenv(componentValues[component]),
+    ]),
+  ].join("\n");
+  return createHash("sha256").update(content).digest("hex");
 }
 
 export function normalizeProviderRuntimeEnv(values: Record<string, string>, providerType: string): Record<string, string> {
@@ -264,6 +322,100 @@ export async function materializeEnvFile(
   return { hash: hashEnv(values), output: result.stdout.trim() };
 }
 
+export function buildMaterializeEnvBundleCommand(
+  deployPath: string,
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>
+): string {
+  const quotedPath = shQuote(deployPath);
+  const commands = [
+    "set -eu",
+    "gc_env_timestamp=$(date +%Y%m%d%H%M%S)",
+    `mkdir -p ${quotedPath}/.groundcontrol/env ${quotedPath}/.groundcontrol/env-backups`,
+    `cd ${quotedPath}`,
+  ];
+  if (Object.keys(values).length > 0) {
+    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(values)));
+  }
+
+  const components = Object.keys(componentValues)
+    .filter(isSafeComposeServiceName)
+    .filter((component) => Object.keys(componentValues[component]).length > 0)
+    .sort();
+  for (const component of components) {
+    commands.push(...atomicEnvWriteCommands(
+      `.groundcontrol/env/${component}.env`,
+      serializeDotenv(componentValues[component])
+    ));
+  }
+  if (components.length > 0) {
+    const override = [
+      "# Managed by GroundControl. Source values remain encrypted in GroundControl.",
+      "services:",
+      ...components.flatMap((component) => [
+        `  ${component}:`,
+        "    env_file:",
+        `      - .groundcontrol/env/${component}.env`,
+      ]),
+      "",
+    ].join("\n");
+    commands.push(...atomicEnvWriteCommands(
+      ".groundcontrol/compose.env.override.yml",
+      override
+    ));
+  }
+  commands.push("printf '%s\\n' 'environment materialized'");
+  return commands.join("\n");
+}
+
+function atomicEnvWriteCommands(path: string, content: string): string[] {
+  const encoded = Buffer.from(content, "utf8").toString("base64");
+  const target = shQuote(path);
+  const backupBase = shQuote(
+    `.groundcontrol/env-backups/${path.replace(/[^A-Za-z0-9_.-]/g, "_")}.`
+  );
+  return [
+    `if [ -f ${target} ]; then cp ${target} ${backupBase}"$gc_env_timestamp".bak; fi`,
+    `printf '%s' ${shQuote(encoded)} | base64 -d > ${target}.new`,
+    `chmod 600 ${target}.new`,
+    `mv ${target}.new ${target}`,
+    `chmod 600 ${target}`,
+  ];
+}
+
+function isSafeComposeServiceName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value);
+}
+
+export async function materializeEnvBundle(
+  deployPath: string,
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>,
+  vps?: VpsConnection | null
+) {
+  const conn = vps || (await getActiveVps());
+  const result = await execOnTarget(
+    buildMaterializeEnvBundleCommand(deployPath, values, componentValues),
+    conn
+  );
+  if (result.code !== 0) {
+    throw new Error(result.stderr || result.stdout || "Failed to materialize environment");
+  }
+  return {
+    hash: hashEnvBundle(values, componentValues),
+    files: [
+      ...(Object.keys(values).length > 0 ? [".env"] : []),
+      ...Object.keys(componentValues)
+        .filter(isSafeComposeServiceName)
+        .filter((component) => Object.keys(componentValues[component]).length > 0)
+        .map((component) => `.groundcontrol/env/${component}.env`),
+      ...(Object.keys(componentValues).some((component) => Object.keys(componentValues[component]).length > 0)
+        ? [".groundcontrol/compose.env.override.yml"]
+        : []),
+    ],
+  };
+}
+
 export async function applyEnvToDeployment(
   project: Project,
   deploymentId?: number,
@@ -276,8 +428,12 @@ export async function applyEnvToDeployment(
     throw new Error(`Missing required env keys: ${resolved.validation.missing.join(", ")}`);
   }
   if (options.materialize !== false && project.path) {
-    await materializeEnvFile(project.path, resolved.values);
-    log?.(`[env] materialized ${resolved.profile.providerType} env to ${project.path}/.env\n`);
+    const materialized = await materializeEnvBundle(
+      project.path,
+      resolved.values,
+      resolved.componentValues
+    );
+    log?.(`[env] materialized ${resolved.profile.providerType} environment (${materialized.files.join(", ")})\n`);
   }
   await prisma.deploymentEnvProfile.update({
     where: { id: resolved.profile.id },
@@ -292,13 +448,27 @@ export async function applyEnvToDeployment(
   return resolved;
 }
 
-export function publicProfile(profile: DeploymentEnvProfile, values: Record<string, string>, schema: EnvSchemaEntry[]) {
-  const validation = validateEnv(schema, values);
+export function publicProfile(
+  profile: DeploymentEnvProfile,
+  values: Record<string, string>,
+  schema: EnvSchemaEntry[],
+  componentValues: Record<string, Record<string, string>> = {}
+) {
+  const validation = validateEnvBundle(schema, values, componentValues);
   return {
     ...profile,
     schema,
     validation,
     values: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { masked: maskSecret(value), hasValue: !!value }])),
+    componentValues: Object.fromEntries(
+      Object.entries(componentValues).map(([component, scoped]) => [
+        component,
+        Object.fromEntries(Object.entries(scoped).map(([key, value]) => [
+          key,
+          { masked: maskSecret(value), hasValue: !!value },
+        ])),
+      ])
+    ),
   };
 }
 
