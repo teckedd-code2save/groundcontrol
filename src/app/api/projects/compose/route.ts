@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { execOnVps, resolveComposeProjectPath, runDockerCompose, shQuote } from "@/lib/vps";
 import { parseComposeServices } from "@/lib/project-scan";
 import { prisma } from "@/lib/prisma";
-import { applyEnvToDeployment } from "@/lib/env-management";
+import { applyEnvToDeployment, MissingDeploymentEnvError } from "@/lib/env-management";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { validateSafePath } from "@/lib/host-safety";
@@ -47,6 +47,14 @@ export async function GET(req: NextRequest) {
     const { services, domain } = parseComposeServices(result.stdout);
     return NextResponse.json({ services, domain, raw: result.stdout, projectPath, source });
   } catch (err: unknown) {
+    if (err instanceof MissingDeploymentEnvError) {
+      return NextResponse.json({
+        success: false,
+        error: "Redeploy failed: Missing required env keys for this redeploy",
+        code: "MISSING_DEPLOYMENT_ENV",
+        missingEnvKeys: err.missing,
+      }, { status: 422 });
+    }
     return handleApiError(err);
   }
 }

@@ -5,10 +5,12 @@ import { handleApiError } from "@/lib/errors";
 import {
   getProfileValues,
   getProfileValuesByComponent,
+  deleteLocalEnvValues,
   materializeEnvBundle,
   parseEnvJson,
   parseEnvSchema,
   publicProfile,
+  removeEnvSchemaEntries,
   setLocalEnvValues,
   upsertEnvProfileForProject,
   type EnvSchemaEntry,
@@ -139,7 +141,24 @@ export async function POST(req: NextRequest) {
     const discovered = await discoverProjectEnv(project).catch(() => EMPTY_DISCOVERY);
 
     let action = "saved";
-    if (body.reconcile === true || body.importCurrentServerEnv === true) {
+    const deleteKeys = Array.isArray(body.deleteKeys)
+      ? body.deleteKeys.filter((key: unknown): key is string => typeof key === "string" && validKey(key))
+      : [];
+    if (deleteKeys.length > 0) {
+      schema = removeEnvSchemaEntries(schema, deleteKeys, component);
+      profile = await upsertEnvProfileForProject({
+        projectId,
+        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        schema,
+        providerType: body.providerType || "local",
+        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : null,
+        environment: body.environment || "prod",
+        secretPath: body.secretPath || "/",
+        projectRef: body.projectRef || "",
+      });
+      await deleteLocalEnvValues(profile.id, deleteKeys, component);
+      action = "deleted";
+    } else if (body.reconcile === true || body.importCurrentServerEnv === true) {
       const bundle = buildReconciledBundle(discovered, component || undefined);
       schema = mergeSchema(schema, schemaForBundle(bundle));
       profile = await upsertEnvProfileForProject({
@@ -187,8 +206,14 @@ export async function POST(req: NextRequest) {
       getProfileValuesByComponent(profile.id),
     ]);
     let materialized: { hash: string; files: string[] } | null = null;
-    if (profile.providerType === "local" && project.path && (action === "reconciled" || body.values)) {
-      materialized = await materializeEnvBundle(project.path, values, componentValues);
+    if (profile.providerType === "local" && project.path && (action === "reconciled" || action === "deleted" || body.values)) {
+      materialized = await materializeEnvBundle(
+        project.path,
+        values,
+        componentValues,
+        undefined,
+        { pruneManagedFiles: action === "deleted" }
+      );
       profile = await prisma.deploymentEnvProfile.update({
         where: { id: profile.id },
         data: {
