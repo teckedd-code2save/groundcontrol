@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   ArrowLeft,
   ExternalLink,
   FolderGit2,
   Layers3,
+  Pencil,
   RefreshCw,
   ServerCog,
   Settings2,
@@ -52,9 +53,12 @@ type DeploymentDetailRecord = {
     status: string;
     confidence: string;
     composeProject?: string | null;
-    containers: Array<{ name: string; image: string; status: string; ports: string; state: string; service?: string | null }>;
+    containers: Array<{ name: string; image: string; status: string; ports: string; state: string; service?: string | null; createdAt?: string; startedAt?: string; restartCount?: number }>;
     evidence: string[];
   };
+  route?: { file: string; domain: string; proxy?: string | null; root?: string | null; confidence: string; score: number } | null;
+  identitySource?: string;
+  runtimeEvents?: Array<{ id: number; status: string; output?: string | null; error?: string | null; durationMs?: number | null; createdAt: string }>;
   createdAt: string;
   updatedAt: string;
 };
@@ -77,6 +81,9 @@ export function DeploymentDetail({ slug }: { slug: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
+  const [identityOpen, setIdentityOpen] = useState(false);
+  const [publicUrlInput, setPublicUrlInput] = useState("");
+  const [repoUrlInput, setRepoUrlInput] = useState("");
   const [message, setMessage] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -129,6 +136,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectSlug: deployment.legacyProjectSlug,
+          projectPath: deployment.sourcePath || undefined,
           action: "redeploy",
           services: component ? [component] : undefined,
         }),
@@ -144,10 +152,34 @@ export function DeploymentDetail({ slug }: { slug: string }) {
     }
   }
 
-  const liveUrl = useMemo(() => {
-    if (!deployment) return null;
-    return deployment.publicUrl || (deployment.domain ? `https://${deployment.domain}` : null);
-  }, [deployment]);
+  function openIdentityEditor() {
+    setPublicUrlInput(liveUrl || "");
+    setRepoUrlInput(deployment?.repoUrl || "");
+    setIdentityOpen(true);
+  }
+
+  async function saveIdentity() {
+    if (!deployment) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/deployment-inventory/${encodeURIComponent(deployment.slug)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicUrl: publicUrlInput, repoUrl: repoUrlInput }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not save deployment identity");
+      await load();
+      setIdentityOpen(false);
+      setMessage({ tone: "success", text: "Deployment URL and repository saved as operator-confirmed identity." });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const liveUrl = deployment?.publicUrl || (deployment?.domain ? `https://${deployment.domain}` : null);
 
   if (loading && !deployment) {
     return <div className="mx-auto max-w-7xl p-4 text-sm text-muted md:p-8">Loading deployment workspace…</div>;
@@ -198,6 +230,10 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                 Repository
               </a>
             )}
+            <button type="button" onClick={openIdentityEditor} className="gc-button gc-button-secondary">
+              <Pencil size={14} aria-hidden="true" />
+              Edit identity
+            </button>
             {liveUrl && (
               <a href={liveUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-primary">
                 <ExternalLink size={14} aria-hidden="true" />
@@ -247,6 +283,12 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                   <DetailValue label="Source path" value={deployment.sourcePath || "No source folder"} mono />
                   <DetailValue label="Runtime identity" value={deployment.containerName || deployment.composePath || "Resolved from deployment source"} mono />
                 </dl>
+                {deployment.route && (
+                  <dl className="grid border-t border-border md:grid-cols-2 md:divide-x md:divide-border">
+                    <DetailValue label="Public route from Caddy" value={deployment.route.domain} mono />
+                    <DetailValue label="Route evidence" value={`${deployment.route.confidence} confidence · ${deployment.route.file}`} mono />
+                  </dl>
+                )}
               </section>
 
               <section className="grid gap-4 lg:grid-cols-2">
@@ -296,6 +338,12 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                         <div className="min-w-0">
                           <p className="truncate font-mono text-xs text-foreground">{container.service || container.name}</p>
                           <p className="mt-1 truncate font-mono text-[9px] text-muted">{container.name} · {container.image}</p>
+                          {(container.startedAt || container.createdAt) && (
+                            <p className="mt-1 font-mono text-[9px] text-muted">
+                              Started {new Date(container.startedAt || container.createdAt || "").toLocaleString()}
+                              {container.restartCount ? ` · ${container.restartCount} restarts` : ""}
+                            </p>
+                          )}
                         </div>
                         <span className={`font-mono text-[10px] ${container.state === "running" ? "text-success" : "text-warning"}`}>{container.state}</span>
                       </div>
@@ -337,7 +385,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                 <h2 className="mt-1 text-lg font-semibold tracking-tight">Recent releases</h2>
               </div>
               {deployment.releases.length === 0 ? (
-                <div className="p-6 text-sm text-muted">This workload exists on the host, but GroundControl did not capture its earlier release history. Runtime evidence above is current; future deploys will add release records here.</div>
+                <div className="p-6 text-sm text-muted">No release record was captured by the deployment pipeline. Host and runtime events below still provide operational history.</div>
               ) : (
                 <div className="divide-y divide-border">
                   {deployment.releases.map((release) => (
@@ -359,6 +407,22 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                   ))}
                 </div>
               )}
+              {Boolean(deployment.runtimeEvents?.length) && (
+                <div className="border-t border-border">
+                  <div className="px-5 py-3"><p className="gc-eyebrow">Runtime deployment events</p></div>
+                  <div className="divide-y divide-border">
+                    {deployment.runtimeEvents!.map((event) => (
+                      <div key={event.id} className="grid gap-2 px-5 py-3 md:grid-cols-[1fr_auto]">
+                        <div>
+                          <span className="text-xs font-medium">Compose redeploy</span>
+                          <p className="mt-1 max-w-2xl truncate font-mono text-[9px] text-muted">{event.error || event.output || "Lifecycle action recorded"}</p>
+                        </div>
+                        <span className="font-mono text-[10px] text-muted">{event.status} · {new Date(event.createdAt).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           )}
         </main>
@@ -375,6 +439,22 @@ export function DeploymentDetail({ slug }: { slug: string }) {
             </button>
           ))}
         </div>
+      </ModalSurface>
+      <ModalSurface open={identityOpen} onClose={() => setIdentityOpen(false)} title="Deployment identity" description="Confirm values GroundControl cannot safely infer. Host evidence remains visible and is not overwritten.">
+        <form onSubmit={(event) => { event.preventDefault(); void saveIdentity(); }} className="space-y-4">
+          <label className="block">
+            <span className="gc-label">Deployed URL</span>
+            <input autoFocus value={publicUrlInput} onChange={(event) => setPublicUrlInput(event.target.value)} placeholder="https://app.example.com" className="gc-field mt-2 w-full font-mono" />
+          </label>
+          <label className="block">
+            <span className="gc-label">GitHub repository</span>
+            <input value={repoUrlInput} onChange={(event) => setRepoUrlInput(event.target.value)} placeholder="https://github.com/owner/repository" className="gc-field mt-2 w-full font-mono" />
+          </label>
+          <div className="flex justify-end gap-2 border-t border-border pt-4">
+            <button type="button" onClick={() => setIdentityOpen(false)} className="gc-button gc-button-quiet">Cancel</button>
+            <button type="submit" disabled={busy} className="gc-button gc-button-primary">{busy ? "Saving…" : "Save identity"}</button>
+          </div>
+        </form>
       </ModalSurface>
     </div>
   );
