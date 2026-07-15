@@ -20,6 +20,7 @@ import {
   type SourceTreeProbe,
 } from "@/lib/template-source-requirements";
 import { inferDeploymentName, slugifyDeploymentName } from "@/lib/deployment-identity";
+import { deploymentVerificationStatus, parsePublicEndpointCheck } from "@/lib/deployment-verification";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -78,6 +79,18 @@ async function enrolTemplateDeployment(args: {
 interface CloudflareZone {
   id: string;
   name?: string;
+}
+
+async function verifyPublicEndpoints(domains: string[], vps: Awaited<ReturnType<typeof getActiveVps>>) {
+  const checks = [];
+  for (const domain of domains) {
+    const probe = await execOnTarget(
+      `curl -k -sS -o /dev/null --max-time 15 -w '%{http_code}|%{remote_ip}' ${shQuote(`https://${domain}/`)} 2>&1 || true`,
+      vps
+    );
+    checks.push(parsePublicEndpointCheck(domain, probe.stdout.trim() || probe.stderr.trim()));
+  }
+  return checks;
 }
 
 function isCloudflareZone(value: unknown): value is CloudflareZone {
@@ -355,11 +368,8 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const healthResults = [];
-      for (const recordName of domains) {
-        const health = await execOnTarget(`curl -k -fsS -I --max-time 15 ${shQuote(`https://${recordName}/`)} 2>&1 | head -n 1 || true`, vps);
-        healthResults.push({ domain: recordName, result: health.stdout.trim() || health.stderr.trim() });
-      }
+      const healthResults = await verifyPublicEndpoints(domains, vps);
+      const verification = deploymentVerificationStatus(domains, dnsResult, healthResults);
 
       const persisted = await persistTemplateDeployment({
         slug,
@@ -378,6 +388,7 @@ export async function POST(req: NextRequest) {
         manifest,
         vpsConfigId: vps.id,
         durationMs: Date.now() - startTime,
+        status: verification.status,
         category: "static",
         targetType: "static",
         staticDir,
@@ -393,7 +404,11 @@ export async function POST(req: NextRequest) {
       });
 
       return NextResponse.json({
-        success: true,
+        success: verification.publicVerified,
+        deployed: true,
+        status: verification.status,
+        publicVerified: verification.publicVerified,
+        error: verification.error,
         ...persisted,
         deployPath,
         staticDir,
@@ -409,8 +424,10 @@ export async function POST(req: NextRequest) {
         manifest,
         source,
         enrolled: true,
-        message: `Published static site ${slug} to ${staticDir}.${domains.length ? ` Served at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}`,
-      });
+        message: verification.publicVerified
+          ? `Published and publicly verified ${slug}${domains.length ? ` at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}.`
+          : `Published ${slug} to the host, but its public endpoint is not reachable yet.`,
+      }, { status: verification.publicVerified ? 200 : 502 });
     }
 
     const existingDeployment = await execOnTarget(`test -f ${shQuote(deployPath)}/docker-compose.yml && echo yes || echo no`, vps);
@@ -536,11 +553,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const healthResults = [];
-    for (const recordName of domains) {
-      const health = await execOnTarget(`curl -k -fsS -I --max-time 15 ${shQuote(`https://${recordName}/`)} 2>&1 | head -n 1 || true`, vps);
-      healthResults.push({ domain: recordName, result: health.stdout.trim() || health.stderr.trim() });
-    }
+    const healthResults = await verifyPublicEndpoints(domains, vps);
+    const verification = deploymentVerificationStatus(domains, dnsResult, healthResults);
 
     const persisted = await persistTemplateDeployment({
       slug,
@@ -561,6 +575,7 @@ export async function POST(req: NextRequest) {
       tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
       vpsConfigId: vps.id,
       durationMs: Date.now() - startTime,
+      status: verification.status,
     });
     const envSchema = parseEnvSchema(resolved.envSchema);
     const envProfile = await upsertEnvProfileForProject({
@@ -604,7 +619,11 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({
-      success: true,
+      success: verification.publicVerified,
+      deployed: true,
+      status: verification.status,
+      publicVerified: verification.publicVerified,
+      error: verification.error,
       ...persisted,
       deployPath,
       slug,
@@ -621,8 +640,10 @@ export async function POST(req: NextRequest) {
       source,
       tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
       enrolled: true,
-      message: `Deployed ${slug} to ${deployPath}. ${domains.length ? `Served at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}`,
-    });
+      message: verification.publicVerified
+        ? `Deployed and publicly verified ${slug}${domains.length ? ` at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}.`
+        : `Deployed ${slug} to the host, but its public endpoint is not reachable yet.`,
+    }, { status: verification.publicVerified ? 200 : 502 });
   } catch (err) {
     return NextResponse.json({
       success: false, error: err instanceof Error ? err.message : "Deploy failed",
