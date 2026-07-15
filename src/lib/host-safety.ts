@@ -15,6 +15,7 @@ const ALLOWED_PATH_PATTERNS = [
   "/etc/systemd/system/*",
   "/etc/init.d/*",
   "/opt/*",
+  "/srv/*",
   "/var/www/*",
   "/root/*",
   "/home/*",
