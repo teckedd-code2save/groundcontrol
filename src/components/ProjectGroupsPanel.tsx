@@ -1,6 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ExternalLink,
+  FolderGit2,
+  Link2,
+  Plus,
+  Trash2,
+  Unlink,
+} from "lucide-react";
+import {
+  ContextActionMenu,
+  ContextMenuAction,
+  ContextMenuDivider,
+  ContextMenuLabel,
+} from "@/components/ContextActionMenu";
+import { ModalSurface } from "@/components/ModalSurface";
 
 type DeploymentSummary = {
   id: number;
@@ -8,6 +24,8 @@ type DeploymentSummary = {
   name: string;
   path: string;
   domain: string | null;
+  publicUrl?: string | null;
+  repoUrl?: string | null;
   status: string;
   lastDeploy: string | null;
 };
@@ -34,10 +52,12 @@ export function ProjectGroupsPanel() {
   const [ungrouped, setUngrouped] = useState<DeploymentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [linkProject, setLinkProject] = useState<ProjectGroup | null>(null);
+  const [moveDeployment, setMoveDeployment] = useState<DeploymentSummary | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [message, setMessage] = useState("");
-  const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const response = await fetch("/api/project-groups", { cache: "no-store" });
@@ -53,147 +73,296 @@ export function ProjectGroupsPanel() {
       .finally(() => setLoading(false));
   }, [load]);
 
+  const allDeployments = useMemo(
+    () => [...ungrouped, ...projects.flatMap((project) => project.deployments)],
+    [projects, ungrouped]
+  );
+
   async function createProject() {
     if (!name.trim()) return;
-    const response = await fetch("/api/project-groups", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, description }),
-    });
-    const data = await readJson(response);
-    if (!response.ok || data.error) {
-      setMessage(data.error || "Could not create project");
-      return;
+    setBusy(true);
+    try {
+      const response = await fetch("/api/project-groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not create project");
+      setName("");
+      setDescription("");
+      setCreateOpen(false);
+      setMessage("Project created.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
-    setName("");
-    setDescription("");
-    setCreateOpen(false);
-    setMessage("Project created");
-    await load();
   }
 
   async function assignDeployment(deploymentId: number, projectGroupId: number | null) {
-    const response = await fetch(`/api/projects/${deploymentId}/group`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectGroupId }),
-    });
-    const data = await readJson(response);
-    if (!response.ok || data.error) {
-      setMessage(data.error || "Could not move deployment");
-      return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/projects/${deploymentId}/group`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectGroupId }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not move deployment");
+      setMessage(projectGroupId ? "Deployment linked to project." : "Deployment moved to Ungrouped.");
+      setLinkProject(null);
+      setMoveDeployment(null);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
-    setMessage(projectGroupId ? "Deployment assigned to project" : "Deployment moved to ungrouped");
-    await load();
   }
 
   async function deleteProject(projectId: number) {
-    const response = await fetch(`/api/project-groups/${projectId}`, { method: "DELETE" });
-    const data = await readJson(response);
-    if (!response.ok || data.error) {
-      setMessage(data.error || "Could not delete project");
-      return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/project-groups/${projectId}`, { method: "DELETE" });
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not delete project");
+      setMessage("Project removed; its deployments are now ungrouped.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
-    setOpenMenu(null);
-    setMessage("Project removed; its deployments are now ungrouped");
-    await load();
   }
 
-  if (loading) return <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted">Loading projects…</div>;
+  if (loading) {
+    return <div className="border border-border bg-card p-6 text-sm text-muted">Loading projects…</div>;
+  }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex flex-col gap-3 border-b border-border pb-5 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted">Organization</p>
+          <p className="gc-eyebrow">Organization</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em]">Projects</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted">Projects only group deployments. Runtime configuration remains on each deployment.</p>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
+            Group deployments that belong together. Each deployment keeps its own runtime, source, environment, and release history.
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreateOpen((open) => !open)}
-          className="rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:opacity-90"
-        >
-          {createOpen ? "Cancel" : "New project"}
+        <button type="button" onClick={() => setCreateOpen(true)} className="gc-button gc-button-primary">
+          <Plus size={14} aria-hidden="true" />
+          New project
         </button>
       </div>
 
-      {message && <div className="rounded-md border border-border bg-card px-3 py-2 text-xs text-muted">{message}</div>}
+      {message && <div className="border border-border bg-card px-3 py-2 text-xs text-muted">{message}</div>}
 
-      {createOpen && (
-        <div className="grid gap-3 rounded-lg border border-border bg-card p-4 md:grid-cols-[1fr_1.5fr_auto] md:items-end">
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-mono uppercase tracking-wide text-muted">Name</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="GroundControl" className="w-full rounded-md bg-background px-3 py-2 text-sm outline-none ring-accent/40 focus:ring-1" />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-mono uppercase tracking-wide text-muted">Description</span>
-            <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Optional context" className="w-full rounded-md bg-background px-3 py-2 text-sm outline-none ring-accent/40 focus:ring-1" />
-          </label>
-          <button type="button" onClick={createProject} disabled={!name.trim()} className="rounded-md bg-accent px-4 py-2 text-sm text-white disabled:opacity-40">Create</button>
-        </div>
-      )}
-
-      <div className="space-y-3">
+      <div className="space-y-4">
         {projects.map((project) => (
-          <section key={project.id} className="overflow-hidden rounded-lg border border-border bg-card">
-            <div className="flex items-start justify-between gap-3 px-4 py-4">
+          <section id={project.slug} key={project.id} className="scroll-mt-6 border border-border bg-card">
+            <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
               <div>
                 <h2 className="text-base font-medium tracking-tight">{project.name}</h2>
-                <p className="mt-1 text-xs text-muted">{project.description || `${project.deployments.length} deployment${project.deployments.length === 1 ? "" : "s"}`}</p>
+                <p className="mt-1 text-xs text-muted">
+                  {project.description || `${project.deployments.length} deployment${project.deployments.length === 1 ? "" : "s"}`}
+                </p>
               </div>
-              <div className="relative">
-                <button type="button" onClick={() => setOpenMenu(openMenu === project.id ? null : project.id)} aria-label={`Actions for ${project.name}`} className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted hover:text-foreground">⋯</button>
-                {openMenu === project.id && (
-                  <div className="absolute right-0 top-10 z-20 w-48 overflow-hidden rounded-md border border-border bg-background shadow-xl">
-                    <button type="button" onClick={() => deleteProject(project.id)} className="w-full px-3 py-2 text-left text-xs text-error hover:bg-error/10">Delete project</button>
-                  </div>
+              <ContextActionMenu label={`Actions for ${project.name}`}>
+                {(close) => (
+                  <>
+                    <ContextMenuLabel>Project</ContextMenuLabel>
+                    <ContextMenuAction onClick={() => {
+                      close();
+                      setLinkProject(project);
+                    }}>
+                      <Link2 size={14} aria-hidden="true" />
+                      Add deployment
+                    </ContextMenuAction>
+                    <ContextMenuDivider />
+                    <ContextMenuAction
+                      tone="danger"
+                      disabled={busy}
+                      onClick={() => {
+                        close();
+                        void deleteProject(project.id);
+                      }}
+                    >
+                      <Trash2 size={14} aria-hidden="true" />
+                      Delete project
+                    </ContextMenuAction>
+                  </>
                 )}
-              </div>
+              </ContextActionMenu>
             </div>
-            <DeploymentRows deployments={project.deployments} projects={projects} activeProjectId={project.id} onAssign={assignDeployment} />
+            <DeploymentRows
+              deployments={project.deployments}
+              activeProjectId={project.id}
+              onMove={setMoveDeployment}
+              onAssign={assignDeployment}
+            />
           </section>
         ))}
 
-        <section className="overflow-hidden rounded-lg border border-dashed border-border bg-card/60">
-          <div className="px-4 py-4">
-            <h2 className="text-sm font-medium">Ungrouped deployments</h2>
-            <p className="mt-1 text-xs text-muted">Enrolled deployments that have not been assigned to a project.</p>
+        <section className="border border-dashed border-border bg-card/60">
+          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
+            <div>
+              <h2 className="text-sm font-medium">Ungrouped deployments</h2>
+              <p className="mt-1 text-xs text-muted">Deployments that have not been linked to a project.</p>
+            </div>
           </div>
-          <DeploymentRows deployments={ungrouped} projects={projects} activeProjectId={null} onAssign={assignDeployment} />
+          <DeploymentRows
+            deployments={ungrouped}
+            activeProjectId={null}
+            onMove={setMoveDeployment}
+            onAssign={assignDeployment}
+          />
         </section>
       </div>
+
+      <ModalSurface
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create project"
+        description="A project is an organizational group. You can link deployments after creating it."
+      >
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          void createProject();
+        }} className="space-y-4">
+          <label className="block">
+            <span className="gc-label">Project name</span>
+            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Customer platform" className="gc-field mt-2 w-full" />
+          </label>
+          <label className="block">
+            <span className="gc-label">Description <span className="normal-case tracking-normal text-muted/70">optional</span></span>
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What these deployments deliver together" rows={3} className="gc-field mt-2 w-full resize-none" />
+          </label>
+          <div className="flex justify-end gap-2 border-t border-border pt-4">
+            <button type="button" onClick={() => setCreateOpen(false)} className="gc-button gc-button-quiet">Cancel</button>
+            <button type="submit" disabled={!name.trim() || busy} className="gc-button gc-button-primary">{busy ? "Creating…" : "Create project"}</button>
+          </div>
+        </form>
+      </ModalSurface>
+
+      <ModalSurface
+        open={Boolean(linkProject)}
+        onClose={() => setLinkProject(null)}
+        title={linkProject ? `Add deployment to ${linkProject.name}` : "Add deployment"}
+        description="Choose an existing deployment. Its runtime and configuration will not move."
+      >
+        <div className="space-y-1">
+          {allDeployments.filter((deployment) => !linkProject?.deployments.some((item) => item.id === deployment.id)).length === 0 ? (
+            <p className="border border-dashed border-border p-4 text-sm text-muted">Every deployment is already in this project.</p>
+          ) : allDeployments
+            .filter((deployment) => !linkProject?.deployments.some((item) => item.id === deployment.id))
+            .map((deployment) => (
+              <button
+                key={deployment.id}
+                type="button"
+                disabled={busy}
+                onClick={() => void assignDeployment(deployment.id, linkProject?.id || null)}
+                className="flex w-full items-center justify-between gap-3 border border-border px-3 py-2.5 text-left hover:border-accent/50 hover:bg-card"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm">{deployment.name}</span>
+                  <span className="mt-0.5 block truncate font-mono text-[9px] text-muted">{deployment.path}</span>
+                </span>
+                <Plus size={14} className="shrink-0 text-muted" aria-hidden="true" />
+              </button>
+            ))}
+        </div>
+      </ModalSurface>
+
+      <ModalSurface
+        open={Boolean(moveDeployment)}
+        onClose={() => setMoveDeployment(null)}
+        title={moveDeployment ? `Move ${moveDeployment.name}` : "Move deployment"}
+        description="Choose a project or leave the deployment ungrouped."
+      >
+        <div className="space-y-1">
+          <button type="button" disabled={busy} onClick={() => moveDeployment && void assignDeployment(moveDeployment.id, null)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
+            <span>Ungrouped</span><span className="font-mono text-[10px] text-muted">No project</span>
+          </button>
+          {projects.map((project) => (
+            <button key={project.id} type="button" disabled={busy} onClick={() => moveDeployment && void assignDeployment(moveDeployment.id, project.id)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
+              <span>{project.name}</span><span className="font-mono text-[10px] text-muted">{project.slug}</span>
+            </button>
+          ))}
+        </div>
+      </ModalSurface>
     </div>
   );
 }
 
-function DeploymentRows({ deployments, projects, activeProjectId, onAssign }: {
+function DeploymentRows({
+  deployments,
+  activeProjectId,
+  onMove,
+  onAssign,
+}: {
   deployments: DeploymentSummary[];
-  projects: ProjectGroup[];
   activeProjectId: number | null;
-  onAssign: (deploymentId: number, projectGroupId: number | null) => void;
+  onMove: (deployment: DeploymentSummary) => void;
+  onAssign: (deploymentId: number, projectGroupId: number | null) => Promise<void>;
 }) {
-  if (deployments.length === 0) return <div className="border-t border-border px-4 py-5 text-xs text-muted">No deployments in this project.</div>;
+  if (deployments.length === 0) {
+    return <div className="px-4 py-5 text-xs text-muted">No deployments in this project.</div>;
+  }
   return (
-    <div className="divide-y divide-border border-t border-border">
-      {deployments.map((deployment) => (
-        <div key={deployment.id} className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate text-sm font-medium">{deployment.name}</span>
-              <span className="rounded bg-background px-1.5 py-0.5 text-[9px] font-mono uppercase text-muted">{deployment.status || "unknown"}</span>
+    <div className="divide-y divide-border">
+      {deployments.map((deployment) => {
+        const liveUrl = deployment.publicUrl || (deployment.domain ? `https://${deployment.domain}` : null);
+        return (
+          <article key={deployment.id} className="grid gap-3 px-4 py-3 transition-colors hover:bg-background/35 md:grid-cols-[1fr_auto] md:items-center">
+            <Link href={`/deployments/${deployment.slug}`} className="group min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="truncate text-sm font-medium group-hover:text-accent">{deployment.name}</span>
+                <span className="border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted">{deployment.status || "unknown"}</span>
+              </div>
+              <p className="mt-1 truncate font-mono text-[10px] text-muted">{deployment.domain || deployment.path || deployment.slug}</p>
+            </Link>
+            <div className="flex items-center justify-end gap-1.5">
+              {liveUrl && (
+                <a href={liveUrl} target="_blank" rel="noreferrer" className="gc-icon-button" aria-label={`Open ${deployment.name} live site`}>
+                  <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              )}
+              {deployment.repoUrl && (
+                <a href={deployment.repoUrl} target="_blank" rel="noreferrer" className="gc-icon-button" aria-label={`Open ${deployment.name} repository`}>
+                  <FolderGit2 size={14} aria-hidden="true" />
+                </a>
+              )}
+              <ContextActionMenu label={`Actions for ${deployment.name}`}>
+                {(close) => (
+                  <>
+                    <ContextMenuAction href={`/deployments/${deployment.slug}`}>
+                      Open deployment
+                    </ContextMenuAction>
+                    <ContextMenuAction onClick={() => {
+                      close();
+                      onMove(deployment);
+                    }}>
+                      <Link2 size={14} aria-hidden="true" />
+                      Move to project
+                    </ContextMenuAction>
+                    {activeProjectId !== null && (
+                      <ContextMenuAction onClick={() => {
+                        close();
+                        void onAssign(deployment.id, null);
+                      }}>
+                        <Unlink size={14} aria-hidden="true" />
+                        Remove from project
+                      </ContextMenuAction>
+                    )}
+                  </>
+                )}
+              </ContextActionMenu>
             </div>
-            <p className="mt-1 truncate text-[10px] font-mono text-muted">{deployment.domain || deployment.path || deployment.slug}</p>
-          </div>
-          <label className="flex items-center gap-2 text-[10px] font-mono text-muted">
-            Project
-            <select value={activeProjectId ?? ""} onChange={(event) => onAssign(deployment.id, event.target.value ? Number(event.target.value) : null)} className="rounded-md bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-accent">
-              <option value="">Ungrouped</option>
-              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-            </select>
-          </label>
-        </div>
-      ))}
+          </article>
+        );
+      })}
     </div>
   );
 }
