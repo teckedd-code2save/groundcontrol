@@ -19,19 +19,10 @@ import {
   evaluateSourceRequirements,
   type SourceTreeProbe,
 } from "@/lib/template-source-requirements";
+import { inferDeploymentName, slugifyDeploymentName } from "@/lib/deployment-identity";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-}
-
-function slugify(value: unknown): string {
-  return String(value || "deployment")
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "deployment";
 }
 
 function collectDomains(inputs: Record<string, string>): string[] {
@@ -139,7 +130,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { templateName, inputs = {}, envVars = [], repoUrl, branch, ghcrImage, localPath, domain, createDns, zoneId, proxied, tunnelId } = body;
+    const { templateName, deploymentName, inputs = {}, envVars = [], repoUrl, branch, ghcrImage, localPath, domain, createDns, zoneId, proxied, tunnelId } = body;
 
     if (!templateName) {
       return NextResponse.json({ success: false, error: "templateName is required" }, { status: 400 });
@@ -167,7 +158,15 @@ export async function POST(req: NextRequest) {
     const systemConfig = await getSystemConfig();
     const templateRoot = String(systemConfig.templateDeploymentRoot || "/srv/groundcontrol/deployments").replace(/\/+$/, "");
     const staticRoot = String(systemConfig.staticRoot || "/var/www").replace(/\/+$/, "");
-    const slug = slugify(inputs.app_slug || allInputs.app_slug || domain || allInputs.domain || templateName);
+    const inferredName = inferDeploymentName({
+      explicitName: deploymentName,
+      repoUrl,
+      localPath,
+      image: ghcrImage,
+      domain: domain || allInputs.domain,
+      templateName,
+    });
+    const slug = slugifyDeploymentName(inferredName);
     const composeProject = staticMode ? "" : `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
     const deployPath = `${templateRoot}/${slug}`;
     const staticDir = `${staticRoot}/${slug}`;
@@ -334,17 +333,21 @@ export async function POST(req: NextRequest) {
           for (const recordName of domains) {
             const requestedZoneId = String(zoneId || "").trim();
             const zone: CloudflareZone | undefined = requestedZoneId
-              ? { id: requestedZoneId }
+              ? zones.find((candidate) => candidate.id === requestedZoneId)
               : zones.find((z) => Boolean(z.name) && recordName.endsWith(String(z.name)));
-            if (zone) {
-              records.push(await provisionCustomDomain({
-                subdomain: recordName,
-                zoneId: String(zone.id),
-                targetHost: vps.host,
-                recordType: "A",
-                proxied: proxied === true,
-              }));
+            if (!zone) {
+              throw new Error(`No connected Cloudflare zone matches ${recordName}. Select its zone before deploying.`);
             }
+            if (zone.name && recordName !== zone.name && !recordName.endsWith(`.${zone.name}`)) {
+              throw new Error(`${recordName} does not belong to the selected Cloudflare zone ${zone.name}.`);
+            }
+            records.push(await provisionCustomDomain({
+              subdomain: recordName,
+              zoneId: String(zone.id),
+              targetHost: vps.host,
+              recordType: "A",
+              proxied: proxied === true,
+            }));
           }
           dnsResult = records;
         } catch (err) {
@@ -511,17 +514,21 @@ export async function POST(req: NextRequest) {
         for (const recordName of domains) {
           const requestedZoneId = String(zoneId || "").trim();
           const zone: CloudflareZone | undefined = requestedZoneId
-            ? { id: requestedZoneId }
+            ? zones.find((candidate) => candidate.id === requestedZoneId)
             : zones.find((z) => Boolean(z.name) && recordName.endsWith(String(z.name)));
-          if (zone) {
-            records.push(await provisionCustomDomain({
-              subdomain: recordName,
-              zoneId: String(zone.id),
-              targetHost: dnsTunnelId ? `${dnsTunnelId}.cfargotunnel.com` : vps.host,
-              recordType: dnsTunnelId ? "CNAME" : "A",
-              proxied: dnsTunnelId ? proxied !== false : proxied === true,
-            }));
+          if (!zone) {
+            throw new Error(`No connected Cloudflare zone matches ${recordName}. Select its zone before deploying.`);
           }
+          if (zone.name && recordName !== zone.name && !recordName.endsWith(`.${zone.name}`)) {
+            throw new Error(`${recordName} does not belong to the selected Cloudflare zone ${zone.name}.`);
+          }
+          records.push(await provisionCustomDomain({
+            subdomain: recordName,
+            zoneId: String(zone.id),
+            targetHost: dnsTunnelId ? `${dnsTunnelId}.cfargotunnel.com` : vps.host,
+            recordType: dnsTunnelId ? "CNAME" : "A",
+            proxied: dnsTunnelId ? proxied !== false : proxied === true,
+          }));
         }
         dnsResult = records;
       } catch (err) {
