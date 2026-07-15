@@ -12,7 +12,13 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Trash2,
 } from "lucide-react";
+
+export interface EnvironmentRedeployResult {
+  success: boolean;
+  missingEnvKeys?: string[];
+}
 
 interface Provider {
   id: number;
@@ -82,7 +88,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   projectId: number;
   deploymentId?: number;
   componentName?: string;
-  onRedeploy?: (component?: string) => void;
+  onRedeploy?: (component?: string) => void | EnvironmentRedeployResult | Promise<void | EnvironmentRedeployResult>;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [profile, setProfile] = useState<EnvProfile | null>(null);
@@ -101,6 +107,8 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
+  const [missingKeys, setMissingKeys] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const fixedScope = !!componentName;
   const scopeLabel = selectedComponent || "Shared deployment";
@@ -114,6 +122,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       summary?: DiscoverySummary;
     } | undefined;
     if (nextProfile) setProfile(nextProfile);
+    if (nextProfile) setMissingKeys(new Set(nextProfile.validation?.missing || []));
     setDiscovered(Array.isArray(discovery?.entries) ? discovery.entries : []);
     setDiscoveredValues(reveal ? discovery?.values || {} : {});
     setScopedDiscoveredValues(reveal ? discovery?.scopedValues || {} : {});
@@ -122,6 +131,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     setDirtyKeys(new Set());
     setRevealedKeys(reveal ? new Set(["*"]) : new Set());
     setDraft({});
+    setDeleteTarget(null);
   }, [fixedScope]);
 
   const load = useCallback(async (reveal = false) => {
@@ -187,6 +197,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     values?: Record<string, string>;
     schema?: EnvProfile["schema"];
     reconcile?: boolean;
+    deleteKeys?: string[];
     success?: string;
   } = {}) {
     if (!profile) return false;
@@ -213,6 +224,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           schema: options.schema || profile.schema,
           values: options.values,
           reconcile: options.reconcile,
+          deleteKeys: options.deleteKeys,
         }),
       });
       const data = await readJson(response);
@@ -232,6 +244,23 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     } finally {
       setBusy(null);
     }
+  }
+
+  async function deleteEnvironmentKey(key: string) {
+    if (!profile) return;
+    if (deleteTarget !== key) {
+      setDeleteTarget(key);
+      setNotice({ tone: "info", text: `Delete ${key} from ${scopeLabel}? Click the red delete button again to confirm.` });
+      return;
+    }
+    const nextSchema = profile.schema.filter((entry) => !(
+      entry.key === key && (entry.component || "") === selectedComponent
+    ));
+    await saveEnvironment({
+      schema: nextSchema,
+      deleteKeys: [key],
+      success: `${key} removed from ${scopeLabel}. Managed environment files were regenerated.`,
+    });
   }
 
   async function reveal(key?: string) {
@@ -323,6 +352,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               active={!selectedComponent}
               label="Shared deployment"
               detail={`${Object.keys(profile.values || {}).length} saved`}
+              missingCount={[...missingKeys].filter((key) => !key.includes(":")).length}
               onClick={() => setSelectedComponent("")}
             />
             {components.map((component) => (
@@ -331,6 +361,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                 active={selectedComponent === component}
                 label={component}
                 detail={`${Object.keys(profile.componentValues?.[component] || {}).length} saved`}
+                missingCount={[...missingKeys].filter((key) => key.startsWith(`${component}:`)).length}
                 onClick={() => setSelectedComponent(component)}
               />
             ))}
@@ -371,7 +402,17 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                     const saved = hasPendingChanges
                       ? await saveEnvironment({ values: Object.fromEntries([...dirtyKeys].map((key) => [key, draft[key] || ""])) })
                       : true;
-                    if (saved) onRedeploy(selectedComponent || undefined);
+                    if (saved) {
+                      const result = await onRedeploy(selectedComponent || undefined);
+                      if (result && !result.success && result.missingEnvKeys?.length) {
+                        const nextMissing = new Set(result.missingEnvKeys);
+                        setMissingKeys(nextMissing);
+                        const first = result.missingEnvKeys[0];
+                        const separator = first.indexOf(":");
+                        setSelectedComponent(separator > 0 ? first.slice(0, separator) : "");
+                        setNotice({ tone: "error", text: "Redeploy failed: Missing required env keys for this redeploy" });
+                      }
+                    }
                   }}
                   disabled={!!busy}
                   icon={ChevronRight}
@@ -422,14 +463,17 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               const entries = discoveredByKey.get(key) || [];
               const required = selectedSchema.find((entry) => entry.key === key)?.required;
               const isRevealed = allRevealed || revealedKeys.has(key);
+              const scopedKey = selectedComponent ? `${selectedComponent}:${key}` : key;
+              const isMissing = missingKeys.has(scopedKey);
               return (
-                <div key={key} className="grid grid-cols-[minmax(130px,.8fr)_minmax(180px,1.2fr)] items-center gap-3 border-t border-border px-3 py-3">
+                <div key={key} className={`grid grid-cols-[minmax(130px,.8fr)_minmax(180px,1.2fr)] items-center gap-3 border-t px-3 py-3 ${isMissing ? "border-error/50 bg-error/5" : "border-border"}`}>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 font-mono text-xs">
-                      <span className="truncate">{key}</span>
+                      <span className={`truncate ${isMissing ? "text-error" : ""}`}>{key}</span>
                       {required && <span className="text-accent" title="Required">*</span>}
                       {dirtyKeys.has(key) && <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Unsaved" />}
                     </div>
+                    {isMissing && <div id={`missing-${selectedComponent || "shared"}-${key}`} className="mt-1 font-mono text-[9px] text-error">Missing required value</div>}
                     <div className="mt-1 flex flex-wrap gap-1">
                       {entries.length > 0 ? entries.slice(0, 3).map((entry, index) => (
                         <span key={`${entry.source}-${index}`} className="border border-border bg-background px-1.5 py-0.5 font-mono text-[9px] text-muted">
@@ -448,7 +492,9 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                         setDirtyKeys((current) => new Set(current).add(key));
                       }}
                       aria-label={`Value for ${key} in ${scopeLabel}`}
-                      className="gc-field gc-field--compact min-w-0 flex-1 font-mono"
+                      aria-invalid={isMissing}
+                      aria-describedby={isMissing ? `missing-${selectedComponent || "shared"}-${key}` : undefined}
+                      className={`gc-field gc-field--compact min-w-0 flex-1 font-mono ${isMissing ? "border-error ring-1 ring-error/30" : ""}`}
                     />
                     <button
                       type="button"
@@ -460,6 +506,18 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                     >
                       {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
+                    {profile.providerType === "local" && (
+                      <button
+                        type="button"
+                        onClick={() => void deleteEnvironmentKey(key)}
+                        disabled={!!busy}
+                        className={`gc-icon-button ${deleteTarget === key ? "border-error/60 bg-error/10 text-error" : ""}`}
+                        aria-label={`${deleteTarget === key ? "Confirm deletion of" : "Delete"} ${key}`}
+                        title={deleteTarget === key ? "Click again to confirm deletion" : "Delete managed variable"}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -571,10 +629,11 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   );
 }
 
-function ScopeButton({ active, label, detail, onClick }: {
+function ScopeButton({ active, label, detail, missingCount = 0, onClick }: {
   active: boolean;
   label: string;
   detail: string;
+  missingCount?: number;
   onClick: () => void;
 }) {
   return (
@@ -589,7 +648,10 @@ function ScopeButton({ active, label, detail, onClick }: {
         <span className="block truncate text-xs font-medium">{label}</span>
         <span className="mt-0.5 block font-mono text-[9px] opacity-70">{detail}</span>
       </span>
-      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+      <span className="flex shrink-0 items-center gap-2">
+        {missingCount > 0 && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-error px-1.5 py-0.5 font-mono text-[9px] text-white">{missingCount}</span>}
+        <ChevronRight className="h-3.5 w-3.5" />
+      </span>
     </button>
   );
 }
