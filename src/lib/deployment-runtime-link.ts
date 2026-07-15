@@ -12,7 +12,7 @@ export interface DeploymentRuntimeLink {
   status: "present" | "missing";
   confidence: "exact" | "strong" | "none";
   composeProject: string | null;
-  containers: Array<RuntimeContainerRecord & { service: string | null }>;
+  containers: Array<RuntimeContainerRecord & { service: string | null; createdAt: string; startedAt: string; restartCount: number }>;
   evidence: string[];
 }
 
@@ -35,7 +35,17 @@ export function linkDeploymentRuntime(
       ?.split(",").some((file) => file === deployment.sourcePath || file.startsWith(`${deployment.sourcePath}/`)));
     const exactProject = Boolean(composeProject && label?.project === composeProject);
     if (!exactContainer && !exactWorkingDir && !configUnderSource && !exactProject) return [];
-    return [{ ...container, service: label?.service || null, label, exactContainer, exactWorkingDir, exactProject }];
+    return [{
+      ...container,
+      service: label?.service || null,
+      createdAt: label?.createdAt || "",
+      startedAt: label?.startedAt || "",
+      restartCount: label?.restartCount || 0,
+      label,
+      exactContainer,
+      exactWorkingDir,
+      exactProject,
+    }];
   });
 
   const matchedProject = matches.find((item) => item.label?.project)?.label?.project || composeProject || null;
