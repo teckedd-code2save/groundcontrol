@@ -188,6 +188,13 @@ export async function setLocalEnvValues(
   }
 }
 
+export async function deleteLocalEnvValues(profileId: number, keys: string[], component = "") {
+  if (keys.length === 0) return { count: 0 };
+  return prisma.deploymentEnvValue.deleteMany({
+    where: { profileId, component, key: { in: keys } },
+  });
+}
+
 export async function getProfileValues(profileId: number): Promise<Record<string, string>> {
   const rows = await prisma.deploymentEnvValue.findMany({ where: { profileId, component: "" } });
   return Object.fromEntries(rows.map((row) => [row.key, decryptMaybe(row.value) || ""]));
@@ -280,6 +287,17 @@ export function validateEnvForComponents(
   );
 }
 
+export function removeEnvSchemaEntries(
+  schema: EnvSchemaEntry[],
+  keys: string[],
+  component = ""
+): EnvSchemaEntry[] {
+  const removed = new Set(keys);
+  return schema.filter((entry) => (
+    (entry.component || "") !== component || !removed.has(entry.key)
+  ));
+}
+
 export function hashEnvBundle(
   values: Record<string, string>,
   componentValues: Record<string, Record<string, string>>
@@ -339,7 +357,8 @@ export async function materializeEnvFile(
 export function buildMaterializeEnvBundleCommand(
   deployPath: string,
   values: Record<string, string>,
-  componentValues: Record<string, Record<string, string>>
+  componentValues: Record<string, Record<string, string>>,
+  options: { pruneManagedFiles?: boolean } = {}
 ): string {
   const quotedPath = shQuote(deployPath);
   const commands = [
@@ -348,7 +367,13 @@ export function buildMaterializeEnvBundleCommand(
     `mkdir -p ${quotedPath}/.groundcontrol/env ${quotedPath}/.groundcontrol/env-backups`,
     `cd ${quotedPath}`,
   ];
-  if (Object.keys(values).length > 0) {
+  if (options.pruneManagedFiles) {
+    commands.push(
+      "find .groundcontrol/env -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true",
+      "rm -f .groundcontrol/compose.env.override.yml"
+    );
+  }
+  if (Object.keys(values).length > 0 || options.pruneManagedFiles) {
     commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(values)));
   }
 
@@ -405,11 +430,12 @@ export async function materializeEnvBundle(
   deployPath: string,
   values: Record<string, string>,
   componentValues: Record<string, Record<string, string>>,
-  vps?: VpsConnection | null
+  vps?: VpsConnection | null,
+  options: { pruneManagedFiles?: boolean } = {}
 ) {
   const conn = vps || (await getActiveVps());
   const result = await execOnTarget(
-    buildMaterializeEnvBundleCommand(deployPath, values, componentValues),
+    buildMaterializeEnvBundleCommand(deployPath, values, componentValues, options),
     conn
   );
   if (result.code !== 0) {
@@ -418,7 +444,7 @@ export async function materializeEnvBundle(
   return {
     hash: hashEnvBundle(values, componentValues),
     files: [
-      ...(Object.keys(values).length > 0 ? [".env"] : []),
+      ...(Object.keys(values).length > 0 || options.pruneManagedFiles ? [".env"] : []),
       ...Object.keys(componentValues)
         .filter(isSafeComposeServiceName)
         .filter((component) => Object.keys(componentValues[component]).length > 0)
@@ -428,6 +454,13 @@ export async function materializeEnvBundle(
         : []),
     ],
   };
+}
+
+export class MissingDeploymentEnvError extends Error {
+  constructor(public readonly missing: string[]) {
+    super("Missing required env keys for this redeploy");
+    this.name = "MissingDeploymentEnvError";
+  }
 }
 
 export async function applyEnvToDeployment(
@@ -445,7 +478,7 @@ export async function applyEnvToDeployment(
     options.components
   );
   if (!scopedValidation.ok) {
-    throw new Error(`Missing required env keys for this redeploy: ${scopedValidation.missing.join(", ")}`);
+    throw new MissingDeploymentEnvError(scopedValidation.missing);
   }
   if (options.materialize !== false && project.path) {
     const materialized = await materializeEnvBundle(
