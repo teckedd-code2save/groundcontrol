@@ -127,7 +127,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
   }
 
   async function redeploy(component?: string) {
-    if (!deployment?.legacyProjectSlug) return;
+    if (!deployment?.legacyProjectSlug) return { success: false };
     setBusy(true);
     setMessage({ tone: "info", text: component ? `Redeploying ${component}…` : "Redeploying the deployment…" });
     try {
@@ -142,11 +142,24 @@ export function DeploymentDetail({ slug }: { slug: string }) {
         }),
       });
       const data = await readJson(response);
-      if (!response.ok || data.error || data.success === false) throw new Error(data.error || "Redeploy failed");
+      if (!response.ok || data.error || data.success === false) {
+        const missingEnvKeys = Array.isArray(data.missingEnvKeys)
+          ? data.missingEnvKeys.filter((key: unknown): key is string => typeof key === "string")
+          : [];
+        setMessage({
+          tone: "error",
+          text: missingEnvKeys.length
+            ? "Redeploy failed: Missing required env keys for this redeploy"
+            : data.error || "Redeploy failed",
+        });
+        return { success: false, missingEnvKeys };
+      }
       setMessage({ tone: "success", text: component ? `${component} redeployed.` : "Deployment redeployed." });
       await load();
+      return { success: true };
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      return { success: false };
     } finally {
       setBusy(false);
     }
@@ -372,7 +385,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
 
           {tab === "environment" && (
             deployment.legacyProjectId ? (
-              <DeploymentEnvPanel projectId={deployment.legacyProjectId} onRedeploy={(component) => void redeploy(component)} />
+              <DeploymentEnvPanel projectId={deployment.legacyProjectId} onRedeploy={redeploy} />
             ) : (
               <div className="border border-border bg-card p-6 text-sm text-muted">This standalone runtime has no saved deployment source yet, so environment reconciliation is not available.</div>
             )
