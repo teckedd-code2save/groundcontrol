@@ -13,7 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       include: { project: true },
     });
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-    const resolved = await resolveDeploymentEnv(profile.project);
+    const resolved = await resolveDeploymentEnv(profile.project, profile.slug);
     if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
     if (!resolved.validation.ok) {
       return NextResponse.json({ error: `Missing required env keys: ${resolved.validation.missing.join(", ")}`, validation: resolved.validation }, { status: 400 });
@@ -21,7 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const result = await materializeEnvBundle(
       profile.project.path,
       resolved.values,
-      resolved.componentValues
+      resolved.componentValues,
+      undefined,
+      { environmentSlug: profile.slug }
     );
     const updated = await prisma.deploymentEnvProfile.update({
       where: { id: profile.id },

@@ -220,6 +220,9 @@ model DeploymentEnvProfile {
   id                Int       @id @default(autoincrement())
   projectId         Int
   deploymentId      Int?
+  name              String    @default("Production")
+  slug              String    @default("production")
+  isDefault         Boolean   @default(false)
   providerType      String    @default("local")
   providerAccountId Int?
   environment       String    @default("prod")
@@ -233,12 +236,15 @@ model DeploymentEnvProfile {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  project         Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  deployment      Deployment?          @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
-  providerAccount EnvProviderAccount?  @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
+  project         Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deployment      Deployment?                 @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+  providerAccount EnvProviderAccount?         @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
   values          DeploymentEnvValue[]
+  valueVersions   DeploymentEnvValueVersion[]
 
+  @@unique([projectId, slug])
   @@index([projectId, providerType])
+  @@index([projectId, isDefault])
   @@index([deploymentId])
   @@index([providerAccountId])
 }
@@ -251,6 +257,7 @@ model DeploymentEnvValue {
   value     String   @default("") // encrypted at rest
   required  Boolean  @default(false)
   source    String   @default("local") // local | imported | generated
+  version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -258,6 +265,23 @@ model DeploymentEnvValue {
 
   @@unique([profileId, component, key])
   @@index([profileId, component])
+}
+
+model DeploymentEnvValueVersion {
+  id        Int      @id @default(autoincrement())
+  profileId Int
+  component String   @default("")
+  key       String
+  value     String   @default("") // encrypted envelope; empty for a deletion marker
+  version   Int
+  state     String   @default("active") // active | deleted
+  source    String   @default("local")
+  createdAt DateTime @default(now())
+
+  profile DeploymentEnvProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, component, key, version])
+  @@index([profileId, component, key, createdAt])
 }
 
 model DeploymentLog {

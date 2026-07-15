@@ -6,11 +6,13 @@ import {
   getProfileValues,
   getProfileValuesByComponent,
   deleteLocalEnvValues,
-  materializeEnvBundle,
+  listDeploymentEnvironments,
+  normalizeEnvironmentSlug,
   parseEnvJson,
   parseEnvSchema,
   publicProfile,
   removeEnvSchemaEntries,
+  resolveDeploymentEnv,
   setLocalEnvValues,
   upsertEnvProfileForProject,
   type EnvSchemaEntry,
@@ -79,7 +81,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const projectId = Number(searchParams.get("projectId") || 0);
     const deploymentId = Number(searchParams.get("deploymentId") || 0);
-    const reveal = searchParams.get("reveal") === "true";
+    const environmentSlug = searchParams.get("environment") || undefined;
     let project = projectId ? await prisma.project.findUnique({ where: { id: projectId } }) : null;
     if (!project && deploymentId) {
       const deployment = await prisma.deployment.findUnique({
@@ -92,19 +94,46 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "projectId or deploymentId is required" }, { status: 400 });
     }
 
-    const profile = await upsertEnvProfileForProject({
-      projectId: project.id,
-      deploymentId: deploymentId || undefined,
-    });
-    const [values, componentValues, discovered] = await Promise.all([
+    const profile = environmentSlug
+      ? await prisma.deploymentEnvProfile.findFirst({
+          where: { projectId: project.id, slug: normalizeEnvironmentSlug(environmentSlug) },
+        })
+      : await upsertEnvProfileForProject({
+          projectId: project.id,
+          deploymentId: deploymentId || undefined,
+        });
+    if (!profile) return NextResponse.json({ error: "Deployment environment not found" }, { status: 404 });
+    const [storedValues, storedComponentValues, discovered, environments] = await Promise.all([
       getProfileValues(profile.id),
       getProfileValuesByComponent(profile.id),
       discoverProjectEnv(project).catch(() => EMPTY_DISCOVERY),
+      listDeploymentEnvironments(project.id),
     ]);
+    let values = storedValues;
+    let componentValues = storedComponentValues;
+    let providerError: string | null = null;
+    if (profile.providerType === "infisical") {
+      try {
+        const resolved = await resolveDeploymentEnv(project, profile.slug);
+        if (resolved) {
+          values = resolved.values;
+          componentValues = resolved.componentValues;
+        }
+      } catch (error) {
+        providerError = error instanceof Error ? error.message : "Infisical could not be reached";
+      }
+    }
     return NextResponse.json({
-      profile: profileResponse(profile, values, componentValues, reveal),
-      discovered: publicDiscovery(discovered, reveal),
-      components: listComponents(discovered, componentValues),
+      profile: profileResponse(profile, values, componentValues),
+      environments: environments.map(publicEnvironment),
+      discovered: publicDiscovery(discovered),
+      components: listComponents(discovered, componentValues, parseEnvJson(profile.schemaJson)),
+      legacyUnassignedCount: Object.keys(values).length,
+      legacyUnassignedKeys: Array.from(new Set([
+        ...Object.keys(values),
+        ...parseEnvJson(profile.schemaJson).filter((entry) => !entry.component).map((entry) => entry.key),
+      ])).sort(),
+      providerError,
     });
   } catch (err) {
     return handleApiError(err);
@@ -120,23 +149,71 @@ export async function POST(req: NextRequest) {
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) return NextResponse.json({ error: "project not found" }, { status: 404 });
 
+    if (body.action === "create-environment") {
+      const name = String(body.name || "").trim();
+      const slug = normalizeEnvironmentSlug(body.slug || name);
+      if (!name) return NextResponse.json({ error: "Environment name is required" }, { status: 400 });
+      const duplicate = await prisma.deploymentEnvProfile.findFirst({ where: { projectId, slug } });
+      if (duplicate) return NextResponse.json({ error: `An environment named ${duplicate.name} already exists` }, { status: 409 });
+      const source = body.copyFromProfileId
+        ? await prisma.deploymentEnvProfile.findFirst({
+            where: { id: Number(body.copyFromProfileId), projectId },
+          })
+        : await prisma.deploymentEnvProfile.findFirst({
+            where: { projectId },
+            orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
+          });
+      const created = await upsertEnvProfileForProject({
+        projectId,
+        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        name,
+        environmentSlug: slug,
+        isDefault: !source,
+        schema: parseEnvJson(source?.schemaJson).filter((entry) => entry.component),
+        providerType: source?.providerType || "local",
+        providerAccountId: source?.providerAccountId,
+        environment: String(body.providerEnvironment || slug),
+        secretPath: source?.secretPath || "/",
+        projectRef: source?.projectRef || "",
+      });
+      return NextResponse.json({
+        profile: profileResponse(created, {}, {}),
+        environments: (await listDeploymentEnvironments(projectId)).map(publicEnvironment),
+        components: [],
+        discovered: publicDiscovery(EMPTY_DISCOVERY),
+        action: "created",
+      }, { status: 201 });
+    }
+
     const component = normalizeComponent(body.componentName);
+    const changesValues = body.values && typeof body.values === "object";
+    const changesRuntimeState = changesValues || body.reconcile === true || body.importCurrentServerEnv === true || Array.isArray(body.deleteKeys) || body.action === "assign-legacy-key";
+    if (changesRuntimeState && !component) {
+      return NextResponse.json({
+        error: "Choose the component that should receive these values. GroundControl no longer creates shared deployment variables.",
+      }, { status: 400 });
+    }
     const submittedSchema = normalizeSchema(body.schema);
-    const existingProfile = await prisma.deploymentEnvProfile.findFirst({
-      where: { projectId },
-      orderBy: { updatedAt: "desc" },
-    });
+    const environmentSlug = normalizeEnvironmentSlug(body.environmentSlug || "production");
+    const existingProfile = body.profileId
+      ? await prisma.deploymentEnvProfile.findFirst({ where: { id: Number(body.profileId), projectId } })
+      : await prisma.deploymentEnvProfile.findFirst({ where: { projectId, slug: environmentSlug } });
+    if (!existingProfile) return NextResponse.json({ error: "Deployment environment not found" }, { status: 404 });
     const existingSchema = parseEnvJson(existingProfile?.schemaJson);
     let schema = mergeSchema(existingSchema, submittedSchema);
     let profile = await upsertEnvProfileForProject({
       projectId,
+      profileId: existingProfile.id,
       deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+      name: body.name || existingProfile.name,
+      environmentSlug: existingProfile.slug,
+      isDefault: body.isDefault === true ? true : existingProfile.isDefault,
       schema,
-      providerType: body.providerType || "local",
-      providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : null,
-      environment: body.environment || "prod",
-      secretPath: body.secretPath || "/",
-      projectRef: body.projectRef || "",
+      providerType: body.providerType || existingProfile.providerType,
+      providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : existingProfile.providerAccountId,
+      environment: body.providerEnvironment || body.environment || existingProfile.environment,
+      secretPath: body.secretPath || existingProfile.secretPath,
+      projectRef: body.projectRef || existingProfile.projectRef,
     });
     const discovered = await discoverProjectEnv(project).catch(() => EMPTY_DISCOVERY);
 
@@ -144,36 +221,70 @@ export async function POST(req: NextRequest) {
     const deleteKeys = Array.isArray(body.deleteKeys)
       ? body.deleteKeys.filter((key: unknown): key is string => typeof key === "string" && validKey(key))
       : [];
-    if (deleteKeys.length > 0) {
+    if (body.action === "assign-legacy-key") {
+      const key = String(body.key || "");
+      if (!validKey(key)) return NextResponse.json({ error: "A valid environment key is required" }, { status: 400 });
+      schema = mergeSchema(
+        removeEnvSchemaEntries(schema, [key], ""),
+        [{ key, required: true, component }]
+      );
+      profile = await upsertEnvProfileForProject({
+        projectId,
+        profileId: profile.id,
+        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        name: profile.name,
+        environmentSlug: profile.slug,
+        isDefault: profile.isDefault,
+        schema,
+        providerType: profile.providerType,
+        providerAccountId: profile.providerAccountId,
+        environment: profile.environment,
+        secretPath: profile.secretPath,
+        projectRef: profile.projectRef,
+      });
+      if (profile.providerType === "local") {
+        const legacyValues = await getProfileValues(profile.id);
+        if (legacyValues[key] !== undefined) {
+          await setLocalEnvValues(profile.id, { [key]: legacyValues[key] }, schema, component);
+          await deleteLocalEnvValues(profile.id, [key], "");
+        }
+      }
+      action = "assigned";
+    } else if (deleteKeys.length > 0) {
       schema = removeEnvSchemaEntries(schema, deleteKeys, component);
       profile = await upsertEnvProfileForProject({
         projectId,
+        profileId: profile.id,
         deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        name: profile.name,
+        environmentSlug: profile.slug,
+        isDefault: profile.isDefault,
         schema,
-        providerType: body.providerType || "local",
-        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : null,
-        environment: body.environment || "prod",
-        secretPath: body.secretPath || "/",
-        projectRef: body.projectRef || "",
+        providerType: body.providerType || profile.providerType,
+        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : profile.providerAccountId,
+        environment: body.providerEnvironment || body.environment || profile.environment,
+        secretPath: body.secretPath || profile.secretPath,
+        projectRef: body.projectRef || profile.projectRef,
       });
       await deleteLocalEnvValues(profile.id, deleteKeys, component);
       action = "deleted";
     } else if (body.reconcile === true || body.importCurrentServerEnv === true) {
-      const bundle = buildReconciledBundle(discovered, component || undefined);
+      const bundle = buildReconciledBundle(discovered, component);
       schema = mergeSchema(schema, schemaForBundle(bundle));
       profile = await upsertEnvProfileForProject({
         projectId,
+        profileId: profile.id,
         deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        name: profile.name,
+        environmentSlug: profile.slug,
+        isDefault: profile.isDefault,
         schema,
-        providerType: body.providerType || "local",
-        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : null,
-        environment: body.environment || "prod",
-        secretPath: body.secretPath || "/",
-        projectRef: body.projectRef || "",
+        providerType: body.providerType || profile.providerType,
+        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : profile.providerAccountId,
+        environment: body.providerEnvironment || body.environment || profile.environment,
+        secretPath: body.secretPath || profile.secretPath,
+        projectRef: body.projectRef || profile.projectRef,
       });
-      if (Object.keys(bundle.deployment).length > 0) {
-        await setLocalEnvValues(profile.id, bundle.deployment, schema);
-      }
       for (const [name, scoped] of Object.entries(bundle.components)) {
         await setLocalEnvValues(profile.id, scoped, schema, name);
       }
@@ -190,13 +301,17 @@ export async function POST(req: NextRequest) {
       })));
       profile = await upsertEnvProfileForProject({
         projectId,
+        profileId: profile.id,
         deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        name: profile.name,
+        environmentSlug: profile.slug,
+        isDefault: profile.isDefault,
         schema,
-        providerType: body.providerType || "local",
-        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : null,
-        environment: body.environment || "prod",
-        secretPath: body.secretPath || "/",
-        projectRef: body.projectRef || "",
+        providerType: body.providerType || profile.providerType,
+        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : profile.providerAccountId,
+        environment: body.providerEnvironment || body.environment || profile.environment,
+        secretPath: body.secretPath || profile.secretPath,
+        projectRef: body.projectRef || profile.projectRef,
       });
       await setLocalEnvValues(profile.id, submittedValues, schema, component);
     }
@@ -205,32 +320,26 @@ export async function POST(req: NextRequest) {
       getProfileValues(profile.id),
       getProfileValuesByComponent(profile.id),
     ]);
-    let materialized: { hash: string; files: string[] } | null = null;
-    if (profile.providerType === "local" && project.path && (action === "reconciled" || action === "deleted" || body.values)) {
-      materialized = await materializeEnvBundle(
-        project.path,
-        values,
-        componentValues,
-        undefined,
-        { pruneManagedFiles: action === "deleted" }
-      );
-      profile = await prisma.deploymentEnvProfile.update({
-        where: { id: profile.id },
-        data: {
-          status: "synced",
-          lastHash: materialized.hash,
-          lastSyncedAt: new Date(),
-          lastError: null,
-        },
-      });
-    }
+    profile = await prisma.deploymentEnvProfile.update({
+      where: { id: profile.id },
+      data: {
+        status: action === "saved" && !changesRuntimeState ? profile.status : "ready",
+        lastError: null,
+      },
+    });
 
     return NextResponse.json({
-      profile: profileResponse(profile, values, componentValues, false),
-      discovered: publicDiscovery(discovered, false),
-      components: listComponents(discovered, componentValues),
+      profile: profileResponse(profile, values, componentValues),
+      environments: (await listDeploymentEnvironments(projectId)).map(publicEnvironment),
+      discovered: publicDiscovery(discovered),
+      components: listComponents(discovered, componentValues, parseEnvJson(profile.schemaJson)),
+      legacyUnassignedCount: Object.keys(values).length,
+      legacyUnassignedKeys: Array.from(new Set([
+        ...Object.keys(values),
+        ...parseEnvJson(profile.schemaJson).filter((entry) => !entry.component).map((entry) => entry.key),
+      ])).sort(),
       action,
-      materialized,
+      materialized: null,
     });
   } catch (err) {
     return handleApiError(err);
@@ -240,41 +349,51 @@ export async function POST(req: NextRequest) {
 function profileResponse(
   profile: Parameters<typeof publicProfile>[0],
   values: Record<string, string>,
-  componentValues: Record<string, Record<string, string>>,
-  reveal: boolean
+  componentValues: Record<string, Record<string, string>>
 ) {
-  const result = publicProfile(profile, values, parseEnvJson(profile.schemaJson), componentValues);
-  if (!reveal) return result;
+  return publicProfile(profile, values, parseEnvJson(profile.schemaJson), componentValues);
+}
+
+function publicEnvironment(profile: {
+  id: number;
+  name: string;
+  slug: string;
+  isDefault: boolean;
+  providerType: string;
+  providerAccountId: number | null;
+  environment: string;
+  status: string;
+  lastSyncedAt: Date | null;
+}) {
   return {
-    ...result,
-    values: revealValues(values),
-    componentValues: Object.fromEntries(
-      Object.entries(componentValues).map(([component, scoped]) => [component, revealValues(scoped)])
-    ),
+    id: profile.id,
+    name: profile.name,
+    slug: profile.slug,
+    isDefault: profile.isDefault,
+    providerType: profile.providerType,
+    providerAccountId: profile.providerAccountId,
+    providerEnvironment: profile.environment,
+    status: profile.status,
+    lastSyncedAt: profile.lastSyncedAt,
   };
 }
 
-function revealValues(values: Record<string, string>) {
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, { masked: value, hasValue: !!value }])
-  );
-}
-
-function publicDiscovery(discovered: DiscoveredEnvResult, reveal: boolean) {
+function publicDiscovery(discovered: DiscoveredEnvResult) {
   return {
     entries: discovered.entries,
     summary: discovered.summary,
-    ...(reveal ? { values: discovered.values, scopedValues: discovered.scopedValues } : {}),
   };
 }
 
 function listComponents(
   discovered: DiscoveredEnvResult,
-  componentValues: Record<string, Record<string, string>>
+  componentValues: Record<string, Record<string, string>>,
+  schema: EnvSchemaEntry[] = []
 ) {
   return Array.from(new Set([
     ...discovered.entries.flatMap((entry) => entry.component ? [entry.component] : []),
     ...Object.keys(componentValues),
+    ...schema.flatMap((entry) => entry.component ? [entry.component] : []),
   ])).sort();
 }
 

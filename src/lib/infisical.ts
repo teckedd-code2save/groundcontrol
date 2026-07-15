@@ -17,6 +17,13 @@ export interface InfisicalSecret {
   value: string;
 }
 
+export interface InfisicalProjectSummary {
+  id: string;
+  name: string;
+  slug: string;
+  environments: Array<{ name: string; slug: string }>;
+}
+
 export function normalizeInfisicalHost(host?: string): string {
   const value = (host || "https://app.infisical.com").trim().replace(/\/+$/, "");
   return value.endsWith("/api") ? value.slice(0, -4) : value;
@@ -93,6 +100,50 @@ function normalizeSecretList(value: unknown): InfisicalSecret[] {
     if (typeof key !== "string") return [];
     return [{ key, value: secretValue == null ? "" : String(secretValue) }];
   });
+}
+
+export function normalizeInfisicalProjects(value: unknown): InfisicalProjectSummary[] {
+  const root = value as Record<string, unknown>;
+  const projects = Array.isArray(value)
+    ? value
+    : Array.isArray(root?.projects)
+      ? root.projects
+      : Array.isArray(root?.workspaces)
+        ? root.workspaces
+        : [];
+  return projects.flatMap((project) => {
+    if (!project || typeof project !== "object") return [];
+    const item = project as Record<string, unknown>;
+    const id = item.id || item._id || item.workspaceId;
+    if (typeof id !== "string") return [];
+    const environments = Array.isArray(item.environments)
+      ? item.environments.flatMap((environment) => {
+          if (!environment || typeof environment !== "object") return [];
+          const entry = environment as Record<string, unknown>;
+          const slug = entry.slug || entry.environmentSlug;
+          if (typeof slug !== "string") return [];
+          return [{ name: typeof entry.name === "string" ? entry.name : slug, slug }];
+        })
+      : [];
+    return [{
+      id,
+      name: typeof item.name === "string" ? item.name : typeof item.projectName === "string" ? item.projectName : id,
+      slug: typeof item.slug === "string" ? item.slug : typeof item.projectSlug === "string" ? item.projectSlug : id,
+      environments,
+    }];
+  });
+}
+
+export async function listInfisicalProjects(
+  config: InfisicalProviderConfig,
+  credentials: InfisicalCredentials
+): Promise<InfisicalProjectSummary[]> {
+  const token = await loginInfisicalUniversalAuth(config, credentials);
+  const host = normalizeInfisicalHost(config.host);
+  const data = await infisicalRequest<unknown>(`${host}/api/v1/projects?type=secret-manager`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return normalizeInfisicalProjects(data);
 }
 
 export async function listInfisicalSecrets(
