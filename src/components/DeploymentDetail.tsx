@@ -126,7 +126,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
     }
   }
 
-  async function redeploy(component?: string) {
+  async function redeploy(component?: string, environmentSlug?: string) {
     if (!deployment?.legacyProjectSlug) return { success: false };
     setBusy(true);
     setMessage({ tone: "info", text: component ? `Redeploying ${component}…` : "Redeploying the deployment…" });
@@ -139,6 +139,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
           projectPath: deployment.sourcePath || undefined,
           action: "redeploy",
           services: component ? [component] : undefined,
+          environmentSlug,
         }),
       });
       const data = await readJson(response);

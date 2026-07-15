@@ -3,6 +3,7 @@ import {
   listInfisicalSecrets,
   loginInfisicalUniversalAuth,
   normalizeInfisicalHost,
+  normalizeInfisicalProjects,
 } from "./infisical";
 
 describe("infisical provider", () => {
@@ -13,6 +14,20 @@ describe("infisical provider", () => {
   it("normalizes hosts", () => {
     expect(normalizeInfisicalHost("https://secrets.example.com/api")).toBe("https://secrets.example.com");
     expect(normalizeInfisicalHost("https://secrets.example.com/")).toBe("https://secrets.example.com");
+  });
+
+  it("normalizes accessible projects and their named environments", () => {
+    expect(normalizeInfisicalProjects({ projects: [{
+      id: "project-1",
+      name: "RentAWeekend",
+      slug: "rentaweekend",
+      environments: [{ name: "Production", slug: "prod" }, { name: "Staging", slug: "staging" }],
+    }] })).toEqual([{
+      id: "project-1",
+      name: "RentAWeekend",
+      slug: "rentaweekend",
+      environments: [{ name: "Production", slug: "prod" }, { name: "Staging", slug: "staging" }],
+    }]);
   });
 
   it("logs in with universal auth", async () => {

@@ -4,11 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
   ChevronRight,
-  Eye,
-  EyeOff,
-  FileKey,
   Layers3,
   Loader2,
+  Plus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -26,6 +24,23 @@ interface Provider {
   provider: string;
 }
 
+interface DeploymentEnvironment {
+  id: number;
+  name: string;
+  slug: string;
+  isDefault: boolean;
+  providerType: string;
+  providerEnvironment: string;
+  status: string;
+}
+
+interface InfisicalProject {
+  id: string;
+  name: string;
+  slug: string;
+  environments: Array<{ name: string; slug: string }>;
+}
+
 interface EnvValue {
   masked: string;
   hasValue: boolean;
@@ -34,6 +49,9 @@ interface EnvValue {
 interface EnvProfile {
   id: number;
   projectId: number;
+  name: string;
+  slug: string;
+  isDefault: boolean;
   providerType: string;
   providerAccountId: number | null;
   environment: string;
@@ -88,19 +106,18 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   projectId: number;
   deploymentId?: number;
   componentName?: string;
-  onRedeploy?: (component?: string) => void | EnvironmentRedeployResult | Promise<void | EnvironmentRedeployResult>;
+  onRedeploy?: (component?: string, environmentSlug?: string) => void | EnvironmentRedeployResult | Promise<void | EnvironmentRedeployResult>;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [environments, setEnvironments] = useState<DeploymentEnvironment[]>([]);
+  const [selectedEnvironment, setSelectedEnvironment] = useState("");
   const [profile, setProfile] = useState<EnvProfile | null>(null);
   const [discovered, setDiscovered] = useState<DiscoveredEnvEntry[]>([]);
-  const [discoveredValues, setDiscoveredValues] = useState<Record<string, string>>({});
-  const [scopedDiscoveredValues, setScopedDiscoveredValues] = useState<Record<string, string>>({});
   const [summary, setSummary] = useState<DiscoverySummary>(EMPTY_SUMMARY);
   const [components, setComponents] = useState<string[]>(componentName ? [componentName] : []);
   const [selectedComponent, setSelectedComponent] = useState(componentName || "");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
-  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [pastedEnv, setPastedEnv] = useState("");
@@ -109,37 +126,48 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [notice, setNotice] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [missingKeys, setMissingKeys] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [environmentName, setEnvironmentName] = useState("");
+  const [legacyUnassignedCount, setLegacyUnassignedCount] = useState(0);
+  const [legacyUnassignedKeys, setLegacyUnassignedKeys] = useState<string[]>([]);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const [infisicalProjects, setInfisicalProjects] = useState<InfisicalProject[]>([]);
 
   const fixedScope = !!componentName;
-  const scopeLabel = selectedComponent || "Shared deployment";
+  const scopeLabel = selectedComponent || "Choose a component";
 
-  const hydrate = useCallback((data: Record<string, unknown>, reveal: boolean) => {
+  const hydrate = useCallback((data: Record<string, unknown>) => {
     const nextProfile = data.profile as EnvProfile | undefined;
+    const nextEnvironments = Array.isArray(data.environments) ? data.environments as DeploymentEnvironment[] : [];
     const discovery = data.discovered as {
       entries?: DiscoveredEnvEntry[];
-      values?: Record<string, string>;
-      scopedValues?: Record<string, string>;
       summary?: DiscoverySummary;
     } | undefined;
     if (nextProfile) setProfile(nextProfile);
+    setEnvironments(nextEnvironments);
+    if (nextProfile) setSelectedEnvironment(nextProfile.slug);
     if (nextProfile) setMissingKeys(new Set(nextProfile.validation?.missing || []));
     setDiscovered(Array.isArray(discovery?.entries) ? discovery.entries : []);
-    setDiscoveredValues(reveal ? discovery?.values || {} : {});
-    setScopedDiscoveredValues(reveal ? discovery?.scopedValues || {} : {});
     setSummary(discovery?.summary || EMPTY_SUMMARY);
-    if (!fixedScope) setComponents(Array.isArray(data.components) ? data.components as string[] : []);
+    const nextComponents = Array.isArray(data.components) ? data.components as string[] : [];
+    if (!fixedScope) {
+      setComponents(nextComponents);
+      setSelectedComponent((current) => current && nextComponents.includes(current) ? current : nextComponents[0] || "");
+    }
     setDirtyKeys(new Set());
-    setRevealedKeys(reveal ? new Set(["*"]) : new Set());
     setDraft({});
     setDeleteTarget(null);
+    setLegacyUnassignedCount(Number(data.legacyUnassignedCount || 0));
+    setLegacyUnassignedKeys(Array.isArray(data.legacyUnassignedKeys) ? data.legacyUnassignedKeys as string[] : []);
+    setProviderError(typeof data.providerError === "string" ? data.providerError : null);
   }, [fixedScope]);
 
-  const load = useCallback(async (reveal = false) => {
+  const load = useCallback(async (environmentSlug?: string) => {
     setBusy("load");
     try {
       const query = new URLSearchParams({ projectId: String(projectId) });
       if (deploymentId) query.set("deploymentId", String(deploymentId));
-      if (reveal) query.set("reveal", "true");
+      if (environmentSlug || selectedEnvironment) query.set("environment", environmentSlug || selectedEnvironment);
       const [providersResponse, profileResponse] = await Promise.all([
         fetch("/api/env/providers", { cache: "no-store" }),
         fetch(`/api/env/profiles?${query.toString()}`, { cache: "no-store" }),
@@ -150,35 +178,53 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       ]);
       if (!profileResponse.ok || profileData.error) throw new Error(profileData.error || "Environment load failed");
       setProviders(Array.isArray(providerData.providers) ? providerData.providers : []);
-      hydrate(profileData, reveal);
+      hydrate(profileData);
     } catch (error) {
       setNotice({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
       setBusy(null);
     }
-  }, [deploymentId, hydrate, projectId]);
+  }, [deploymentId, hydrate, projectId, selectedEnvironment]);
 
   useEffect(() => {
-    void load(false);
+    void load();
   }, [load]);
 
   useEffect(() => {
     setDraft({});
     setDirtyKeys(new Set());
-    setRevealedKeys(new Set());
     setNotice(null);
   }, [selectedComponent]);
 
+  useEffect(() => {
+    if (profile?.providerType !== "infisical" || !profile.providerAccountId) {
+      setInfisicalProjects([]);
+      return;
+    }
+    let active = true;
+    fetch(`/api/env/providers/catalog?providerAccountId=${profile.providerAccountId}`, { cache: "no-store" })
+      .then(readJson)
+      .then((data) => {
+        if (!active) return;
+        setInfisicalProjects(Array.isArray(data.projects) ? data.projects : []);
+      })
+      .catch(() => {
+        if (active) setInfisicalProjects([]);
+      });
+    return () => { active = false; };
+  }, [profile?.providerAccountId, profile?.providerType]);
+
   const selectedSavedValues = useMemo(() => selectedComponent
     ? profile?.componentValues?.[selectedComponent] || {}
-    : profile?.values || {}, [profile?.componentValues, profile?.values, selectedComponent]);
-  const selectedSchema = useMemo(() =>
-    (profile?.schema || []).filter((entry) => (entry.component || "") === selectedComponent),
+    : {}, [profile?.componentValues, selectedComponent]);
+  const selectedSchema = useMemo(() => selectedComponent
+    ? (profile?.schema || []).filter((entry) => entry.component === selectedComponent)
+    : [],
     [profile?.schema, selectedComponent]
   );
-  const selectedDiscovered = useMemo(() => discovered.filter((entry) =>
-    selectedComponent ? entry.component === selectedComponent : !entry.component
-  ), [discovered, selectedComponent]);
+  const selectedDiscovered = useMemo(() => selectedComponent
+    ? discovered.filter((entry) => entry.component === selectedComponent)
+    : [], [discovered, selectedComponent]);
   const keys = useMemo(() => Array.from(new Set([
     ...selectedSchema.map((entry) => entry.key),
     ...Object.keys(selectedSavedValues),
@@ -190,7 +236,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     return map;
   }, [selectedDiscovered]);
   const providerOptions = providers.filter((provider) => provider.provider !== "local");
-  const allRevealed = revealedKeys.has("*");
+  const selectedInfisicalProject = infisicalProjects.find((project) => project.id === profile?.projectRef);
   const hasPendingChanges = dirtyKeys.size > 0;
 
   async function saveEnvironment(options: {
@@ -198,15 +244,19 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     schema?: EnvProfile["schema"];
     reconcile?: boolean;
     deleteKeys?: string[];
+    isDefault?: boolean;
     success?: string;
   } = {}) {
-    if (!profile) return false;
+    if (!profile || (!selectedComponent && (options.values || options.reconcile || options.deleteKeys))) {
+      setNotice({ tone: "error", text: "Choose the component that should receive these values." });
+      return false;
+    }
     setBusy(options.reconcile ? "reconcile" : "save");
     setNotice({
       tone: "info",
       text: options.reconcile
-        ? `Reconciling ${selectedComponent || "the whole deployment"}…`
-        : `Saving ${scopeLabel} and materializing its managed environment…`,
+        ? `Reconciling ${selectedComponent} into ${profile.name}…`
+        : `Saving ${scopeLabel} in ${profile.name}…`,
     });
     try {
       const response = await fetch("/api/env/profiles", {
@@ -214,11 +264,15 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
+          profileId: profile.id,
           deploymentId,
-          componentName: selectedComponent || undefined,
+          componentName: selectedComponent,
+          name: profile.name,
+          environmentSlug: profile.slug,
+          isDefault: options.isDefault ?? profile.isDefault,
           providerType: profile.providerType,
           providerAccountId: profile.providerAccountId,
-          environment: profile.environment,
+          providerEnvironment: profile.environment,
           secretPath: profile.secretPath,
           projectRef: profile.projectRef,
           schema: options.schema || profile.schema,
@@ -229,13 +283,13 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       });
       const data = await readJson(response);
       if (!response.ok || data.error) throw new Error(data.error || "Environment save failed");
-      hydrate(data, false);
-      const files = Array.isArray(data.materialized?.files) ? data.materialized.files.join(", ") : "managed source";
+      hydrate(data);
+      if (profile.providerType === "infisical") await load(profile.slug);
       setNotice({
         tone: "success",
         text: options.success || (options.reconcile
-          ? `Reconciled ${scopeLabel}. GroundControl now owns a reproducible source in ${files}.`
-          : `Saved ${scopeLabel}. Materialized ${files}.`),
+          ? `Reconciled ${scopeLabel} into ${profile.name}. No component was restarted.`
+          : `Saved ${scopeLabel} in ${profile.name}. It will be injected on redeploy.`),
       });
       return true;
     } catch (error) {
@@ -259,34 +313,12 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     await saveEnvironment({
       schema: nextSchema,
       deleteKeys: [key],
-      success: `${key} removed from ${scopeLabel}. Managed environment files were regenerated.`,
+      success: `${key} removed from ${scopeLabel} in ${profile.name}.`,
     });
   }
 
-  async function reveal(key?: string) {
-    if (hasPendingChanges) {
-      setNotice({ tone: "info", text: "Save or discard pending edits before revealing current values." });
-      return;
-    }
-    if (key && revealedKeys.has(key)) {
-      const next = new Set(revealedKeys);
-      next.delete(key);
-      setRevealedKeys(next);
-      return;
-    }
-    await load(true);
-    if (key) setRevealedKeys(new Set([key]));
-  }
-
   function currentValue(key: string) {
-    if (dirtyKeys.has(key)) return draft[key] || "";
-    if (!allRevealed && !revealedKeys.has(key)) return "";
-    if (selectedComponent) {
-      return profile?.componentValues?.[selectedComponent]?.[key]?.masked
-        ?? scopedDiscoveredValues[`${selectedComponent}:${key}`]
-        ?? "";
-    }
-    return profile?.values?.[key]?.masked ?? discoveredValues[key] ?? "";
+    return dirtyKeys.has(key) ? draft[key] || "" : "";
   }
 
   function placeholderFor(key: string) {
@@ -302,6 +334,67 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       if (!seen.has(id)) next.push({ key, required: true, component: selectedComponent || undefined });
     }
     return next;
+  }
+
+  async function createEnvironment() {
+    if (!environmentName.trim() || !profile) return;
+    setBusy("create");
+    try {
+      const response = await fetch("/api/env/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create-environment",
+          projectId,
+          deploymentId,
+          name: environmentName.trim(),
+          copyFromProfileId: profile.id,
+        }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not create environment");
+      const created = data.profile as EnvProfile;
+      setEnvironmentName("");
+      setCreateOpen(false);
+      setSelectedEnvironment(created.slug);
+      hydrate(data);
+      setNotice({ tone: "success", text: `${created.name} created with the same requirements and no copied secret values.` });
+    } catch (error) {
+      setNotice({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function assignLegacyKey(key: string) {
+    if (!profile || !selectedComponent) {
+      setNotice({ tone: "info", text: "Choose the component that should receive this legacy key." });
+      return;
+    }
+    setBusy(`assign-${key}`);
+    try {
+      const response = await fetch("/api/env/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "assign-legacy-key",
+          projectId,
+          deploymentId,
+          profileId: profile.id,
+          environmentSlug: profile.slug,
+          componentName: selectedComponent,
+          key,
+        }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not assign legacy key");
+      hydrate(data);
+      setNotice({ tone: "success", text: `${key} is now explicitly assigned to ${selectedComponent} in ${profile.name}.` });
+    } catch (error) {
+      setNotice({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(null);
+    }
   }
 
   if (!profile) {
@@ -320,16 +413,51 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             <div className="gc-eyebrow">Deployment configuration</div>
             <h3 className="mt-1 text-base font-semibold tracking-tight">Environment</h3>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
-              Values are grouped by the component that consumes them. Saving writes the encrypted source and its managed environment file immediately.
+              Select a named runtime environment, then manage only the values explicitly assigned to each component. Values are injected when that environment is deployed.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <ActionButton onClick={() => void load(false)} disabled={!!busy} icon={RefreshCw}>Refresh</ActionButton>
-            <ActionButton onClick={() => void reveal()} disabled={!!busy || hasPendingChanges} icon={allRevealed ? EyeOff : Eye}>
-              {allRevealed ? "Mask values" : "Reveal values"}
-            </ActionButton>
+            <ActionButton onClick={() => void load()} disabled={!!busy} icon={RefreshCw}>Refresh</ActionButton>
+            <ActionButton onClick={() => setCreateOpen((open) => !open)} disabled={!!busy || hasPendingChanges} icon={Plus}>New environment</ActionButton>
           </div>
         </div>
+        <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-end sm:justify-between">
+          <label className="block min-w-56">
+            <span className="gc-label">Runtime environment</span>
+            <select
+              value={selectedEnvironment || profile.slug}
+              onChange={(event) => setSelectedEnvironment(event.target.value)}
+              disabled={!!busy || hasPendingChanges}
+              className="gc-field w-full"
+            >
+              {environments.map((environment) => (
+                <option key={environment.id} value={environment.slug}>
+                  {environment.name}{environment.isDefault ? " · default" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] text-muted">
+            <span>{profile.providerType === "infisical" ? "Infisical" : "GroundControl Vault"}</span>
+            <span>·</span>
+            <span>{profile.providerType === "infisical" ? profile.environment : "encrypted at rest"}</span>
+            {profile.isDefault && <span className="border border-success/30 bg-success/10 px-2 py-1 text-success">default</span>}
+          </div>
+        </div>
+        {createOpen && (
+          <div className="mt-4 grid gap-2 border border-accent/25 bg-accent/5 p-3 sm:grid-cols-[minmax(180px,1fr)_auto]">
+            <input
+              value={environmentName}
+              onChange={(event) => setEnvironmentName(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") void createEnvironment(); }}
+              placeholder="Staging"
+              className="gc-field gc-field--compact"
+              autoFocus
+            />
+            <ActionButton primary onClick={() => void createEnvironment()} disabled={!!busy || !environmentName.trim()} icon={Plus}>Create environment</ActionButton>
+            <p className="text-[10px] leading-4 text-muted sm:col-span-2">Requirements and provider mapping are copied from {profile.name}; secret values are never copied.</p>
+          </div>
+        )}
       </div>
 
       {notice && (
@@ -344,17 +472,35 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
         </div>
       )}
 
+      {providerError && (
+        <div className="mx-4 mt-4 border border-error/30 bg-error/5 px-3 py-2 text-xs text-error md:mx-5" role="alert">
+          Infisical connection failed: {providerError}
+        </div>
+      )}
+
+      {legacyUnassignedKeys.length > 0 && (
+        <div className="mx-4 mt-4 border border-warning/30 bg-warning/5 px-3 py-3 text-xs text-warning md:mx-5">
+          <div>{legacyUnassignedKeys.length} legacy deployment-wide key{legacyUnassignedKeys.length === 1 ? "" : "s"} remain available for compatibility{legacyUnassignedCount ? `; ${legacyUnassignedCount} currently resolve to values` : ""}. Select a component, then assign each key explicitly.</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {legacyUnassignedKeys.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => void assignLegacyKey(key)}
+                disabled={!!busy || !selectedComponent}
+                className="border border-warning/30 bg-background px-2 py-1 font-mono text-[9px] text-warning hover:border-warning/60 disabled:opacity-40"
+              >
+                {key} → {selectedComponent || "choose component"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className={`grid ${fixedScope ? "" : "md:grid-cols-[220px_minmax(0,1fr)]"}`}>
         {!fixedScope && (
           <aside className="border-b border-border bg-background/35 p-3 md:border-b-0 md:border-r">
-            <div className="px-2 pb-2 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">Configuration scope</div>
-            <ScopeButton
-              active={!selectedComponent}
-              label="Shared deployment"
-              detail={`${Object.keys(profile.values || {}).length} saved`}
-              missingCount={[...missingKeys].filter((key) => !key.includes(":")).length}
-              onClick={() => setSelectedComponent("")}
-            />
+            <div className="px-2 pb-2 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">Deployment components</div>
             {components.map((component) => (
               <ScopeButton
                 key={component}
@@ -375,18 +521,20 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <div className="flex items-center gap-2">
-                {selectedComponent ? <Layers3 className="h-4 w-4 text-accent" /> : <FileKey className="h-4 w-4 text-accent" />}
+                <Layers3 className="h-4 w-4 text-accent" />
                 <h4 className="text-sm font-medium">{scopeLabel}</h4>
               </div>
               <div className="mt-1 font-mono text-[10px] text-muted">
-                {selectedComponent ? `.groundcontrol/env/${selectedComponent}.env` : ".env"}
-                {profile.lastSyncedAt ? ` · synced ${new Date(profile.lastSyncedAt).toLocaleString()}` : " · not synchronized"}
+                {profile.name} · {profile.providerType === "infisical" ? `${profile.projectRef || "unlinked project"} / ${profile.environment}` : "write-only vault"}
+                {profile.lastSyncedAt ? ` · deployed ${new Date(profile.lastSyncedAt).toLocaleString()}` : " · not deployed yet"}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <ActionButton onClick={() => setReconcileOpen((open) => !open)} disabled={!!busy} icon={RotateCcw}>
-                Reconcile sources
-              </ActionButton>
+              {profile.providerType === "local" && (
+                <ActionButton onClick={() => setReconcileOpen((open) => !open)} disabled={!!busy || !selectedComponent} icon={RotateCcw}>
+                  Reconcile sources
+                </ActionButton>
+              )}
               <ActionButton
                 primary
                 onClick={() => void saveEnvironment({ values: Object.fromEntries([...dirtyKeys].map((key) => [key, draft[key] || ""])) })}
@@ -403,13 +551,13 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                       ? await saveEnvironment({ values: Object.fromEntries([...dirtyKeys].map((key) => [key, draft[key] || ""])) })
                       : true;
                     if (saved) {
-                      const result = await onRedeploy(selectedComponent || undefined);
+                      const result = await onRedeploy(selectedComponent || undefined, profile.slug);
                       if (result && !result.success && result.missingEnvKeys?.length) {
                         const nextMissing = new Set(result.missingEnvKeys);
                         setMissingKeys(nextMissing);
                         const first = result.missingEnvKeys[0];
                         const separator = first.indexOf(":");
-                        setSelectedComponent(separator > 0 ? first.slice(0, separator) : "");
+                        if (separator > 0) setSelectedComponent(first.slice(0, separator));
                         setNotice({ tone: "error", text: "Redeploy failed: Missing required env keys for this redeploy" });
                       }
                     }
@@ -417,13 +565,13 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   disabled={!!busy}
                   icon={ChevronRight}
                 >
-                  {selectedComponent ? `Redeploy ${selectedComponent} only` : `Redeploy all ${components.length || ""} components`.replace("all  components", "all components")}
+                  {selectedComponent ? `Deploy ${selectedComponent} to ${profile.name}` : `Deploy ${profile.name}`}
                 </ActionButton>
               )}
             </div>
           </div>
 
-          {reconcileOpen && (
+          {reconcileOpen && profile.providerType === "local" && (
             <div className="mt-4 border border-accent/25 bg-accent/5 p-4">
               <div className="text-sm font-medium">Create one reproducible source</div>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">
@@ -436,7 +584,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   disabled={!!busy}
                   icon={busy === "reconcile" ? Loader2 : Check}
                 >
-                  {busy === "reconcile" ? "Reconciling…" : `Reconcile ${selectedComponent || "all components"}`}
+                  {busy === "reconcile" ? "Reconciling…" : `Reconcile ${selectedComponent}`}
                 </ActionButton>
                 <span className="font-mono text-[10px] text-muted">No container is restarted until you choose redeploy.</span>
               </div>
@@ -452,7 +600,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           <div className="mt-4 overflow-hidden border border-border">
             <div className="grid grid-cols-[minmax(130px,.8fr)_minmax(180px,1.2fr)] gap-3 bg-background/60 px-3 py-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted">
               <span>Variable and provenance</span>
-              <span>Managed value</span>
+              <span>{profile.providerType === "infisical" ? "Infisical state" : "Write-only value"}</span>
             </div>
             {keys.length === 0 ? (
               <div className="px-4 py-10 text-center">
@@ -462,7 +610,6 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             ) : keys.map((key) => {
               const entries = discoveredByKey.get(key) || [];
               const required = selectedSchema.find((entry) => entry.key === key)?.required;
-              const isRevealed = allRevealed || revealedKeys.has(key);
               const scopedKey = selectedComponent ? `${selectedComponent}:${key}` : key;
               const isMissing = missingKeys.has(scopedKey);
               return (
@@ -473,7 +620,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                       {required && <span className="text-accent" title="Required">*</span>}
                       {dirtyKeys.has(key) && <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Unsaved" />}
                     </div>
-                    {isMissing && <div id={`missing-${selectedComponent || "shared"}-${key}`} className="mt-1 font-mono text-[9px] text-error">Missing required value</div>}
+                    {isMissing && <div id={`missing-${selectedComponent || "component"}-${key}`} className="mt-1 font-mono text-[9px] text-error">Missing required value</div>}
                     <div className="mt-1 flex flex-wrap gap-1">
                       {entries.length > 0 ? entries.slice(0, 3).map((entry, index) => (
                         <span key={`${entry.source}-${index}`} className="border border-border bg-background px-1.5 py-0.5 font-mono text-[9px] text-muted">
@@ -484,28 +631,19 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   </div>
                   <div className="flex min-w-0 gap-2">
                     <input
-                      type={isRevealed ? "text" : "password"}
+                      type="password"
                       value={currentValue(key)}
                       placeholder={placeholderFor(key)}
+                      disabled={profile.providerType === "infisical"}
                       onChange={(event) => {
                         setDraft((current) => ({ ...current, [key]: event.target.value }));
                         setDirtyKeys((current) => new Set(current).add(key));
                       }}
                       aria-label={`Value for ${key} in ${scopeLabel}`}
                       aria-invalid={isMissing}
-                      aria-describedby={isMissing ? `missing-${selectedComponent || "shared"}-${key}` : undefined}
+                      aria-describedby={isMissing ? `missing-${selectedComponent || "component"}-${key}` : undefined}
                       className={`gc-field gc-field--compact min-w-0 flex-1 font-mono ${isMissing ? "border-error ring-1 ring-error/30" : ""}`}
                     />
-                    <button
-                      type="button"
-                      onClick={() => void reveal(key)}
-                      disabled={!!busy || hasPendingChanges}
-                      className="gc-icon-button"
-                      aria-label={`${isRevealed ? "Hide" : "Reveal"} ${key}`}
-                      title={`${isRevealed ? "Hide" : "Reveal"} current value`}
-                    >
-                      {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
                     {profile.providerType === "local" && (
                       <button
                         type="button"
@@ -544,13 +682,13 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   />
                   <ActionButton
                     primary
-                    disabled={!!busy || !newKey}
+                    disabled={!!busy || !selectedComponent || !newKey}
                     onClick={async () => {
                       const key = newKey;
                       const ok = await saveEnvironment({
                         values: { [key]: newValue },
                         schema: schemaWith([key]),
-                        success: `${key} added to ${scopeLabel} and written to its managed environment file.`,
+                        success: `${key} added to ${scopeLabel} in ${profile.name}. It remains write-only and will be injected on redeploy.`,
                       });
                       if (ok) {
                         setNewKey("");
@@ -575,7 +713,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                 />
                 <div className="mt-2 flex justify-end">
                   <ActionButton
-                    disabled={!!busy || !pastedEnv.trim()}
+                    disabled={!!busy || !selectedComponent || !pastedEnv.trim()}
                     onClick={() => {
                       const parsed = parseEnvText(pastedEnv);
                       const importedKeys = Object.keys(parsed);
@@ -611,14 +749,55 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   }}
                   className="gc-field w-full"
                 >
-                  <option value="local">GroundControl encrypted</option>
+                  <option value="local">GroundControl Vault</option>
                   {providerOptions.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
                 </select>
               </label>
-              <Field label="Provider project" value={profile.projectRef} onChange={(value) => setProfile({ ...profile, projectRef: value })} />
-              <Field label="Environment" value={profile.environment} onChange={(value) => setProfile({ ...profile, environment: value })} />
-              <Field label="Secret path" value={profile.secretPath} onChange={(value) => setProfile({ ...profile, secretPath: value })} />
-              <div className="md:col-span-4 flex justify-end">
+              {profile.providerType === "infisical" && infisicalProjects.length > 0 ? (
+                <label className="block">
+                  <span className="gc-label">Infisical project</span>
+                  <select
+                    value={profile.projectRef}
+                    onChange={(event) => {
+                      const project = infisicalProjects.find((item) => item.id === event.target.value);
+                      setProfile({
+                        ...profile,
+                        projectRef: event.target.value,
+                        environment: project?.environments[0]?.slug || profile.environment,
+                      });
+                    }}
+                    className="gc-field w-full"
+                  >
+                    <option value="">Choose an existing project</option>
+                    {infisicalProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                  </select>
+                </label>
+              ) : profile.providerType === "infisical" ? (
+                <Field label="Provider project" value={profile.projectRef} onChange={(value) => setProfile({ ...profile, projectRef: value })} />
+              ) : null}
+              {profile.providerType === "infisical" && selectedInfisicalProject?.environments.length ? (
+                <label className="block">
+                  <span className="gc-label">Provider environment</span>
+                  <select
+                    value={profile.environment}
+                    onChange={(event) => setProfile({ ...profile, environment: event.target.value })}
+                    className="gc-field w-full"
+                  >
+                    {selectedInfisicalProject.environments.map((environment) => (
+                      <option key={environment.slug} value={environment.slug}>{environment.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : profile.providerType === "infisical" ? (
+                <Field label="Provider environment" value={profile.environment} onChange={(value) => setProfile({ ...profile, environment: value })} />
+              ) : null}
+              {profile.providerType === "infisical" && (
+                <Field label="Secret path" value={profile.secretPath} onChange={(value) => setProfile({ ...profile, secretPath: value })} />
+              )}
+              <div className="md:col-span-4 flex flex-wrap justify-end gap-2">
+                {!profile.isDefault && (
+                  <ActionButton onClick={() => void saveEnvironment({ isDefault: true, success: `${profile.name} is now the default deployment environment.` })} disabled={!!busy}>Make default</ActionButton>
+                )}
                 <ActionButton onClick={() => void saveEnvironment()} disabled={!!busy} icon={Save}>Save provider settings</ActionButton>
               </div>
             </div>

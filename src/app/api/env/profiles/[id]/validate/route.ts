@@ -13,7 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       include: { project: true },
     });
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-    const resolved = await resolveDeploymentEnv(profile.project);
+    const resolved = await resolveDeploymentEnv(profile.project, profile.slug);
     if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
     await prisma.deploymentEnvProfile.update({
       where: { id: profile.id },

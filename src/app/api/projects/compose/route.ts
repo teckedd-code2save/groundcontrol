@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     requireAuth(req);
-    const { projectSlug, projectPath: requestedPath, services, action } = await req.json();
+    const { projectSlug, projectPath: requestedPath, services, action, environmentSlug } = await req.json();
     if (!projectSlug) {
       return NextResponse.json({ error: "projectSlug required" }, { status: 400 });
     }
@@ -100,7 +100,11 @@ export async function POST(req: NextRequest) {
         { ...project, path: target.projectPath },
         undefined,
         undefined,
-        { materialize: true, components: Array.isArray(services) ? services : undefined }
+        {
+          materialize: true,
+          components: Array.isArray(services) ? services : undefined,
+          environmentSlug: typeof environmentSlug === "string" ? environmentSlug : undefined,
+        }
       );
     }
 
@@ -132,6 +136,14 @@ export async function POST(req: NextRequest) {
       projectPath: target.projectPath,
     });
   } catch (err: unknown) {
+    if (err instanceof MissingDeploymentEnvError) {
+      return NextResponse.json({
+        success: false,
+        error: "Redeploy failed: Missing required env keys for this redeploy",
+        code: "MISSING_DEPLOYMENT_ENV",
+        missingEnvKeys: err.missing,
+      }, { status: 422 });
+    }
     const detail = err instanceof Error ? err.message : "The Compose action failed before it could start.";
     return handleApiError(new HttpError(`Redeploy failed: ${detail}`, 500, {
       code: "COMPOSE_REDEPLOY_FAILED",

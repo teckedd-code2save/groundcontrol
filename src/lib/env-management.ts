@@ -32,6 +32,23 @@ export interface ResolvedDeploymentEnv {
   validation: EnvValidationResult;
 }
 
+export function normalizeEnvironmentSlug(value?: string | null): string {
+  const slug = String(value || "production")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "production";
+}
+
+export function environmentDisplayName(value?: string | null): string {
+  const slug = normalizeEnvironmentSlug(value);
+  if (slug === "prod" || slug === "production") return "Production";
+  if (slug === "stage" || slug === "staging") return "Staging";
+  if (slug === "dev" || slug === "development") return "Development";
+  return slug.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
 export function parseEnvSchema(content?: string | null): EnvSchemaEntry[] {
   const seen = new Set<string>();
   const entries: EnvSchemaEntry[] = [];
@@ -113,9 +130,9 @@ export async function ensureLocalEnvProvider() {
   }
   return prisma.envProviderAccount.create({
     data: {
-      name: "Local encrypted .env",
+      name: "GroundControl Vault",
       provider: "local",
-      configJson: JSON.stringify({ description: "Encrypted values stored by GroundControl" }),
+      configJson: JSON.stringify({ description: "Version-ready encrypted values stored by GroundControl" }),
       credentials: "",
       isActive: true,
     },
@@ -124,7 +141,11 @@ export async function ensureLocalEnvProvider() {
 
 export async function upsertEnvProfileForProject(input: {
   projectId: number;
+  profileId?: number | null;
   deploymentId?: number | null;
+  name?: string;
+  environmentSlug?: string;
+  isDefault?: boolean;
   schema?: EnvSchemaEntry[];
   providerType?: string;
   providerAccountId?: number | null;
@@ -132,18 +153,29 @@ export async function upsertEnvProfileForProject(input: {
   secretPath?: string;
   projectRef?: string;
 }) {
-  const providerType = input.providerType || "local";
+  const requestedSlug = input.environmentSlug ? normalizeEnvironmentSlug(input.environmentSlug) : null;
+  const existing = input.profileId
+    ? await prisma.deploymentEnvProfile.findFirst({ where: { id: input.profileId, projectId: input.projectId } })
+    : requestedSlug
+      ? await prisma.deploymentEnvProfile.findFirst({ where: { projectId: input.projectId, slug: requestedSlug } })
+      : await prisma.deploymentEnvProfile.findFirst({
+          where: { projectId: input.projectId },
+          orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
+        });
+  const slug = requestedSlug || existing?.slug || "production";
+  const providerType = input.providerType || existing?.providerType || "local";
   const providerAccount = input.providerAccountId
     ? await prisma.envProviderAccount.findUnique({ where: { id: input.providerAccountId } })
     : providerType === "local"
       ? await ensureLocalEnvProvider()
       : null;
-  const existing = await prisma.deploymentEnvProfile.findFirst({
-    where: { projectId: input.projectId },
-    orderBy: { updatedAt: "desc" },
-  });
   const data = {
     deploymentId: input.deploymentId ?? existing?.deploymentId ?? null,
+    name: input.name?.trim() || existing?.name || environmentDisplayName(slug),
+    slug,
+    isDefault: input.isDefault ?? existing?.isDefault ?? !(await prisma.deploymentEnvProfile.count({
+      where: { projectId: input.projectId },
+    })),
     providerType,
     providerAccountId: providerAccount?.id ?? input.providerAccountId ?? null,
     environment: input.environment || existing?.environment || "prod",
@@ -151,10 +183,23 @@ export async function upsertEnvProfileForProject(input: {
     projectRef: input.projectRef || existing?.projectRef || "",
     schemaJson: JSON.stringify(input.schema || parseEnvJson(existing?.schemaJson)),
   };
+  if (data.isDefault) {
+    await prisma.deploymentEnvProfile.updateMany({
+      where: { projectId: input.projectId, ...(existing ? { id: { not: existing.id } } : {}) },
+      data: { isDefault: false },
+    });
+  }
   if (existing) {
     return prisma.deploymentEnvProfile.update({ where: { id: existing.id }, data });
   }
   return prisma.deploymentEnvProfile.create({ data: { projectId: input.projectId, ...data } });
+}
+
+export async function listDeploymentEnvironments(projectId: number) {
+  return prisma.deploymentEnvProfile.findMany({
+    where: { projectId },
+    orderBy: [{ isDefault: "desc" }, { name: "asc" }],
+  });
 }
 
 export async function setLocalEnvValues(
@@ -169,30 +214,61 @@ export async function setLocalEnvValues(
       .map((entry) => entry.key)
   );
   for (const [key, value] of Object.entries(values)) {
-    await prisma.deploymentEnvValue.upsert({
-      where: { profileId_component_key: { profileId, component, key } },
-      create: {
-        profileId,
-        component,
-        key,
-        value: encryptIfNeeded(value) || "",
-        required: required.has(key),
-        source: "local",
-      },
-      update: {
-        value: encryptIfNeeded(value) || "",
-        required: required.has(key),
-        source: "local",
-      },
+    const encryptedValue = encryptIfNeeded(value) || "";
+    const latest = await prisma.deploymentEnvValueVersion.aggregate({
+      where: { profileId, component, key },
+      _max: { version: true },
     });
+    const version = (latest._max.version || 0) + 1;
+    await prisma.$transaction([
+      prisma.deploymentEnvValueVersion.create({
+        data: { profileId, component, key, value: encryptedValue, version, state: "active", source: "local" },
+      }),
+      prisma.deploymentEnvValue.upsert({
+        where: { profileId_component_key: { profileId, component, key } },
+        create: {
+          profileId,
+          component,
+          key,
+          value: encryptedValue,
+          required: required.has(key),
+          source: "local",
+          version,
+        },
+        update: {
+          value: encryptedValue,
+          required: required.has(key),
+          source: "local",
+          version,
+        },
+      }),
+    ]);
   }
 }
 
 export async function deleteLocalEnvValues(profileId: number, keys: string[], component = "") {
   if (keys.length === 0) return { count: 0 };
-  return prisma.deploymentEnvValue.deleteMany({
+  const existing = await prisma.deploymentEnvValue.findMany({
     where: { profileId, component, key: { in: keys } },
   });
+  for (const row of existing) {
+    const latest = await prisma.deploymentEnvValueVersion.aggregate({
+      where: { profileId, component, key: row.key },
+      _max: { version: true },
+    });
+    await prisma.deploymentEnvValueVersion.create({
+      data: {
+        profileId,
+        component,
+        key: row.key,
+        value: "",
+        version: (latest._max.version || row.version) + 1,
+        state: "deleted",
+        source: "local",
+      },
+    });
+  }
+  return prisma.deploymentEnvValue.deleteMany({ where: { profileId, component, key: { in: keys } } });
 }
 
 export async function getProfileValues(profileId: number): Promise<Record<string, string>> {
@@ -224,10 +300,16 @@ function parseConfig<T>(value?: string | null): T {
   }
 }
 
-export async function resolveDeploymentEnv(project: Project): Promise<ResolvedDeploymentEnv | null> {
+export async function resolveDeploymentEnv(
+  project: Project,
+  environmentSlug?: string
+): Promise<ResolvedDeploymentEnv | null> {
   const profile = await prisma.deploymentEnvProfile.findFirst({
-    where: { projectId: project.id },
-    orderBy: { updatedAt: "desc" },
+    where: {
+      projectId: project.id,
+      ...(environmentSlug ? { slug: normalizeEnvironmentSlug(environmentSlug) } : {}),
+    },
+    orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
   });
   if (!profile) return null;
   const provider = profile.providerAccountId
@@ -235,7 +317,7 @@ export async function resolveDeploymentEnv(project: Project): Promise<ResolvedDe
     : null;
   const schema = parseEnvJson(profile.schemaJson);
   let values: Record<string, string> = {};
-  const componentValues = await getProfileValuesByComponent(profile.id);
+  let componentValues = await getProfileValuesByComponent(profile.id);
   if (profile.providerType === "infisical") {
     if (!provider) throw new Error("Infisical env profile has no provider account");
     const config = {
@@ -244,10 +326,23 @@ export async function resolveDeploymentEnv(project: Project): Promise<ResolvedDe
       environment: profile.environment,
       secretPath: profile.secretPath,
     };
-    values = normalizeProviderRuntimeEnv(
+    const providerValues = normalizeProviderRuntimeEnv(
       await listInfisicalSecrets(config, decryptInfisicalCredentials(provider.credentials)),
       "infisical"
     );
+    values = Object.fromEntries(
+      schema
+        .filter((entry) => !entry.component && providerValues[entry.key] !== undefined)
+        .map((entry) => [entry.key, providerValues[entry.key]])
+    );
+    componentValues = schema.reduce<Record<string, Record<string, string>>>((scoped, entry) => {
+      if (!entry.component || providerValues[entry.key] === undefined) return scoped;
+      scoped[entry.component] = {
+        ...(scoped[entry.component] || {}),
+        [entry.key]: providerValues[entry.key],
+      };
+      return scoped;
+    }, {});
   } else {
     values = await getProfileValues(profile.id);
   }
@@ -325,15 +420,12 @@ export function normalizeProviderRuntimeEnv(values: Record<string, string>, prov
 
 export function buildMaterializeEnvCommand(deployPath: string, envContent: string): string {
   const quotedPath = shQuote(deployPath);
-  const backupName = `.groundcontrol/env-backups/.env.$(date +%Y%m%d%H%M%S).bak`;
   return [
     `set -eu`,
-    `mkdir -p ${quotedPath}/.groundcontrol/env-backups`,
     `cd ${quotedPath}`,
     `cat > .env.new << 'GCEOF'`,
     envContent.replace(/\n?$/, "\n") + `GCEOF`,
     `chmod 600 .env.new`,
-    `if [ -f .env ]; then cp .env ${backupName}; fi`,
     `mv .env.new .env`,
     `chmod 600 .env`,
     `sha256sum .env 2>/dev/null | awk '{print $1}' || shasum -a 256 .env | awk '{print $1}'`,
@@ -358,18 +450,24 @@ export function buildMaterializeEnvBundleCommand(
   deployPath: string,
   values: Record<string, string>,
   componentValues: Record<string, Record<string, string>>,
-  options: { pruneManagedFiles?: boolean } = {}
+  options: { pruneManagedFiles?: boolean; environmentSlug?: string } = {}
 ): string {
   const quotedPath = shQuote(deployPath);
+  const namespace = createHash("sha256").update(deployPath).digest("hex").slice(0, 16);
+  const environmentSlug = normalizeEnvironmentSlug(options.environmentSlug);
+  const runtimeDir = `/run/groundcontrol/environments/${namespace}/${environmentSlug}`;
+  const quotedRuntimeDir = shQuote(runtimeDir);
   const commands = [
     "set -eu",
-    "gc_env_timestamp=$(date +%Y%m%d%H%M%S)",
-    `mkdir -p ${quotedPath}/.groundcontrol/env ${quotedPath}/.groundcontrol/env-backups`,
+    `mkdir -p ${quotedPath}/.groundcontrol ${quotedRuntimeDir}`,
+    `chmod 700 ${quotedRuntimeDir}`,
     `cd ${quotedPath}`,
+    "find .groundcontrol/env -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true",
+    "find .groundcontrol/env-backups -maxdepth 1 -type f -name '*.bak' -delete 2>/dev/null || true",
   ];
   if (options.pruneManagedFiles) {
     commands.push(
-      "find .groundcontrol/env -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true",
+      `find ${quotedRuntimeDir} -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true`,
       "rm -f .groundcontrol/compose.env.override.yml"
     );
   }
@@ -383,7 +481,7 @@ export function buildMaterializeEnvBundleCommand(
     .sort();
   for (const component of components) {
     commands.push(...atomicEnvWriteCommands(
-      `.groundcontrol/env/${component}.env`,
+      `${runtimeDir}/${component}.env`,
       serializeDotenv(componentValues[component])
     ));
   }
@@ -394,7 +492,7 @@ export function buildMaterializeEnvBundleCommand(
       ...components.flatMap((component) => [
         `  ${component}:`,
         "    env_file:",
-        `      - .groundcontrol/env/${component}.env`,
+        `      - ${runtimeDir}/${component}.env`,
       ]),
       "",
     ].join("\n");
@@ -410,11 +508,7 @@ export function buildMaterializeEnvBundleCommand(
 function atomicEnvWriteCommands(path: string, content: string): string[] {
   const encoded = Buffer.from(content, "utf8").toString("base64");
   const target = shQuote(path);
-  const backupBase = shQuote(
-    `.groundcontrol/env-backups/${path.replace(/[^A-Za-z0-9_.-]/g, "_")}.`
-  );
   return [
-    `if [ -f ${target} ]; then cp ${target} ${backupBase}"$gc_env_timestamp".bak; fi`,
     `printf '%s' ${shQuote(encoded)} | base64 -d > ${target}.new`,
     `chmod 600 ${target}.new`,
     `mv ${target}.new ${target}`,
@@ -431,7 +525,7 @@ export async function materializeEnvBundle(
   values: Record<string, string>,
   componentValues: Record<string, Record<string, string>>,
   vps?: VpsConnection | null,
-  options: { pruneManagedFiles?: boolean } = {}
+  options: { pruneManagedFiles?: boolean; environmentSlug?: string } = {}
 ) {
   const conn = vps || (await getActiveVps());
   const result = await execOnTarget(
@@ -448,7 +542,7 @@ export async function materializeEnvBundle(
       ...Object.keys(componentValues)
         .filter(isSafeComposeServiceName)
         .filter((component) => Object.keys(componentValues[component]).length > 0)
-        .map((component) => `.groundcontrol/env/${component}.env`),
+        .map((component) => `/run/groundcontrol/environments/${createHash("sha256").update(deployPath).digest("hex").slice(0, 16)}/${normalizeEnvironmentSlug(options.environmentSlug)}/${component}.env`),
       ...(Object.keys(componentValues).some((component) => Object.keys(componentValues[component]).length > 0)
         ? [".groundcontrol/compose.env.override.yml"]
         : []),
@@ -467,9 +561,9 @@ export async function applyEnvToDeployment(
   project: Project,
   deploymentId?: number,
   log?: (chunk: string) => void,
-  options: { materialize?: boolean; components?: string[] } = {}
+  options: { materialize?: boolean; components?: string[]; environmentSlug?: string } = {}
 ) {
-  const resolved = await resolveDeploymentEnv(project);
+  const resolved = await resolveDeploymentEnv(project, options.environmentSlug);
   if (!resolved) return null;
   const scopedValidation = validateEnvForComponents(
     parseEnvJson(resolved.profile.schemaJson),
@@ -484,17 +578,19 @@ export async function applyEnvToDeployment(
     const materialized = await materializeEnvBundle(
       project.path,
       resolved.values,
-      resolved.componentValues
+      resolved.componentValues,
+      undefined,
+      { environmentSlug: resolved.profile.slug }
     );
     log?.(`[env] materialized ${resolved.profile.providerType} environment (${materialized.files.join(", ")})\n`);
   }
   await prisma.deploymentEnvProfile.update({
     where: { id: resolved.profile.id },
     data: {
-        status: resolved.validation.ok ? "synced" : "missing",
+      status: resolved.validation.ok ? "synced" : "missing",
       lastHash: resolved.validation.hash,
       lastSyncedAt: new Date(),
-        lastError: resolved.validation.ok ? null : `Missing: ${resolved.validation.missing.join(", ")}`,
+      lastError: resolved.validation.ok ? null : `Missing: ${resolved.validation.missing.join(", ")}`,
       deploymentId: deploymentId ?? resolved.profile.deploymentId,
     },
   });

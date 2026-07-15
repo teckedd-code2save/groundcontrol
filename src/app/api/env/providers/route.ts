@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
         })
       : "";
     const data = {
-      name: String(body.name || (provider === "infisical" ? "Infisical" : "Local encrypted .env")),
+      name: String(body.name || (provider === "infisical" ? "Infisical" : "GroundControl Vault")),
       provider,
       configJson,
       credentials,

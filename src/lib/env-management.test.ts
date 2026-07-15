@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildMaterializeEnvBundleCommand,
   buildMaterializeEnvCommand,
+  environmentDisplayName,
   hashEnvBundle,
   hashEnv,
   maskSecret,
   normalizeProviderRuntimeEnv,
+  normalizeEnvironmentSlug,
   parseDotenv,
   parseEnvSchema,
   removeEnvSchemaEntries,
@@ -60,7 +62,7 @@ DATABASE_URL=duplicate
     expect(command).toContain("cat > .env.new");
     expect(command).toContain("chmod 600 .env.new");
     expect(command).toContain("mv .env.new .env");
-    expect(command).toContain(".groundcontrol/env-backups");
+    expect(command).not.toContain("env-backups");
   });
 
   it("preserves Infisical sec-prefixed keys and adds runtime aliases", () => {
@@ -104,8 +106,10 @@ DATABASE_URL=duplicate
       { api: { DATABASE_URL: "postgres://db" }, worker: { QUEUE: "critical" } }
     );
 
-    expect(command).toContain(".groundcontrol/env/api.env");
-    expect(command).toContain(".groundcontrol/env/worker.env");
+    expect(command).toContain("/api.env");
+    expect(command).not.toContain(".groundcontrol/env/api.env");
+    expect(command).toContain("/run/groundcontrol/environments/");
+    expect(command).toContain("/worker.env");
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
     expect(command).toContain("base64 -d");
     expect(command).not.toContain("postgres://db");
@@ -151,9 +155,16 @@ DATABASE_URL=duplicate
 
   it("prunes only GroundControl-managed component files during deletion", () => {
     const command = buildMaterializeEnvBundleCommand("/srv/app", {}, {}, { pruneManagedFiles: true });
-    expect(command).toContain("find .groundcontrol/env");
+    expect(command).toContain("find '/run/groundcontrol/environments/");
     expect(command).toContain("rm -f .groundcontrol/compose.env.override.yml");
     expect(command).not.toContain("rm -f .env");
     expect(command).toContain("> '.env'.new");
+  });
+
+  it("normalizes operator environment names independently from provider slugs", () => {
+    expect(normalizeEnvironmentSlug("Customer Preview")).toBe("customer-preview");
+    expect(normalizeEnvironmentSlug(" ")).toBe("production");
+    expect(environmentDisplayName("prod")).toBe("Production");
+    expect(environmentDisplayName("customer-preview")).toBe("Customer Preview");
   });
 });
