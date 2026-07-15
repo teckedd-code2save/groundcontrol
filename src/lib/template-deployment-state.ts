@@ -27,6 +27,7 @@ export interface PersistTemplateDeploymentInput {
   tunnelId?: string | null;
   vpsConfigId?: number | null;
   durationMs?: number;
+  status?: "success" | "degraded" | "failed";
   /** Project category: docker (default) or static. */
   category?: "docker" | "static" | "app";
   /** Deployment target type used for this template run. */
@@ -57,6 +58,7 @@ export async function persistTemplateDeployment(
 ): Promise<PersistTemplateDeploymentResult> {
   const primaryDomain = input.domains[0] || null;
   const publicUrl = primaryDomain ? `https://${primaryDomain}` : null;
+  const status = input.status || "success";
 
   const category = input.category || "docker";
   const project = await client.project.upsert({
@@ -70,7 +72,7 @@ export async function persistTemplateDeployment(
       dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
       category,
-      status: "success",
+      status,
       lastDeploy: new Date(),
       envVars: JSON.stringify({
         templateName: input.templateName,
@@ -87,7 +89,7 @@ export async function persistTemplateDeployment(
       dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
       category,
-      status: "success",
+      status,
       lastDeploy: new Date(),
       envVars: JSON.stringify({
         templateName: input.templateName,
@@ -108,7 +110,7 @@ export async function persistTemplateDeployment(
     data: {
       projectId: project.id,
       targetId: target.id,
-      status: "success",
+      status,
       branch: input.source.branch || input.source.requestedRef || "main",
       commitSha: input.source.commitSha || null,
       publicUrl,
