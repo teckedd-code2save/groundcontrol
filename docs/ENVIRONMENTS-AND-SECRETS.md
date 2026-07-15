@@ -12,9 +12,10 @@ configuration belongs to the deployment workload, never to the project group.
   slugs are used internally.
 - Releases record the environment profile and fingerprint they consumed.
 
-There is no implicit shared-variable scope. Existing deployment-wide values are
-kept as legacy compatibility data until an operator assigns each key to a
-component. GroundControl moves encrypted local values without revealing them.
+There is no implicit shared-variable scope. GroundControl does not inspect
+`.env` files or running containers to guess secret ownership. Operators add
+values directly or explicitly import an environment file into a selected
+component.
 
 ## Providers
 
@@ -45,13 +46,17 @@ Saving changes updates the authoritative provider but does not mutate running
 containers. Redeploy resolves the chosen named environment, validates required
 component keys, and then injects the selected values.
 
+The deployment interface is write-only. An administrator may deliberately pull
+one component into an environment-named file for local use; every export is
+audited and returned with no-store response headers.
+
 The current compatibility injector writes component env files beneath the
 host's `/run/groundcontrol/environments` memory-backed runtime area and points a
 GroundControl-owned Compose override at those files. It removes older
 GroundControl component files and plaintext backups from deployment directories
-during materialization. Legacy deployment-wide values still use the top-level
-`.env` compatibility path during redeploy until the operator assigns them to
-components; new component-scoped values do not use that path.
+during materialization. Existing deployment-wide values retain their top-level
+`.env` compatibility path so an upgrade does not break a running workload, but
+new values can only be created inside a component scope.
 
 Environment-variable injection remains observable to a privileged Docker
 operator. Native file-secret delivery through `/run/secrets` is the next mode
@@ -68,7 +73,9 @@ for applications that support `*_FILE` or configurable credential paths.
 - Existing Infisical project discovery.
 - Write-only managed secret inputs.
 - Version history for GroundControl Vault values and deletion markers.
-- Explicit migration of legacy deployment-wide keys.
+- Explicit add and environment-file import flows.
+- Audited, administrator-only environment file export.
+- No automatic secret discovery from host files or containers.
 - Runtime-area Compose compatibility injection.
 - Missing-key validation mapped to components and fields.
 

@@ -17,34 +17,7 @@ import {
   upsertEnvProfileForProject,
   type EnvSchemaEntry,
 } from "@/lib/env-management";
-import {
-  discoverProjectEnv,
-  type DiscoveredEnvResult,
-} from "@/lib/env-discovery";
-
-const EMPTY_DISCOVERY: DiscoveredEnvResult = {
-  entries: [],
-  values: {},
-  scopedValues: {},
-  summary: {
-    containerCount: 0,
-    runningContainerCount: 0,
-    runtimeKeyCount: 0,
-    declaredKeyCount: 0,
-  },
-};
-
-const RUNTIME_NOISE_KEYS = new Set([
-  "HOME",
-  "HOSTNAME",
-  "PATH",
-  "PWD",
-  "SHLVL",
-  "TERM",
-  "USER",
-  "LOGNAME",
-  "_",
-]);
+import { parseComposeServices } from "@/lib/project-scan";
 
 function normalizeSchema(value: unknown): EnvSchemaEntry[] {
   if (Array.isArray(value)) return value.flatMap((entry) => {
@@ -103,10 +76,9 @@ export async function GET(req: NextRequest) {
           deploymentId: deploymentId || undefined,
         });
     if (!profile) return NextResponse.json({ error: "Deployment environment not found" }, { status: 404 });
-    const [storedValues, storedComponentValues, discovered, environments] = await Promise.all([
+    const [storedValues, storedComponentValues, environments] = await Promise.all([
       getProfileValues(profile.id),
       getProfileValuesByComponent(profile.id),
-      discoverProjectEnv(project).catch(() => EMPTY_DISCOVERY),
       listDeploymentEnvironments(project.id),
     ]);
     let values = storedValues;
@@ -126,13 +98,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       profile: profileResponse(profile, values, componentValues),
       environments: environments.map(publicEnvironment),
-      discovered: publicDiscovery(discovered),
-      components: listComponents(discovered, componentValues, parseEnvJson(profile.schemaJson)),
-      legacyUnassignedCount: Object.keys(values).length,
-      legacyUnassignedKeys: Array.from(new Set([
-        ...Object.keys(values),
-        ...parseEnvJson(profile.schemaJson).filter((entry) => !entry.component).map((entry) => entry.key),
-      ])).sort(),
+      components: listComponents(project.dockerCompose, componentValues, parseEnvJson(profile.schemaJson)),
       providerError,
     });
   } catch (err) {
@@ -179,15 +145,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         profile: profileResponse(created, {}, {}),
         environments: (await listDeploymentEnvironments(projectId)).map(publicEnvironment),
-        components: [],
-        discovered: publicDiscovery(EMPTY_DISCOVERY),
+        components: listComponents(project.dockerCompose, {}, parseEnvJson(created.schemaJson)),
         action: "created",
       }, { status: 201 });
     }
 
     const component = normalizeComponent(body.componentName);
     const changesValues = body.values && typeof body.values === "object";
-    const changesRuntimeState = changesValues || body.reconcile === true || body.importCurrentServerEnv === true || Array.isArray(body.deleteKeys) || body.action === "assign-legacy-key";
+    if (body.reconcile === true || body.importCurrentServerEnv === true || body.action === "assign-legacy-key") {
+      return NextResponse.json({
+        error: "GroundControl does not infer secrets from host files or running containers. Add them explicitly or import an environment file.",
+      }, { status: 400 });
+    }
+    const changesRuntimeState = changesValues || Array.isArray(body.deleteKeys);
     if (changesRuntimeState && !component) {
       return NextResponse.json({
         error: "Choose the component that should receive these values. GroundControl no longer creates shared deployment variables.",
@@ -215,42 +185,11 @@ export async function POST(req: NextRequest) {
       secretPath: body.secretPath || existingProfile.secretPath,
       projectRef: body.projectRef || existingProfile.projectRef,
     });
-    const discovered = await discoverProjectEnv(project).catch(() => EMPTY_DISCOVERY);
-
     let action = "saved";
     const deleteKeys = Array.isArray(body.deleteKeys)
       ? body.deleteKeys.filter((key: unknown): key is string => typeof key === "string" && validKey(key))
       : [];
-    if (body.action === "assign-legacy-key") {
-      const key = String(body.key || "");
-      if (!validKey(key)) return NextResponse.json({ error: "A valid environment key is required" }, { status: 400 });
-      schema = mergeSchema(
-        removeEnvSchemaEntries(schema, [key], ""),
-        [{ key, required: true, component }]
-      );
-      profile = await upsertEnvProfileForProject({
-        projectId,
-        profileId: profile.id,
-        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
-        name: profile.name,
-        environmentSlug: profile.slug,
-        isDefault: profile.isDefault,
-        schema,
-        providerType: profile.providerType,
-        providerAccountId: profile.providerAccountId,
-        environment: profile.environment,
-        secretPath: profile.secretPath,
-        projectRef: profile.projectRef,
-      });
-      if (profile.providerType === "local") {
-        const legacyValues = await getProfileValues(profile.id);
-        if (legacyValues[key] !== undefined) {
-          await setLocalEnvValues(profile.id, { [key]: legacyValues[key] }, schema, component);
-          await deleteLocalEnvValues(profile.id, [key], "");
-        }
-      }
-      action = "assigned";
-    } else if (deleteKeys.length > 0) {
+    if (deleteKeys.length > 0) {
       schema = removeEnvSchemaEntries(schema, deleteKeys, component);
       profile = await upsertEnvProfileForProject({
         projectId,
@@ -268,27 +207,6 @@ export async function POST(req: NextRequest) {
       });
       await deleteLocalEnvValues(profile.id, deleteKeys, component);
       action = "deleted";
-    } else if (body.reconcile === true || body.importCurrentServerEnv === true) {
-      const bundle = buildReconciledBundle(discovered, component);
-      schema = mergeSchema(schema, schemaForBundle(bundle));
-      profile = await upsertEnvProfileForProject({
-        projectId,
-        profileId: profile.id,
-        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
-        name: profile.name,
-        environmentSlug: profile.slug,
-        isDefault: profile.isDefault,
-        schema,
-        providerType: body.providerType || profile.providerType,
-        providerAccountId: body.providerAccountId ? Number(body.providerAccountId) : profile.providerAccountId,
-        environment: body.providerEnvironment || body.environment || profile.environment,
-        secretPath: body.secretPath || profile.secretPath,
-        projectRef: body.projectRef || profile.projectRef,
-      });
-      for (const [name, scoped] of Object.entries(bundle.components)) {
-        await setLocalEnvValues(profile.id, scoped, schema, name);
-      }
-      action = "reconciled";
     } else if (body.values && typeof body.values === "object") {
       const submittedValues = Object.fromEntries(
         Object.entries(body.values as Record<string, unknown>)
@@ -331,13 +249,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       profile: profileResponse(profile, values, componentValues),
       environments: (await listDeploymentEnvironments(projectId)).map(publicEnvironment),
-      discovered: publicDiscovery(discovered),
-      components: listComponents(discovered, componentValues, parseEnvJson(profile.schemaJson)),
-      legacyUnassignedCount: Object.keys(values).length,
-      legacyUnassignedKeys: Array.from(new Set([
-        ...Object.keys(values),
-        ...parseEnvJson(profile.schemaJson).filter((entry) => !entry.component).map((entry) => entry.key),
-      ])).sort(),
+      components: listComponents(project.dockerCompose, componentValues, parseEnvJson(profile.schemaJson)),
       action,
       materialized: null,
     });
@@ -378,63 +290,17 @@ function publicEnvironment(profile: {
   };
 }
 
-function publicDiscovery(discovered: DiscoveredEnvResult) {
-  return {
-    entries: discovered.entries,
-    summary: discovered.summary,
-  };
-}
-
 function listComponents(
-  discovered: DiscoveredEnvResult,
+  composeContent: string | null | undefined,
   componentValues: Record<string, Record<string, string>>,
   schema: EnvSchemaEntry[] = []
 ) {
+  const composeComponents = parseComposeServices(composeContent || "").services.map((service) => service.name);
   return Array.from(new Set([
-    ...discovered.entries.flatMap((entry) => entry.component ? [entry.component] : []),
+    ...composeComponents,
     ...Object.keys(componentValues),
     ...schema.flatMap((entry) => entry.component ? [entry.component] : []),
   ])).sort();
-}
-
-function buildReconciledBundle(discovered: DiscoveredEnvResult, onlyComponent?: string) {
-  const deployment: Record<string, string> = {};
-  const components: Record<string, Record<string, string>> = {};
-  const declared = new Set(
-    discovered.entries
-      .filter((entry) => !entry.runtime)
-      .map((entry) => `${entry.component || ""}:${entry.key}`)
-  );
-
-  for (const entry of discovered.entries) {
-    if (!entry.hasValue) continue;
-    if (entry.runtime && RUNTIME_NOISE_KEYS.has(entry.key)) continue;
-    if (entry.runtime && !declared.has(`${entry.component || ""}:${entry.key}`) && entry.key.startsWith("LC_")) continue;
-    if (entry.component) {
-      if (onlyComponent && entry.component !== onlyComponent) continue;
-      const value = discovered.scopedValues[`${entry.component}:${entry.key}`];
-      if (value === undefined) continue;
-      const scoped = components[entry.component] || {};
-      scoped[entry.key] = value;
-      components[entry.component] = scoped;
-    } else if (!onlyComponent) {
-      const value = discovered.scopedValues[entry.key] ?? discovered.values[entry.key];
-      if (value !== undefined) deployment[entry.key] = value;
-    }
-  }
-  return { deployment, components };
-}
-
-function schemaForBundle(bundle: {
-  deployment: Record<string, string>;
-  components: Record<string, Record<string, string>>;
-}): EnvSchemaEntry[] {
-  return [
-    ...Object.keys(bundle.deployment).map((key) => ({ key, required: true })),
-    ...Object.entries(bundle.components).flatMap(([component, values]) =>
-      Object.keys(values).map((key) => ({ key, required: true, component }))
-    ),
-  ];
 }
 
 function mergeSchema(base: EnvSchemaEntry[], additions: EnvSchemaEntry[]) {
