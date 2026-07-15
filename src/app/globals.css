@@ -156,13 +156,15 @@ input:focus,textarea:focus,select:focus{
   color: var(--text);
 }
 
-.gc-button--primary {
+.gc-button--primary,
+.gc-button-primary {
   border-color: rgba(232, 84, 42, 0.5);
   background: var(--accent);
   color: white;
 }
 
-.gc-button--primary:hover:not(:disabled) {
+.gc-button--primary:hover:not(:disabled),
+.gc-button-primary:hover:not(:disabled) {
   border-color: var(--accent-bright);
   background: var(--accent-bright);
   color: white;
@@ -172,6 +174,21 @@ input:focus,textarea:focus,select:focus{
   border-color: rgba(34, 197, 94, 0.35);
   background: rgba(34, 197, 94, 0.1);
   color: var(--success);
+}
+
+.gc-button-secondary {
+  background: var(--bg-darker);
+  color: var(--text);
+}
+
+.gc-button-quiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+.gc-button-quiet:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--bg-darker);
 }
 
 .gc-button:disabled,
