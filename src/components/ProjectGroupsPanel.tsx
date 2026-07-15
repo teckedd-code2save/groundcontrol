@@ -267,7 +267,6 @@ export function ProjectGroupsPanel() {
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm">{deployment.name}</span>
-                  <span className="mt-0.5 block truncate font-mono text-[9px] text-muted">{deployment.path}</span>
                 </span>
                 <Plus size={14} className="shrink-0 text-muted" aria-hidden="true" />
               </button>
@@ -287,7 +286,7 @@ export function ProjectGroupsPanel() {
           </button>
           {projects.map((project) => (
             <button key={project.id} type="button" disabled={busy} onClick={() => moveDeployment && void assignDeployment(moveDeployment.id, project.id)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
-              <span>{project.name}</span><span className="font-mono text-[10px] text-muted">{project.slug}</span>
+              <span>{project.name}</span>
             </button>
           ))}
         </div>
@@ -317,11 +316,8 @@ function DeploymentRows({
         return (
           <article key={deployment.id} className="grid gap-3 px-4 py-3 transition-colors hover:bg-background/35 md:grid-cols-[1fr_auto] md:items-center">
             <Link href={`/deployments/${deployment.slug}`} className="group min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate text-sm font-medium group-hover:text-accent">{deployment.name}</span>
-                <span className="border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted">{deployment.status || "unknown"}</span>
-              </div>
-              <p className="mt-1 truncate font-mono text-[10px] text-muted">{deployment.domain || deployment.path || deployment.slug}</p>
+              <div className="truncate text-sm font-medium group-hover:text-accent">{deployment.name}</div>
+              {liveUrl && <p className="mt-1 truncate text-[10px] text-muted">{deployment.domain || liveUrl}</p>}
             </Link>
             <div className="flex items-center justify-end gap-1.5">
               {liveUrl && (

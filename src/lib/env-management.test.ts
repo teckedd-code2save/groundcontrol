@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import {
   buildMaterializeEnvBundleCommand,
   buildMaterializeEnvCommand,
@@ -139,6 +140,13 @@ DATABASE_URL=duplicate
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
     expect(command).toContain('set -- -f "$gc_compose_base" -f .groundcontrol/compose.env.override.yml');
     expect(command).toContain('docker compose "$@" up -d');
+  });
+
+  it("generates valid POSIX shell when Compose must discover its base file", () => {
+    const command = buildManagedComposeInvocation("docker compose", "up -d --force-recreate");
+    const syntax = spawnSync("/bin/sh", ["-n"], { input: command, encoding: "utf8" });
+
+    expect(syntax.status, syntax.stderr).toBe(0);
   });
 
   it("removes only the requested component schema entries", () => {

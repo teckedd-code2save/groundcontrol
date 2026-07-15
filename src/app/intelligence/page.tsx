@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   GitBranch,
   Play,
@@ -115,6 +117,14 @@ export default function IntelligencePage() {
     };
   }, [refreshGraph]);
 
+  function collectEvidence() {
+    setError(null);
+    void refreshGraph(true).catch((e) => {
+      setError(e instanceof Error ? e.message : String(e));
+      setLoading(false);
+    });
+  }
+
   async function startInvestigation() {
     setLoading(true);
     setError(null);
@@ -162,6 +172,26 @@ export default function IntelligencePage() {
   }
 
   const stateLabel = run?.state?.replace(/_/g, " ") || "idle";
+  const readinessById = useMemo(
+    () => new Map(readiness.map((check) => [check.id, check])),
+    [readiness]
+  );
+  const providerReady = Boolean(readinessById.get("gemini")?.ready && readinessById.get("daytona")?.ready);
+  const setupReadyCount = [
+    readinessById.get("host")?.ready,
+    readinessById.get("path")?.ready,
+    readinessById.get("journey")?.ready,
+    providerReady,
+    Boolean(run),
+  ].filter(Boolean).length;
+  const canRunFirstTest = Boolean(
+    readinessById.get("host")?.ready
+      && readinessById.get("path")?.ready
+      && readinessById.get("journey")?.ready
+      && providerReady
+      && changeSets.length > 0
+  );
+  const advancedReadiness = readiness.filter((check) => ["recovery", "browser", "persistence"].includes(check.id));
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
@@ -190,57 +220,78 @@ export default function IntelligencePage() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => void refreshGraph(true).catch((e) => {
-            setError(e instanceof Error ? e.message : String(e));
-            setLoading(false);
-          })}
-          disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:border-accent/50 disabled:opacity-50"
-        >
-          <Activity className="h-3.5 w-3.5" />
-          {loading ? "Collecting evidence…" : "Collect host evidence"}
-        </button>
-        <button
-          type="button"
-          onClick={startInvestigation}
-          disabled={loading || changeSets.length === 0 || paths.length === 0}
-          className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-sm text-background hover:opacity-90 disabled:opacity-50"
-        >
-          <Play className="h-3.5 w-3.5" />
-          Run investigation
-        </button>
-        <button
-          type="button"
-          onClick={approveRecovery}
-          disabled={loading || run?.state !== "awaiting_approval"}
-          className="inline-flex items-center gap-1.5 rounded-md border border-emerald-600/40 bg-emerald-600/10 px-3 py-1.5 text-sm text-emerald-800 dark:text-emerald-300 disabled:opacity-50"
-        >
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          Approve recovery
-        </button>
-      </div>
-
       <section className="border border-border bg-card">
-        <div className="border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold">Testing readiness and current limits</h2>
-          <p className="mt-1 text-xs text-muted">These checks separate what Loop can prove now from the integrations needed for fuller production testing.</p>
+        <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-4">
+          <div>
+            <h2 className="text-sm font-semibold">Set up your first live Intelligence test</h2>
+            <p className="mt-1 text-xs text-muted">Complete these in order. GroundControl will use a real enrolled service and public customer journey.</p>
+          </div>
+          <span className="shrink-0 text-xs text-muted">{setupReadyCount}/5 ready</span>
         </div>
-        <div className="grid md:grid-cols-2">
-          {readiness.map((check) => (
-            <div key={check.id} className="flex gap-3 border-b border-border px-4 py-3 md:odd:border-r">
-              <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${check.ready ? "bg-success" : "bg-warning"}`} />
-              <div>
-                <div className="text-xs font-medium">{check.label}</div>
-                <div className="mt-1 text-[11px] leading-relaxed text-muted">{check.detail}</div>
-              </div>
-            </div>
-          ))}
-          {readiness.length === 0 && <div className="p-4 text-xs text-muted">Collect host evidence to evaluate readiness.</div>}
+        <div className="divide-y divide-border">
+          <SetupStep
+            number="01"
+            title="Collect live host evidence"
+            detail={readinessById.get("host")?.detail || "Read Docker and proxy state from the active host."}
+            ready={Boolean(readinessById.get("host")?.ready)}
+            action={
+              <button type="button" onClick={collectEvidence} disabled={loading} className="gc-button gc-button-secondary">
+                <Activity className="h-3.5 w-3.5" /> {loading ? "Collecting…" : "Collect evidence"}
+              </button>
+            }
+          />
+          <SetupStep
+            number="02"
+            title="Choose an enrolled public service"
+            detail={readinessById.get("path")?.detail || "GroundControl needs a Caddy or Nginx route that reaches an enrolled deployment."}
+            ready={Boolean(readinessById.get("path")?.ready)}
+            action={<Link href="/deployments" className="gc-button gc-button-secondary">Open deployments <ArrowRight className="h-3.5 w-3.5" /></Link>}
+          />
+          <SetupStep
+            number="03"
+            title="Confirm the customer journey"
+            detail={readinessById.get("journey")?.detail || "Collect evidence after the public route is available; GroundControl will register its first HTTP journey."}
+            ready={Boolean(readinessById.get("journey")?.ready)}
+            action={<button type="button" onClick={collectEvidence} disabled={loading || !readinessById.get("path")?.ready} className="gc-button gc-button-secondary">Confirm journey</button>}
+          />
+          <SetupStep
+            number="04"
+            title="Connect Gemini and Daytona"
+            detail={providerReady
+              ? "Gemini investigation and Daytona reproduction credentials are available."
+              : "Add GEMINI_API_KEY and DAYTONA_API_KEY to the GroundControl app component, then redeploy GroundControl."}
+            ready={providerReady}
+            action={<Link href="/deployments/groundcontrol#environment" className="gc-button gc-button-secondary">Configure secrets <ArrowRight className="h-3.5 w-3.5" /></Link>}
+          />
+          <SetupStep
+            number="05"
+            title="Run a real investigation"
+            detail={run
+              ? `First run started and is now ${stateLabel}.`
+              : changeSets.length > 0
+                ? "Use the latest real host change and confirmed journey for the first investigation."
+                : "Redeploy an enrolled service or change its proxy route, then collect evidence again."}
+            ready={Boolean(run)}
+            action={changeSets.length > 0
+              ? <button type="button" onClick={startInvestigation} disabled={loading || !canRunFirstTest} className="gc-button gc-button-primary"><Play className="h-3.5 w-3.5" /> Run first test</button>
+              : <button type="button" onClick={collectEvidence} disabled={loading} className="gc-button gc-button-secondary">Collect latest change</button>}
+          />
         </div>
       </section>
+
+      {advancedReadiness.length > 0 && (
+        <details className="border border-border bg-card/60">
+          <summary className="cursor-pointer px-4 py-3 text-xs font-medium">Advanced readiness and current limits</summary>
+          <div className="divide-y divide-border border-t border-border">
+            {advancedReadiness.map((check) => (
+              <div key={check.id} className="flex gap-3 px-4 py-3">
+                <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${check.ready ? "bg-success" : "bg-warning"}`} />
+                <div><div className="text-xs font-medium">{check.label}</div><div className="mt-1 text-[11px] text-muted">{check.detail}</div></div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* Service paths */}
@@ -457,6 +508,11 @@ export default function IntelligencePage() {
                 <p className="mt-2 text-xs text-muted">
                   Expected: {run.actionPlan.expectedResult}
                 </p>
+                {run.state === "awaiting_approval" && (
+                  <button type="button" onClick={approveRecovery} disabled={loading} className="gc-button gc-button-secondary mt-3 text-emerald-700 dark:text-emerald-300">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Approve recovery
+                  </button>
+                )}
               </div>
             )}
 
@@ -493,6 +549,27 @@ export default function IntelligencePage() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function SetupStep({ number, title, detail, ready, action }: {
+  number: string;
+  title: string;
+  detail: string;
+  ready: boolean;
+  action: ReactNode;
+}) {
+  return (
+    <div className="grid gap-3 px-4 py-4 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center">
+      <span className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-medium ${ready ? "bg-success/15 text-success" : "bg-background text-muted"}`}>
+        {ready ? <CheckCircle2 className="h-4 w-4" /> : number}
+      </span>
+      <div>
+        <div className="text-sm font-medium">{title}</div>
+        <div className="mt-1 text-xs leading-relaxed text-muted">{detail}</div>
+      </div>
+      {!ready && <div className="sm:justify-self-end">{action}</div>}
     </div>
   );
 }
