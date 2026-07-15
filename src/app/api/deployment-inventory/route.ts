@@ -26,7 +26,14 @@ export async function GET(req: NextRequest) {
       prisma.projectGroup.findMany({ orderBy: { name: "asc" } }),
       prisma.enrolledDeployment.findMany({
         where: { vpsConfigId: vps?.id ?? null },
-        include: { projectGroup: true, legacyProject: true },
+        include: {
+          projectGroup: true,
+          legacyProject: {
+            include: {
+              deployments: { orderBy: { createdAt: "desc" }, take: 1 },
+            },
+          },
+        },
         orderBy: [{ projectGroupId: "asc" }, { name: "asc" }],
       }),
     ]);
@@ -72,15 +79,27 @@ export async function GET(req: NextRequest) {
     const liveNames = new Set(containers.map((item) => item.name));
     return NextResponse.json({
       projects,
-      deployments: enrolled.map((item) => ({
-        ...item,
-        project: item.projectGroup,
-        projectId: item.projectGroupId,
-        legacyProjectSlug: item.legacyProject?.slug || null,
-        observedStatus: item.containerName
-          ? liveNames.has(item.containerName) ? "present" : "missing"
-          : tree.projects.some((candidate) => candidate.path === item.sourcePath) ? "present" : "missing",
-      })),
+      deployments: enrolled.map((item) => {
+        const latestRelease = item.legacyProject?.deployments[0] || null;
+        return {
+          ...item,
+          project: item.projectGroup,
+          projectId: item.projectGroupId,
+          legacyProjectSlug: item.legacyProject?.slug || null,
+          repoUrl: item.legacyProject?.repoUrl || null,
+          domain: item.legacyProject?.domain || null,
+          publicUrl: latestRelease?.publicUrl || latestRelease?.previewUrl || null,
+          latestRelease: latestRelease ? {
+            id: latestRelease.id,
+            status: latestRelease.status,
+            commitSha: latestRelease.commitSha,
+            createdAt: latestRelease.createdAt,
+          } : null,
+          observedStatus: item.containerName
+            ? liveNames.has(item.containerName) ? "present" : "missing"
+            : tree.projects.some((candidate) => candidate.path === item.sourcePath) ? "present" : "missing",
+        };
+      }),
       candidates: [...folderCandidates, ...containerCandidates],
       discoveryError: tree.error || null,
     });
