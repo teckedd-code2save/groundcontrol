@@ -376,7 +376,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   disabled={!!busy}
                   icon={ChevronRight}
                 >
-                  Redeploy {selectedComponent || "deployment"}
+                  {selectedComponent ? `Redeploy ${selectedComponent} only` : `Redeploy all ${components.length || ""} components`.replace("all  components", "all components")}
                 </ActionButton>
               )}
             </div>
