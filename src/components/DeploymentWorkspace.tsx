@@ -317,18 +317,14 @@ export function DeploymentWorkspace() {
                               <ServerCog size={14} aria-hidden="true" />
                               Open deployment
                             </ContextMenuAction>
-                            {liveUrl && (
-                              <ContextMenuAction href={liveUrl}>
-                                <ExternalLink size={14} aria-hidden="true" />
-                                Open live site
-                              </ContextMenuAction>
-                            )}
-                            {item.repoUrl && (
-                              <ContextMenuAction href={item.repoUrl}>
-                                <FolderGit2 size={14} aria-hidden="true" />
-                                Open repository
-                              </ContextMenuAction>
-                            )}
+                            <ContextMenuAction href={liveUrl || `/deployments/${item.slug}`}>
+                              <ExternalLink size={14} aria-hidden="true" />
+                              {liveUrl ? "Open live site" : "Set live URL"}
+                            </ContextMenuAction>
+                            <ContextMenuAction href={item.repoUrl || `/deployments/${item.slug}`}>
+                              <FolderGit2 size={14} aria-hidden="true" />
+                              {item.repoUrl ? "Open repository" : "Set repository"}
+                            </ContextMenuAction>
                             <ContextMenuDivider />
                             <ContextMenuAction onClick={() => {
                               close();
