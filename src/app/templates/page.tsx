@@ -54,6 +54,9 @@ interface TemplateDeployResult {
   tunnelId?: string | null;
   tunnelConfig?: unknown;
   enrolled?: boolean;
+  status?: string;
+  publicVerified?: boolean;
+  error?: string | null;
 }
 
 type Step = "browse" | "source" | "configure" | "preview" | "deploy";
@@ -128,7 +131,6 @@ export default function TemplatesPage() {
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([]);
   const [createDns, setCreateDns] = useState(false);
-  const [autoDomain, setAutoDomain] = useState(false);
   const [tunnels, setTunnels] = useState<CloudflareTunnelOption[]>([]);
   const [selectedTunnelId, setSelectedTunnelId] = useState("");
   const [zones, setZones] = useState<CloudflareZoneOption[]>([]);
@@ -412,13 +414,13 @@ export default function TemplatesPage() {
         }),
       });
       const data = await res.json();
-      if (data.success) {
+      if (data.success || data.deployed) {
         setDeployStatus("Deployment created, enrolled and attached to its environment source.");
         setDeployResult(data);
         const parts = [data.message];
         if (Array.isArray(data.dns) && data.dns.length > 0) parts.push(`DNS: ${data.dns.length} record${data.dns.length === 1 ? "" : "s"} created`);
         else if (data.dns?.error) parts.push(`DNS needs attention: ${data.dns.error}`);
-        setResult({ ok: true, msg: parts.join(" — ") });
+        setResult({ ok: data.success === true, msg: parts.join(" — ") });
         setStep("deploy");
         setPreviewText(data.composeYml || data.proxyConfig || "");
         setComposeYml(data.composeYml || "");
@@ -710,14 +712,10 @@ export default function TemplatesPage() {
               <div>
                 <label className="block text-xs font-mono text-muted mb-1">Domain</label>
                 <input type="text" value={inputs.domain || ""}
-                  onChange={e => { updateInput("domain", e.target.value); setAutoDomain(false); setSelectedZoneId(""); }}
-                  placeholder="app.example.com" disabled={autoDomain}
-                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent disabled:opacity-40"/>
-                <label className="flex items-center gap-2 mt-2">
-                  <input type="checkbox" checked={autoDomain} onChange={e => { setAutoDomain(e.target.checked); if (e.target.checked) updateInput("domain", `${(Math.random()*9999|0)}.groundcontrol.run`); }}
-                    className="accent-accent"/>
-                  <span className="text-xs text-muted font-mono">Auto-generate subdomain</span>
-                </label>
+                  onChange={e => { updateInput("domain", e.target.value); setSelectedZoneId(""); }}
+                  placeholder="app.example.com"
+                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
+                <p className="mt-1 text-[10px] text-muted">Use a domain from a connected Cloudflare zone. GroundControl only reports success after the public route responds.</p>
               </div>
               {(selected.inputs || []).filter(i => ![
                 "domain",
@@ -849,8 +847,11 @@ export default function TemplatesPage() {
             </details>
           )}
           {deployResult && (
-            <div className="rounded-md border border-success/25 bg-success/5 p-5">
-              <h3 className="text-sm font-medium text-success mb-2">Deployed successfully</h3>
+            <div className={`rounded-md border p-5 ${deployResult.publicVerified === false ? "border-warning/30 bg-warning/5" : "border-success/25 bg-success/5"}`}>
+              <h3 className={`text-sm font-medium mb-2 ${deployResult.publicVerified === false ? "text-warning" : "text-success"}`}>
+                {deployResult.publicVerified === false ? "Deployed, public route needs attention" : "Deployed and verified"}
+              </h3>
+              {deployResult.error && <p className="mb-2 text-xs font-mono text-error">{deployResult.error}</p>}
               <p className="text-xs text-muted font-mono">Path: {deployResult.deployPath}</p>
               {deployResult.composeProject && <p className="text-xs text-muted font-mono mt-1">Compose project: {deployResult.composeProject}</p>}
               {deployResult.enrolled && <p className="mt-1 text-xs font-mono text-success">Enrolled in GroundControl inventory</p>}
