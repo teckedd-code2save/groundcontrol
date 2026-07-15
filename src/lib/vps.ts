@@ -233,6 +233,9 @@ export interface DockerContainerLabelInfo {
   workingDir: string;
   configFiles: string;
   projectSlug: string;
+  createdAt?: string;
+  startedAt?: string;
+  restartCount?: number;
 }
 
 export async function getDockerContainers(vps?: VpsConnection | null) {
@@ -286,7 +289,12 @@ export async function getDockerContainerLabels(vps?: VpsConnection | null): Prom
         `docker inspect --format "{{.Name}}	{{index .Config.Labels \\"com.docker.compose.project\\"}}	{{index .Config.Labels \\"com.docker.compose.service\\"}}	{{index .Config.Labels \\"com.docker.compose.project.working_dir\\"}}	{{index .Config.Labels \\"com.docker.compose.project.config_files\\"}}" ${shQuote(name)} 2>/dev/null || echo ""`,
         conn
       );
+      const stateInspect = await execOnVps(
+        `docker inspect --format "{{.Created}}\t{{.State.StartedAt}}\t{{.RestartCount}}" ${shQuote(name)} 2>/dev/null || echo ""`,
+        conn
+      );
       const [n, project, service, workingDir, configFiles] = inspect.stdout.trim().split("\t");
+      const [createdAt, startedAt, restartCount] = stateInspect.stdout.trim().split("\t");
       const resolvedWorkingDir = cleanDockerTemplateValue(workingDir);
       const resolvedProject = cleanDockerTemplateValue(project);
       if (n) {
@@ -297,6 +305,9 @@ export async function getDockerContainerLabels(vps?: VpsConnection | null): Prom
           workingDir: resolvedWorkingDir,
           configFiles: cleanDockerTemplateValue(configFiles),
           projectSlug: resolvedWorkingDir.split("/").filter(Boolean).pop() || resolvedProject,
+          createdAt: createdAt || "",
+          startedAt: startedAt || "",
+          restartCount: Number(restartCount || 0),
         });
       }
     } catch {

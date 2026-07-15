@@ -266,6 +266,20 @@ export function validateEnvBundle(
   };
 }
 
+export function validateEnvForComponents(
+  schema: EnvSchemaEntry[],
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>,
+  components: string[] = []
+): EnvValidationResult {
+  const scope = new Set(components);
+  return validateEnvBundle(
+    scope.size ? schema.filter((entry) => !entry.component || scope.has(entry.component)) : schema,
+    values,
+    componentValues
+  );
+}
+
 export function hashEnvBundle(
   values: Record<string, string>,
   componentValues: Record<string, Record<string, string>>
@@ -420,12 +434,18 @@ export async function applyEnvToDeployment(
   project: Project,
   deploymentId?: number,
   log?: (chunk: string) => void,
-  options: { materialize?: boolean } = {}
+  options: { materialize?: boolean; components?: string[] } = {}
 ) {
   const resolved = await resolveDeploymentEnv(project);
   if (!resolved) return null;
-  if (!resolved.validation.ok) {
-    throw new Error(`Missing required env keys: ${resolved.validation.missing.join(", ")}`);
+  const scopedValidation = validateEnvForComponents(
+    parseEnvJson(resolved.profile.schemaJson),
+    resolved.values,
+    resolved.componentValues,
+    options.components
+  );
+  if (!scopedValidation.ok) {
+    throw new Error(`Missing required env keys for this redeploy: ${scopedValidation.missing.join(", ")}`);
   }
   if (options.materialize !== false && project.path) {
     const materialized = await materializeEnvBundle(
@@ -438,10 +458,10 @@ export async function applyEnvToDeployment(
   await prisma.deploymentEnvProfile.update({
     where: { id: resolved.profile.id },
     data: {
-      status: "synced",
+        status: resolved.validation.ok ? "synced" : "missing",
       lastHash: resolved.validation.hash,
       lastSyncedAt: new Date(),
-      lastError: null,
+        lastError: resolved.validation.ok ? null : `Missing: ${resolved.validation.missing.join(", ")}`,
       deploymentId: deploymentId ?? resolved.profile.deploymentId,
     },
   });
