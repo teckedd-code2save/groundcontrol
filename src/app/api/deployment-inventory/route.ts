@@ -8,9 +8,10 @@ import {
   getActiveVps,
   getDockerContainerLabels,
   getDockerContainers,
+  scanProjects,
   shQuote,
 } from "@/lib/vps";
-import { linkDeploymentRuntime } from "@/lib/deployment-runtime-link";
+import { resolveDeploymentEvidence } from "@/lib/deployment-evidence";
 
 function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "deployment";
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
     requireAuth(req);
     const vps = await getActiveVps();
     await reconcileKnownDeployments(vps?.id ?? null);
-    const [tree, containers, labels, projects, enrolled] = await Promise.all([
+    const [tree, containers, labels, projects, enrolled, hostProjects] = await Promise.all([
       scanProjectsTree(vps),
       getDockerContainers(vps),
       getDockerContainerLabels(vps),
@@ -88,6 +89,7 @@ export async function GET(req: NextRequest) {
         },
         orderBy: [{ projectGroupId: "asc" }, { name: "asc" }],
       }),
+      scanProjects(vps),
     ]);
 
     const enrolledPaths = new Set(enrolled.map((item) => item.sourcePath).filter(Boolean));
@@ -132,17 +134,24 @@ export async function GET(req: NextRequest) {
       projects,
       deployments: enrolled.map((item) => {
         const latestRelease = item.legacyProject?.deployments[0] || null;
-        const runtime = linkDeploymentRuntime(item, containers, labels);
+        const evidence = resolveDeploymentEvidence({
+          ...item,
+          savedDomain: item.legacyProject?.domain,
+          savedRepoUrl: item.legacyProject?.repoUrl,
+        }, containers, labels, tree.projects, hostProjects.caddySites);
+        const runtime = evidence.runtime;
         const scanned = tree.projects.find((candidate) => candidate.path === item.sourcePath);
         return {
           ...item,
           project: item.projectGroup,
           projectId: item.projectGroupId,
           legacyProjectSlug: item.legacyProject?.slug || null,
-          repoUrl: item.legacyProject?.repoUrl || null,
-          domain: item.legacyProject?.domain || null,
-          publicUrl: latestRelease?.publicUrl || latestRelease?.previewUrl || (item.legacyProject?.domain ? `https://${item.legacyProject.domain}` : null),
+          repoUrl: evidence.repoUrl,
+          domain: item.legacyProject?.domain || evidence.route?.domain || null,
+          publicUrl: evidence.publicUrl || latestRelease?.publicUrl || latestRelease?.previewUrl || null,
           runtime,
+          route: evidence.route,
+          identitySource: evidence.identitySource,
           latestRelease: latestRelease ? {
             id: latestRelease.id,
             status: latestRelease.status,
