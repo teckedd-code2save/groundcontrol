@@ -118,4 +118,16 @@ describe("persistTemplateDeployment", () => {
     ]);
     expect(normalizeDnsRecords({ error: "DNS provisioning failed" })).toEqual([]);
   });
+
+  it("persists a degraded result when the public endpoint was not verified", async () => {
+    const client = createClient();
+    await persistTemplateDeployment({ ...baseInput(), status: "degraded" }, client);
+    expect(client.project.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ status: "degraded" }),
+      update: expect.objectContaining({ status: "degraded" }),
+    }));
+    expect(client.deployment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ status: "degraded" }),
+    });
+  });
 });
