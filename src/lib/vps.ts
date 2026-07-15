@@ -554,7 +554,7 @@ export function buildManagedComposeInvocation(
   const selectBase = composeFile
     ? `gc_compose_base=${shQuote(composeFile)}`
     : [
-        `gc_compose_base=''`,
+        `gc_compose_base='';`,
         `for gc_file in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do`,
         `  if [ -f "$gc_file" ]; then gc_compose_base="$gc_file"; break; fi`,
         `done`,

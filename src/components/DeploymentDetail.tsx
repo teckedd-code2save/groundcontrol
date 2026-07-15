@@ -105,6 +105,13 @@ export function DeploymentDetail({ slug }: { slug: string }) {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const requestedTab = window.location.hash.slice(1);
+    if (requestedTab === "overview" || requestedTab === "environment" || requestedTab === "releases") {
+      setTab(requestedTab);
+    }
+  }, []);
+
   async function assignProject(projectGroupId: number | null) {
     if (!deployment) return;
     setBusy(true);
