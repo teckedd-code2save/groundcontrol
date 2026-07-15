@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { FolderGit2, Search } from "lucide-react";
 import type { TemplateDefinition } from "@/lib/template-engine";
 import { getTemplateSourcePlan } from "@/lib/template-source-requirements";
+import { ModalSurface } from "@/components/ModalSurface";
 
 interface TemplateWithId extends TemplateDefinition {
   _filename: string;
@@ -25,7 +27,25 @@ interface CloudflareTunnelOption {
   domains?: string[];
 }
 
+interface CloudflareZoneOption {
+  id: string;
+  name: string;
+  status?: string;
+}
+
+interface GithubRepositoryOption {
+  id: number;
+  name: string;
+  fullName: string;
+  url: string;
+  htmlUrl: string;
+  defaultBranch: string;
+  description: string;
+  updatedAt?: string | null;
+}
+
 interface TemplateDeployResult {
+  slug?: string;
   deployPath?: string;
   composeProject?: string;
   dns?: unknown;
@@ -97,6 +117,7 @@ export default function TemplatesPage() {
   const [sourceType, setSourceType] = useState<"github" | "ghcr" | "local">("github");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
+  const [deploymentName, setDeploymentName] = useState("");
   const [ghcrImage, setGhcrImage] = useState("");
   const [localPath, setLocalPath] = useState("");
   const [repoValidating, setRepoValidating] = useState(false);
@@ -110,6 +131,13 @@ export default function TemplatesPage() {
   const [autoDomain, setAutoDomain] = useState(false);
   const [tunnels, setTunnels] = useState<CloudflareTunnelOption[]>([]);
   const [selectedTunnelId, setSelectedTunnelId] = useState("");
+  const [zones, setZones] = useState<CloudflareZoneOption[]>([]);
+  const [selectedZoneId, setSelectedZoneId] = useState("");
+  const [githubOpen, setGithubOpen] = useState(false);
+  const [githubOwner, setGithubOwner] = useState("teckedd-code2save");
+  const [githubRepos, setGithubRepos] = useState<GithubRepositoryOption[]>([]);
+  const [githubLoading, setGithubLoading] = useState(false);
+  const [githubError, setGithubError] = useState("");
 
   const [previewText, setPreviewText] = useState("");
   const [composeYml, setComposeYml] = useState("");
@@ -122,6 +150,8 @@ export default function TemplatesPage() {
       .then(d => setTemplates(d.templates || [])).catch(() => {});
     fetch("/api/cloudflare/tunnels").then(r => r.json())
       .then(d => setTunnels(d.tunnels || [])).catch(() => setTunnels([]));
+    fetch("/api/cloudflare/zones").then(r => r.json())
+      .then(d => setZones(d.zones || [])).catch(() => setZones([]));
   }, []);
 
   function selectTemplate(t: TemplateWithId) {
@@ -144,6 +174,8 @@ export default function TemplatesPage() {
     setPreviewText("");
     setDeployResult(null);
     setSelectedTunnelId("");
+    setSelectedZoneId("");
+    setDeploymentName("");
     setSourceValidated(false);
     setSourceChecks([]);
     setSourceSuggestion("");
@@ -206,6 +238,16 @@ export default function TemplatesPage() {
       if (d.ok) {
         setSourceValidated(true);
         const name = d.repo?.name || repoUrl || localPath || "source";
+        if (!deploymentName.trim()) {
+          const inferred = String(d.repo?.name || repoUrl || localPath || ghcrImage || "")
+            .replace(/[?#].*$/, "")
+            .replace(/\/+$/, "")
+            .replace(/\.git$/i, "")
+            .split(/[/:]/)
+            .filter(Boolean)
+            .pop();
+          if (inferred) setDeploymentName(inferred.replace(/:[^:]+$/, ""));
+        }
         const checkSummary = (d.checks || [])
           .filter((c: SourceCheck) => c.ok)
           .map((c: SourceCheck) => c.label)
@@ -273,6 +315,11 @@ export default function TemplatesPage() {
   ));
 
   const selectedTunnel = tunnels.find((tunnel) => tunnel.id === selectedTunnelId);
+  const matchingZone = zones.find((zone) => {
+    const hostname = String(inputs.domain || "").trim().toLowerCase();
+    return hostname === zone.name || hostname.endsWith(`.${zone.name}`);
+  });
+  const effectiveZoneId = selectedZoneId || matchingZone?.id || "";
   const dnsRecordType = usesCloudflareTunnel && selectedTunnelId ? "CNAME" : "A";
 
   function addEnvVar() { setEnvVars([...envVars, { key: "", value: "" }]); }
@@ -281,8 +328,22 @@ export default function TemplatesPage() {
   }
   function removeEnvVar(i: number) { setEnvVars(envVars.filter((_, idx) => idx !== i)); }
 
+  function validateDnsConfiguration(): boolean {
+    if (!createDns) return true;
+    if (!String(inputs.domain || "").trim()) {
+      setResult({ ok: false, msg: "Enter the public domain before enabling Cloudflare DNS." });
+      return false;
+    }
+    if (!effectiveZoneId) {
+      setResult({ ok: false, msg: `No connected Cloudflare zone matches ${inputs.domain}. Select its zone or connect it in Settings.` });
+      return false;
+    }
+    return true;
+  }
+
   async function handlePreview() {
     if (!selected) return;
+    if (!validateDnsConfiguration()) return;
     setLoading(true); setResult(null); setDeployStatus("Validating source and required inputs…");
     // Re-validate source before generating preview (catches wrong template + repo combo)
     const sourceOk = sourceValidated || (await validateSource({ silentOk: true }));
@@ -320,6 +381,7 @@ export default function TemplatesPage() {
 
   async function handleDeploy() {
     if (!selected) return;
+    if (!validateDnsConfiguration()) return;
     setLoading(true); setResult(null);
     const sourceOk = sourceValidated || (await validateSource({ silentOk: true }));
     if (!sourceOk) {
@@ -334,6 +396,7 @@ export default function TemplatesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           templateName: selected._filename,
+          deploymentName: deploymentName.trim() || undefined,
           inputs: deploymentInputs(),
           envVars: envVars.filter(e => e.key),
           repoUrl: sourceType === "github" ? repoUrl : undefined,
@@ -342,6 +405,8 @@ export default function TemplatesPage() {
           localPath: sourceType === "local" ? localPath : undefined,
           domain: inputs.domain || undefined,
           createDns: createDns && !!inputs.domain,
+          zoneId: createDns ? effectiveZoneId || undefined : undefined,
+          proxied: createDns ? true : undefined,
           tunnelId: usesCloudflareTunnel && selectedTunnelId ? selectedTunnelId : undefined,
           tunnelService: usesCloudflareTunnel ? `http://app:${inputs.app_port || inputs.port || "80"}` : undefined,
         }),
@@ -351,7 +416,8 @@ export default function TemplatesPage() {
         setDeployStatus("Deployment created, enrolled and attached to its environment source.");
         setDeployResult(data);
         const parts = [data.message];
-        if (data.dns) parts.push("DNS: record created");
+        if (Array.isArray(data.dns) && data.dns.length > 0) parts.push(`DNS: ${data.dns.length} record${data.dns.length === 1 ? "" : "s"} created`);
+        else if (data.dns?.error) parts.push(`DNS needs attention: ${data.dns.error}`);
         setResult({ ok: true, msg: parts.join(" — ") });
         setStep("deploy");
         setPreviewText(data.composeYml || data.proxyConfig || "");
@@ -368,6 +434,23 @@ export default function TemplatesPage() {
       setDeployStatus("");
       setResult({ ok: false, msg: "Connection error" });
     } finally { setLoading(false); }
+  }
+
+  async function loadGithubRepositories() {
+    if (!githubOwner.trim()) return;
+    setGithubLoading(true);
+    setGithubError("");
+    try {
+      const response = await fetch(`/api/github/repositories?owner=${encodeURIComponent(githubOwner.trim())}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Could not load repositories");
+      setGithubRepos(data.repositories || []);
+    } catch (error) {
+      setGithubError(error instanceof Error ? error.message : String(error));
+      setGithubRepos([]);
+    } finally {
+      setGithubLoading(false);
+    }
   }
 
   const steps = [
@@ -427,7 +510,7 @@ export default function TemplatesPage() {
         ))}
       </div>
 
-      {result && (
+      {result && step !== "source" && (
         <div className={`mb-6 p-3 rounded text-sm font-mono ${result.ok ? "bg-success/10 border border-success/30 text-success" : "bg-error/10 border border-error/30 text-error"}`}>
           {result.msg}
           {result.dns && <span className="block text-[10px] mt-1 opacity-75">{result.dns}</span>}
@@ -444,27 +527,11 @@ export default function TemplatesPage() {
       {/* Step 1: Browse */}
       {step === "browse" && (
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="border border-border bg-card p-4">
-              <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Pick by app shape</div>
-              <p className="text-[11px] text-muted/75 leading-relaxed">
-                Templates describe deployable app shapes: static HTML sites, Dockerfile source builds, private tunnel
-                apps, SaaS stacks, and k3s edge setups.
-              </p>
-            </div>
-            <div className="border border-border bg-card p-4">
-              <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Know the exposure</div>
-              <p className="text-[11px] text-muted/75 leading-relaxed">
-                Each card shows whether traffic enters through Caddy, Nginx, Traefik, or Cloudflare Tunnel before it
-                reaches the app service.
-              </p>
-            </div>
-            <div className="border border-border bg-card p-4">
-              <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Then deploy</div>
-              <p className="text-[11px] text-muted/75 leading-relaxed">
-                Successful template runs create a managed deployment identity, save its environment source and enrol it automatically.
-              </p>
-            </div>
+          <div className="flex flex-col gap-2 border-l-2 border-accent bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="max-w-2xl text-xs leading-relaxed text-muted">
+              Choose the closest application shape. GroundControl will ask only for the source, identity, and exposure details that shape needs.
+            </p>
+            <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">{templates.length} available</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {sortedTemplates.map(t => (
@@ -490,17 +557,6 @@ export default function TemplatesPage() {
               <div className="mb-3 space-y-1.5 text-[10px] text-muted/80">
                 <p><span className="font-mono text-muted">Exposure:</span> {templateExposure(t)}</p>
                 <p><span className="font-mono text-muted">Source:</span> {templateSourceModes(t).join(" or ")}</p>
-                <p><span className="font-mono text-muted">Services:</span> {t.services.map((service) => service.name).join(", ") || (isStaticTpl(t) ? "static files" : "—")}</p>
-                <p><span className="font-mono text-muted">Needs:</span>{" "}
-                  {[
-                    t.requires?.docker && "Docker",
-                    t.requires?.caddy && "Caddy",
-                    t.requires?.nginx && "Nginx",
-                    t.requires?.traefik && "Traefik",
-                    t.requires?.k3s && "k3s",
-                    isStaticTpl(t) && "Git or local path",
-                  ].filter(Boolean).join(" · ") || "—"}
-                </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {isStaticTpl(t) && <Tag>No Docker</Tag>}
@@ -556,7 +612,13 @@ export default function TemplatesPage() {
             </div>
             {sourceType === "github" && (
               <div className="space-y-3">
-                <label className="block text-xs font-mono text-muted">Repo URL</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="block text-xs font-mono text-muted">Repository</label>
+                  <button type="button" onClick={() => setGithubOpen(true)} className="gc-button gc-button-quiet">
+                    <FolderGit2 size={14} aria-hidden="true" />
+                    Choose from GitHub
+                  </button>
+                </div>
                 <div className="flex gap-2">
                   <input type="text" value={repoUrl} onChange={e => {
                     setRepoUrl(e.target.value);
@@ -568,7 +630,7 @@ export default function TemplatesPage() {
                     className="flex-1 bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
                   <button onClick={() => validateSource()} disabled={repoValidating || !repoUrl}
                     className="px-3 py-2 text-xs font-mono border border-border hover:border-accent disabled:opacity-50">
-                    {repoValidating ? "..." : "Check fit"}
+                    {repoValidating ? "Checking…" : "Verify source"}
                   </button>
                 </div>
                 <label className="block text-xs font-mono text-muted mt-3">Branch</label>
@@ -606,6 +668,11 @@ export default function TemplatesPage() {
                 ))}
               </ul>
             )}
+            {result && (
+              <div className={`mt-4 border px-3 py-2 text-xs ${result.ok ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>
+                {result.msg}
+              </div>
+            )}
             {sourceSuggestion && (
               <p className="mt-3 text-[11px] text-amber-400/90 leading-relaxed border border-amber-500/25 bg-amber-500/5 rounded-md px-3 py-2">
                 {sourceSuggestion}
@@ -627,12 +694,23 @@ export default function TemplatesPage() {
       {step === "configure" && selected && (
         <div className="space-y-6">
           <div className="bg-card border border-border p-5">
-            <h3 className="text-sm font-medium mb-4">Deployment Settings</h3>
+            <h3 className="text-sm font-medium mb-4">Deployment</h3>
             <div className="space-y-4 max-w-lg">
+              <div>
+                <label className="block text-xs font-mono text-muted mb-1">Name</label>
+                <input
+                  type="text"
+                  value={deploymentName}
+                  onChange={event => setDeploymentName(event.target.value)}
+                  placeholder={repoUrl ? repoUrl.replace(/\.git$/, "").split("/").pop() || "deployment" : "deployment"}
+                  className="w-full bg-background border border-border px-3 py-2 text-sm outline-none focus:border-accent"
+                />
+                <p className="mt-1 text-[10px] text-muted">Defaults to the repository, image, or source-folder name.</p>
+              </div>
               <div>
                 <label className="block text-xs font-mono text-muted mb-1">Domain</label>
                 <input type="text" value={inputs.domain || ""}
-                  onChange={e => { updateInput("domain", e.target.value); setAutoDomain(false); }}
+                  onChange={e => { updateInput("domain", e.target.value); setAutoDomain(false); setSelectedZoneId(""); }}
                   placeholder="app.example.com" disabled={autoDomain}
                   className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent disabled:opacity-40"/>
                 <label className="flex items-center gap-2 mt-2">
@@ -641,7 +719,15 @@ export default function TemplatesPage() {
                   <span className="text-xs text-muted font-mono">Auto-generate subdomain</span>
                 </label>
               </div>
-              {(selected.inputs || []).filter(i => i.name !== "domain" && i.name !== "tunnel_token").map(inp => (
+              {(selected.inputs || []).filter(i => ![
+                "domain",
+                "tunnel_token",
+                "app_slug",
+                "repo_url",
+                "repo_branch",
+                "repo_dir",
+                "ghcr_image",
+              ].includes(i.name)).map(inp => (
                 <div key={inp.name}>
                   <label className="block text-xs font-mono text-muted mb-1">
                     {inp.prompt || inp.name}
@@ -674,12 +760,31 @@ export default function TemplatesPage() {
           </div>
 
           <div className="bg-card border border-border p-5">
-            <h3 className="text-sm font-medium mb-3">Cloudflare DNS</h3>
-            <label className="flex items-center gap-3">
-              <input type="checkbox" checked={createDns} onChange={e => setCreateDns(e.target.checked)} className="accent-accent w-4 h-4"/>
-              <span className="text-sm">Auto-create {dnsRecordType} record for {inputs.domain || "your domain"} → {dnsRecordType === "CNAME" ? "selected tunnel" : "this VPS"}</span>
-            </label>
-            <p className="text-[10px] text-muted mt-2 ml-7">Cloudflare token required in Settings.</p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-medium">Cloudflare DNS</h3>
+                <p className="mt-1 text-xs text-muted">Create the public record as part of this deployment.</p>
+              </div>
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={createDns} onChange={e => setCreateDns(e.target.checked)} className="accent-accent w-4 h-4"/>
+                Configure DNS
+              </label>
+            </div>
+            {createDns && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                <label className="block">
+                  <span className="gc-label">Cloudflare zone</span>
+                  <select value={effectiveZoneId} onChange={event => setSelectedZoneId(event.target.value)} className="gc-field w-full">
+                    <option value="">Select the zone for {inputs.domain || "this domain"}</option>
+                    {zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}{zone.status ? ` · ${zone.status}` : ""}</option>)}
+                  </select>
+                </label>
+                <span className="pb-2 font-mono text-[10px] text-muted">{dnsRecordType} → {dnsRecordType === "CNAME" ? "tunnel" : "active VPS"}</span>
+              </div>
+            )}
+            {createDns && zones.length === 0 && (
+              <p className="mt-3 border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">No active Cloudflare zones are available. Connect Cloudflare in Settings first.</p>
+            )}
           </div>
 
           {usesCloudflareTunnel && (
@@ -749,7 +854,10 @@ export default function TemplatesPage() {
               <p className="text-xs text-muted font-mono">Path: {deployResult.deployPath}</p>
               {deployResult.composeProject && <p className="text-xs text-muted font-mono mt-1">Compose project: {deployResult.composeProject}</p>}
               {deployResult.enrolled && <p className="mt-1 text-xs font-mono text-success">Enrolled in GroundControl inventory</p>}
-              {Boolean(deployResult.dns) && <p className="text-xs text-muted font-mono mt-1">DNS: record created</p>}
+              {Array.isArray(deployResult.dns) && deployResult.dns.length > 0 && <p className="text-xs text-success font-mono mt-1">DNS: {deployResult.dns.length} record{deployResult.dns.length === 1 ? "" : "s"} created</p>}
+              {typeof deployResult.dns === "object" && deployResult.dns !== null && !Array.isArray(deployResult.dns) && "error" in deployResult.dns && (
+                <p className="mt-1 text-xs font-mono text-error">DNS: {String((deployResult.dns as { error: unknown }).error)}</p>
+              )}
               {Array.isArray(deployResult.health) && deployResult.health.length > 0 && (
                 <div className="mt-2 space-y-1">
                   {deployResult.health.map((h: { domain: string; result: string }) => (
@@ -781,7 +889,7 @@ export default function TemplatesPage() {
             )}
             {step === "deploy" && (
               <>
-                <button onClick={() => router.push("/services")}
+                <button onClick={() => router.push(deployResult?.slug ? `/deployments/${deployResult.slug}` : "/deployments")}
                   className="rounded-md px-4 py-2 text-xs font-mono bg-accent text-white hover:bg-accent-bright transition-colors">
                   Open Deployments
                 </button>
@@ -798,6 +906,57 @@ export default function TemplatesPage() {
           </div>
         </div>
       )}
+
+      <ModalSurface
+        open={githubOpen}
+        onClose={() => setGithubOpen(false)}
+        title="Choose a GitHub repository"
+        description="Browse public repositories for a GitHub user or organization. Private repository access can be connected separately later."
+      >
+        <div className="space-y-4">
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            void loadGithubRepositories();
+          }} className="flex gap-2">
+            <label className="min-w-0 flex-1">
+              <span className="gc-label">GitHub user or organization</span>
+              <input value={githubOwner} onChange={event => setGithubOwner(event.target.value)} placeholder="github-owner" className="gc-field w-full" />
+            </label>
+            <button type="submit" disabled={!githubOwner.trim() || githubLoading} className="gc-button gc-button-secondary self-end">
+              <Search size={14} aria-hidden="true" />
+              {githubLoading ? "Loading…" : "Browse"}
+            </button>
+          </form>
+          {githubError && <p className="border border-error/30 bg-error/5 px-3 py-2 text-xs text-error">{githubError}</p>}
+          <div className="max-h-[50vh] space-y-1 overflow-y-auto pr-1">
+            {githubRepos.map(repo => (
+              <button
+                key={repo.id}
+                type="button"
+                onClick={() => {
+                  setRepoUrl(repo.url);
+                  setBranch(repo.defaultBranch || "main");
+                  setDeploymentName(repo.name);
+                  setSourceValidated(false);
+                  setSourceChecks([]);
+                  setResult(null);
+                  setGithubOpen(false);
+                }}
+                className="flex w-full items-start justify-between gap-4 border border-border px-3 py-3 text-left hover:border-accent/50 hover:bg-card"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{repo.fullName}</span>
+                  <span className="mt-1 line-clamp-2 block text-[11px] leading-relaxed text-muted">{repo.description || "No description"}</span>
+                </span>
+                <span className="shrink-0 font-mono text-[9px] text-muted">{repo.defaultBranch}</span>
+              </button>
+            ))}
+            {!githubLoading && githubRepos.length === 0 && !githubError && (
+              <p className="border border-dashed border-border p-4 text-center text-xs text-muted">Enter an account and browse its public repositories.</p>
+            )}
+          </div>
+        </div>
+      </ModalSurface>
     </div>
   );
 }

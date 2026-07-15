@@ -1,8 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { listZones, getActiveCloudflareAccount } from "@/lib/cloudflare";
+import { requireAuth } from "@/lib/auth";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    requireAuth(req);
     const account = await getActiveCloudflareAccount();
     if (!account) return NextResponse.json({ error: "No active Cloudflare account. Add one in Settings → Cloudflare." }, { status: 400 });
     const zones = await listZones(account);
