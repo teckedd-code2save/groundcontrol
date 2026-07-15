@@ -8,6 +8,7 @@ import {
   normalizeProviderRuntimeEnv,
   parseDotenv,
   parseEnvSchema,
+  removeEnvSchemaEntries,
   serializeDotenv,
   validateEnv,
   validateEnvBundle,
@@ -134,5 +135,25 @@ DATABASE_URL=duplicate
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
     expect(command).toContain('set -- -f "$gc_compose_base" -f .groundcontrol/compose.env.override.yml');
     expect(command).toContain('docker compose "$@" up -d');
+  });
+
+  it("removes only the requested component schema entries", () => {
+    const schema = [
+      { key: "TOKEN", required: true },
+      { key: "TOKEN", required: true, component: "api" },
+      { key: "QUEUE", required: true, component: "worker" },
+    ];
+    expect(removeEnvSchemaEntries(schema, ["TOKEN"], "api")).toEqual([
+      { key: "TOKEN", required: true },
+      { key: "QUEUE", required: true, component: "worker" },
+    ]);
+  });
+
+  it("prunes only GroundControl-managed component files during deletion", () => {
+    const command = buildMaterializeEnvBundleCommand("/srv/app", {}, {}, { pruneManagedFiles: true });
+    expect(command).toContain("find .groundcontrol/env");
+    expect(command).toContain("rm -f .groundcontrol/compose.env.override.yml");
+    expect(command).not.toContain("rm -f .env");
+    expect(command).toContain("> '.env'.new");
   });
 });
