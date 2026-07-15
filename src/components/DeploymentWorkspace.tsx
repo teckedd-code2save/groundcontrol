@@ -206,11 +206,9 @@ export function DeploymentWorkspace() {
     <div className="space-y-8">
       <div className="flex flex-col gap-3 border-b border-border pb-5 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="gc-eyebrow">Active host inventory</p>
-          <h2 className="mt-2 text-xl font-semibold tracking-tight">Managed workloads</h2>
+          <h2 className="text-xl font-semibold tracking-tight">Deployments</h2>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
-            Every deployment has its own management workspace. Projects organize deployments without owning their
-            paths, configuration, or runtime.
+            Open a deployment to manage its environment, releases, source and endpoint.
           </p>
         </div>
         <button
@@ -240,7 +238,7 @@ export function DeploymentWorkspace() {
         <div className="flex items-end justify-between gap-4">
           <div>
             <h3 className="text-sm font-medium">Enrolled deployments</h3>
-            <p className="mt-1 text-[11px] text-muted">Open a deployment for runtime, environment, source, release, and endpoint management.</p>
+            <p className="mt-1 text-[11px] text-muted">Organized by project.</p>
           </div>
           <Link href="/projects" className="gc-button gc-button-quiet hidden sm:inline-flex">
             <Layers3 size={14} aria-hidden="true" />
@@ -266,26 +264,13 @@ export function DeploymentWorkspace() {
               {items.map((item) => {
                 const liveUrl = item.publicUrl || (item.domain ? `https://${item.domain}` : null);
                 return (
-                  <article key={item.id} className="grid gap-3 px-4 py-3 transition-colors hover:bg-background/35 md:grid-cols-[minmax(190px,1fr)_minmax(180px,1fr)_auto] md:items-center">
+                  <article key={item.id} className="grid gap-3 px-4 py-3 transition-colors hover:bg-background/35 md:grid-cols-[minmax(190px,1fr)_auto] md:items-center">
                     <Link href={`/deployments/${item.slug}`} className="group min-w-0">
                       <div className="truncate text-sm font-medium group-hover:text-accent">{item.name}</div>
-                      <div className="mt-1 font-mono text-[10px] text-muted">{item.kind} · {item.managementMode}</div>
-                    </Link>
-
-                    <div className="min-w-0">
-                      <div className={`text-xs ${item.observedStatus === "present" ? "text-success" : "text-warning"}`}>
-                        {item.observedStatus === "present" ? "Observed on host" : "Not found in latest scan"}
-                      </div>
-                      <div className="mt-1 truncate font-mono text-[10px] text-muted">
-                        {item.sourcePath || item.containerName || "runtime identity"}
-                      </div>
-                      {item.runtime && item.runtime.containers.length > 0 && (
-                        <div className="mt-1 truncate font-mono text-[9px] text-muted">
-                          {item.runtime.containers.length} linked container{item.runtime.containers.length === 1 ? "" : "s"}
-                          {item.runtime.composeProject ? ` · ${item.runtime.composeProject}` : ""}
-                        </div>
+                      {item.observedStatus !== "present" && (
+                        <div className="mt-1 text-[10px] text-warning">Needs attention</div>
                       )}
-                    </div>
+                    </Link>
 
                     <div className="flex items-center justify-end gap-1.5">
                       {liveUrl && (

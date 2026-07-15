@@ -48,7 +48,7 @@ type DeploymentDetailRecord = {
   domain?: string | null;
   publicUrl?: string | null;
   releases: Release[];
-  envProfile?: { status: string; lastSyncedAt?: string | null } | null;
+  envProfile?: { name?: string; status: string; lastSyncedAt?: string | null } | null;
   runtime?: {
     status: string;
     confidence: string;
@@ -210,7 +210,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
 
   const tabs: { id: Tab; label: string; detail: string }[] = [
     { id: "overview", label: "Overview", detail: "Identity and access" },
-    { id: "environment", label: "Environment", detail: deployment.envProfile?.status || "Not configured" },
+    { id: "environment", label: "Environment", detail: deployment.envProfile?.name || "Configure" },
     { id: "releases", label: "Releases", detail: `${deployment.releases.length} recent` },
   ];
 
@@ -224,12 +224,10 @@ export function DeploymentDetail({ slug }: { slug: string }) {
       <header className="border-b border-border pb-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${deployment.observedStatus === "present" ? "bg-success" : "bg-warning"}`} />
-              <span className="gc-eyebrow">{deployment.observedStatus === "present" ? "Observed on host" : "Needs attention"}</span>
-            </div>
-            <h1 className="mt-3 truncate text-3xl font-semibold tracking-[-0.04em] md:text-4xl">{deployment.name}</h1>
-            <p className="mt-2 font-mono text-[11px] text-muted">{deployment.kind} · {deployment.managementMode} · {deployment.slug}</p>
+            <h1 className="truncate text-3xl font-semibold tracking-[-0.04em] md:text-4xl">{deployment.name}</h1>
+            <p className={`mt-2 text-xs ${deployment.observedStatus === "present" ? "text-muted" : "text-warning"}`}>
+              {deployment.observedStatus === "present" ? deployment.project?.name || "Ungrouped" : "Needs attention"}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {deployment.kind === "compose" && deployment.legacyProjectSlug && (
@@ -288,23 +286,6 @@ export function DeploymentDetail({ slug }: { slug: string }) {
         <main className="min-w-0">
           {tab === "overview" && (
             <div className="space-y-6">
-              <section className="gc-work-surface">
-                <div className="border-b border-border px-5 py-4">
-                  <p className="gc-eyebrow">Operational identity</p>
-                  <h2 className="mt-1 text-lg font-semibold tracking-tight">Where this deployment lives</h2>
-                </div>
-                <dl className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
-                  <DetailValue label="Source path" value={deployment.sourcePath || "No source folder"} mono />
-                  <DetailValue label="Runtime identity" value={deployment.containerName || deployment.composePath || "Resolved from deployment source"} mono />
-                </dl>
-                {deployment.route && (
-                  <dl className="grid border-t border-border md:grid-cols-2 md:divide-x md:divide-border">
-                    <DetailValue label="Public route from Caddy" value={deployment.route.domain} mono />
-                    <DetailValue label="Route evidence" value={`${deployment.route.confidence} confidence · ${deployment.route.file}`} mono />
-                  </dl>
-                )}
-              </section>
-
               <section className="grid gap-4 lg:grid-cols-2">
                 <div className="border border-border bg-card p-5">
                   <div className="flex items-start justify-between gap-4">
@@ -337,40 +318,6 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                 </div>
               </section>
 
-              <section className="border border-border bg-card">
-                <div className="flex flex-col gap-2 border-b border-border px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <p className="gc-eyebrow">Runtime relationship</p>
-                    <h2 className="mt-1 text-base font-medium">Containers linked to this deployment</h2>
-                  </div>
-                  <span className="font-mono text-[9px] uppercase text-muted">{deployment.runtime?.confidence || "none"} match</span>
-                </div>
-                {deployment.runtime?.containers.length ? (
-                  <div className="divide-y divide-border">
-                    {deployment.runtime.containers.map((container) => (
-                      <div key={container.name} className="grid gap-2 px-5 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                        <div className="min-w-0">
-                          <p className="truncate font-mono text-xs text-foreground">{container.service || container.name}</p>
-                          <p className="mt-1 truncate font-mono text-[9px] text-muted">{container.name} · {container.image}</p>
-                          {(container.startedAt || container.createdAt) && (
-                            <p className="mt-1 font-mono text-[9px] text-muted">
-                              Started {new Date(container.startedAt || container.createdAt || "").toLocaleString()}
-                              {container.restartCount ? ` · ${container.restartCount} restarts` : ""}
-                            </p>
-                          )}
-                        </div>
-                        <span className={`font-mono text-[10px] ${container.state === "running" ? "text-success" : "text-warning"}`}>{container.state}</span>
-                      </div>
-                    ))}
-                    <div className="flex flex-wrap gap-2 px-5 py-3">
-                      {deployment.runtime.evidence.map((item) => <span key={item} className="border border-border px-2 py-1 font-mono text-[9px] text-muted">{item}</span>)}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="px-5 py-5 text-xs leading-relaxed text-muted">No running container could be linked from Docker Compose labels or the saved runtime identity. The deployment remains tracked, but its runtime needs reconciliation.</div>
-                )}
-              </section>
-
               <section className="border border-border bg-card p-5">
                 <p className="gc-eyebrow">Management</p>
                 <h2 className="mt-2 text-base font-medium">Operate the whole deployment</h2>
@@ -388,7 +335,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
             deployment.legacyProjectId ? (
               <DeploymentEnvPanel projectId={deployment.legacyProjectId} onRedeploy={redeploy} />
             ) : (
-              <div className="border border-border bg-card p-6 text-sm text-muted">This standalone runtime has no saved deployment source yet, so environment reconciliation is not available.</div>
+              <div className="border border-border bg-card p-6 text-sm text-muted">Connect this deployment to a saved source before configuring environments.</div>
             )
           )}
 
@@ -470,15 +417,6 @@ export function DeploymentDetail({ slug }: { slug: string }) {
           </div>
         </form>
       </ModalSurface>
-    </div>
-  );
-}
-
-function DetailValue({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="min-w-0 px-5 py-4">
-      <dt className="gc-label">{label}</dt>
-      <dd className={`mt-2 break-all text-xs text-foreground/85 ${mono ? "font-mono" : ""}`}>{value}</dd>
     </div>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { SensitiveField } from "@/components/SensitiveField";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ActionConfirm } from "@/components/ActionConfirm";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
@@ -827,33 +826,24 @@ export function ContainersPanel() {
                           <ContainerIcon type={getContainerType(container.name, container.image)} className="w-4 h-4 text-muted" />
                           <span className="truncate">{container.name}</span>
                         </div>
-                        <div className="text-xs text-muted font-mono mt-0.5 truncate">
-                          {container.image} · {container.status}
+                        <div className="mt-0.5 truncate text-xs font-mono text-muted">
+                          {container.image}
                         </div>
-                        {(container.composeProject || container.composeWorkingDir) && (
-                          <div className="text-[10px] text-muted font-mono mt-1 truncate">
-                            {container.composeProject && (
-                              <span>compose {container.composeProject}</span>
-                            )}
-                            {container.composeService && (
-                              <span>/{container.composeService}</span>
-                            )}
-                            {container.composeWorkingDir && (
-                              <span> · {container.composeWorkingDir}</span>
-                            )}
-                          </div>
-                        )}
                       </div>
                     </div>
 
                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-4">
-                      {container.stats && container.state === "running" && (
-                        <div className="hidden md:flex gap-4 text-xs font-mono text-muted">
+                      <div className="hidden items-center gap-4 text-xs font-mono text-muted md:flex">
+                        <span className={container.status.includes("unhealthy") ? "text-warning" : ""}>
+                          {container.status}
+                        </span>
+                        {container.stats && container.state === "running" && (
+                          <>
                           <span>CPU {container.stats.cpu}</span>
                           <span>MEM {container.stats.mem}</span>
-                          <span>PIDs {container.stats.pids}</span>
-                        </div>
-                      )}
+                          </>
+                        )}
+                      </div>
 
                       <div className="relative flex w-full justify-end sm:w-auto">
                         <button
@@ -901,15 +891,6 @@ export function ContainersPanel() {
                                 Start
                               </button>
                             )}
-                            {container.composeWorkingDir && (
-                              <button
-                                type="button"
-                                onClick={() => { window.location.href = "/deployments"; }}
-                                className="w-full px-3 py-2 text-left text-xs hover:bg-card"
-                              >
-                                Open deployment
-                              </button>
-                            )}
                             <button
                               type="button"
                               onClick={() => { setOpenContainerMenu(null); setRemoveTarget(container.name); }}
@@ -924,8 +905,8 @@ export function ContainersPanel() {
                   </div>
 
                   {container.ports && (
-                    <div className="mt-2 text-xs text-muted font-mono pl-7">
-                      <SensitiveField value={container.ports} />
+                    <div className="mt-2 pl-7 text-xs font-mono text-muted">
+                      {container.ports}
                     </div>
                   )}
                 </div>
@@ -989,9 +970,10 @@ export function ContainersPanel() {
                           <ContainerIcon type={getContainerType(group.repository, "")} className="w-4 h-4 text-muted" />
                           {group.repository}
                         </div>
-                        <div className="text-[10px] text-muted font-mono mt-0.5">
-                          Latest {latestName || "unknown"} · {group.images.length} image{group.images.length === 1 ? "" : "s"} · {totalSizeStr}
-                          {usedContainers.length > 0 ? ` · ${runningCount} running / ${usedContainers.length} linked` : ""}
+                        <div className="mt-0.5 text-[10px] font-mono text-muted">
+                          {latest?.tag && latest.tag !== "<none>" ? `Latest ${latest.tag} · ` : ""}
+                          {group.images.length} image{group.images.length === 1 ? "" : "s"} · {totalSizeStr}
+                          {usedContainers.length > 0 ? ` · ${runningCount} running` : " · unused"}
                         </div>
                       </div>
                       <div className="flex gap-2 sm:ml-4 sm:shrink-0">
