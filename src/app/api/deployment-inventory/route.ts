@@ -10,15 +10,67 @@ import {
   getDockerContainers,
   shQuote,
 } from "@/lib/vps";
+import { linkDeploymentRuntime } from "@/lib/deployment-runtime-link";
 
 function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "deployment";
+}
+
+async function reconcileKnownDeployments(vpsConfigId: number | null) {
+  const projects = await prisma.project.findMany({
+    where: { inventoryRecord: null },
+    orderBy: { createdAt: "asc" },
+  });
+  for (const project of projects) {
+    let saved: { source?: { sourcePath?: string }; composeProject?: string } = {};
+    try { saved = JSON.parse(project.envVars || "{}"); } catch {}
+    let slug = project.slug;
+    const collision = await prisma.enrolledDeployment.findUnique({ where: { slug } });
+    if (collision) slug = `${project.slug}-${project.id}`;
+    const sourcePath = saved.source?.sourcePath || project.path;
+    const existingIdentity = await prisma.enrolledDeployment.findFirst({
+      where: { vpsConfigId, sourcePath },
+    });
+    if (existingIdentity && !existingIdentity.legacyProjectId) {
+      await prisma.enrolledDeployment.update({
+        where: { id: existingIdentity.id },
+        data: {
+          name: project.name,
+          kind: project.category === "static" ? "static" : project.dockerCompose ? "compose" : "app",
+          managementMode: "managed",
+          composePath: project.dockerCompose ? `${sourcePath}/docker-compose.yml` : existingIdentity.composePath,
+          projectGroupId: project.projectGroupId,
+          legacyProjectId: project.id,
+          metadataJson: JSON.stringify({ source: "existing-groundcontrol-project", composeProject: saved.composeProject || null }),
+        },
+      });
+      continue;
+    }
+    if (existingIdentity) continue;
+    await prisma.enrolledDeployment.create({
+      data: {
+        name: project.name,
+        slug,
+        kind: project.category === "static" ? "static" : project.dockerCompose ? "compose" : "app",
+        managementMode: "managed",
+        sourcePath,
+        composePath: project.dockerCompose ? `${sourcePath}/docker-compose.yml` : null,
+        projectGroupId: project.projectGroupId,
+        vpsConfigId,
+        legacyProjectId: project.id,
+        status: project.status,
+        lastSeenAt: project.lastDeploy,
+        metadataJson: JSON.stringify({ source: "existing-groundcontrol-project", composeProject: saved.composeProject || null }),
+      },
+    });
+  }
 }
 
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
     const vps = await getActiveVps();
+    await reconcileKnownDeployments(vps?.id ?? null);
     const [tree, containers, labels, projects, enrolled] = await Promise.all([
       scanProjectsTree(vps),
       getDockerContainers(vps),
@@ -76,11 +128,12 @@ export async function GET(req: NextRequest) {
         };
       });
 
-    const liveNames = new Set(containers.map((item) => item.name));
     return NextResponse.json({
       projects,
       deployments: enrolled.map((item) => {
         const latestRelease = item.legacyProject?.deployments[0] || null;
+        const runtime = linkDeploymentRuntime(item, containers, labels);
+        const scanned = tree.projects.find((candidate) => candidate.path === item.sourcePath);
         return {
           ...item,
           project: item.projectGroup,
@@ -88,16 +141,16 @@ export async function GET(req: NextRequest) {
           legacyProjectSlug: item.legacyProject?.slug || null,
           repoUrl: item.legacyProject?.repoUrl || null,
           domain: item.legacyProject?.domain || null,
-          publicUrl: latestRelease?.publicUrl || latestRelease?.previewUrl || null,
+          publicUrl: latestRelease?.publicUrl || latestRelease?.previewUrl || (item.legacyProject?.domain ? `https://${item.legacyProject.domain}` : null),
+          runtime,
           latestRelease: latestRelease ? {
             id: latestRelease.id,
             status: latestRelease.status,
             commitSha: latestRelease.commitSha,
             createdAt: latestRelease.createdAt,
           } : null,
-          observedStatus: item.containerName
-            ? liveNames.has(item.containerName) ? "present" : "missing"
-            : tree.projects.some((candidate) => candidate.path === item.sourcePath) ? "present" : "missing",
+          observedStatus: runtime.status === "present" || Boolean(scanned) || item.kind === "static" && Boolean(item.legacyProject)
+            ? "present" : "missing",
         };
       }),
       candidates: [...folderCandidates, ...containerCandidates],

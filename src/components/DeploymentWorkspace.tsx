@@ -49,6 +49,13 @@ type Enrolled = {
   publicUrl?: string | null;
   repoUrl?: string | null;
   domain?: string | null;
+  runtime?: {
+    status: string;
+    confidence: string;
+    composeProject?: string | null;
+    containers: Array<{ name: string; service?: string | null; state: string }>;
+    evidence: string[];
+  };
 };
 
 type LinkTarget =
@@ -272,6 +279,12 @@ export function DeploymentWorkspace() {
                       <div className="mt-1 truncate font-mono text-[10px] text-muted">
                         {item.sourcePath || item.containerName || "runtime identity"}
                       </div>
+                      {item.runtime && item.runtime.containers.length > 0 && (
+                        <div className="mt-1 truncate font-mono text-[9px] text-muted">
+                          {item.runtime.containers.length} linked container{item.runtime.containers.length === 1 ? "" : "s"}
+                          {item.runtime.composeProject ? ` · ${item.runtime.composeProject}` : ""}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-end gap-1.5">
@@ -488,4 +501,3 @@ export function DeploymentWorkspace() {
     </div>
   );
 }
-

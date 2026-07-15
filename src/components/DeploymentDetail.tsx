@@ -48,6 +48,13 @@ type DeploymentDetailRecord = {
   publicUrl?: string | null;
   releases: Release[];
   envProfile?: { status: string; lastSyncedAt?: string | null } | null;
+  runtime?: {
+    status: string;
+    confidence: string;
+    composeProject?: string | null;
+    containers: Array<{ name: string; image: string; status: string; ports: string; state: string; service?: string | null }>;
+    evidence: string[];
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -274,6 +281,34 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                 </div>
               </section>
 
+              <section className="border border-border bg-card">
+                <div className="flex flex-col gap-2 border-b border-border px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="gc-eyebrow">Runtime relationship</p>
+                    <h2 className="mt-1 text-base font-medium">Containers linked to this deployment</h2>
+                  </div>
+                  <span className="font-mono text-[9px] uppercase text-muted">{deployment.runtime?.confidence || "none"} match</span>
+                </div>
+                {deployment.runtime?.containers.length ? (
+                  <div className="divide-y divide-border">
+                    {deployment.runtime.containers.map((container) => (
+                      <div key={container.name} className="grid gap-2 px-5 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                        <div className="min-w-0">
+                          <p className="truncate font-mono text-xs text-foreground">{container.service || container.name}</p>
+                          <p className="mt-1 truncate font-mono text-[9px] text-muted">{container.name} · {container.image}</p>
+                        </div>
+                        <span className={`font-mono text-[10px] ${container.state === "running" ? "text-success" : "text-warning"}`}>{container.state}</span>
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap gap-2 px-5 py-3">
+                      {deployment.runtime.evidence.map((item) => <span key={item} className="border border-border px-2 py-1 font-mono text-[9px] text-muted">{item}</span>)}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="px-5 py-5 text-xs leading-relaxed text-muted">No running container could be linked from Docker Compose labels or the saved runtime identity. The deployment remains tracked, but its runtime needs reconciliation.</div>
+                )}
+              </section>
+
               <section className="border border-border bg-card p-5">
                 <p className="gc-eyebrow">Management</p>
                 <h2 className="mt-2 text-base font-medium">Operate the whole deployment</h2>
@@ -302,7 +337,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                 <h2 className="mt-1 text-lg font-semibold tracking-tight">Recent releases</h2>
               </div>
               {deployment.releases.length === 0 ? (
-                <div className="p-6 text-sm text-muted">No release records are attached to this deployment yet.</div>
+                <div className="p-6 text-sm text-muted">This workload exists on the host, but GroundControl did not capture its earlier release history. Runtime evidence above is current; future deploys will add release records here.</div>
               ) : (
                 <div className="divide-y divide-border">
                   {deployment.releases.map((release) => (

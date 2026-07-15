@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
-import { getActiveVps, getDockerContainers } from "@/lib/vps";
+import { getActiveVps, getDockerContainerLabels, getDockerContainers } from "@/lib/vps";
+import { linkDeploymentRuntime } from "@/lib/deployment-runtime-link";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: string }> }) {
   try {
     requireAuth(req);
     const { slug } = await ctx.params;
     const vps = await getActiveVps();
-    const [deployment, containers, projects] = await Promise.all([
+    const [deployment, containers, labels, projects] = await Promise.all([
       prisma.enrolledDeployment.findUnique({
         where: { slug },
         include: {
@@ -30,6 +31,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         },
       }),
       getDockerContainers(vps),
+      getDockerContainerLabels(vps),
       prisma.projectGroup.findMany({ orderBy: { name: "asc" } }),
     ]);
 
@@ -40,6 +42,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
     const liveNames = new Set(containers.map((container) => container.name));
     const releases = deployment.legacyProject?.deployments || [];
     const latestRelease = releases[0] || null;
+    const runtime = linkDeploymentRuntime(deployment, containers, labels);
     return NextResponse.json({
       deployment: {
         ...deployment,
@@ -48,12 +51,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         legacyProjectSlug: deployment.legacyProject?.slug || null,
         repoUrl: deployment.legacyProject?.repoUrl || null,
         domain: deployment.legacyProject?.domain || null,
-        publicUrl: latestRelease?.publicUrl || latestRelease?.previewUrl || null,
+        publicUrl: latestRelease?.publicUrl || latestRelease?.previewUrl || (deployment.legacyProject?.domain ? `https://${deployment.legacyProject.domain}` : null),
+        runtime,
         releases,
         envProfile: deployment.legacyProject?.envProfiles[0] || null,
-        observedStatus: deployment.containerName
-          ? liveNames.has(deployment.containerName) ? "present" : "missing"
-          : ["active", "observed"].includes(deployment.status) ? "present" : deployment.status,
+        observedStatus: runtime.status === "present" || deployment.kind === "static" && Boolean(deployment.legacyProject)
+          ? "present" : deployment.containerName && liveNames.has(deployment.containerName) ? "present" : "missing",
       },
       projects,
     });
