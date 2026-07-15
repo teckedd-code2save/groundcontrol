@@ -11,6 +11,7 @@ import {
   serializeDotenv,
   validateEnv,
   validateEnvBundle,
+  validateEnvForComponents,
 } from "./env-management";
 import { buildManagedComposeInvocation } from "./vps";
 
@@ -107,6 +108,24 @@ DATABASE_URL=duplicate
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
     expect(command).toContain("base64 -d");
     expect(command).not.toContain("postgres://db");
+  });
+
+  it("allows a component redeploy when unrelated components are incomplete", () => {
+    const schema = [
+      { key: "PUBLIC_URL", required: true },
+      { key: "DATABASE_URL", required: true, component: "api" },
+      { key: "QUEUE_URL", required: true, component: "worker" },
+    ];
+    const result = validateEnvForComponents(
+      schema,
+      { PUBLIC_URL: "https://app.example.com" },
+      { api: { DATABASE_URL: "postgres://api" } },
+      ["api"]
+    );
+    expect(result.ok).toBe(true);
+    expect(result.missing).toEqual([]);
+    expect(validateEnvForComponents(schema, { PUBLIC_URL: "https://app.example.com" }, {}, ["api"]).missing)
+      .toEqual(["api:DATABASE_URL"]);
   });
 
   it("adds the managed override to Compose only when the file exists", () => {
