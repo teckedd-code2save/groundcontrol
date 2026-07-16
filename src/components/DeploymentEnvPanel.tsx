@@ -260,7 +260,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     const seen = new Set(next.map((entry) => `${entry.component || ""}:${entry.key}`));
     for (const key of keysToAdd) {
       const id = `${selectedComponent}:${key}`;
-      if (!seen.has(id)) next.push({ key, required: true, component: selectedComponent || undefined });
+      if (!seen.has(id)) next.push({ key, required: false, component: selectedComponent || undefined });
     }
     return next;
   }
@@ -447,7 +447,10 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                       const first = result.missingEnvKeys[0];
                       const separator = first.indexOf(":");
                       if (separator > 0) setSelectedComponent(first.slice(0, separator));
-                      setNotice({ tone: "error", text: "Redeploy failed because required secrets are missing." });
+                      const missingList = result.missingEnvKeys
+                        .map((k: string) => { const s = k.indexOf(":"); return s > 0 ? `${k.slice(0, s)}:${k.slice(s + 1)}` : k; })
+                        .join(", ");
+                      setNotice({ tone: "error", text: `Missing secrets: ${missingList}. Fill them in or mark as optional to proceed.` });
                     }
                   }}
                   disabled={Boolean(busy) || !selectedComponent}

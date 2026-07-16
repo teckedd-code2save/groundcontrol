@@ -20,7 +20,7 @@ import {
 import { buildManagedComposeInvocation } from "./vps";
 
 describe("env management", () => {
-  it("parses env schemas into required keys", () => {
+  it("parses env schemas with optional keys by default", () => {
     const schema = parseEnvSchema(`
 # comment
 DATABASE_URL=<SET_ME>
@@ -30,14 +30,18 @@ DATABASE_URL=duplicate
 `);
 
     expect(schema).toEqual([
-      { key: "DATABASE_URL", required: true, defaultValue: undefined },
-      { key: "REDIS_URL", required: true, defaultValue: "redis://redis:6379" },
+      { key: "DATABASE_URL", required: false, defaultValue: undefined },
+      { key: "REDIS_URL", required: false, defaultValue: "redis://redis:6379" },
     ]);
   });
 
-  it("validates required keys and produces stable hashes", () => {
-    const schema = parseEnvSchema("A=<SET_ME>\nB=default\n");
-    const values = { B: "2", A: "1" };
+  it("validates only explicitly required keys", () => {
+    // Keys are optional by default — only keys with required:true are enforced
+    const schema = [
+      { key: "A", required: false },
+      { key: "B", required: true },
+    ];
+    const values = { A: "1", B: "2" };
 
     expect(validateEnv(schema, values)).toEqual({
       ok: true,

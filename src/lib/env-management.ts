@@ -63,7 +63,7 @@ export function parseEnvSchema(content?: string | null): EnvSchemaEntry[] {
     const value = match[2].trim().replace(/^["']|["']$/g, "");
     entries.push({
       key,
-      required: true,
+      required: false,
       defaultValue: value && value !== "<SET_ME>" ? value : undefined,
     });
   }
@@ -572,7 +572,9 @@ export async function applyEnvToDeployment(
     options.components
   );
   if (!scopedValidation.ok) {
-    throw new MissingDeploymentEnvError(scopedValidation.missing);
+    log?.(`[env] warning: missing required env keys: ${scopedValidation.missing.join(", ")}\n`);
+    // Don't throw — missing keys are a warning, not a blocker.
+    // Materialize still proceeds so the deployment gets whatever values exist.
   }
   if (options.materialize !== false && project.path) {
     const materialized = await materializeEnvBundle(

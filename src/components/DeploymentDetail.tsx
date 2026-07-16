@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   ArrowLeft,
+  Box,
+  Code2,
   ExternalLink,
   FolderGit2,
   Layers3,
@@ -28,6 +30,15 @@ type Release = {
   durationMs?: number | null;
   createdAt: string;
   target?: { name: string; type: string } | null;
+  imageDigest?: string | null;
+  previousImageDigest?: string | null;
+  changedFields?: string | null;
+};
+type ContainerInfo = {
+  name: string;
+  image: string;
+  state: string;
+  status: string;
 };
 type DeploymentDetailRecord = {
   id: number;
@@ -48,52 +59,74 @@ type DeploymentDetailRecord = {
   domain?: string | null;
   publicUrl?: string | null;
   releases: Release[];
-  envProfile?: { name?: string; status: string; lastSyncedAt?: string | null } | null;
+  envProfile?: {
+    id: number;
+    name: string;
+    slug: string;
+    providerType: string;
+    environment: string;
+    status: string;
+  } | null;
   runtime?: {
     status: string;
-    confidence: string;
     composeProject?: string | null;
-    containers: Array<{ name: string; image: string; status: string; ports: string; state: string; service?: string | null; createdAt?: string; startedAt?: string; restartCount?: number }>;
-    evidence: string[];
-  };
-  route?: { file: string; domain: string; proxy?: string | null; root?: string | null; confidence: string; score: number } | null;
+    containers?: ContainerInfo[];
+  } | null;
+  runtimeEvents?: Array<{
+    id: number;
+    status: string;
+    output?: string | null;
+    error?: string | null;
+    createdAt: string;
+  }>;
+  imageDigest?: string | null;
+  previousImageDigest?: string | null;
   identitySource?: string;
-  runtimeEvents?: Array<{ id: number; status: string; output?: string | null; error?: string | null; durationMs?: number | null; createdAt: string }>;
-  createdAt: string;
-  updatedAt: string;
 };
 
-type Tab = "overview" | "environment" | "releases";
+type Tab = "manage" | "environment" | "releases";
 
 async function readJson(response: Response) {
-  const text = await response.text();
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return { error: text || "Invalid response" };
-  }
+  try { return await response.json(); } catch { return {}; }
 }
 
-export function DeploymentDetail({ slug }: { slug: string }) {
+export default function DeploymentDetail({
+  slug,
+  initialTab,
+}: {
+  slug: string;
+  initialTab?: string;
+}) {
   const [deployment, setDeployment] = useState<DeploymentDetailRecord | null>(null);
   const [projects, setProjects] = useState<Group[]>([]);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
+  const [tab, setTab] = useState<Tab>("manage");
   const [projectOpen, setProjectOpen] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [imageEditorOpen, setImageEditorOpen] = useState(false);
   const [publicUrlInput, setPublicUrlInput] = useState("");
   const [repoUrlInput, setRepoUrlInput] = useState("");
-  const [message, setMessage] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
+  const [composeContent, setComposeContent] = useState("");
+  const [composeLoading, setComposeLoading] = useState(false);
+  const [imageSourceInput, setImageSourceInput] = useState("");
+  const [imageDigestInput, setImageDigestInput] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/deployment-inventory/${encodeURIComponent(slug)}`, { cache: "no-store" });
-      const data = await readJson(response);
-      if (!response.ok || data.error) throw new Error(data.error || "Could not load deployment");
+      const res = await fetch(`/api/deployment-inventory/${encodeURIComponent(slug)}`);
+      const data = await readJson(res);
+      if (!res.ok || data.error) {
+        setMessage({ tone: "error", text: data.error || "Could not load deployment" });
+        return;
+      }
       setDeployment(data.deployment);
-      setProjects(data.projects || []);
+      setProjects(Array.isArray(data.projects) ? data.projects : []);
+      setContainers(Array.isArray(data.deployment?.runtime?.containers) ? data.deployment.runtime.containers : []);
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -101,16 +134,12 @@ export function DeploymentDetail({ slug }: { slug: string }) {
     }
   }, [slug]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    const requestedTab = window.location.hash.slice(1);
-    if (requestedTab === "overview" || requestedTab === "environment" || requestedTab === "releases") {
-      setTab(requestedTab);
-    }
-  }, []);
+    const resolved = initialTab === "environment" || initialTab === "releases" ? initialTab as Tab : "manage";
+    setTab(resolved);
+  }, [initialTab]);
 
   async function assignProject(projectGroupId: number | null) {
     if (!deployment) return;
@@ -157,18 +186,15 @@ export function DeploymentDetail({ slug }: { slug: string }) {
         setMessage({
           tone: "error",
           text: missingEnvKeys.length
-            ? "Redeploy failed: Missing required env keys for this redeploy"
+            ? `Missing secrets: ${missingEnvKeys.map((k: string) => { const s = k.indexOf(":"); return s > 0 ? k.slice(s + 1) : k; }).join(", ")}`
             : data.error || "Redeploy failed",
         });
         return { success: false, missingEnvKeys };
       }
 
       if (data.detached) {
-        // Self-redeploy: API returned before the compose finished.
-        // Poll until the deployment is reachable or timeout.
         setMessage({ tone: "info", text: "Redeploy queued — checking status…" });
         setBusy(true);
-
         const changed = data.changedFields as string[] | undefined;
         for (let attempt = 0; attempt < 20; attempt++) {
           await new Promise(r => setTimeout(r, 3000));
@@ -185,12 +211,8 @@ export function DeploymentDetail({ slug }: { slug: string }) {
               await load();
               return { success: true };
             }
-          } catch {
-            // API is still restarting — expected, keep polling
-          }
-          if (attempt === 4) {
-            setMessage({ tone: "info", text: "Still waiting for deployment to come back online…" });
-          }
+          } catch { /* expected during restart */ }
+          if (attempt === 4) setMessage({ tone: "info", text: "Still waiting…" });
         }
         setMessage({ tone: "info", text: "Redeploy may have completed — refresh to confirm." });
         setBusy(false);
@@ -198,10 +220,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
         return { success: true };
       }
 
-      setMessage({
-        tone: "success",
-        text: component ? `${component} redeployed.` : "Deployment redeployed.",
-      });
+      setMessage({ tone: "success", text: component ? `${component} redeployed.` : "Deployment redeployed." });
       await load();
       return { success: true };
     } catch (error) {
@@ -231,7 +250,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
       if (!response.ok || data.error) throw new Error(data.error || "Could not save deployment identity");
       await load();
       setIdentityOpen(false);
-      setMessage({ tone: "success", text: "Deployment URL and repository saved as operator-confirmed identity." });
+      setMessage({ tone: "success", text: "Deployment identity saved." });
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -239,7 +258,36 @@ export function DeploymentDetail({ slug }: { slug: string }) {
     }
   }
 
+  async function openComposeViewer() {
+    if (!deployment?.legacyProjectSlug) return;
+    setComposeLoading(true);
+    setComposeOpen(true);
+    try {
+      const res = await fetch(`/api/projects/compose?slug=${encodeURIComponent(deployment.legacyProjectSlug)}`);
+      const data = await readJson(res);
+      setComposeContent(data.raw || "No compose file found.");
+    } catch {
+      setComposeContent("Failed to load compose file.");
+    } finally {
+      setComposeLoading(false);
+    }
+  }
+
+  function openImageEditor(container: ContainerInfo) {
+    setImageSourceInput(container.image);
+    setImageDigestInput("");
+    setImageEditorOpen(true);
+  }
+
+  async function saveImageSource() {
+    setImageEditorOpen(false);
+    setMessage({ tone: "info", text: "Image source editing via compose file requires deploy integration. Use the Compose viewer to edit the docker-compose.yml directly." });
+  }
+
   const liveUrl = deployment?.publicUrl || (deployment?.domain ? `https://${deployment.domain}` : null);
+  const changedFields = deployment?.releases[0]?.changedFields
+    ? (() => { try { return JSON.parse(deployment.releases[0].changedFields) as string[]; } catch { return []; } })()
+    : [];
 
   if (loading && !deployment) {
     return <div className="mx-auto max-w-7xl p-4 text-sm text-muted md:p-8">Loading deployment workspace…</div>;
@@ -255,7 +303,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
   }
 
   const tabs: { id: Tab; label: string; detail: string }[] = [
-    { id: "overview", label: "Overview", detail: "Identity and access" },
+    { id: "manage", label: "Manage", detail: "Containers, sources, configuration" },
     { id: "environment", label: "Environment", detail: deployment.envProfile?.name || "Configure" },
     { id: "releases", label: "Releases", detail: `${deployment.releases.length} recent` },
   ];
@@ -273,6 +321,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
             <h1 className="truncate text-3xl font-semibold tracking-[-0.04em] md:text-4xl">{deployment.name}</h1>
             <p className={`mt-2 text-xs ${deployment.observedStatus === "present" ? "text-muted" : "text-warning"}`}>
               {deployment.observedStatus === "present" ? deployment.project?.name || "Ungrouped" : "Needs attention"}
+              {deployment.identitySource === "manual" && " · manually confirmed"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -330,15 +379,17 @@ export function DeploymentDetail({ slug }: { slug: string }) {
         </nav>
 
         <main className="min-w-0">
-          {tab === "overview" && (
+          {/* ===== MANAGE TAB ===== */}
+          {tab === "manage" && (
             <div className="space-y-6">
+              {/* Identity + Access cards */}
               <section className="grid gap-4 lg:grid-cols-2">
                 <div className="border border-border bg-card p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="gc-eyebrow">Project</p>
                       <h2 className="mt-2 text-base font-medium">{deployment.project?.name || "Ungrouped"}</h2>
-                      <p className="mt-1 text-xs leading-relaxed text-muted">Projects organize related deployments without changing this runtime.</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted">Projects organize related deployments.</p>
                     </div>
                     <Layers3 size={18} className="text-muted" aria-hidden="true" />
                   </div>
@@ -353,7 +404,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                     <div>
                       <p className="gc-eyebrow">Access</p>
                       <h2 className="mt-2 text-base font-medium">Endpoints and source</h2>
-                      <p className="mt-1 text-xs leading-relaxed text-muted">Open the customer-facing route or inspect the repository behind this deployment.</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted">Customer-facing route and repository.</p>
                     </div>
                     <ExternalLink size={18} className="text-muted" aria-hidden="true" />
                   </div>
@@ -364,19 +415,100 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                 </div>
               </section>
 
+              {/* Management quick-actions — fixed titles */}
               <section className="border border-border bg-card p-5">
                 <p className="gc-eyebrow">Management</p>
-                <h2 className="mt-2 text-base font-medium">Operate the whole deployment</h2>
+                <h2 className="mt-2 text-base font-medium">Manage deployment</h2>
                 <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  <ManagementLink icon={<TerminalSquare size={16} />} href="/containers" title="Runtime" detail="Containers and processes" />
+                  <ManagementLink icon={<Box size={16} />} onClick={() => {}} title="Containers" detail="Running services below" />
                   <ManagementLink icon={<Settings2 size={16} />} onClick={() => setTab("environment")} title="Environment" detail="Configuration and secrets" />
                   <ManagementLink icon={<Activity size={16} />} onClick={() => setTab("releases")} title="Releases" detail="Changes and outcomes" />
                   <ManagementLink icon={<ServerCog size={16} />} href="/intelligence" title="Intelligence" detail="Evidence and investigation" />
                 </div>
               </section>
+
+              {/* Compose viewer + image info */}
+              {deployment.kind === "compose" && (
+                <section className="border border-border bg-card p-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="gc-eyebrow">Compose</p>
+                      <h2 className="mt-1 text-base font-medium">Deployment configuration</h2>
+                    </div>
+                    <button type="button" onClick={openComposeViewer} className="gc-button gc-button-secondary">
+                      <Code2 size={14} aria-hidden="true" />
+                      View compose
+                    </button>
+                  </div>
+                  {deployment.imageDigest && (
+                    <p className="mt-3 font-mono text-[10px] text-muted truncate">
+                      Current image: {deployment.imageDigest.slice(0, 47)}…
+                    </p>
+                  )}
+                  {changedFields.length > 0 && (
+                    <p className="mt-1 font-mono text-[10px] text-accent">
+                      Last change: {changedFields.join(", ")}
+                    </p>
+                  )}
+                </section>
+              )}
+
+              {/* Containers list */}
+              {containers.length > 0 && (
+                <section className="border border-border bg-card">
+                  <div className="border-b border-border px-5 py-4">
+                    <p className="gc-eyebrow">Runtime</p>
+                    <h2 className="mt-1 text-lg font-semibold tracking-tight">Containers ({containers.length})</h2>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {containers.map((container) => (
+                      <div key={container.name} className="flex items-center justify-between gap-4 px-5 py-3">
+                        <div className="min-w-0">
+                          <span className="block truncate font-mono text-sm">{container.name}</span>
+                          <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{container.image}</span>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${
+                            container.state === "running" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+                          }`}>{container.state}</span>
+                          <button
+                            type="button"
+                            onClick={() => openImageEditor(container)}
+                            className="rounded px-2 py-1 font-mono text-[10px] text-muted hover:bg-background hover:text-foreground transition-colors"
+                            title="View image source"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Runtime events */}
+              {Boolean(deployment.runtimeEvents?.length) && (
+                <section className="border border-border bg-card">
+                  <div className="border-b border-border px-5 py-4">
+                    <p className="gc-eyebrow">Recent actions</p>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {deployment.runtimeEvents!.slice(0, 5).map((event) => (
+                      <div key={event.id} className="grid gap-2 px-5 py-3 md:grid-cols-[1fr_auto]">
+                        <div>
+                          <span className="text-xs font-medium">Compose {event.status}</span>
+                          <p className="mt-1 max-w-2xl truncate font-mono text-[9px] text-muted">{event.error || event.output || "Lifecycle action recorded"}</p>
+                        </div>
+                        <span className="font-mono text-[10px] text-muted">{event.status} · {new Date(event.createdAt).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
             </div>
           )}
 
+          {/* ===== ENVIRONMENT TAB ===== */}
           {tab === "environment" && (
             deployment.legacyProjectId ? (
               <DeploymentEnvPanel projectId={deployment.legacyProjectId} onRedeploy={redeploy} />
@@ -385,6 +517,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
             )
           )}
 
+          {/* ===== RELEASES TAB ===== */}
           {tab === "releases" && (
             <section className="border border-border bg-card">
               <div className="border-b border-border px-5 py-4">
@@ -392,7 +525,7 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                 <h2 className="mt-1 text-lg font-semibold tracking-tight">Recent releases</h2>
               </div>
               {deployment.releases.length === 0 ? (
-                <div className="p-6 text-sm text-muted">No release record was captured by the deployment pipeline. Host and runtime events below still provide operational history.</div>
+                <div className="p-6 text-sm text-muted">No releases recorded. Redeploy to create a release record with image digest and change tracking.</div>
               ) : (
                 <div className="divide-y divide-border">
                   {deployment.releases.map((release) => (
@@ -402,7 +535,24 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                           <span className="text-sm font-medium">{release.target?.name || release.target?.type || "Deployment"}</span>
                           <span className="border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted">{release.status}</span>
                         </div>
-                        <p className="mt-1 font-mono text-[10px] text-muted">{release.commitSha?.slice(0, 10) || release.branch || "No commit recorded"}</p>
+                        <p className="mt-1 font-mono text-[10px] text-muted">
+                          {release.commitSha?.slice(0, 10) || release.branch || "No commit recorded"}
+                        </p>
+                        {release.imageDigest && (
+                          <p className="mt-0.5 font-mono text-[9px] text-muted truncate">
+                            {release.imageDigest.slice(0, 55)}…
+                          </p>
+                        )}
+                        {release.changedFields && (() => {
+                          try {
+                            const fields = JSON.parse(release.changedFields) as string[];
+                            return fields.length > 0 ? (
+                              <span className="mt-1 inline-flex items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[9px] text-accent">
+                                {fields.join(", ")}
+                              </span>
+                            ) : null;
+                          } catch { return null; }
+                        })()}
                       </div>
                       <span className="font-mono text-[10px] text-muted">{new Date(release.createdAt).toLocaleString()}</span>
                       {(release.publicUrl || release.previewUrl) && (
@@ -414,28 +564,14 @@ export function DeploymentDetail({ slug }: { slug: string }) {
                   ))}
                 </div>
               )}
-              {Boolean(deployment.runtimeEvents?.length) && (
-                <div className="border-t border-border">
-                  <div className="px-5 py-3"><p className="gc-eyebrow">Runtime deployment events</p></div>
-                  <div className="divide-y divide-border">
-                    {deployment.runtimeEvents!.map((event) => (
-                      <div key={event.id} className="grid gap-2 px-5 py-3 md:grid-cols-[1fr_auto]">
-                        <div>
-                          <span className="text-xs font-medium">Compose redeploy</span>
-                          <p className="mt-1 max-w-2xl truncate font-mono text-[9px] text-muted">{event.error || event.output || "Lifecycle action recorded"}</p>
-                        </div>
-                        <span className="font-mono text-[10px] text-muted">{event.status} · {new Date(event.createdAt).toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </section>
           )}
         </main>
       </div>
 
-      <ModalSurface open={projectOpen} onClose={() => setProjectOpen(false)} title="Change project" description="Organization only—runtime and configuration remain attached to this deployment.">
+      {/* ===== MODALS ===== */}
+
+      <ModalSurface open={projectOpen} onClose={() => setProjectOpen(false)} title="Change project">
         <div className="space-y-1">
           <button type="button" disabled={busy} onClick={() => void assignProject(null)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
             <span>Ungrouped</span><span className="font-mono text-[10px] text-muted">No project</span>
@@ -447,7 +583,8 @@ export function DeploymentDetail({ slug }: { slug: string }) {
           ))}
         </div>
       </ModalSurface>
-      <ModalSurface open={identityOpen} onClose={() => setIdentityOpen(false)} title="Deployment identity" description="Confirm values GroundControl cannot safely infer. Host evidence remains visible and is not overwritten.">
+
+      <ModalSurface open={identityOpen} onClose={() => setIdentityOpen(false)} title="Deployment identity" description="Confirm values GroundControl cannot safely infer.">
         <form onSubmit={(event) => { event.preventDefault(); void saveIdentity(); }} className="space-y-4">
           <label className="block">
             <span className="gc-label">Deployed URL</span>
@@ -462,6 +599,31 @@ export function DeploymentDetail({ slug }: { slug: string }) {
             <button type="submit" disabled={busy} className="gc-button gc-button-primary">{busy ? "Saving…" : "Save identity"}</button>
           </div>
         </form>
+      </ModalSurface>
+
+      <ModalSurface open={composeOpen} onClose={() => setComposeOpen(false)} title="Compose file" description={deployment.sourcePath || deployment.composePath || deployment.slug}>
+        {composeLoading ? (
+          <div className="py-8 text-center text-sm text-muted">Loading…</div>
+        ) : (
+          <pre className="max-h-[60vh] overflow-auto rounded border border-border bg-background p-4 font-mono text-xs whitespace-pre-wrap">{composeContent}</pre>
+        )}
+      </ModalSurface>
+
+      <ModalSurface open={imageEditorOpen} onClose={() => setImageEditorOpen(false)} title="Image source" description="Edit the image used by this container in docker-compose.yml">
+        <div className="space-y-4">
+          <label className="block">
+            <span className="gc-label">Image</span>
+            <input value={imageSourceInput} onChange={(event) => setImageSourceInput(event.target.value)} className="gc-field mt-2 w-full font-mono text-xs" />
+          </label>
+          <label className="block">
+            <span className="gc-label">Pin digest (optional)</span>
+            <input value={imageDigestInput} onChange={(event) => setImageDigestInput(event.target.value)} placeholder="ghcr.io/owner/repo@sha256:abc123..." className="gc-field mt-2 w-full font-mono text-xs" />
+          </label>
+          <p className="text-[10px] text-muted">Use the Compose viewer to edit docker-compose.yml directly. Image source changes require a redeploy to take effect.</p>
+          <div className="flex justify-end gap-2 border-t border-border pt-4">
+            <button type="button" onClick={() => setImageEditorOpen(false)} className="gc-button gc-button-quiet">Close</button>
+          </div>
+        </div>
       </ModalSurface>
     </div>
   );
