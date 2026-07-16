@@ -208,13 +208,30 @@ export async function POST(req: NextRequest) {
       }, { status: 422 });
     }
 
-    // 4. Force recreate with latest image
-    const deployArgs = `up -d --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`;
+    // 4. Run database migrations (mirrors CI: prisma migrate deploy)
+    const migrateResult = await execOnVps(
+      `cd ${shQuote(target.projectPath)} && ${composeCmd} run --rm --no-deps web npx prisma migrate deploy --schema /app/db/schema.prisma 2>&1`,
+      vps
+    );
+    // Migration failure is non-fatal for non-GroundControl projects (they may not use Prisma).
+    // For GroundControl itself, migration failure means the app may crash — log it clearly.
+    if (migrateResult.code !== 0) {
+      console.warn(`[redeploy] prisma migrate deploy failed for ${projectSlug}: ${migrateResult.stderr || migrateResult.stdout}`);
+    }
+
+    // 5. Deploy (mirrors CI: up -d --remove-orphans)
+    const deployArgs = `up -d --remove-orphans${serviceArgs ? ` ${serviceArgs}` : ""}`;
     let result: { stdout: string; stderr: string; code: number };
     let detached = false;
 
     if (vps?.isLocal) {
-      const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, deployArgs)}`;
+      const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, deployArgs)} && ` +
+        // Health-check loop (mirrors CI: wait for healthy)
+        `for i in $(seq 1 30); do ` +
+        `if ${buildManagedComposeInvocation(composeCmd, `ps${serviceArgs ? ` ${serviceArgs}` : ""}`)} | grep -q healthy; then break; fi; ` +
+        `sleep 2; done && ` +
+        // Cleanup (mirrors CI: docker system prune -f)
+        `docker system prune -f`;
       const logFile = `/tmp/gc-redeploy-${projectSlug}.log`;
       execDetached(command, logFile);
       detached = true;
