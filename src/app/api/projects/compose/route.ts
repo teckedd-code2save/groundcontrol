@@ -185,28 +185,13 @@ export async function POST(req: NextRequest) {
       validationOutput = configCheck.stdout;
     }
 
-    // 3. Pull latest images
+    // 3. Pull latest images (best-effort — projects with local-only images
+    //    like "myapp:local" can't pull from a registry, and that's fine).
+    //    Mirror CI behaviour: run pull, log output, never block on failure.
     const pullResult = await execOnVps(
-      `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`)}`,
+      `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`)} 2>&1; exit 0`,
       vps
     );
-    if (pullResult.code !== 0) {
-      await prisma.deploymentLog.create({
-        data: {
-          projectSlug: project?.slug || projectSlug,
-          status: "failed",
-          output: validationOutput || null,
-          error: pullResult.stderr || "Image pull failed",
-          durationMs: Date.now() - startedAt,
-        },
-      }).catch(() => undefined);
-
-      return NextResponse.json({
-        success: false,
-        error: `Image pull failed:\n${pullResult.stderr || pullResult.stdout}`,
-        code: "IMAGE_PULL_FAILED",
-      }, { status: 422 });
-    }
 
     // 4. Run database migrations (mirrors CI: prisma migrate deploy)
     const migrateResult = await execOnVps(
