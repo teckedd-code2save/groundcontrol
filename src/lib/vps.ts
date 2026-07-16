@@ -1,5 +1,5 @@
 import { NodeSSH } from "node-ssh";
-import { exec } from "child_process";
+import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { prisma } from "./prisma";
 import { decryptMaybe } from "./crypto";
@@ -144,6 +144,90 @@ export async function execOnVps(
     stderr: result.stderr,
     code: result.code || 0,
   };
+}
+
+/**
+ * Execute a command in a detached process that survives parent death.
+ *
+ * Self-redeploy scenario: `docker compose up -d` stops the current container,
+ * which kills the Node.js process running the API handler. If the compose
+ * invocation is a child of that process, it gets SIGHUP and is terminated
+ * mid-operation — leaving new containers created but never started.
+ *
+ * `spawnDetached` launches the command via `nohup` + `setsid` so it continues
+ * running even after the parent process dies. Returns immediately; output is
+ * written to `outputFile` if provided.
+ */
+export function execDetached(
+  command: string,
+  outputFile?: string
+): void {
+  const wrapped = outputFile
+    ? `nohup sh -c ${shQuote(command)} > ${shQuote(outputFile)} 2>&1 &`
+    : `nohup sh -c ${shQuote(command)} > /dev/null 2>&1 &`;
+  
+  const child = spawn(wrapped, [], {
+    shell: true,
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+/**
+ * Fetch the current image digest for a running container.
+ * Returns the full repo@sha256:... digest for pinning rollbacks.
+ */
+export async function getImageDigest(
+  containerName: string,
+  vps?: VpsConnection | null
+): Promise<string | null> {
+  const conn = vps || (await getActiveVps());
+  if (!conn) return null;
+  
+  const result = await execOnVps(
+    `docker inspect --format '{{index .RepoDigests 0}}' ${shQuote(containerName)} 2>/dev/null || echo ""`,
+    conn
+  );
+  const digest = result.stdout.trim();
+  return digest || null;
+}
+
+/**
+ * Look up the image digest of the most recent successful deployment
+ * for a project, which becomes the rollback target.
+ */
+export async function getPreviousDeploymentDigest(
+  projectSlug: string
+): Promise<string | null> {
+  const project = await prisma.project.findUnique({ where: { slug: projectSlug } });
+  if (!project) return null;
+  
+  const prev = await prisma.deployment.findFirst({
+    where: { projectId: project.id, status: "success", imageDigest: { not: null } },
+    orderBy: { createdAt: "desc" },
+    select: { imageDigest: true },
+  });
+  return prev?.imageDigest ?? null;
+}
+
+/**
+ * Compare the new deployment with the previous one and return
+ * a list of fields that changed.
+ */
+export function computeChangedFields(
+  previous: { imageDigest?: string | null; envHash?: string | null } | null,
+  current: { imageDigest?: string | null; envHash?: string | null }
+): string[] {
+  const changed: string[] = [];
+  if (!previous) return ["initial"];
+  if (previous.imageDigest && current.imageDigest && previous.imageDigest !== current.imageDigest) {
+    changed.push("image");
+  }
+  if (previous.envHash && current.envHash && previous.envHash !== current.envHash) {
+    changed.push("env");
+  }
+  return changed;
 }
 
 export async function testConnection(config: {

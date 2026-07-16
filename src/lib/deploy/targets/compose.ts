@@ -110,25 +110,55 @@ export function createComposeTarget(
       return {};
     },
 
-    async rollback(_deployment, ctx) {
+    async rollback(deployment, ctx) {
       const projectPath = await resolveProjectPath(project, config, ctx);
       const composeCmd = await getDockerComposeCommand(ctx.vps);
 
       ctx.log(`[compose] rolling back ${project.slug}`);
 
-      // Pragmatic rollback: restart the stack. If an imageTag was pinned
-      // previously this will still restart with the previous image until the
-      // next build+deploy cycle.
-      const result = await execOnVps(
-        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
-          composeCmd,
-          "down",
-          config.composeFile
-        )} && ${buildManagedComposeInvocation(composeCmd, "up -d", config.composeFile)}`,
-        ctx.vps
-      );
-      if (result.code !== 0) {
-        throw new Error(result.stderr || "docker compose rollback failed");
+      // Pin to previous image digest if available for a real rollback.
+      // Otherwise fall back to the old restart-based approach.
+      const pinnedDigest = deployment.previousImageDigest;
+      if (pinnedDigest) {
+        ctx.log(`[compose] pinning to previous image: ${pinnedDigest.slice(0, 19)}...`);
+
+        // Write a temporary compose override that pins the image digest
+        const overridePath = `${projectPath}/.groundcontrol/rollback-pin.override.yml`;
+        await execOnVps(
+          `mkdir -p ${shQuote(`${projectPath}/.groundcontrol`)} && ` +
+          `echo 'services:' > ${shQuote(overridePath)} && ` +
+          `echo '  \"*\":' >> ${shQuote(overridePath)} && ` +
+          `echo '    image: ${pinnedDigest}' >> ${shQuote(overridePath)}`
+        , ctx.vps);
+
+        const result = await execOnVps(
+          `cd ${shQuote(projectPath)} && ` +
+          `${buildManagedComposeInvocation(composeCmd, "down", config.composeFile)} && ` +
+          `${composeCmd} -f ${shQuote(config.composeFile || "docker-compose.yml")} ` +
+          `-f .groundcontrol/rollback-pin.override.yml up -d`,
+          ctx.vps
+        );
+
+        // Clean up the temp override
+        await execOnVps(`rm -f ${shQuote(overridePath)}`, ctx.vps).catch(() => {});
+
+        if (result.code !== 0) {
+          throw new Error(result.stderr || "docker compose rollback failed");
+        }
+      } else {
+        // No digest to pin — fall back to restart
+        ctx.log(`[compose] no previous digest available; restarting current image`);
+        const result = await execOnVps(
+          `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
+            composeCmd,
+            "down",
+            config.composeFile
+          )} && ${buildManagedComposeInvocation(composeCmd, "up -d", config.composeFile)}`,
+          ctx.vps
+        );
+        if (result.code !== 0) {
+          throw new Error(result.stderr || "docker compose rollback failed");
+        }
       }
     },
 

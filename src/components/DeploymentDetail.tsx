@@ -162,7 +162,46 @@ export function DeploymentDetail({ slug }: { slug: string }) {
         });
         return { success: false, missingEnvKeys };
       }
-      setMessage({ tone: "success", text: component ? `${component} redeployed.` : "Deployment redeployed." });
+
+      if (data.detached) {
+        // Self-redeploy: API returned before the compose finished.
+        // Poll until the deployment is reachable or timeout.
+        setMessage({ tone: "info", text: "Redeploy queued — checking status…" });
+        setBusy(true);
+
+        const changed = data.changedFields as string[] | undefined;
+        for (let attempt = 0; attempt < 20; attempt++) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const healthRes = await fetch("/api/projects/compose", { signal: AbortSignal.timeout(5000) });
+            if (healthRes.ok) {
+              setMessage({
+                tone: "success",
+                text: component
+                  ? `${component} redeployed${changed?.length ? ` (${changed.join(", ")})` : ""}.`
+                  : `Deployment redeployed${changed?.length ? ` (${changed.join(", ")})` : ""}.`,
+              });
+              setBusy(false);
+              await load();
+              return { success: true };
+            }
+          } catch {
+            // API is still restarting — expected, keep polling
+          }
+          if (attempt === 4) {
+            setMessage({ tone: "info", text: "Still waiting for deployment to come back online…" });
+          }
+        }
+        setMessage({ tone: "info", text: "Redeploy may have completed — refresh to confirm." });
+        setBusy(false);
+        await load();
+        return { success: true };
+      }
+
+      setMessage({
+        tone: "success",
+        text: component ? `${component} redeployed.` : "Deployment redeployed.",
+      });
       await load();
       return { success: true };
     } catch (error) {

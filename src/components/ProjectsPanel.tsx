@@ -537,8 +537,18 @@ export function ProjectsPanel() {
         };
       } else {
         setError("");
-        const output = data.output || data.stderr || `${label} completed`;
-        setComposeOutput({ slug, output, error: "" });
+        if (data.detached && type === "redeploy") {
+          // Self-redeploy: show queued message and schedule a refresh
+          const output = data.output || "Redeploy queued — refreshing in 5s…";
+          setComposeOutput({ slug, output, error: "" });
+          setTimeout(() => {
+            setComposeOutput(null);
+            window.dispatchEvent(new Event("gc:services-refresh"));
+          }, 5000);
+        } else {
+          const output = data.output || data.stderr || `${label} completed`;
+          setComposeOutput({ slug, output, error: "" });
+        }
         return { success: true };
       }
     } catch (err) {

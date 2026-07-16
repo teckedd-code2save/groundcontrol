@@ -177,6 +177,9 @@ model Deployment {
   branch             String   @default("main")
   commitSha          String?
   imageTag           String?
+  imageDigest        String?  // SHA256 digest of the deployed image (docker inspect --format '{{.RepoDigests}}')
+  previousImageDigest String? // Digest of the previous successful deployment, for rollback
+  changedFields      String?  // JSON: list of fields that changed since last deploy ["image","env","compose_file","proxy_config"]
   publicUrl          String?
   previewUrl         String?
   previewProcessInfo String? // PID/log path for ephemeral quick tunnels
