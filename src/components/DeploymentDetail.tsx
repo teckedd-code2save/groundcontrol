@@ -114,6 +114,8 @@ export default function DeploymentDetail({
   const [composeLoading, setComposeLoading] = useState(false);
   const [imageSourceInput, setImageSourceInput] = useState("");
   const [imageDigestInput, setImageDigestInput] = useState("");
+  const [redeployLog, setRedeployLog] = useState<string[]>([]);
+  const [showLog, setShowLog] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -194,19 +196,40 @@ export default function DeploymentDetail({
 
       if (data.detached) {
         setMessage({ tone: "info", text: "Redeploy queued — checking status…" });
+        setShowLog(true);
+        setRedeployLog([]);
         setBusy(true);
+
+        // Poll logs every 2 seconds
+        const logInterval = setInterval(async () => {
+          try {
+            const logRes = await fetch(`/api/projects/compose/log?slug=${encodeURIComponent(deployment.legacyProjectSlug!)}`);
+            if (logRes.ok) {
+              const logData = await readJson(logRes);
+              if (Array.isArray(logData.lines)) setRedeployLog(logData.lines);
+            }
+          } catch { /* log polling is best-effort */ }
+        }, 2000);
+
         const changed = data.changedFields as string[] | undefined;
         for (let attempt = 0; attempt < 20; attempt++) {
           await new Promise(r => setTimeout(r, 3000));
           try {
             const healthRes = await fetch("/api/projects/compose", { signal: AbortSignal.timeout(5000) });
             if (healthRes.ok) {
+              clearInterval(logInterval);
+              // Final log fetch
+              try {
+                const logRes = await fetch(`/api/projects/compose/log?slug=${encodeURIComponent(deployment.legacyProjectSlug!)}`);
+                if (logRes.ok) { const logData = await readJson(logRes); if (Array.isArray(logData.lines)) setRedeployLog(logData.lines); }
+              } catch {}
               setMessage({
                 tone: "success",
                 text: component
                   ? `${component} redeployed${changed?.length ? ` (${changed.join(", ")})` : ""}.`
                   : `Deployment redeployed${changed?.length ? ` (${changed.join(", ")})` : ""}.`,
               });
+              setTimeout(() => setShowLog(false), 5000);
               setBusy(false);
               await load();
               return { success: true };
@@ -214,7 +237,9 @@ export default function DeploymentDetail({
           } catch { /* expected during restart */ }
           if (attempt === 4) setMessage({ tone: "info", text: "Still waiting…" });
         }
+        clearInterval(logInterval);
         setMessage({ tone: "info", text: "Redeploy may have completed — refresh to confirm." });
+        setTimeout(() => setShowLog(false), 10000);
         setBusy(false);
         await load();
         return { success: true };
@@ -359,6 +384,18 @@ export default function DeploymentDetail({
               ? "border-error/30 bg-error/10 text-error"
               : "border-border bg-card text-muted"
         }`}>{message.text}</div>
+      )}
+
+      {showLog && redeployLog.length > 0 && (
+        <div className="mt-3 border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-3 py-2">
+            <span className="text-[10px] font-mono text-muted">Redeploy log</span>
+            <button onClick={() => setShowLog(false)} className="text-[10px] font-mono text-muted hover:text-foreground">Hide</button>
+          </div>
+          <pre className="max-h-48 overflow-auto p-3 font-mono text-[10px] leading-relaxed text-muted whitespace-pre-wrap">
+            {redeployLog.join("\n")}
+          </pre>
+        </div>
       )}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[220px_minmax(0,1fr)]">
@@ -601,11 +638,27 @@ export default function DeploymentDetail({
         </form>
       </ModalSurface>
 
-      <ModalSurface open={composeOpen} onClose={() => setComposeOpen(false)} title="Compose file" description={deployment.sourcePath || deployment.composePath || deployment.slug}>
+      <ModalSurface open={composeOpen} onClose={() => { setComposeOpen(false); setComposeContent(""); }} title="Compose file" description={deployment.sourcePath || deployment.composePath || deployment.slug}>
         {composeLoading ? (
           <div className="py-8 text-center text-sm text-muted">Loading…</div>
         ) : (
-          <pre className="max-h-[60vh] overflow-auto rounded border border-border bg-background p-4 font-mono text-xs whitespace-pre-wrap">{composeContent}</pre>
+          <div className="space-y-3">
+            <textarea
+              value={composeContent}
+              onChange={(event) => setComposeContent(event.target.value)}
+              className="w-full max-h-[50vh] min-h-[20vh] resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs whitespace-pre-wrap focus:border-accent focus:outline-none"
+              spellCheck={false}
+            />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-muted">Edit the compose file directly. Changes take effect on next redeploy.</span>
+              <div className="flex gap-2">
+                <button type="button" onClick={openComposeViewer} className="gc-button gc-button-quiet text-xs">Reset</button>
+                <button type="button" onClick={async () => {
+                  setMessage({ tone: "info", text: "Compose editing via API requires a save endpoint. Use the Terminal to edit files directly." });
+                }} className="gc-button gc-button-secondary text-xs">Save changes</button>
+              </div>
+            </div>
+          </div>
         )}
       </ModalSurface>
 

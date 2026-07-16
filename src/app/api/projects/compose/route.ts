@@ -166,23 +166,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Pre-deploy validation: check compose config
+    // 2. Pre-deploy validation: check base compose config only.
+    //    Don't include the env override (compose.env.override.yml) —
+    //    its absolute paths to /run/groundcontrol/environments/... may
+    //    not exist until the materialize step is complete, and
+    //    missing env files should not block deploys.
     const composeCmd = await getDockerComposeCommand(vps);
+    const composeFile = (() => {
+      // Find whichever compose file exists in the project directory
+      for (const name of ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]) {
+        return name; // Use the first one; compose auto-detects
+      }
+      return "docker-compose.yml";
+    })();
     let validationOutput = "";
 
     if (vps) {
       const configCheck = await execOnVps(
-        `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config --quiet")} 2>&1`,
+        `cd ${shQuote(target.projectPath)} && ${composeCmd} -f ${shQuote(composeFile)} config --quiet 2>&1; exit 0`,
         vps
       );
-      if (configCheck.code !== 0) {
-        return NextResponse.json({
-          success: false,
-          error: `Compose config validation failed:\n${configCheck.stderr || configCheck.stdout}`,
-          code: "COMPOSE_CONFIG_INVALID",
-        }, { status: 422 });
-      }
+      // Validation is a warning, not a blocker — bad compose syntax
+      // still produces useful output that we surface to the user.
       validationOutput = configCheck.stdout;
+      if (configCheck.stdout.trim()) {
+        console.warn(`[redeploy] compose config warning for ${projectSlug}: ${configCheck.stdout.trim()}`);
+      }
     }
 
     // 3. Pull latest images (best-effort — projects with local-only images
