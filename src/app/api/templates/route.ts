@@ -34,6 +34,23 @@ export async function POST(req: NextRequest) {
       if (ghcrImage) allInputs.ghcr_image = ghcrImage;
       if (localPath) allInputs.repo_dir = localPath;
 
+      // Resolve static_dir for static-site templates so the Caddy
+      // config preview shows the real path instead of {{static_dir}}.
+      // The deploy route computes this from staticRoot + slug, but
+      // the preview runs before deploy so we use the template name
+      // as a reasonable stand-in for the slug.
+      if (template.deploy_mode === "static" && !allInputs.static_dir) {
+        const { getSystemConfig } = await import("@/lib/vps");
+        try {
+          const config = await getSystemConfig();
+          const staticRoot = config.staticRoot || "/var/www";
+          const previewSlug = inputs.app_slug || name;
+          allInputs.static_dir = `${staticRoot.replace(/\/+$/, "")}/${previewSlug}`;
+        } catch {
+          allInputs.static_dir = `/var/www/${inputs.app_slug || name}`;
+        }
+      }
+
       const resolved = resolveTemplate(template, allInputs);
       const previewText = generatePreview(resolved);
       return NextResponse.json({
