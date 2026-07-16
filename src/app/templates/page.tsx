@@ -324,6 +324,16 @@ export default function TemplatesPage() {
   const effectiveZoneId = selectedZoneId || matchingZone?.id || "";
   const dnsRecordType = usesCloudflareTunnel && selectedTunnelId ? "CNAME" : "A";
 
+  // Resolve the full domain: if the user typed a bare name (no dot),
+  // auto-append the matched Cloudflare zone so they see the final FQDN.
+  const resolvedDomain = (() => {
+    const raw = String(inputs.domain || "").trim();
+    if (!raw) return "";
+    if (raw.includes(".")) return raw; // already a FQDN
+    if (matchingZone) return `${raw}.${matchingZone.name}`;
+    return raw;
+  })();
+
   function addEnvVar() { setEnvVars([...envVars, { key: "", value: "" }]); }
   function updateEnvVar(i: number, f: "key" | "value", v: string) {
     const u = [...envVars]; u[i][f] = v; setEnvVars(u);
@@ -405,7 +415,7 @@ export default function TemplatesPage() {
           branch: sourceType === "github" ? branch : undefined,
           ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
           localPath: sourceType === "local" ? localPath : undefined,
-          domain: inputs.domain || undefined,
+          domain: resolvedDomain || inputs.domain || undefined,
           createDns: createDns && !!inputs.domain,
           zoneId: createDns ? effectiveZoneId || undefined : undefined,
           proxied: createDns ? true : undefined,
@@ -716,6 +726,9 @@ export default function TemplatesPage() {
                   placeholder="app.example.com"
                   className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
                 <p className="mt-1 text-[10px] text-muted">Use a domain from a connected Cloudflare zone. GroundControl only reports success after the public route responds.</p>
+                {resolvedDomain && resolvedDomain !== String(inputs.domain || "").trim() && (
+                  <p className="mt-1 font-mono text-[11px] text-accent">{resolvedDomain}</p>
+                )}
               </div>
               {(selected.inputs || []).filter(i => ![
                 "domain",
@@ -768,7 +781,7 @@ export default function TemplatesPage() {
                 Configure DNS
               </label>
             </div>
-            {createDns && (
+            {createDns && (<div>
               <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
                 <label className="block">
                   <span className="gc-label">Cloudflare zone</span>
@@ -777,9 +790,20 @@ export default function TemplatesPage() {
                     {zones.map(zone => <option key={zone.id} value={zone.id}>{zone.name}{zone.status ? ` · ${zone.status}` : ""}</option>)}
                   </select>
                 </label>
-                <span className="pb-2 font-mono text-[10px] text-muted">{dnsRecordType} → {dnsRecordType === "CNAME" ? "tunnel" : "active VPS"}</span>
+                <span className="pb-2 font-mono text-[10px] text-muted">
+                  {resolvedDomain && effectiveZoneId
+                    ? `${resolvedDomain} → points to your VPS`
+                    : `${dnsRecordType} record — ${dnsRecordType === "CNAME" ? "routes through Cloudflare Tunnel" : "points to your server"}`}
+                </span>
               </div>
-            )}
+              {resolvedDomain && effectiveZoneId && (
+                <p className="text-[10px] text-muted leading-relaxed">
+                  A {dnsRecordType} record will be created in Cloudflare so{" "}
+                  <span className="font-mono">{resolvedDomain}</span> reaches
+                  your VPS. Caddy automatically serves the site at this domain.
+                </p>
+              )}
+            </div>)}
             {createDns && zones.length === 0 && (
               <p className="mt-3 border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">No active Cloudflare zones are available. Connect Cloudflare in Settings first.</p>
             )}
