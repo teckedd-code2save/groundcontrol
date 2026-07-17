@@ -16,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const { id } = await params;
     const component = new URL(req.url).searchParams.get("component")?.trim() || "";
-    if (!VALID_COMPONENT.test(component)) {
+    if (component && !VALID_COMPONENT.test(component)) {
       return NextResponse.json({ error: "Choose a valid deployment component" }, { status: 400 });
     }
 
@@ -28,7 +28,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const resolved = await resolveDeploymentEnv(profile.project, profile.slug);
     if (!resolved) return NextResponse.json({ error: "Environment could not be resolved" }, { status: 404 });
-    const values = resolved.componentValues[component] || {};
+    const values = component
+      ? (resolved.componentValues[component] || {})
+      : resolved.values;
 
     await auditLog({
       userId: user.id,
@@ -43,7 +45,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     });
 
-    const filename = `.env.${profile.slug}.${component}`;
+    const filename = component ? `${component}.env` : ".env";
     return new NextResponse(serializeDotenv(values), {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",

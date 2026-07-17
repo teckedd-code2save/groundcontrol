@@ -463,7 +463,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                       setNotice({ tone: "error", text: `Missing secrets: ${missingList}. Fill them in or mark as optional to proceed.` });
                     }
                   }}
-                  disabled={Boolean(busy) || !selectedComponent}
+                  disabled={Boolean(busy)}
                   icon={ChevronRight}
                 >
                   Deploy
@@ -472,7 +472,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             </div>
           </div>
 
-          {profile.providerType === "local" && selectedComponent && (
+          {profile.providerType === "local" && (
             <div className="flex flex-wrap gap-2 py-4">
               <ActionButton onClick={() => { setAddOpen((open) => !open); setImportOpen(false); }} disabled={Boolean(busy)} icon={Plus}>Add secret</ActionButton>
               <ActionButton onClick={() => { setImportOpen((open) => !open); setAddOpen(false); }} disabled={Boolean(busy)} icon={FileUp}>Import env file</ActionButton>
