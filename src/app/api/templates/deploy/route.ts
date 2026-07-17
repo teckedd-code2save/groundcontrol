@@ -160,6 +160,18 @@ export async function POST(req: NextRequest) {
     if (ghcrImage) allInputs["ghcr_image"] = ghcrImage;
     if (localPath) allInputs["repo_dir"] = localPath;
     if (domain) allInputs["domain"] = normalizeDomain(domain);
+    // Safety net: if the domain is a bare hostname (no dot), try to
+    // resolve it against the selected Cloudflare zone.
+    if (allInputs["domain"] && !allInputs["domain"].includes(".") && zoneId) {
+      try {
+        const { listZones } = await import("@/lib/cloudflare");
+        const zones = await listZones();
+        const zone = zones.find((z: any) => String(z.id) === String(zoneId));
+        if (zone?.name) {
+          allInputs["domain"] = `${allInputs["domain"]}.${zone.name}`;
+        }
+      } catch { /* best-effort */ }
+    }
     for (const [key, value] of Object.entries(allInputs)) {
       if (key === "domain" || key.endsWith("_domain")) allInputs[key] = normalizeDomain(value);
     }
