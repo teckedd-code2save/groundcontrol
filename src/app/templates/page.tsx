@@ -326,11 +326,13 @@ export default function TemplatesPage() {
 
   // Resolve the full domain: if the user typed a bare name (no dot),
   // auto-append the matched Cloudflare zone so they see the final FQDN.
+  // If the field is empty but a zone is selected and DNS is enabled,
+  // infer the apex domain (e.g. serendepify.com).
   const resolvedDomain = (() => {
     const raw = String(inputs.domain || "").trim();
-    if (!raw) return "";
-    if (raw.includes(".")) return raw; // already a FQDN
-    if (matchingZone) return `${raw}.${matchingZone.name}`;
+    if (raw && raw.includes(".")) return raw; // already a FQDN
+    if (raw && matchingZone) return `${raw}.${matchingZone.name}`; // subdomain
+    if (!raw && createDns && matchingZone) return matchingZone.name; // apex
     return raw;
   })();
 
@@ -416,7 +418,7 @@ export default function TemplatesPage() {
           ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
           localPath: sourceType === "local" ? localPath : undefined,
           domain: resolvedDomain || inputs.domain || undefined,
-          createDns: createDns && !!inputs.domain,
+          createDns: createDns && !!(resolvedDomain || inputs.domain),
           zoneId: createDns ? effectiveZoneId || undefined : undefined,
           proxied: createDns ? true : undefined,
           tunnelId: usesCloudflareTunnel && selectedTunnelId ? selectedTunnelId : undefined,
