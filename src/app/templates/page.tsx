@@ -546,46 +546,28 @@ export default function TemplatesPage() {
       {/* Step 1: Browse */}
       {step === "browse" && (
         <div className="space-y-4">
-          <div className="flex flex-col gap-2 border-l-2 border-accent bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="max-w-2xl text-xs leading-relaxed text-muted">
-              Choose the closest application shape. GroundControl will ask only for the source, identity, and exposure details that shape needs.
-            </p>
-            <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">{templates.length} available</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <p className="max-w-xl text-xs text-muted leading-relaxed">
+            Choose a deployment shape. GroundControl provisions the reverse proxy, DNS, and runtime — you supply the source and domain.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {sortedTemplates.map(t => (
             <button key={t._filename} onClick={() => selectTemplate(t)}
-              className={`text-left p-5 bg-card border transition-colors hover:border-accent/40 hover:bg-accent/5 ${
-                isRecommended(t) ? "border-accent/35 ring-1 ring-accent/15" : "border-border"
+              className={`text-left p-4 bg-card border transition-colors hover:border-accent/40 ${
+                isRecommended(t) ? "border-accent/40" : "border-border"
               }`}>
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-medium text-sm">{t.name}</h3>
-                    {isRecommended(t) && (
-                      <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-accent">
-                        recommended
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-1 text-[10px] font-mono uppercase tracking-wider text-accent">{t.category} · {templateComplexity(t)}</p>
-                </div>
-                <span className="text-lg text-muted">{t.category === "private" ? "◎" : t.category === "kubernetes" ? "▦" : "◉"}</span>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h3 className="font-medium text-sm truncate">{t.name}</h3>
+                <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase text-muted border border-border">
+                  {t.deploy_mode === "static" ? "static" : "compose"}
+                </span>
               </div>
-              <p className="text-xs text-muted leading-relaxed mb-3">{templatePurpose(t)}</p>
-              <div className="mb-3 space-y-1.5 text-[10px] text-muted/80">
-                <p><span className="font-mono text-muted">Exposure:</span> {templateExposure(t)}</p>
-                <p><span className="font-mono text-muted">Source:</span> {templateSourceModes(t).join(" or ")}</p>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {isStaticTpl(t) && <Tag>No Docker</Tag>}
+              <p className="text-[11px] text-muted leading-relaxed line-clamp-2">{templatePurpose(t)}</p>
+              <div className="mt-3 flex flex-wrap gap-1">
                 {t.requires?.docker && <Tag>Docker</Tag>}
                 {t.requires?.caddy && <Tag>Caddy</Tag>}
-                {t.requires?.traefik && <Tag>Traefik</Tag>}
                 {t.requires?.nginx && <Tag>Nginx</Tag>}
                 {t.requires?.k3s && <Tag>k3s</Tag>}
-                {(t.components || []).some((component) => component.kind === "tunnel") && <Tag>Tunnel</Tag>}
-                <span className="text-[9px] px-1.5 py-0.5 bg-muted/10 text-muted border border-muted/20 font-mono">v{t.version}</span>
+                {isStaticTpl(t) && <Tag>No Docker</Tag>}
               </div>
             </button>
           ))}

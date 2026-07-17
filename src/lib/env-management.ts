@@ -471,8 +471,15 @@ export function buildMaterializeEnvBundleCommand(
       "rm -f .groundcontrol/compose.env.override.yml"
     );
   }
-  if (Object.keys(values).length > 0 || options.pruneManagedFiles) {
-    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(values)));
+  // Merge component-specific values into the deployment-wide .env so
+  // Docker Compose variable substitution (${API_IMAGE}, ${WEB_IMAGE}, etc.)
+  // picks them up without needing the compose.env.override.yml.
+  const mergedValues = { ...values };
+  for (const component of Object.keys(componentValues).filter(isSafeComposeServiceName)) {
+    Object.assign(mergedValues, componentValues[component]);
+  }
+  if (Object.keys(mergedValues).length > 0 || options.pruneManagedFiles) {
+    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(mergedValues)));
   }
 
   const components = Object.keys(componentValues)
