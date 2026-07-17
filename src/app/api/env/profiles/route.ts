@@ -158,11 +158,6 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
     const changesRuntimeState = changesValues || Array.isArray(body.deleteKeys);
-    if (changesRuntimeState && !component) {
-      return NextResponse.json({
-        error: "Choose the component that should receive these values. GroundControl no longer creates shared deployment variables.",
-      }, { status: 400 });
-    }
     const submittedSchema = normalizeSchema(body.schema);
     const environmentSlug = normalizeEnvironmentSlug(body.environmentSlug || "production");
     const existingProfile = body.profileId
