@@ -11,6 +11,7 @@ import { DeployTargetsTab } from "@/components/DeployTargetsTab";
 import CloudAccountsTab from "@/components/CloudAccountsTab";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
 import EnvProvidersTab from "@/components/EnvProvidersTab";
+import ConnectorsPanel from "@/components/ConnectorsPanel";
 
 interface VpsConfig {
   id: number;
@@ -26,7 +27,7 @@ interface VpsConfig {
   createdAt: string;
 }
 
-type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "env-providers" | "cloud-accounts" | "deploy-targets" | "infrastructure";
+type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "env-providers" | "cloud-accounts" | "deploy-targets" | "infrastructure" | "connectors";
 
 const settingsTabs: { key: TabKey; label: string; description: string }[] = [
   { key: "connections", label: "VPS", description: "Hosts, SSH, and active server" },
@@ -39,6 +40,7 @@ const settingsTabs: { key: TabKey; label: string; description: string }[] = [
   { key: "cloud-accounts", label: "Cloud", description: "Cloud credentials and tests" },
   { key: "deploy-targets", label: "Targets", description: "Deployment backends" },
   { key: "infrastructure", label: "Infra", description: "Terraform stacks and outputs" },
+  { key: "connectors", label: "Connectors", description: "GitHub, Gemini, Daytona integrations" },
 ];
 
 export default function SettingsPage() {
@@ -99,6 +101,11 @@ export default function SettingsPage() {
       {activeTab === "infrastructure" && (
         <div>
           <TerraformStacksTab />
+        </div>
+      )}
+      {activeTab === "connectors" && (
+        <div>
+          <ConnectorsPanel />
         </div>
       )}
     </div>

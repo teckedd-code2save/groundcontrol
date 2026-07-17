@@ -555,3 +555,9 @@ model UserGuideProgress {
   @@unique([userId, guideId])
   @@index([userId, status])
 }
+
+model AppConfig {
+  key       String   @id
+  value     String   @default("") // encrypted JSON for sensitive values
+  updatedAt DateTime @updatedAt
+}
