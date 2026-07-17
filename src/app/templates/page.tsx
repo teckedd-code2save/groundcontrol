@@ -294,6 +294,10 @@ export default function TemplatesPage() {
 
   function deploymentInputs(): Record<string, string> {
     const merged = { ...inputs };
+    // Override domain with the resolved FQDN (e.g. pocket-models → pocket-models.serendepify.com)
+    if (resolvedDomain) merged.domain = resolvedDomain;
+    // Use deployment name as app_slug when the template default kicks in
+    if (!merged.app_slug && deploymentName.trim()) merged.app_slug = deploymentName.trim().toLowerCase().replace(/[^a-z0-9-]/g, "-");
     if (!selected || sourceType !== "ghcr" || !ghcrImage) return merged;
     for (const input of selected.inputs || []) {
       if (input.name.endsWith("_image") || input.name === "app_image") {
@@ -344,8 +348,9 @@ export default function TemplatesPage() {
 
   function validateDnsConfiguration(): boolean {
     if (!createDns) return true;
-    if (!String(inputs.domain || "").trim()) {
-      setResult({ ok: false, msg: "Enter the public domain before enabling Cloudflare DNS." });
+    // Allow apex: empty domain is fine if a zone is selected
+    if (!String(inputs.domain || "").trim() && !effectiveZoneId) {
+      setResult({ ok: false, msg: "Enter a domain or select a Cloudflare zone for apex hosting." });
       return false;
     }
     if (!effectiveZoneId) {
