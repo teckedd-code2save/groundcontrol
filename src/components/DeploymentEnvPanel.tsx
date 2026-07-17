@@ -115,7 +115,10 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     const nextComponents = Array.isArray(data.components) ? data.components as string[] : [];
     if (!fixedScope) {
       setComponents(nextComponents);
-      setSelectedComponent((current) => current && nextComponents.includes(current) ? current : nextComponents[0] || "");
+      setSelectedComponent((current) => {
+        if (current === "") return ""; // stay on Deployment-wide
+        return current && nextComponents.includes(current) ? current : nextComponents[0] || "";
+      });
     }
     setDraft({});
     setDirtyKeys(new Set());
