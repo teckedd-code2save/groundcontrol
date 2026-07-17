@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, Globe, Layers, RefreshCw, Server, Shield, XCircle, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, Globe, RefreshCw, Shield, XCircle, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 
 type ServicePath = { domain: string; upstream?: string; containerName?: string; containerState?: string; healthy: boolean; issues: string[]; serviceId?: string };
@@ -95,19 +95,8 @@ export default function IntelligencePage() {
       )}
 
       {paths.length > 0 && (
-        <div className="mt-6 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-          {/* Sidebar — service list */}
-          <aside className="h-fit space-y-1 border border-border bg-card p-2">
-            <div className="px-2 py-1.5 text-[10px] font-medium text-muted uppercase tracking-wider">Operations</div>
-            <NavItem active icon={<Activity className="h-3.5 w-3.5" />} label="Intelligence" count={changeSets.length} />
-            <NavItem icon={<Layers className="h-3.5 w-3.5" />} label="Services" count={paths.length} />
-            <NavItem icon={<Globe className="h-3.5 w-3.5" />} label="Changes" count={changeSets.length} />
-            <NavItem icon={<Server className="h-3.5 w-3.5" />} label="Hosts" detail="connected · healthy" sub />
-          </aside>
-
-          {/* Main — investigation view */}
-          <div className="min-w-0 space-y-6">
-            {/* Incident header */}
+        <div className="min-w-0 space-y-6">
+          {/* Incident header */}
             <div className="border border-border bg-card px-5 py-4">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[10px] font-mono text-muted">SERVICE GRAPH</span>
@@ -275,7 +264,6 @@ export default function IntelligencePage() {
               </div>
             )}
           </div>
-        </div>
       )}
 
       {/* Methodology: Observe → Understand → Test → Recover → Verify */}
@@ -314,23 +302,6 @@ function PillarCard({ label, detail, active }: { label: string; detail: string; 
     <div className={`border p-4 ${active ? "border-accent/40 bg-accent/5" : "border-border bg-card"}`}>
       <p className="text-[10px] font-mono text-muted uppercase tracking-wider">{label}</p>
       <p className={`mt-1 text-xs font-medium ${active ? "text-accent" : "text-foreground"}`}>{detail}</p>
-    </div>
-  );
-}
-
-function NavItem({ icon, label, count, detail, active, sub }: {
-  icon: React.ReactNode; label: string; count?: number; detail?: string; active?: boolean; sub?: boolean;
-}) {
-  return (
-    <div className={`flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors ${
-      active ? "bg-accent/10 text-accent" : sub ? "text-muted/60" : "text-muted hover:bg-background hover:text-foreground"
-    }`}>
-      <span className={active ? "text-accent" : ""}>{icon}</span>
-      <span className="flex-1 font-medium">{label}</span>
-      {count !== undefined && count > 0 && (
-        <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[9px] font-mono text-accent">{count}</span>
-      )}
-      {detail && <span className="text-[9px] text-muted">{detail}</span>}
     </div>
   );
 }

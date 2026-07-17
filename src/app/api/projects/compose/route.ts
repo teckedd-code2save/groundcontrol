@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
 
     if (vps) {
       const configCheck = await execOnVps(
-        `cd ${shQuote(target.projectPath)} && ${composeCmd} -f ${shQuote(composeFile)} config --quiet 2>&1; exit 0`,
+        `cd ${shQuote(target.projectPath)} && ${composeCmd} -f ${shQuote(composeFile)} config --quiet 2>/dev/null; exit 0`,
         vps
       );
       // Validation is a warning, not a blocker — bad compose syntax
