@@ -529,15 +529,9 @@ export default function DeploymentDetail({
                   <div className="border-b border-border px-5 py-4">
                     <p className="gc-eyebrow">Recent actions</p>
                   </div>
-                  <div className="divide-y divide-border">
-                    {deployment.runtimeEvents!.slice(0, 5).map((event) => (
-                      <div key={event.id} className="grid gap-2 px-5 py-3 md:grid-cols-[1fr_auto]">
-                        <div>
-                          <span className="text-xs font-medium">Compose {event.status}</span>
-                          <p className="mt-1 max-w-2xl truncate font-mono text-[9px] text-muted">{event.error || event.output || "Lifecycle action recorded"}</p>
-                        </div>
-                        <span className="font-mono text-[10px] text-muted">{event.status} · {new Date(event.createdAt).toLocaleString()}</span>
-                      </div>
+                  <div className="divide-y divide-border max-h-96 overflow-auto">
+                    {deployment.runtimeEvents!.map((event) => (
+                      <RuntimeEvent key={event.id} event={event} />
                     ))}
                   </div>
                 </section>
@@ -687,4 +681,22 @@ function ManagementLink({ icon, title, detail, href, onClick }: { icon: React.Re
   const className = "flex min-h-16 items-start gap-3 border border-border bg-background/40 p-3 text-left transition-colors hover:border-accent/40 hover:bg-background";
   if (href) return <Link href={href} className={className}>{content}</Link>;
   return <button type="button" onClick={onClick} className={className}>{content}</button>;
+}
+
+function RuntimeEvent({ event }: { event: { id: number; status: string; output?: string | null; error?: string | null; createdAt: string } }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = event.error || event.output || "Lifecycle action recorded";
+  const hasDetail = text.length > 80;
+  return (
+    <div className="px-5 py-3 cursor-pointer hover:bg-background/50" onClick={() => setExpanded(!expanded)}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <span className="text-xs font-medium">Compose {event.status}</span>
+          <p className={`mt-1 font-mono text-[9px] text-muted ${expanded ? "whitespace-pre-wrap break-all" : "line-clamp-2"}`}>{text}</p>
+        </div>
+        <span className="shrink-0 font-mono text-[10px] text-muted">{new Date(event.createdAt).toLocaleString()}</span>
+      </div>
+      {hasDetail && !expanded && <span className="mt-1 text-[10px] text-accent">Click to expand</span>}
+    </div>
+  );
 }
