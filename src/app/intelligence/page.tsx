@@ -14,6 +14,7 @@ export default function IntelligencePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<ServicePath | null>(null);
+  const [run, setRun] = useState<any>(null);
 
   const refresh = useCallback(async (reconcile = false) => {
     setLoading(true);
@@ -32,6 +33,23 @@ export default function IntelligencePage() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  async function runInvestigation(domain: string) {
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch("/api/loop/runs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setRun(data.run);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Investigation failed");
+    } finally { setLoading(false); }
+  }
+
+  const collectEvidence = () => refresh(true);
 
   const selectedEvidence: EvidenceStep[] = selectedPath ? [
     { id: "dns", label: "DNS resolution", ok: true, detail: `${selectedPath.domain} resolves correctly` },
@@ -174,6 +192,67 @@ export default function IntelligencePage() {
               </div>
             )}
 
+            {/* Investigation trigger + results */}
+            <div className="border border-border bg-card">
+              <div className="border-b border-border px-5 py-3 flex items-center justify-between">
+                <span className="text-[10px] font-mono text-muted uppercase">Investigation</span>
+                <button
+                  onClick={() => {
+                    const target = selectedPath?.domain || paths[0]?.domain;
+                    if (target) runInvestigation(target);
+                  }}
+                  disabled={loading || paths.length === 0}
+                  className="gc-button gc-button-secondary text-[11px]">
+                  <Zap className="h-3 w-3" />
+                  {loading ? "Running…" : run ? "Run again" : "Run investigation"}
+                </button>
+              </div>
+              {run?.investigation ? (
+                <div className="divide-y divide-border px-5">
+                  <div className="py-3">
+                    <p className="text-xs font-medium">Symptom</p>
+                    <p className="text-xs text-muted mt-1">{run.investigation.symptom}</p>
+                    <p className="text-[10px] text-muted mt-0.5">Impact: {run.investigation.customerImpact} · Provider: {run.investigation.provider || "deterministic"}</p>
+                  </div>
+                  {run.investigation.hypotheses?.length > 0 && (
+                    <div className="py-3">
+                      <p className="text-xs font-medium mb-2">Hypotheses</p>
+                      {run.investigation.hypotheses.map((h: any) => (
+                        <div key={h.id} className="flex items-start gap-2 mb-2 last:mb-0">
+                          {h.status === "confirmed" ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 text-success shrink-0" /> :
+                           h.status === "rejected" ? <XCircle className="mt-0.5 h-3.5 w-3.5 text-error shrink-0" /> :
+                           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-warning shrink-0" />}
+                          <div>
+                            <p className="text-[11px]">{h.statement}</p>
+                            <p className="text-[10px] text-muted">{(h.confidence * 100).toFixed(0)}% confidence · {h.status}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {run.investigation.confirmedCause && (
+                    <div className="py-3">
+                      <p className="text-xs font-medium">Confirmed cause</p>
+                      <p className="font-mono text-xs text-accent mt-1">{run.investigation.confirmedCause}</p>
+                    </div>
+                  )}
+                  {run.actionPlan && (
+                    <div className="py-3 flex items-center gap-2">
+                      <Shield className="h-3.5 w-3.5 text-accent" />
+                      <span className="text-xs">{run.actionPlan.title}</span>
+                      {run.actionPlan.approvalRequired && <span className="text-[10px] text-warning bg-warning/10 px-1 py-0.5 rounded">Approval required</span>}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="px-5 py-4 text-xs text-muted">
+                  {paths.length === 0
+                    ? "Collect host evidence first, then run an investigation on a healthy service path."
+                    : "Run an investigation on a service path to diagnose issues with Gemini or the deterministic engine."}
+                </div>
+              )}
+            </div>
+
             {/* Change ledger */}
             {changeSets.length > 0 && (
               <div className="border border-border bg-card">
@@ -198,6 +277,34 @@ export default function IntelligencePage() {
           </div>
         </div>
       )}
+
+      {/* Methodology: Observe → Understand → Test → Recover → Verify */}
+      <div className="mt-10 border-t border-border pt-8">
+        <p className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">Methodology</p>
+        <h2 className="text-xl font-semibold tracking-tight mb-2">Observe. Understand. Test. Recover. Verify.</h2>
+        <p className="text-xs text-muted max-w-2xl mb-6">GroundControl works through narrow tools, explicit policy and reversible actions.</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <MethodCard icon={<Globe className="h-4 w-4" />} title="Understand the system behind the URL"
+            detail="Maps continuous relationships between domains, TLS, proxies, Docker networks, containers, and processes — not a static snapshot." />
+          <MethodCard icon={<Zap className="h-4 w-4" />} title="Test customer outcomes, not green containers"
+            detail="Exercises confirmed HTTP journeys after meaningful changes. A running container is not proof that the public application works." />
+          <MethodCard icon={<Shield className="h-4 w-4" />} title="Repair, redeploy or guide with context"
+            detail="Restores a healthy proxy revision, redeploys a previous artifact, or prepares an exact guided plan — never a generic suggestion." />
+          <MethodCard icon={<Activity className="h-4 w-4" />} title="Every confirmed recovery improves the next"
+            detail="Symptoms, causes, and successful actions become service-specific operational memory. GroundControl gets sharper with every incident." />
+        </div>
+      </div>
+
+      {/* Autopilot policy: Monitor → Guide → Approve → Autopilot */}
+      <div className="mt-10 bg-accent/5 border border-accent/20 p-6">
+        <p className="text-[10px] font-mono text-accent uppercase tracking-wider mb-1">Your infrastructure. Your policies. Your final say.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+          <PolicyStep step={1} label="Monitor" detail="Detect changes and exercise affected journeys" active />
+          <PolicyStep step={2} label="Guide" detail="Investigate and prepare exact recovery steps" />
+          <PolicyStep step={3} label="Approve" detail="Execute a reversible repair after one decision" />
+          <PolicyStep step={4} label="Autopilot" detail="Act automatically inside a pre-approved policy" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -224,6 +331,26 @@ function NavItem({ icon, label, count, detail, active, sub }: {
         <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[9px] font-mono text-accent">{count}</span>
       )}
       {detail && <span className="text-[9px] text-muted">{detail}</span>}
+    </div>
+  );
+}
+
+function MethodCard({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
+  return (
+    <div className="border border-border bg-card p-5">
+      <span className="text-muted">{icon}</span>
+      <h3 className="mt-2 text-sm font-medium">{title}</h3>
+      <p className="mt-1 text-xs text-muted leading-relaxed">{detail}</p>
+    </div>
+  );
+}
+
+function PolicyStep({ step, label, detail, active }: { step: number; label: string; detail: string; active?: boolean }) {
+  return (
+    <div className={`border p-4 ${active ? "border-accent/40 bg-accent/5" : "border-border bg-card"}`}>
+      <span className={`font-mono text-[10px] ${active ? "text-accent" : "text-muted"}`}>0{step}</span>
+      <h4 className={`mt-1 text-xs font-medium ${active ? "text-accent" : "text-foreground"}`}>{label}</h4>
+      <p className="mt-0.5 text-[10px] text-muted leading-relaxed">{detail}</p>
     </div>
   );
 }
