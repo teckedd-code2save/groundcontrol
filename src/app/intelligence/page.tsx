@@ -9,8 +9,11 @@ import {
   CheckCircle2,
   GitBranch,
   Play,
+  RefreshCw,
+  Search,
   Shield,
   Undo2,
+  XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 
@@ -23,553 +26,313 @@ type ServicePath = {
   issues: string[];
   serviceId?: string;
 };
-
 type Hypothesis = {
-  id: string;
-  statement: string;
-  supportingEvidenceIds: string[];
-  contradictingEvidenceIds: string[];
-  confidence: number;
-  status: string;
-  concept?: string;
+  id: string; statement: string; confidence: number; status: string; concept?: string;
 };
-
 type LoopRun = {
-  id: string;
-  state: string;
-  isFixture?: boolean;
-  serviceIds: string[];
-  journeyResults: Array<{ journeyId: string; ok: boolean }>;
-  investigation?: {
-    symptom: string;
-    customerImpact: string;
-    confirmedConcept?: string;
-    confirmedCause?: string;
-    uncertainty: string[];
-    hypotheses: Hypothesis[];
-    evidence: Array<{ id: string; kind: string; summary: string }>;
-    provider: string;
-  };
-  actionPlan?: {
-    id: string;
-    kind: string;
-    title: string;
-    description: string;
-    risk: string;
-    approvalRequired: boolean;
-    expectedResult: string;
-    params: Record<string, unknown>;
-  };
+  id: string; state: string; isFixture?: boolean; serviceIds: string[];
+  investigation?: { symptom: string; customerImpact: string; confirmedCause?: string; hypotheses: Hypothesis[]; provider: string };
+  actionPlan?: { kind: string; title: string; description: string; risk: string; approvalRequired: boolean };
   verification?: Array<{ journeyId: string; ok: boolean }>;
-  sideEffects: Record<string, boolean>;
-  auditLog: Array<{ at: string; action: string; detail?: string }>;
-  approvedBy?: string;
+  auditLog: Array<{ at: string; action: string }>;
 };
-
 type ReadinessCheck = { id: string; label: string; ready: boolean; detail: string };
 
 export default function IntelligencePage() {
   const [paths, setPaths] = useState<ServicePath[]>([]);
-  const [changeSets, setChangeSets] = useState<
-    Array<{ id: string; kinds: string[]; serviceIds: string[]; eventIds: string[] }>
-  >([]);
-  const [events, setEvents] = useState<
-    Array<{ id: string; kind: string; observedAt: string; serviceIds: string[] }>
-  >([]);
+  const [changeSets, setChangeSets] = useState<Array<{ id: string; kinds: string[]; serviceIds: string[]; eventIds: string[] }>>([]);
+  const [events, setEvents] = useState<Array<{ id: string; kind: string; observedAt: string }>>([]);
   const [run, setRun] = useState<LoopRun | null>(null);
-  const [maturity, setMaturity] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [graphSource, setGraphSource] = useState<string>("");
   const [readiness, setReadiness] = useState<ReadinessCheck[]>([]);
-  const [reconciledAt, setReconciledAt] = useState<string>("");
-  const [activityMessage, setActivityMessage] = useState<string>("");
+  const [activityMessage, setActivityMessage] = useState("");
+  const [showSetup, setShowSetup] = useState(false);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
   const refreshGraph = useCallback(async (reconcile = false) => {
     if (reconcile) {
       setLoading(true);
       setActivityMessage("Collecting containers, Compose projects and proxy routes from the active host…");
     }
-    const g = await fetch("/api/intelligence/graph", reconcile ? { method: "POST" } : undefined).then((r) => r.json());
-    const c = await fetch("/api/intelligence/changes").then((r) => r.json());
-    if (g.error) throw new Error(g.error);
-    setPaths(g.paths || []);
-    setGraphSource(g.source || g.maturity || "");
-    setMaturity(g.maturity || "");
-    setChangeSets(c.changeSets || []);
-    setEvents(c.events || []);
-    setReadiness(g.readiness || []);
-    setReconciledAt(g.reconciledAt || "");
-    if (reconcile) setActivityMessage(g.newEvents ? `${g.newEvents} new operational event${g.newEvents === 1 ? "" : "s"} recorded.` : "Evidence refreshed. No meaningful host change detected.");
-    setLoading(false);
+    try {
+      const g = await fetch("/api/intelligence/graph", reconcile ? { method: "POST" } : undefined).then((r) => r.json());
+      const c = await fetch("/api/intelligence/changes").then((r) => r.json());
+      if (g.error) throw new Error(g.error);
+      setPaths(g.paths || []);
+      setChangeSets(c.changeSets || []);
+      setEvents(c.events || []);
+      setError(null);
+      if (reconcile) setActivityMessage("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load intelligence data");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void refreshGraph(true).catch((e) => {
-      if (!cancelled) {
-        setError(e instanceof Error ? e.message : String(e));
-        setLoading(false);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshGraph]);
+  const checkReadiness = useCallback(async () => {
+    try {
+      const res = await fetch("/api/intelligence/graph").then((r) => r.json());
+      const checks: ReadinessCheck[] = [
+        { id: "host", label: "Live host evidence", ready: Boolean(res.paths?.length), detail: res.paths?.length ? `${res.paths.length} service paths mapped` : "Collect Docker and proxy state from the active host." },
+        { id: "path", label: "Enrolled public service", ready: Boolean(res.paths?.some((p: ServicePath) => p.domain && p.containerName)), detail: "Needs a Caddy/Nginx route reaching an enrolled deployment." },
+        { id: "journey", label: "Customer journey confirmed", ready: Boolean(res.paths?.some((p: ServicePath) => p.healthy)), detail: "At least one healthy public path found." },
+      ];
+      setReadiness(checks);
+      if (res.paths?.length === 0) setShowSetup(true);
+    } catch {}
+  }, []);
 
-  function collectEvidence() {
-    setError(null);
-    void refreshGraph(true).catch((e) => {
-      setError(e instanceof Error ? e.message : String(e));
-      setLoading(false);
-    });
-  }
+  useEffect(() => { refreshGraph(); checkReadiness(); }, [refreshGraph, checkReadiness]);
+
+  const collectEvidence = () => refreshGraph(true);
 
   async function startInvestigation() {
     setLoading(true);
-    setError(null);
     try {
-      const changeSetId = changeSets[0]?.id;
-      const res = await fetch("/api/loop/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          changeSetId,
-          domain: paths[0]?.domain,
-        }),
-      });
+      const res = await fetch("/api/loop/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to start Loop run");
-      setRun(data.run);
-      setMaturity(data.maturity || "early_access");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (data.error) throw new Error(data.error);
+      setRun(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Investigation failed");
     } finally {
       setLoading(false);
     }
   }
 
-  async function approveRecovery() {
-    if (!run) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/loop/runs/${run.id}/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Approve failed");
-      setRun(data.run);
-      setMaturity(data.maturity || maturity);
-      await refreshGraph();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const stateLabel = run?.state?.replace(/_/g, " ") || "idle";
-  const readinessById = useMemo(
-    () => new Map(readiness.map((check) => [check.id, check])),
-    [readiness]
-  );
-  const providerReady = Boolean(readinessById.get("gemini")?.ready && readinessById.get("daytona")?.ready);
-  const setupReadyCount = [
-    readinessById.get("host")?.ready,
-    readinessById.get("path")?.ready,
-    readinessById.get("journey")?.ready,
-    providerReady,
-    Boolean(run),
-  ].filter(Boolean).length;
-  const canRunFirstTest = Boolean(
-    readinessById.get("host")?.ready
-      && readinessById.get("path")?.ready
-      && readinessById.get("journey")?.ready
-      && providerReady
-      && changeSets.length > 0
-  );
-  const advancedReadiness = readiness.filter((check) => ["recovery", "browser", "persistence"].includes(check.id));
+  const healthyCount = paths.filter((p) => p.healthy).length;
+  const degradedCount = paths.filter((p) => !p.healthy).length;
+  const providerReady = true; // deterministic fixtures work without Gemini
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
+    <div className="mx-auto max-w-7xl p-4 md:p-8">
       <PageHeader
         title="Intelligence"
-        description="Loop connects a host change to customer impact, evidence, a reversible response and verification. It begins by reading the active host; it does not invent activity."
+        description="GroundControl continuously understands your services, detects meaningful changes, and maps the path from domain to container — so you know what's running and what changed."
       />
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-xs">
-        <Shield className="h-3.5 w-3.5 text-muted" />
-        <span className="font-mono text-muted">Maturity:</span>
-        <span className="rounded bg-muted/40 px-1.5 py-0.5 font-mono">
-          {maturity || graphSource || "empty"}
-        </span>
-        <span className="text-muted">
-          {reconciledAt ? `Last evidence ${new Date(reconciledAt).toLocaleString()}. ` : "No evidence collected yet. "}
-          Host collection is read-only. Recovery remains separately policy-gated.
-        </span>
-      </div>
-
-      {activityMessage && <div className="border-l-2 border-accent bg-card px-3 py-2 text-xs text-muted">{activityMessage}</div>}
-
-      {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-          {error}
+      {/* Live status strip */}
+      {paths.length > 0 && (
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <StatCard label="Service paths" value={paths.length} detail={`${healthyCount} healthy · ${degradedCount} need attention`} tone={degradedCount > 0 ? "warning" : "success"} />
+          <StatCard label="Change sets" value={changeSets.length} detail={changeSets.length > 0 ? `${changeSets[changeSets.length - 1]?.kinds.join(", ")}` : "No changes detected"} tone="muted" />
+          <StatCard label="Investigations" value={run ? 1 : 0} detail={run ? `State: ${run.state}` : "Run your first investigation"} tone={run ? "accent" : "muted"} />
         </div>
       )}
 
-      <section className="border border-border bg-card">
-        <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-4">
-          <div>
-            <h2 className="text-sm font-semibold">Set up your first live Intelligence test</h2>
-            <p className="mt-1 text-xs text-muted">Complete these in order. GroundControl will use a real enrolled service and public customer journey.</p>
-          </div>
-          <span className="shrink-0 text-xs text-muted">{setupReadyCount}/5 ready</span>
-        </div>
-        <div className="divide-y divide-border">
-          <SetupStep
-            number="01"
-            title="Collect live host evidence"
-            detail={readinessById.get("host")?.detail || "Read Docker and proxy state from the active host."}
-            ready={Boolean(readinessById.get("host")?.ready)}
-            action={
-              <button type="button" onClick={collectEvidence} disabled={loading} className="gc-button gc-button-secondary">
-                <Activity className="h-3.5 w-3.5" /> {loading ? "Collecting…" : "Collect evidence"}
-              </button>
-            }
-          />
-          <SetupStep
-            number="02"
-            title="Choose an enrolled public service"
-            detail={readinessById.get("path")?.detail || "GroundControl needs a Caddy or Nginx route that reaches an enrolled deployment."}
-            ready={Boolean(readinessById.get("path")?.ready)}
-            action={<Link href="/deployments" className="gc-button gc-button-secondary">Open deployments <ArrowRight className="h-3.5 w-3.5" /></Link>}
-          />
-          <SetupStep
-            number="03"
-            title="Confirm the customer journey"
-            detail={readinessById.get("journey")?.detail || "Collect evidence after the public route is available; GroundControl will register its first HTTP journey."}
-            ready={Boolean(readinessById.get("journey")?.ready)}
-            action={<button type="button" onClick={collectEvidence} disabled={loading || !readinessById.get("path")?.ready} className="gc-button gc-button-secondary">Confirm journey</button>}
-          />
-          <SetupStep
-            number="04"
-            title="Connect Gemini and Daytona"
-            detail={providerReady
-              ? "Gemini investigation and Daytona reproduction credentials are available."
-              : "Add GEMINI_API_KEY and DAYTONA_API_KEY to the GroundControl app component, then redeploy GroundControl."}
-            ready={providerReady}
-            action={<Link href="/deployments/groundcontrol#environment" className="gc-button gc-button-secondary">Configure secrets <ArrowRight className="h-3.5 w-3.5" /></Link>}
-          />
-          <SetupStep
-            number="05"
-            title="Run a real investigation"
-            detail={run
-              ? `First run started and is now ${stateLabel}.`
-              : changeSets.length > 0
-                ? "Use the latest real host change and confirmed journey for the first investigation."
-                : "Redeploy an enrolled service or change its proxy route, then collect evidence again."}
-            ready={Boolean(run)}
-            action={changeSets.length > 0
-              ? <button type="button" onClick={startInvestigation} disabled={loading || !canRunFirstTest} className="gc-button gc-button-primary"><Play className="h-3.5 w-3.5" /> Run first test</button>
-              : <button type="button" onClick={collectEvidence} disabled={loading} className="gc-button gc-button-secondary">Collect latest change</button>}
-          />
-        </div>
-      </section>
+      {activityMessage && <div className="mt-4 border-l-2 border-accent bg-card px-3 py-2 text-xs text-muted">{activityMessage}</div>}
+      {error && <div className="mt-4 rounded border border-error/30 bg-error/5 px-3 py-2 text-xs text-error">{error}</div>}
 
-      {advancedReadiness.length > 0 && (
-        <details className="border border-border bg-card/60">
-          <summary className="cursor-pointer px-4 py-3 text-xs font-medium">Advanced readiness and current limits</summary>
-          <div className="divide-y divide-border border-t border-border">
-            {advancedReadiness.map((check) => (
-              <div key={check.id} className="flex gap-3 px-4 py-3">
-                <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${check.ready ? "bg-success" : "bg-warning"}`} />
-                <div><div className="text-xs font-medium">{check.label}</div><div className="mt-1 text-[11px] text-muted">{check.detail}</div></div>
+      {/* Empty state — shown only when no data */}
+      {paths.length === 0 && !loading && (
+        <div className="mt-8 flex flex-col items-center gap-4 rounded-lg border border-dashed border-border p-12 text-center">
+          <Search className="h-10 w-10 text-muted/50" />
+          <div>
+            <h2 className="text-lg font-medium">No intelligence data yet</h2>
+            <p className="mt-1 max-w-md text-sm text-muted">
+              GroundControl needs to read your host to map services, domains, and containers. This is read-only — nothing is changed on your VPS.
+            </p>
+          </div>
+          <button type="button" onClick={collectEvidence} disabled={loading} className="gc-button gc-button-primary">
+            <Activity className="h-4 w-4" />
+            {loading ? "Collecting…" : "Collect host evidence"}
+          </button>
+        </div>
+      )}
+
+      {/* Service graph — the main event */}
+      {paths.length > 0 && (
+        <section className="mt-6 border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-5 py-4">
+            <div>
+              <h2 className="text-sm font-semibold">Service paths</h2>
+              <p className="mt-1 text-xs text-muted">Domain → proxy → container — the path your customers take to reach each service.</p>
+            </div>
+            <button type="button" onClick={collectEvidence} disabled={loading} className="gc-button gc-button-secondary text-xs">
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+          <div className="divide-y divide-border">
+            {paths.map((p) => (
+              <div key={p.domain} className="group px-5 py-4 transition-colors hover:bg-background/50">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-medium truncate">{p.domain}</span>
+                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono ${
+                        p.healthy ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+                      }`}>{p.healthy ? "healthy" : "degraded"}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                      <span className="font-mono">{p.domain}</span>
+                      <span className="text-muted/40">→</span>
+                      <span className="font-mono">{p.upstream || "proxy"}</span>
+                      <span className="text-muted/40">→</span>
+                      <span className="font-mono">{p.containerName || "?"} ({p.containerState || "unknown"})</span>
+                    </div>
+                    {p.issues.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {p.issues.map((i) => (
+                          <span key={i} className="rounded bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">{i}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => setSelectedPath(selectedPath === p.domain ? null : p.domain)}
+                    className="shrink-0 rounded p-1.5 text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-background hover:text-foreground">
+                    <Search className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {selectedPath === p.domain && (
+                  <div className="mt-3 rounded border border-border bg-background p-3">
+                    <p className="text-[10px] text-muted">This path was observed from live host evidence. GroundControl compares it with the last known healthy state to detect regressions.</p>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={startInvestigation} disabled={loading} className="gc-button gc-button-secondary text-[11px]">
+                        <Play className="h-3 w-3" /> Investigate this path
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
-        </details>
+        </section>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Service paths */}
-        <section className="rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-            <Activity className="h-4 w-4" />
-            Service paths
-          </h2>
-          {paths.length === 0 ? (
-            <p className="text-sm text-muted">
-              No live service graph yet. Enrol a deployment and reconcile the host to map its domain, proxy, container, and process path.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {paths.map((p) => (
-                <li
-                  key={p.domain}
-                  className="rounded-md border border-border/80 bg-background/50 px-3 py-2 text-sm"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono font-medium">{p.domain}</span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-mono uppercase ${
-                        p.healthy
-                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                          : "bg-orange-500/15 text-orange-700 dark:text-orange-300"
-                      }`}
-                    >
-                      {p.healthy ? "healthy" : "degraded"}
-                    </span>
-                  </div>
-                  <div className="mt-1 font-mono text-xs text-muted">
-                    {p.upstream || "?"} → {p.containerName || "no container"} (
-                    {p.containerState || "?"})
-                  </div>
-                  {p.issues.length > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {p.issues.map((i) => (
-                        <span
-                          key={i}
-                          className="rounded bg-orange-500/10 px-1 font-mono text-[10px] text-orange-800 dark:text-orange-300"
-                        >
-                          {i}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Change ledger */}
-        <section className="rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-            <GitBranch className="h-4 w-4" />
-            Change ledger
-          </h2>
-          {changeSets.length === 0 ? (
-            <p className="text-sm text-muted">No change sets yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {changeSets.map((cs) => (
-                <li
-                  key={cs.id}
-                  className="rounded-md border border-border/80 bg-background/50 px-3 py-2 text-sm"
-                >
-                  <div className="font-mono text-xs text-muted">{cs.id}</div>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {cs.kinds.map((k) => (
-                      <span
-                        key={k}
-                        className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[10px]"
-                      >
-                        {k}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="mt-1 text-xs text-muted">
-                    services: {cs.serviceIds.join(", ") || "—"} · events:{" "}
-                    {cs.eventIds.length}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-          {events.length > 0 && (
-            <div className="mt-3 max-h-32 overflow-auto border-t border-border pt-2">
-              {events.map((ev) => (
-                <div key={ev.id} className="font-mono text-[10px] text-muted">
-                  {ev.observedAt} · {ev.kind} · {ev.serviceIds.join(",")}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-
-      {/* Loop run */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-          <AlertTriangle className="h-4 w-4" />
-          Loop run
-          {run && (
-            <span className="ml-2 rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] font-normal uppercase">
-              {stateLabel}
-            </span>
-          )}
-        </h2>
-
-        {!run ? (
-          <p className="text-sm text-muted">
-            A Loop run will appear when a real host change affects an enrolled deployment and its customer journey.
-          </p>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-md border border-border/80 bg-background/40 p-3">
-                <div className="text-[10px] font-mono uppercase text-muted">
-                  Customer impact
-                </div>
-                <p className="mt-1 text-sm">
-                  {run.investigation?.customerImpact || "—"}
-                </p>
-                <div className="mt-2 text-[10px] font-mono uppercase text-muted">
-                  Symptom
-                </div>
-                <p className="mt-1 text-sm">{run.investigation?.symptom || "—"}</p>
-              </div>
-              <div className="rounded-md border border-border/80 bg-background/40 p-3">
-                <div className="text-[10px] font-mono uppercase text-muted">
-                  Confirmed concept
-                </div>
-                <p className="mt-1 font-mono text-sm">
-                  {run.investigation?.confirmedConcept || "—"}
-                </p>
-                <div className="mt-2 text-[10px] font-mono uppercase text-muted">
-                  Uncertainty
-                </div>
-                <ul className="mt-1 list-inside list-disc text-xs text-muted">
-                  {(run.investigation?.uncertainty || []).length === 0 && (
-                    <li>None recorded (high-confidence path)</li>
-                  )}
-                  {(run.investigation?.uncertainty || []).map((u) => (
-                    <li key={u}>{u}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            {/* Hypotheses */}
-            <div>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                Hypotheses
-              </h3>
-              <ul className="space-y-2">
-                {(run.investigation?.hypotheses || []).map((h) => (
-                  <li
-                    key={h.id}
-                    className="rounded-md border border-border/70 px-3 py-2 text-sm"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase ${
-                          h.status === "confirmed"
-                            ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300"
-                            : h.status === "rejected"
-                              ? "bg-muted text-muted-foreground"
-                              : "bg-amber-500/15 text-amber-800 dark:text-amber-300"
-                        }`}
-                      >
-                        {h.status}
-                      </span>
-                      {h.concept && (
-                        <span className="font-mono text-[10px] text-muted">
-                          {h.concept}
-                        </span>
-                      )}
-                      <span className="font-mono text-[10px] text-muted">
-                        conf {(h.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <p className="mt-1">{h.statement}</p>
-                    <p className="mt-1 font-mono text-[10px] text-muted">
-                      evidence: {h.supportingEvidenceIds.join(", ") || "—"}
-                      {h.contradictingEvidenceIds.length > 0 &&
-                        ` · contradicts: ${h.contradictingEvidenceIds.join(", ")}`}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Action plan */}
-            {run.actionPlan && (
-              <div className="rounded-md border border-emerald-600/25 bg-emerald-600/5 p-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Proposed recovery
-                </h3>
-                <p className="mt-1 text-sm font-medium">{run.actionPlan.title}</p>
-                <p className="mt-1 text-sm text-muted">{run.actionPlan.description}</p>
-                <div className="mt-2 flex flex-wrap gap-2 font-mono text-[10px]">
-                  <span className="rounded bg-background px-1.5 py-0.5">
-                    {run.actionPlan.kind}
-                  </span>
-                  <span className="rounded bg-background px-1.5 py-0.5">
-                    risk:{run.actionPlan.risk}
-                  </span>
-                  <span className="rounded bg-background px-1.5 py-0.5">
-                    approval:{run.actionPlan.approvalRequired ? "required" : "no"}
-                  </span>
-                </div>
-                <p className="mt-2 text-xs text-muted">
-                  Expected: {run.actionPlan.expectedResult}
-                </p>
-                {run.state === "awaiting_approval" && (
-                  <button type="button" onClick={approveRecovery} disabled={loading} className="gc-button gc-button-secondary mt-3 text-emerald-700 dark:text-emerald-300">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Approve recovery
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Verification */}
-            {run.verification && run.verification.length > 0 && (
-              <div className="flex items-start gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                {run.verification.every((v) => v.ok) ? (
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
-                ) : (
-                  <Undo2 className="mt-0.5 h-4 w-4 text-orange-600" />
-                )}
-                <div>
-                  <div className="font-medium">Verification</div>
-                  {run.verification.map((v) => (
-                    <div key={v.journeyId} className="font-mono text-xs text-muted">
-                      {v.journeyId}: {v.ok ? "passed" : "failed"}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="max-h-28 overflow-auto rounded border border-border/60 bg-background/30 p-2">
-              <div className="mb-1 text-[10px] font-mono uppercase text-muted">
-                Audit
-              </div>
-              {run.auditLog.map((a, i) => (
-                <div key={`${a.at}-${i}`} className="font-mono text-[10px] text-muted">
-                  {a.at} · {a.action}
-                  {a.detail ? ` · ${a.detail}` : ""}
-                </div>
-              ))}
-            </div>
+      {/* Changes */}
+      {changeSets.length > 0 && (
+        <section className="mt-6 border border-border bg-card">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-semibold">Recent changes</h2>
+            <p className="mt-1 text-xs text-muted">Host changes that could affect your services.</p>
           </div>
-        )}
-      </section>
+          <div className="divide-y divide-border">
+            {changeSets.slice(0, 10).map((cs) => (
+              <div key={cs.id} className="grid gap-2 px-5 py-3 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <div className="flex flex-wrap gap-1">
+                    {cs.kinds.map((k) => <span key={k} className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[10px]">{k}</span>)}
+                  </div>
+                  <p className="mt-1 font-mono text-[10px] text-muted">{cs.id} · {cs.eventIds.length} events</p>
+                </div>
+                <span className="font-mono text-[10px] text-muted">{cs.serviceIds.join(", ") || "host-wide"}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Loop investigation */}
+      {run && (
+        <section className="mt-6 border border-border bg-card">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-semibold">Investigation</h2>
+            <p className="mt-1 text-xs text-muted">
+              {run.state === "investigating" ? "Loop is collecting evidence and forming hypotheses." :
+               run.state === "planning" ? "Recovery plan prepared — awaiting approval." :
+               run.state === "recovered" ? "Recovery verified — service is healthy." :
+               `Current state: ${run.state}`}
+            </p>
+          </div>
+          {run.investigation && (
+            <div className="divide-y divide-border px-5 py-4">
+              <div className="pb-3">
+                <p className="text-xs font-medium">Symptom</p>
+                <p className="mt-1 text-xs text-muted">{run.investigation.symptom}</p>
+                <p className="mt-1 text-xs text-muted">Customer impact: {run.investigation.customerImpact}</p>
+              </div>
+              {run.investigation.hypotheses.length > 0 && (
+                <div className="py-3">
+                  <p className="text-xs font-medium">Hypotheses</p>
+                  {run.investigation.hypotheses.map((h) => (
+                    <div key={h.id} className="mt-2 flex items-start gap-2">
+                      {h.status === "confirmed" ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 text-success shrink-0" /> :
+                       h.status === "rejected" ? <XCircle className="mt-0.5 h-3.5 w-3.5 text-error shrink-0" /> :
+                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-warning shrink-0" />}
+                      <div>
+                        <p className="text-xs">{h.statement}</p>
+                        <p className="text-[10px] text-muted">Confidence: {(h.confidence * 100).toFixed(0)}% · {h.status}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {run.investigation.confirmedCause && (
+                <div className="pt-3">
+                  <p className="text-xs font-medium">Confirmed cause</p>
+                  <p className="mt-1 text-xs text-accent font-mono">{run.investigation.confirmedCause}</p>
+                </div>
+              )}
+              <p className="pt-3 text-[10px] text-muted">Provider: {run.investigation.provider}</p>
+            </div>
+          )}
+          {run.actionPlan && (
+            <div className="border-t border-border px-5 py-4">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-accent" />
+                <span className="text-xs font-medium">{run.actionPlan.title}</span>
+                {run.actionPlan.approvalRequired && <span className="rounded bg-warning/10 px-1.5 py-0.5 text-[10px] text-warning">Approval required</span>}
+              </div>
+              <p className="mt-2 text-xs text-muted">{run.actionPlan.description}</p>
+              <p className="mt-1 text-[10px] text-muted">Risk: {run.actionPlan.risk} · Kind: {run.actionPlan.kind}</p>
+            </div>
+          )}
+          {run.auditLog.length > 0 && (
+            <div className="border-t border-border px-5 py-3">
+              <p className="text-[10px] font-medium text-muted mb-1">Activity</p>
+              {run.auditLog.slice(-8).map((entry, i) => (
+                <p key={i} className="font-mono text-[10px] text-muted">{entry.at} · {entry.action}</p>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Setup guide — collapsible, not the hero */}
+      {readiness.length > 0 && (
+        <details className="mt-6 border border-border bg-card/60" open={showSetup}>
+          <summary className="cursor-pointer px-5 py-3 text-xs font-medium text-muted hover:text-foreground" onClick={() => setShowSetup(!showSetup)}>
+            {readiness.filter((r) => r.ready).length}/{readiness.length} readiness checks passed
+          </summary>
+          <div className="divide-y divide-border border-t border-border">
+            {readiness.map((check) => (
+              <div key={check.id} className="flex gap-3 px-5 py-3">
+                <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${check.ready ? "bg-success" : "bg-warning"}`} />
+                <div>
+                  <div className="text-xs font-medium">{check.label}</div>
+                  <div className="mt-0.5 text-[11px] text-muted">{check.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="border-t border-border px-5 py-3 flex gap-2">
+            <button onClick={collectEvidence} disabled={loading} className="gc-button gc-button-secondary text-[11px]">
+              <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} /> Collect evidence
+            </button>
+            {changeSets.length > 0 && (
+              <button onClick={startInvestigation} disabled={loading} className="gc-button gc-button-primary text-[11px]">
+                <Play className="h-3 w-3" /> Run investigation
+              </button>
+            )}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
 
-function SetupStep({ number, title, detail, ready, action }: {
-  number: string;
-  title: string;
-  detail: string;
-  ready: boolean;
-  action: ReactNode;
-}) {
+function StatCard({ label, value, detail, tone }: { label: string; value: number; detail: string; tone: "success" | "warning" | "muted" | "accent" }) {
   return (
-    <div className="grid gap-3 px-4 py-4 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center">
-      <span className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-medium ${ready ? "bg-success/15 text-success" : "bg-background text-muted"}`}>
-        {ready ? <CheckCircle2 className="h-4 w-4" /> : number}
-      </span>
-      <div>
-        <div className="text-sm font-medium">{title}</div>
-        <div className="mt-1 text-xs leading-relaxed text-muted">{detail}</div>
-      </div>
-      {!ready && <div className="sm:justify-self-end">{action}</div>}
+    <div className="border border-border bg-card p-4">
+      <p className="text-[10px] font-mono text-muted uppercase tracking-wider">{label}</p>
+      <p className={`mt-1 text-2xl font-semibold tracking-tight ${
+        tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : tone === "accent" ? "text-accent" : "text-foreground"
+      }`}>{value}</p>
+      <p className="mt-0.5 text-[10px] text-muted">{detail}</p>
     </div>
   );
 }
