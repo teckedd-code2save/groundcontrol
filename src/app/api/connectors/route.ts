@@ -6,6 +6,30 @@ import { decryptMaybe, encrypt } from "@/lib/crypto";
 
 const ALLOWED_CONNECTORS = ["github", "gemini", "daytona"];
 
+const CONNECTOR_META: Record<string, { name: string; description: string; purpose: string; provider: string; icon: string }> = {
+  github: {
+    name: "GitHub",
+    description: "GitHub Container Registry pull access and image tag syncing.",
+    purpose: "Authenticates docker pull from ghcr.io and enables automatic image tag updates via CI pipeline.",
+    provider: "github.com",
+    icon: "github",
+  },
+  gemini: {
+    name: "Gemini",
+    description: "Structured incident investigation and recovery planning.",
+    purpose: "Analyses service evidence, forms hypotheses, and proposes least-disruptive recovery actions.",
+    provider: "google",
+    icon: "gemini",
+  },
+  daytona: {
+    name: "Daytona",
+    description: "Isolated sandbox for reproducing failures before applying fixes.",
+    purpose: "Clones the exact commit, applies suspect changes, and validates fixes without touching production.",
+    provider: "daytona",
+    icon: "daytona",
+  },
+};
+
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
@@ -27,6 +51,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       connectors: ALLOWED_CONNECTORS.map((id) => ({
         id,
+        ...CONNECTOR_META[id],
         configured: Object.keys(grouped[id] || {}).length > 0,
         config: grouped[id] || {},
       })),
