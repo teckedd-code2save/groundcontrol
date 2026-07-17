@@ -711,12 +711,23 @@ export default function TemplatesPage() {
               <div>
                 <label className="block text-xs font-mono text-muted mb-1">Domain</label>
                 <input type="text" value={inputs.domain || ""}
-                  onChange={e => { updateInput("domain", e.target.value); setSelectedZoneId(""); }}
+                  onChange={e => {
+                    const val = e.target.value;
+                    // If the user types a bare name and a zone is selected,
+                    // keep the zone match but let them type freely
+                    updateInput("domain", val);
+                  }}
                   placeholder="app.example.com"
                   className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"/>
-                <p className="mt-1 text-[10px] text-muted">Use a domain from a connected Cloudflare zone. GroundControl only reports success after the public route responds.</p>
+                <p className="mt-1 text-[10px] text-muted">
+                  Use a domain from a connected Cloudflare zone. GroundControl only reports success after the public route responds.
+                </p>
                 {resolvedDomain && resolvedDomain !== String(inputs.domain || "").trim() && (
-                  <p className="mt-1 font-mono text-[11px] text-accent">{resolvedDomain}</p>
+                  <div className="mt-1.5 rounded border border-accent/30 bg-accent/5 px-2.5 py-1.5">
+                    <p className="text-[10px] text-muted mb-0.5">Final domain with zone:</p>
+                    <p className="font-mono text-xs text-accent font-medium">{resolvedDomain}</p>
+                    <p className="mt-1 text-[9px] text-muted">The DNS record will be created for this full domain. Caddy will serve at this address.</p>
+                  </div>
                 )}
               </div>
               {(selected.inputs || []).filter(i => ![
