@@ -59,6 +59,7 @@ interface EnvProfile {
   status: string;
   schema: Array<{ key: string; required: boolean; component?: string }>;
   validation?: { ok: boolean; missing: string[]; hash: string };
+  values: Record<string, EnvValue>;
   componentValues: Record<string, Record<string, EnvValue>>;
 }
 
@@ -100,7 +101,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
   const [infisicalProjects, setInfisicalProjects] = useState<InfisicalProject[]>([]);
 
   const fixedScope = Boolean(componentName);
-  const scopeLabel = selectedComponent || "Choose a component";
+  const scopeLabel = selectedComponent || "Deployment-wide";
 
   const hydrate = useCallback((data: Record<string, unknown>) => {
     const nextProfile = data.profile as EnvProfile | undefined;
@@ -175,10 +176,11 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
 
   const selectedSavedValues = useMemo(() => selectedComponent
     ? profile?.componentValues?.[selectedComponent] || {}
-    : {}, [profile?.componentValues, selectedComponent]);
+    : profile?.values || {}, [profile?.componentValues, profile?.values, selectedComponent]);
   const selectedSchema = useMemo(() => selectedComponent
-    ? (profile?.schema || []).filter((entry) => entry.component === selectedComponent)
-    : [], [profile?.schema, selectedComponent]);
+    ? (profile?.schema || []).filter((entry) => (entry.component || "") === selectedComponent)
+    : (profile?.schema || []).filter((entry) => !entry.component || entry.component === ""),
+    [profile?.schema, selectedComponent]);
   const keys = useMemo(() => Array.from(new Set([
     ...selectedSchema.map((entry) => entry.key),
     ...Object.keys(selectedSavedValues),
@@ -194,8 +196,8 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     isDefault?: boolean;
     success?: string;
   } = {}) {
-    if (!profile || (!selectedComponent && (options.values || options.deleteKeys))) {
-      setNotice({ tone: "error", text: "Choose the component that should receive these secrets." });
+    if (!profile || (!selectedComponent && !options.values && !options.deleteKeys)) {
+      setNotice({ tone: "error", text: "No changes to save." });
       return false;
     }
     setBusy("save");
@@ -393,7 +395,15 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       <div className={`grid ${fixedScope ? "" : "md:grid-cols-[190px_minmax(0,1fr)]"}`}>
         {!fixedScope && (
           <aside className="border-b border-border bg-background/25 p-3 md:border-b-0 md:border-r">
-            <div className="px-2 pb-2 text-[10px] font-medium text-muted">Components</div>
+            <div className="px-2 pb-2 text-[10px] font-medium text-muted">Scope</div>
+            <ScopeButton
+              active={selectedComponent === ""}
+              label="Deployment-wide"
+              count={Object.keys(profile?.values || {}).length}
+              missingCount={[...missingKeys].filter((key) => !key.includes(":")).length}
+              onClick={() => setSelectedComponent("")}
+            />
+            <div className="px-2 py-1 text-[10px] font-medium text-muted">Components</div>
             {components.map((component) => (
               <ScopeButton
                 key={component}
