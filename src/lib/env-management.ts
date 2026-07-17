@@ -471,15 +471,24 @@ export function buildMaterializeEnvBundleCommand(
       "rm -f .groundcontrol/compose.env.override.yml"
     );
   }
-  // Merge component-specific values into the deployment-wide .env so
-  // Docker Compose variable substitution (${API_IMAGE}, ${WEB_IMAGE}, etc.)
-  // picks them up without needing the compose.env.override.yml.
-  const mergedValues = { ...values };
-  for (const component of Object.keys(componentValues).filter(isSafeComposeServiceName)) {
-    Object.assign(mergedValues, componentValues[component]);
+  // Deployment-wide values
+  if (Object.keys(values).length > 0 || options.pruneManagedFiles) {
+    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(values)));
   }
-  if (Object.keys(mergedValues).length > 0 || options.pruneManagedFiles) {
-    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(mergedValues)));
+
+  // Compose-substitution values: keys ending in _IMAGE (like API_IMAGE, WEB_IMAGE)
+  // are Docker Compose variables resolved at parse time, not container runtime envs.
+  // They must be in .env even if stored under a component.
+  const imageKeys: Record<string, string> = {};
+  for (const component of Object.keys(componentValues)) {
+    for (const [key, value] of Object.entries(componentValues[component])) {
+      if (key.endsWith("_IMAGE") || key.endsWith("_TAG")) {
+        imageKeys[key] = value;
+      }
+    }
+  }
+  if (Object.keys(imageKeys).length > 0) {
+    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv({ ...values, ...imageKeys })));
   }
 
   const components = Object.keys(componentValues)
