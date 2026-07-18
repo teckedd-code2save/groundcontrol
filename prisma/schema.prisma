@@ -119,9 +119,10 @@ model EnrolledDeployment {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  projectGroup  ProjectGroup? @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
-  vpsConfig     VpsConfig?    @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
-  legacyProject Project?      @relation(fields: [legacyProjectId], references: [id], onDelete: SetNull)
+  projectGroup       ProjectGroup?                @relation(fields: [projectGroupId], references: [id], onDelete: SetNull)
+  vpsConfig          VpsConfig?                   @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
+  legacyProject      Project?                     @relation(fields: [legacyProjectId], references: [id], onDelete: SetNull)
+  githubRepositories GithubRepositoryDeployment[]
 
   @@unique([vpsConfigId, sourcePath])
   @@unique([vpsConfigId, containerName])
@@ -169,30 +170,30 @@ model Job {
 }
 
 model Deployment {
-  id                 Int      @id @default(autoincrement())
-  projectId          Int
-  targetId           Int
-  jobId              Int? // Background job tracking real-time logs
-  status             String   @default("pending") // pending | building | deploying | success | failed | rolled_back
-  branch             String   @default("main")
-  commitSha          String?
-  imageTag           String?
-  imageDigest        String?  // SHA256 digest of the deployed image (docker inspect --format '{{.RepoDigests}}')
+  id                  Int      @id @default(autoincrement())
+  projectId           Int
+  targetId            Int
+  jobId               Int? // Background job tracking real-time logs
+  status              String   @default("pending") // pending | building | deploying | success | failed | rolled_back
+  branch              String   @default("main")
+  commitSha           String?
+  imageTag            String?
+  imageDigest         String? // SHA256 digest of the deployed image (docker inspect --format '{{.RepoDigests}}')
   previousImageDigest String? // Digest of the previous successful deployment, for rollback
-  changedFields      String?  // JSON: list of fields that changed since last deploy ["image","env","compose_file","proxy_config"]
-  publicUrl          String?
-  previewUrl         String?
-  previewProcessInfo String? // PID/log path for ephemeral quick tunnels
-  idempotencyKey     String?
-  output             String?
-  error              String?
-  durationMs         Int?
-  envProfileId       Int?
-  envProviderType    String?
-  envHash            String?
-  envStatus          String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  changedFields       String? // JSON: list of fields that changed since last deploy ["image","env","compose_file","proxy_config"]
+  publicUrl           String?
+  previewUrl          String?
+  previewProcessInfo  String? // PID/log path for ephemeral quick tunnels
+  idempotencyKey      String?
+  output              String?
+  error               String?
+  durationMs          Int?
+  envProfileId        Int?
+  envProviderType     String?
+  envHash             String?
+  envStatus           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   project     Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
   target      DeploymentTarget       @relation(fields: [targetId], references: [id], onDelete: Cascade)
@@ -560,4 +561,92 @@ model AppConfig {
   key       String   @id
   value     String   @default("") // encrypted JSON for sensitive values
   updatedAt DateTime @updatedAt
+}
+
+// One operator-owned GitHub App per GroundControl instance. Credentials are
+// encrypted with GROUNDCONTROL_SECRET and are never returned to the client.
+model GithubAppConnection {
+  id                     Int      @id @default(autoincrement())
+  appId                  String   @unique
+  slug                   String   @unique
+  name                   String
+  ownerLogin             String   @default("")
+  clientId               String
+  clientSecretEncrypted  String
+  privateKeyEncrypted    String
+  webhookSecretEncrypted String
+  publicUrl              String
+  permissionsJson        String   @default("{}")
+  eventsJson             String   @default("[]")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  installations GithubInstallation[]
+}
+
+model GithubInstallation {
+  id                  String    @id // GitHub installation ID
+  connectionId        Int
+  accountLogin        String
+  accountType         String    @default("User")
+  repositorySelection String    @default("selected")
+  suspendedAt         DateTime?
+  lastSyncedAt        DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  connection   GithubAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  repositories GithubRepository[]
+
+  @@index([connectionId, accountLogin])
+}
+
+model GithubRepository {
+  id              String   @id // GitHub repository ID
+  installationId  String
+  owner           String
+  name            String
+  fullName        String   @unique
+  htmlUrl         String
+  defaultBranch   String   @default("main")
+  isPrivate       Boolean  @default(false)
+  isArchived      Boolean  @default(false)
+  permissionsJson String   @default("{}")
+  lastSyncedAt    DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  installation GithubInstallation           @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  deployments  GithubRepositoryDeployment[]
+
+  @@index([installationId, owner])
+}
+
+model GithubRepositoryDeployment {
+  githubRepositoryId   String
+  enrolledDeploymentId Int
+  source               String   @default("repository_url")
+  createdAt            DateTime @default(now())
+
+  repository GithubRepository   @relation(fields: [githubRepositoryId], references: [id], onDelete: Cascade)
+  deployment EnrolledDeployment @relation(fields: [enrolledDeploymentId], references: [id], onDelete: Cascade)
+
+  @@id([githubRepositoryId, enrolledDeploymentId])
+  @@index([enrolledDeploymentId])
+}
+
+model GithubWebhookDelivery {
+  id                 String    @id // X-GitHub-Delivery
+  event              String
+  action             String    @default("")
+  repositoryFullName String    @default("")
+  installationId     String    @default("")
+  status             String    @default("received") // received | processed | ignored | failed
+  summaryJson        String    @default("{}") // sanitized metadata only; never the raw payload
+  error              String?
+  receivedAt         DateTime  @default(now())
+  processedAt        DateTime?
+
+  @@index([event, receivedAt])
+  @@index([repositoryFullName, receivedAt])
 }

@@ -2,22 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  CheckCircle2,
   ExternalLink,
-  FolderGit,
-  Key,
   Plug,
   RefreshCw,
   Shield,
-  Trash2,
-  WifiOff,
 } from "lucide-react";
+import GithubAppPanel from "@/components/GithubAppPanel";
 
 type ConnectorState = {
   id: string;
   name: string;
   provider: string;
-  icon: "github" | "gemini" | "daytona" | "generic";
+  icon: "gemini" | "daytona" | "generic";
   configured: boolean;
   status: "connected" | "disconnected" | "error";
   config: Record<string, string>;
@@ -26,17 +22,6 @@ type ConnectorState = {
 };
 
 const DEFAULT_CONNECTORS: ConnectorState[] = [
-  {
-    id: "github",
-    name: "GitHub",
-    provider: "github.com",
-    icon: "github",
-    configured: false,
-    status: "disconnected",
-    config: { token: "", username: "" },
-    description: "GitHub Container Registry pull access and image tag syncing.",
-    purpose: "Authenticates docker pull from ghcr.io and enables automatic image tag updates via CI pipeline.",
-  },
   {
     id: "gemini",
     name: "Gemini",
@@ -137,7 +122,6 @@ export default function ConnectorsPanel() {
 
   const IconComponent = ({ icon }: { icon: ConnectorState["icon"] }) => {
     switch (icon) {
-      case "github": return <FolderGit className="h-5 w-5" />;
       case "gemini": return <span className="text-lg">✦</span>;
       case "daytona": return <Shield className="h-5 w-5" />;
       default: return <Plug className="h-5 w-5" />;
@@ -145,13 +129,15 @@ export default function ConnectorsPanel() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="border-b border-border pb-4">
         <h2 className="text-sm font-semibold">Connectors</h2>
         <p className="mt-1 text-xs text-muted max-w-2xl">
-          External services that GroundControl integrates with. Configure each connector to enable its features — pull images, investigate incidents, or reproduce failures.
+          Connect the systems that provide repository change evidence, investigation intelligence and isolated reproduction.
         </p>
       </div>
+
+      <GithubAppPanel />
 
       {message && (
         <div className={`rounded border px-3 py-2 text-xs ${message.tone === "success" ? "border-success/30 bg-success/5 text-success" : "border-error/30 bg-error/5 text-error"}`}>
@@ -206,44 +192,6 @@ export default function ConnectorsPanel() {
           {/* Config form */}
           {editing === conn.id && (
             <div className="border-t border-border bg-background/50 px-5 py-4">
-              {conn.id === "github" && (
-                <div className="space-y-3 max-w-lg">
-                  <div>
-                    <label className="block text-[10px] font-mono text-muted mb-1">
-                      GitHub username
-                    </label>
-                    <input
-                      type="text"
-                      value={draft.username || ""}
-                      onChange={(e) => setDraft({ ...draft, username: e.target.value })}
-                      placeholder="teckedd-code2save"
-                      className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-mono text-muted mb-1">
-                      Personal access token
-                    </label>
-                    <input
-                      type="password"
-                      value={draft.token || ""}
-                      onChange={(e) => setDraft({ ...draft, token: e.target.value })}
-                      placeholder="ghp_..."
-                      className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent"
-                    />
-                    <p className="mt-1 text-[10px] text-muted">
-                      Needs <code className="font-mono bg-muted/20 px-1">read:packages</code> scope.{" "}
-                      <a href="https://github.com/settings/tokens" target="_blank" rel="noopener" className="text-accent hover:underline inline-flex items-center gap-0.5">
-                        Create token <ExternalLink className="h-2.5 w-2.5" />
-                      </a>
-                    </p>
-                  </div>
-                  <p className="text-[10px] text-muted bg-muted/10 rounded p-2">
-                    Used for: <code className="font-mono">docker login ghcr.io</code> on the VPS and automatic image tag updates from CI pipelines.
-                  </p>
-                </div>
-              )}
-
               {conn.id === "gemini" && (
                 <div className="space-y-3 max-w-lg">
                   <div>
