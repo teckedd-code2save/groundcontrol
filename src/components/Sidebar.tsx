@@ -111,7 +111,10 @@ export function Sidebar() {
       <aside className={`gc-sidebar fixed inset-y-0 left-0 z-40 hidden flex-col border-r transition-[width] duration-200 md:flex ${collapsed ? "w-[72px]" : "w-60"}`}>
         <Brand collapsed={collapsed} toggle={toggleCollapsed} />
         <NavGroups pathname={pathname} unreadAlerts={unreadAlerts} collapsed={collapsed} />
-        <div className="border-t border-border p-2">
+        <div className="space-y-1 border-t border-border p-2">
+          {navItems.filter((item) => item.section === "system").map((item) => (
+            <DesktopNavItem key={item.href} item={item} pathname={pathname} unreadAlerts={unreadAlerts} collapsed={collapsed} />
+          ))}
           <Link href="/onboarding?add=1" title="Add another server" className={`flex min-h-9 items-center gap-2 rounded-sm border border-border text-[11px] text-muted transition-colors hover:border-accent/40 hover:text-foreground ${collapsed ? "justify-center px-2" : "px-3"}`}>
             <Plus className="h-3.5 w-3.5 shrink-0" />
             {!collapsed && <span>Add server</span>}
