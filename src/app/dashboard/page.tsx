@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import MemoryPanel from "@/components/MemoryPanel";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
 import { PageHeader } from "@/components/PageHeader";
+import { ArrowUpRight, Bot, ChevronRight } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -239,7 +241,12 @@ export default function DashboardPage() {
 
   const intelligence = generateIntelligence();
   const priorityItems = intelligence.items.filter((item) => item.status !== "good").slice(0, 2);
-  const calmItems = priorityItems.length > 0 ? priorityItems : intelligence.items.slice(0, 1);
+  const attentionItems = priorityItems.length > 0 ? priorityItems : intelligence.items.slice(0, 3);
+  const overallState = intelligence.items.some((item) => item.status === "critical")
+    ? "critical"
+    : intelligence.items.some((item) => item.status === "warn")
+      ? "warning"
+      : "healthy";
 
   const topMetrics = [
     { label: "Memory", value: stats ? `${stats.memory.percent}%` : "—", detail: `${stats?.memory.used || 0}/${stats?.memory.total || 0} MB`, tone: stats && parseFloat(stats.memory.percent) > 85 ? "text-error" : "text-foreground" },
@@ -249,28 +256,22 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto">
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <PageHeader
-          className="mb-0"
-          title="Dashboard"
-          description="Status, priority attention, and the next safe action."
-        />
-        <div className="flex flex-wrap gap-2 text-[10px] font-mono text-muted">
-          <span className="rounded-md border border-border bg-card px-2.5 py-1.5">
-            uptime <span className="text-foreground">{stats ? formatUptime(stats.uptime) : "—"}</span>
-          </span>
-          <span className="rounded-md border border-border bg-card px-2.5 py-1.5">
-            cores <span className="text-foreground">{stats?.cpuCount || 0}</span>
-          </span>
-          <span className="rounded-md border border-border bg-card px-2.5 py-1.5">
-            containers <span className="text-success">{runningContainers}</span>/<span className="text-foreground">{containers.length}</span>
-          </span>
-        </div>
-      </div>
+    <div className="gc-page gc-page--wide">
+      <PageHeader
+        eyebrow="Fleet overview"
+        title="Operations"
+        description="Customer-impact signals first, with host telemetry and raw controls close behind."
+        actions={(
+          <div className="flex items-center gap-3 font-mono text-[10px] text-muted">
+            <span>UPTIME <span className="text-foreground">{stats ? formatUptime(stats.uptime) : "—"}</span></span>
+            <span className="h-3 w-px bg-border" />
+            <span>{stats?.cpuCount || 0} CORES</span>
+          </div>
+        )}
+      />
 
       {error && (
-        <div className="mb-6 p-4 bg-error/10 border border-error/30 rounded-md text-error text-sm">
+        <div className="mb-6 rounded-sm border border-error/30 bg-error/10 p-4 text-sm text-error">
           {error}
         </div>
       )}
@@ -278,200 +279,191 @@ export default function DashboardPage() {
       <LoaderOverlay3D open={loading && !stats} variant="container" title="Loading dashboard..." />
 
       {loading && !stats ? null : (
-        <>
-          <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-            {topMetrics.map((metric) => (
-              <button
-                key={metric.label}
-                onClick={metric.label === "Memory" || metric.label === "Disk" ? () => setMemoryPanelOpen(true) : undefined}
-                className="rounded-md border border-border bg-card px-3.5 py-3 text-left transition-colors hover:border-accent/30 hover:bg-border/15"
-              >
-                <span className="block text-[10px] font-mono uppercase tracking-wider text-muted">{metric.label}</span>
-                <span className={`mt-1 block text-xl font-semibold tracking-tight ${metric.tone}`}>{metric.value}</span>
-                <span className="mt-0.5 block truncate text-[10px] font-mono text-muted">{metric.detail}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="mb-5 rounded-md border border-border bg-card p-3.5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="min-w-0">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-muted">Attention</div>
-                <div className="mt-1 truncate text-sm font-medium">{intelligence.title}</div>
+        <div className="space-y-5">
+          <section className="gc-panel overflow-hidden">
+            <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
+              <div className="flex min-h-[270px] flex-col justify-between border-b border-border p-6 lg:border-b-0 lg:border-r lg:p-8">
+                <div>
+                  <span className={`gc-status gc-status--${overallState}`}>
+                    {overallState === "healthy" ? "Verified operational state" : overallState === "warning" ? "Review recommended" : "Action required"}
+                  </span>
+                  <h2 className="mt-5 max-w-2xl text-3xl font-medium leading-[1.08] tracking-[-0.045em] md:text-[38px]">{intelligence.title}</h2>
+                  <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted">
+                    {attentionItems[0]?.detail || "GroundControl has not found a current customer-impacting signal."}
+                  </p>
+                </div>
+                <div className="mt-8 flex flex-wrap gap-2">
+                  <Link href="/intelligence" className="gc-button gc-button-primary">Open Intelligence <ArrowUpRight className="h-3.5 w-3.5" /></Link>
+                  <Link href="/alerts" className="gc-button gc-button-secondary">Review alerts</Link>
+                  <button type="button" onClick={investigateWithAi} disabled={synthesisLoading && !synthesis} className="gc-button gc-button-quiet"><Bot className="h-3.5 w-3.5" /> Ask assistant</button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {calmItems.map((item) => {
-                  const tone = item.status === "critical" ? "text-error bg-error/10 border-error/20" : item.status === "warn" ? "text-warning bg-warning/10 border-warning/20" : "text-success bg-success/10 border-success/20";
-                  const content = (
-                    <span className={`inline-flex max-w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px] font-mono ${tone}`}>
-                      <span className="truncate">{item.label}: {item.detail}</span>
-                    </span>
-                  );
-                  if (item.action) {
-                    return <button key={item.label} onClick={item.action} className="max-w-full">{content}</button>;
-                  }
-                  return <a key={item.label} href={item.href} className="max-w-full">{content}</a>;
-                })}
+              <div className="grid grid-cols-2 bg-background/30">
+                {topMetrics.map((metric, index) => (
+                  <button
+                    key={metric.label}
+                    type="button"
+                    onClick={metric.label === "Memory" || metric.label === "Disk" ? () => setMemoryPanelOpen(true) : undefined}
+                    className={`min-h-[134px] p-5 text-left transition-colors hover:bg-white/[0.025] ${index % 2 === 0 ? "border-r border-border" : ""} ${index < 2 ? "border-b border-border" : ""}`}
+                  >
+                    <span className="gc-eyebrow">{metric.label}</span>
+                    <span className={`mt-3 block text-[28px] font-medium tracking-[-0.04em] ${metric.tone}`}>{metric.value}</span>
+                    <span className="mt-1 block truncate font-mono text-[10px] text-muted">{metric.detail}</span>
+                  </button>
+                ))}
               </div>
-              <button
-                onClick={investigateWithAi}
-                disabled={synthesisLoading && !synthesis}
-                className="shrink-0 rounded-md bg-accent px-3 py-2 text-xs font-mono text-white transition-colors hover:bg-accent-bright disabled:opacity-50"
-              >
-                Investigate
-              </button>
             </div>
-            {(synthesis || synthesisError) && (
-              <details className="mt-3 text-xs text-muted">
-                <summary className="cursor-pointer font-mono text-[10px] text-muted">Assistant note</summary>
-                <p className="mt-2 leading-relaxed">{synthesis?.summary || synthesisError}</p>
-                {synthesis?.actions.length ? (
-                  <ul className="mt-2 space-y-1">
-                    {synthesis.actions.slice(0, 3).map((action, index) => <li key={index}>{action}</li>)}
-                  </ul>
-                ) : null}
-              </details>
-            )}
-          </div>
+          </section>
 
-          {/* Metrics Charts */}
-          {metrics.length > 1 && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-              <div className="bg-card border border-border rounded-xl p-5">
-                <h3 className="text-sm font-mono text-muted mb-4">
-                  CPU Load (1m) · Last hour
-                </h3>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,0.75fr)]">
+            <section className="gc-panel min-w-0 overflow-hidden">
+              <div className="gc-panel-header">
+                <div>
+                  <p className="gc-eyebrow">Host telemetry</p>
+                  <h3 className="mt-1 text-sm font-medium">Last hour</h3>
+                </div>
+                <Link href="/processes" className="flex items-center gap-1 text-[11px] text-muted hover:text-foreground">Processes <ChevronRight className="h-3.5 w-3.5" /></Link>
+              </div>
+              {metrics.length > 1 ? (
+                <div className="grid divide-y divide-border lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+                  <div className="min-w-0 p-4">
+                    <p className="mb-3 font-mono text-[10px] text-muted">CPU LOAD · 1 MIN</p>
                 <ResponsiveContainer width="100%" height={200}>
                   <AreaChart data={metrics}>
                     <defs>
                       <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#ff5500" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#ff5500" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#c8f36b" stopOpacity={0.22} />
+                        <stop offset="95%" stopColor="#c8f36b" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                    <CartesianGrid vertical={false} stroke="#2a302b" />
                     <XAxis
                       dataKey="createdAt"
                       tickFormatter={(v) => new Date(v).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      stroke="#666"
+                      stroke="#626960"
                       fontSize={10}
                     />
-                    <YAxis stroke="#666" fontSize={10} />
+                    <YAxis stroke="#626960" fontSize={10} />
                     <Tooltip
-                      contentStyle={{ background: "#111", border: "1px solid #333", borderRadius: 8 }}
+                      contentStyle={{ background: "#0b0e0c", border: "1px solid #3a423b", borderRadius: 4, fontSize: 11 }}
                       labelFormatter={(v) => new Date(v).toLocaleString()}
                     />
-                    <Area type="monotone" dataKey="cpuLoad1" stroke="#ff5500" fill="url(#cpuGrad)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="cpuLoad1" stroke="#c8f36b" fill="url(#cpuGrad)" strokeWidth={1.5} />
                   </AreaChart>
                 </ResponsiveContainer>
-              </div>
-
-              <div className="bg-card border border-border rounded-xl p-5">
-                <h3 className="text-sm font-mono text-muted mb-4">
-                  Memory % · Last hour
-                </h3>
+                  </div>
+                  <div className="min-w-0 p-4">
+                    <p className="mb-3 font-mono text-[10px] text-muted">MEMORY · PERCENT</p>
                 <ResponsiveContainer width="100%" height={200}>
                   <AreaChart data={metrics}>
                     <defs>
                       <linearGradient id="memGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#c77dff" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#c77dff" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#e7b75b" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#e7b75b" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                    <CartesianGrid vertical={false} stroke="#2a302b" />
                     <XAxis
                       dataKey="createdAt"
                       tickFormatter={(v) => new Date(v).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      stroke="#666"
+                      stroke="#626960"
                       fontSize={10}
                     />
-                    <YAxis stroke="#666" fontSize={10} domain={[0, 100]} />
+                    <YAxis stroke="#626960" fontSize={10} domain={[0, 100]} />
                     <Tooltip
-                      contentStyle={{ background: "#111", border: "1px solid #333", borderRadius: 8 }}
+                      contentStyle={{ background: "#0b0e0c", border: "1px solid #3a423b", borderRadius: 4, fontSize: 11 }}
                       labelFormatter={(v) => new Date(v).toLocaleString()}
                     />
-                    <Area type="monotone" dataKey="memPercent" stroke="#c77dff" fill="url(#memGrad)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="memPercent" stroke="#e7b75b" fill="url(#memGrad)" strokeWidth={1.5} />
                   </AreaChart>
                 </ResponsiveContainer>
-              </div>
-            </div>
-          )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-8 text-sm text-muted">Telemetry history will appear after the next collection interval.</div>
+              )}
+            </section>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Load Average */}
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="text-sm font-mono text-muted mb-4">Load Average</h3>
-              <div className="flex gap-4">
-                {stats?.load.map((load, i) => (
-                  <div key={i} className="flex-1">
-                    <div className="text-2xl font-bold">{load.toFixed(2)}</div>
-                    <div className="text-xs text-muted mt-1">
-                      {i === 0 ? "1m" : i === 1 ? "5m" : "15m"}
-                    </div>
-                    <div className="mt-2 h-2 bg-border rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-accent rounded-full transition-all duration-500"
-                        style={{ width: `${Math.min((load / (stats.cpuCount || 1)) * 100, 100)}%` }}
-                      />
+            <section className="gc-panel overflow-hidden">
+              <div className="gc-panel-header">
+                <div>
+                  <p className="gc-eyebrow">Runtime</p>
+                  <h3 className="mt-1 text-sm font-medium">Container health</h3>
+                </div>
+                <span className="font-mono text-[10px] text-muted"><span className="text-success">{counts.running} running</span>{counts.stopped > 0 ? ` · ${counts.stopped} stopped` : ""}</span>
+              </div>
+              <div className="max-h-[446px] divide-y divide-border overflow-y-auto scrollbar-thin">
+                {containers.slice(0, 12).map((container) => {
+                  const isStopped = container.state !== "running";
+                  const isUnhealthy = container.status.includes("unhealthy");
+                  return (
+                    <Link
+                      key={container.name}
+                      href="/containers"
+                      className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-white/[0.025]"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isStopped ? "bg-error" : isUnhealthy ? "bg-warning" : "bg-success"}`} />
+                        <ContainerIcon type={getContainerType(container.name, container.image)} className="h-4 w-4 shrink-0 text-muted" />
+                        <div className="min-w-0">
+                          <span className="block truncate text-[12px] font-medium">{container.name}</span>
+                          <span className="block truncate font-mono text-[9px] text-muted">{container.image}</span>
+                        </div>
+                      </div>
+                      <span className={`shrink-0 font-mono text-[9px] uppercase ${isStopped ? "text-error" : isUnhealthy ? "text-warning" : "text-muted"}`}>{isStopped ? "stopped" : isUnhealthy ? "unhealthy" : container.stats?.cpu || "running"}</span>
+                    </Link>
+                  );
+                })}
+                {containers.length === 0 && (
+                  <p className="p-8 text-center text-sm text-muted">No containers found</p>
+                )}
+              </div>
+              <Link href="/containers" className="flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted hover:text-foreground">Open runtime <ChevronRight className="h-3.5 w-3.5" /></Link>
+            </section>
+          </div>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <section className="gc-panel p-5">
+              <p className="gc-eyebrow">Load average</p>
+              <div className="mt-5 grid grid-cols-3 divide-x divide-border">
+                {stats?.load.map((load, index) => (
+                  <div key={index} className="px-4 first:pl-0 last:pr-0">
+                    <div className="text-2xl font-medium tracking-[-0.04em]">{load.toFixed(2)}</div>
+                    <div className="mt-1 font-mono text-[9px] text-muted">{index === 0 ? "1 MIN" : index === 1 ? "5 MIN" : "15 MIN"}</div>
+                    <div className="mt-3 h-1 overflow-hidden bg-border">
+                      <div className="h-full bg-accent transition-[width] duration-500" style={{ width: `${Math.min((load / (stats.cpuCount || 1)) * 100, 100)}%` }} />
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
 
-            {/* Container Quick View */}
-            <div className="bg-card border border-border rounded-xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-mono text-muted">Container Health</h3>
-                <div className="flex items-center gap-2 text-[10px] font-mono">
-                  <span className="text-success">{counts.running} up</span>
-                  {counts.stopped > 0 && <span className="text-error">{counts.stopped} down</span>}
-                  {counts.unhealthy > 0 && <span className="text-warning">{counts.unhealthy} sick</span>}
-                </div>
+            <section className="gc-panel overflow-hidden">
+              <div className="gc-panel-header">
+                <div><p className="gc-eyebrow">Attention queue</p><h3 className="mt-1 text-sm font-medium">Current signals</h3></div>
               </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
-                {containers.map((container) => {
-                  const isStopped = container.state !== "running";
-                  const isUnhealthy = container.status.includes("unhealthy");
-                  return (
-                    <a
-                      key={container.name}
-                      href={`/containers`}
-                      className={`flex items-center justify-between py-2 px-3 rounded-lg transition-colors ${
-                        isStopped ? "bg-error/5 border border-error/10 hover:bg-error/10" : "bg-background/50 hover:bg-background"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-2 h-2 rounded-full ${
-                            container.state === "running"
-                              ? isUnhealthy
-                                ? "bg-warning"
-                                : "bg-success"
-                              : "bg-error"
-                          }`}
-                        />
-                        <div className="flex items-center gap-2">
-                          <ContainerIcon type={getContainerType(container.name, container.image)} className="w-4 h-4 text-muted" />
-                          <span className={`text-sm font-medium ${isStopped ? "text-error/80" : ""}`}>{container.name}</span>
-                          {isStopped && (
-                            <span className="ml-2 text-[10px] font-mono text-error">stopped</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-xs text-muted font-mono">
-                        {container.stats?.cpu || (isStopped ? "—" : "—")}
-                      </div>
-                    </a>
+              <div className="divide-y divide-border">
+                {attentionItems.map((item) => {
+                  const content = (
+                    <span className="flex items-start gap-3 px-4 py-3 text-left">
+                      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${item.status === "critical" ? "bg-error" : item.status === "warn" ? "bg-warning" : "bg-success"}`} />
+                      <span className="min-w-0"><span className="block text-[12px] font-medium">{item.label}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-muted">{item.detail}</span></span>
+                    </span>
                   );
+                  return item.action
+                    ? <button key={item.label} type="button" onClick={item.action} className="block w-full hover:bg-white/[0.025]">{content}</button>
+                    : <Link key={item.label} href={item.href || "/dashboard"} className="block hover:bg-white/[0.025]">{content}</Link>;
                 })}
-                {containers.length === 0 && (
-                  <p className="text-sm text-muted py-4 text-center">No containers found</p>
-                )}
               </div>
-            </div>
+              {(synthesis || synthesisError) && (
+                <details className="border-t border-border px-4 py-3 text-[11px] text-muted">
+                  <summary className="cursor-pointer font-mono text-[9px] uppercase tracking-wider">Assistant analysis</summary>
+                  <p className="mt-3 leading-relaxed">{synthesis?.summary || synthesisError}</p>
+                </details>
+              )}
+            </section>
           </div>
-        </>
+        </div>
       )}
       <MemoryPanel open={memoryPanelOpen} onClose={() => setMemoryPanelOpen(false)} />
     </div>

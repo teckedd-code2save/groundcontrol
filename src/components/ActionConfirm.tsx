@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { ModalSurface } from "@/components/ModalSurface";
+import { Button, Notice } from "@/components/ui";
 
 export type ActionType = "deploy" | "start" | "stop" | "restart" | "remove" | "prune" | "reload-caddy" | "reload-nginx" | "compose-up" | "compose-down";
 
@@ -70,19 +72,7 @@ export function ActionConfirm({ open, action, targetName, targetType, onConfirm,
   const [confirming, setConfirming] = useState(false);
   const meta = ACTION_META[action];
 
-  if (!open) return null;
-
-  const severityClasses = {
-    neutral: "border-accent/30 text-accent",
-    warning: "border-warning/30 text-warning",
-    error: "border-error/30 text-error",
-  };
-
-  const bgClasses = {
-    neutral: "bg-accent/10 hover:bg-accent/20",
-    warning: "bg-warning/10 hover:bg-warning/20",
-    error: "bg-error/10 hover:bg-error/20",
-  };
+  const noticeTone = meta.severity === "error" ? "danger" : meta.severity;
 
   async function handleConfirm() {
     setConfirming(true);
@@ -94,40 +84,35 @@ export function ActionConfirm({ open, action, targetName, targetType, onConfirm,
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
-      <div className="bg-card border border-border rounded-xl w-full max-w-md p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center border ${severityClasses[meta.severity]}`}>
-            <ActionIcon action={action} className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="font-medium">{meta.title} {targetType || ""}</h3>
-            <p className="text-xs text-muted mt-0.5 font-mono">{targetName}</p>
-          </div>
-        </div>
-
-        <div className={`border rounded-lg p-3 mb-4 text-xs ${meta.severity === "error" ? "bg-error/5 border-error/20 text-error/80" : meta.severity === "warning" ? "bg-warning/5 border-warning/20 text-warning/80" : "bg-accent/5 border-accent/20 text-accent/80"}`}>
-          <span className="font-semibold">Consequence: </span>
-          {meta.consequence}
-        </div>
-
-        <div className="flex gap-3 justify-end">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-xs font-mono border border-border rounded-lg hover:border-accent hover:text-accent transition-colors"
-          >
-            Cancel
-          </button>
-          <button
+    <ModalSurface
+      open={open}
+      onClose={onCancel}
+      title={`${meta.title} ${targetType || ""}`.trim()}
+      description={targetName}
+      size="sm"
+      tone={meta.severity === "error" ? "danger" : "neutral"}
+      footer={
+        <>
+          <Button onClick={onCancel} variant="quiet">Cancel</Button>
+          <Button
             onClick={handleConfirm}
             disabled={confirming}
-            className={`px-4 py-2 text-xs font-mono border rounded-lg transition-colors disabled:opacity-50 ${severityClasses[meta.severity]} ${bgClasses[meta.severity]}`}
+            variant={meta.severity === "error" ? "danger" : "primary"}
           >
-            {confirming ? "Executing..." : `Confirm ${meta.title}`}
-          </button>
+            {confirming ? "Executing…" : `Confirm ${meta.title}`}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-border text-muted">
+          <ActionIcon action={action} className="h-4 w-4" />
         </div>
+        <Notice tone={noticeTone} title="Consequence" className="flex-1">
+          {meta.consequence}
+        </Notice>
       </div>
-    </div>
+    </ModalSurface>
   );
 }
 

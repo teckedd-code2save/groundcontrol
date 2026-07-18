@@ -2,24 +2,27 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, startTransition, useState, type ComponentType } from "react";
+import { startTransition, useEffect, useState, type ComponentType } from "react";
 import {
-  LayoutDashboard,
-  Sparkles,
-  Boxes,
-  FolderKanban,
-  Rocket,
-  LayoutTemplate,
-  Terminal,
   Bell,
-  Settings,
-  Menu,
-  Plus,
+  Boxes,
   ChevronLeft,
   ChevronRight,
+  FolderKanban,
+  LayoutDashboard,
+  LayoutTemplate,
+  LogOut,
+  Menu,
+  Plus,
   Radar,
+  Rocket,
+  Settings,
+  Sparkles,
+  Terminal,
+  X,
   type LucideProps,
 } from "lucide-react";
+import BrandLogo from "./BrandLogo";
 import { useSidebar } from "./SidebarContext";
 
 interface AlertItem { read?: boolean; }
@@ -28,28 +31,32 @@ type NavItem = {
   href: string;
   label: string;
   icon: ComponentType<LucideProps>;
-  section?: "operate" | "build" | "system";
+  section: "observe" | "manage" | "build" | "tools" | "system";
 };
 
-const primaryItems: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, section: "operate" },
-  { href: "/projects", label: "Projects", icon: FolderKanban, section: "operate" },
-  { href: "/deployments", label: "Deployments", icon: Rocket, section: "operate" },
-  { href: "/containers", label: "Runtime", icon: Boxes, section: "operate" },
-  { href: "/intelligence", label: "Intelligence", icon: Radar, section: "operate" },
-  { href: "/ai", label: "Co-Pilot", icon: Sparkles, section: "operate" },
+const navItems: NavItem[] = [
+  { href: "/dashboard", label: "Overview", icon: LayoutDashboard, section: "observe" },
+  { href: "/intelligence", label: "Intelligence", icon: Radar, section: "observe" },
+  { href: "/alerts", label: "Alerts", icon: Bell, section: "observe" },
+  { href: "/projects", label: "Projects", icon: FolderKanban, section: "manage" },
+  { href: "/deployments", label: "Deployments", icon: Rocket, section: "manage" },
+  { href: "/containers", label: "Runtime", icon: Boxes, section: "manage" },
   { href: "/templates", label: "Templates", icon: LayoutTemplate, section: "build" },
-  { href: "/terminal", label: "Terminal", icon: Terminal, section: "operate" },
-];
-
-const mobilePrimaryItems = primaryItems.filter((item) =>
-  ["/dashboard", "/projects", "/deployments", "/containers", "/intelligence"].includes(item.href)
-);
-
-const secondaryItems: NavItem[] = [
-  { href: "/alerts", label: "Alerts", icon: Bell, section: "system" },
+  { href: "/ai", label: "Assistant", icon: Sparkles, section: "tools" },
+  { href: "/terminal", label: "Terminal", icon: Terminal, section: "tools" },
   { href: "/settings", label: "Settings", icon: Settings, section: "system" },
 ];
+
+const groups = [
+  { key: "observe", label: "Observe" },
+  { key: "manage", label: "Operate" },
+  { key: "build", label: "Build" },
+  { key: "tools", label: "Tools" },
+] as const;
+
+const mobileItems = navItems.filter((item) =>
+  ["/dashboard", "/projects", "/deployments", "/intelligence"].includes(item.href)
+);
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -59,173 +66,148 @@ export function Sidebar() {
   const [unreadAlerts, setUnreadAlerts] = useState(0);
 
   useEffect(() => {
-    fetch("/api/auth/me").then(r => r.ok ? r.json() : null).then(d => setUser(d)).catch(() => {});
+    fetch("/api/auth/me").then((response) => response.ok ? response.json() : null).then(setUser).catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!user) return;
-    const poll = () => fetch("/api/alerts").then(r => r.ok ? r.json() : []).then(d => setUnreadAlerts((d as AlertItem[]).filter(a => !a.read).length)).catch(() => {});
-    poll(); const iv = setInterval(poll, 30000); return () => clearInterval(iv);
+    const poll = () => fetch("/api/alerts")
+      .then((response) => response.ok ? response.json() : [])
+      .then((items) => setUnreadAlerts((items as AlertItem[]).filter((item) => !item.read).length))
+      .catch(() => {});
+    poll();
+    const interval = setInterval(poll, 30000);
+    return () => clearInterval(interval);
   }, [user]);
 
   useEffect(() => { startTransition(() => setMobileMenu(false)); }, [pathname]);
 
   if (!user) return null;
 
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  };
+
   return (
     <>
-      {/* ── Mobile: bottom tab bar ── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 grid grid-cols-6 bg-card/95 backdrop-blur border-t border-border py-1.5 safe-area-bottom">
-        {mobilePrimaryItems.map(item => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
-          const Icon = item.icon;
-          return (
-            <Link key={item.href} href={item.href}
-              className={`min-w-0 flex flex-col items-center gap-0.5 px-1 py-1 rounded-md transition-colors ${
-                active ? "text-accent" : "text-muted hover:text-foreground"
-              }`}>
-              <Icon className="h-4 w-4" strokeWidth={1.75} />
-              <span className="w-full truncate text-center text-[8px] font-mono leading-none min-[370px]:text-[9px]">{item.label}</span>
-            </Link>
-          );
-        })}
-        <button onClick={() => setMobileMenu(true)}
-          className="min-w-0 flex flex-col items-center gap-0.5 px-1 py-1 rounded-md text-muted hover:text-foreground transition-colors">
-          <Menu className="h-4 w-4" strokeWidth={1.75} />
-          <span className="w-full truncate text-center text-[8px] font-mono leading-none min-[370px]:text-[9px]">More</span>
+      <nav className="gc-sidebar fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 border-t px-1 py-1.5 md:hidden safe-area-bottom">
+        {mobileItems.map((item) => <MobileNavItem key={item.href} item={item} pathname={pathname} />)}
+        <button type="button" onClick={() => setMobileMenu(true)} className="flex min-w-0 flex-col items-center gap-1 px-1 py-1.5 text-muted transition-colors hover:text-foreground">
+          <Menu className="h-[18px] w-[18px]" strokeWidth={1.7} />
+          <span className="text-[9px] leading-none">More</span>
         </button>
       </nav>
 
-      {/* ── Mobile: full menu overlay ── */}
       {mobileMenu && (
-        <div className="md:hidden fixed inset-0 z-[60] flex">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setMobileMenu(false)} />
-          <div className="relative w-64 bg-card border-r border-border h-full overflow-y-auto animate-slide-in">
-            <div className="p-4 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-xs"><svg width="16" height="16" viewBox="0 0 64 64" fill="none"><g transform="rotate(118 32 32)"><circle cx="32" cy="32" r="21" stroke="#fff" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="74 58"/><circle cx="32" cy="32" r="21" stroke="#E8542A" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="24 200" strokeDashoffset="-80"/></g></svg></div>
-                <span className="font-bold text-sm">GroundControl</span>
-              </div>
-              <button onClick={() => setMobileMenu(false)} className="p-1.5 rounded-lg hover:bg-border/50 text-muted hover:text-foreground transition-colors">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div className="p-3 space-y-1">
-              {[...primaryItems, ...secondaryItems].map(item => {
-                const active = pathname === item.href || pathname.startsWith(item.href + "/");
-                const Icon = item.icon;
-                return (
-                  <Link key={item.href} href={item.href}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                      active ? "bg-accent/10 text-accent border border-accent/30" : "text-foreground/70 hover:bg-border/50 border border-transparent"
-                    }`}>
-                    <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                    <span>{item.label}</span>
-                    {item.href === "/alerts" && unreadAlerts > 0 && (
-                      <span className="ml-auto text-[10px] font-mono bg-accent text-white px-1.5 py-0.5 rounded-md">{unreadAlerts}</span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-            <div className="p-3 border-t border-border">
-              <Link href="/onboarding?add=1" className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-md hover:bg-accent/20 transition-colors">
-                <Plus className="h-3.5 w-3.5" /> Add Server
-              </Link>
-              <div className="flex items-center justify-between px-3 py-2 mt-2">
-                <span className="text-xs font-mono text-muted">{user.username}</span>
-                <button onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.href = "/login"; }}
-                  className="text-xs text-muted hover:text-error transition-colors font-mono">logout</button>
-              </div>
-            </div>
+        <div className="fixed inset-0 z-[60] md:hidden">
+          <button type="button" aria-label="Close navigation" className="absolute inset-0 bg-black/70" onClick={() => setMobileMenu(false)} />
+          <div className="gc-sidebar relative flex h-full w-[286px] flex-col border-r animate-slide-in">
+            <Brand collapsed={false} close={() => setMobileMenu(false)} />
+            <NavGroups pathname={pathname} unreadAlerts={unreadAlerts} collapsed={false} />
+            <AccountFooter user={user.username} collapsed={false} logout={logout} />
           </div>
         </div>
       )}
 
-      {/* ── Desktop sidebar ── */}
-      <aside className={`hidden md:flex fixed left-0 top-0 h-screen bg-card border-r border-border flex-col z-40 transition-all duration-200 ${collapsed ? "w-16" : "w-64"}`}>
-        <div className={`p-4 border-b border-border flex items-center ${collapsed ? "flex-col gap-2 justify-center" : "justify-between"}`}>
-          <Link href="/dashboard" className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
-            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold text-sm shrink-0"><svg width="16" height="16" viewBox="0 0 64 64" fill="none"><g transform="rotate(118 32 32)"><circle cx="32" cy="32" r="21" stroke="#fff" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="74 58"/><circle cx="32" cy="32" r="21" stroke="#E8542A" strokeWidth="6.5" strokeLinecap="round" strokeDasharray="24 200" strokeDashoffset="-80"/></g></svg></div>
-            {!collapsed && (
-              <div>
-                <h1 className="font-bold text-sm tracking-tight">GroundControl</h1>
-                <p className="text-[10px] text-muted font-mono">Operational control</p>
-              </div>
-            )}
+      <aside className={`gc-sidebar fixed inset-y-0 left-0 z-40 hidden flex-col border-r transition-[width] duration-200 md:flex ${collapsed ? "w-[72px]" : "w-60"}`}>
+        <Brand collapsed={collapsed} toggle={toggleCollapsed} />
+        <NavGroups pathname={pathname} unreadAlerts={unreadAlerts} collapsed={collapsed} />
+        <div className="border-t border-border p-2">
+          <Link href="/onboarding?add=1" title="Add another server" className={`flex min-h-9 items-center gap-2 rounded-sm border border-border text-[11px] text-muted transition-colors hover:border-accent/40 hover:text-foreground ${collapsed ? "justify-center px-2" : "px-3"}`}>
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            {!collapsed && <span>Add server</span>}
           </Link>
-          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleCollapsed(); }}
-            className="hidden md:flex items-center justify-center w-8 h-8 rounded-md text-muted hover:text-foreground hover:bg-border/50 transition-colors"
-            title={collapsed ? "Expand" : "Collapse"}>
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </button>
         </div>
-
-        <nav className="flex-1 p-2 space-y-4 overflow-y-auto">
-          {(
-            [
-              { key: "operate", label: "Operate", items: primaryItems.filter((i) => i.section === "operate") },
-              { key: "build", label: "Build", items: primaryItems.filter((i) => i.section === "build") },
-              { key: "system", label: "System", items: secondaryItems },
-            ] as const
-          ).map((group) => (
-            <div key={group.key} className="space-y-1">
-              {!collapsed && (
-                <p className="px-3 pt-1 text-[10px] font-mono uppercase tracking-wider text-muted/70">
-                  {group.label}
-                </p>
-              )}
-              {group.items.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(item.href + "/");
-                const Icon = item.icon;
-                return (
-                  <Link key={item.href} href={item.href} title={item.label}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all duration-200 ${
-                      collapsed ? "justify-center" : ""
-                    } ${
-                      active
-                        ? "bg-accent/10 text-accent border border-accent/30"
-                        : "text-foreground/70 hover:text-foreground hover:bg-border/50 border border-transparent"
-                    }`}>
-                    <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                    {!collapsed && <span className="flex-1">{item.label}</span>}
-                    {!collapsed && item.href === "/alerts" && unreadAlerts > 0 && (
-                      <span className="ml-auto text-[10px] font-mono bg-accent text-white px-1.5 py-0.5 rounded-md min-w-[1.25rem] text-center">{unreadAlerts}</span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
-
-        <div className="p-2 border-t border-border space-y-2">
-          <Link href="/onboarding?add=1" title="Add another VPS"
-            className="flex items-center justify-center gap-2 px-3 py-2 text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-md hover:bg-accent/20 transition-colors">
-            <Plus className="h-3.5 w-3.5" />
-            {!collapsed && <span>Add Server</span>}
-          </Link>
-          {user && (
-            <div className={`flex items-center justify-between px-3 py-2 ${collapsed ? "flex-col gap-2" : ""}`}>
-              {!collapsed && <span className="text-xs font-mono text-muted truncate">{user.username}</span>}
-              <button onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.href = "/login"; }}
-                title="Logout" className="text-xs text-muted hover:text-error transition-colors font-mono">
-                {collapsed ? "out" : "logout"}
-              </button>
-            </div>
-          )}
-          <div className={`flex items-center gap-2 px-3 py-2 ${collapsed ? "justify-center" : ""}`}>
-            <div className="w-2 h-2 rounded-full bg-success animate-pulse shrink-0" />
-            {!collapsed && <span className="text-xs text-muted font-mono">Host linked</span>}
-          </div>
-        </div>
+        <AccountFooter user={user.username} collapsed={collapsed} logout={logout} />
       </aside>
 
       <style>{`
         @keyframes slide-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
-        .animate-slide-in { animation: slide-in 0.2s ease-out; }
+        .animate-slide-in { animation: slide-in 180ms ease-out; }
         .safe-area-bottom { padding-bottom: max(0.375rem, env(safe-area-inset-bottom)); }
       `}</style>
     </>
+  );
+}
+
+function Brand({ collapsed, toggle, close }: { collapsed: boolean; toggle?: () => void; close?: () => void }) {
+  return (
+    <div className={`flex h-16 shrink-0 items-center border-b border-border ${collapsed ? "justify-center px-2" : "justify-between px-4"}`}>
+      <Link href="/dashboard" className="flex min-w-0 items-center gap-3" aria-label="GroundControl overview">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center border border-border bg-background">
+          <BrandLogo size={21} stroke="#f1f2eb" accent="#c8f36b" />
+        </span>
+        {!collapsed && (
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-semibold tracking-[-0.02em]">GroundControl</span>
+            <span className="mt-0.5 block font-mono text-[9px] uppercase tracking-[0.12em] text-muted">Self-hosted operations</span>
+          </span>
+        )}
+      </Link>
+      {close ? (
+        <button type="button" onClick={close} className="gc-icon-button" aria-label="Close navigation"><X className="h-4 w-4" /></button>
+      ) : !collapsed ? (
+        <button type="button" onClick={toggle} className="gc-icon-button border-transparent" aria-label="Collapse navigation"><ChevronLeft className="h-4 w-4" /></button>
+      ) : null}
+      {collapsed && toggle && (
+        <button type="button" onClick={toggle} className="absolute left-[60px] top-6 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-sidebar text-muted hover:text-foreground" aria-label="Expand navigation">
+          <ChevronRight className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function NavGroups({ pathname, unreadAlerts, collapsed }: { pathname: string; unreadAlerts: number; collapsed: boolean }) {
+  return (
+    <nav className="flex-1 overflow-y-auto px-2 py-4">
+      <div className="space-y-5">
+        {groups.map((group) => (
+          <div key={group.key}>
+            {!collapsed && <p className="mb-1.5 px-2 font-mono text-[9px] uppercase tracking-[0.14em] text-text-dim">{group.label}</p>}
+            <div className="space-y-0.5">
+              {navItems.filter((item) => item.section === group.key).map((item) => (
+                <DesktopNavItem key={item.href} item={item} pathname={pathname} unreadAlerts={unreadAlerts} collapsed={collapsed} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+function DesktopNavItem({ item, pathname, unreadAlerts, collapsed }: { item: NavItem; pathname: string; unreadAlerts: number; collapsed: boolean }) {
+  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  const Icon = item.icon;
+  return (
+    <Link href={item.href} title={item.label} className={`relative flex min-h-9 items-center gap-3 rounded-sm px-2.5 text-[12px] transition-colors ${collapsed ? "justify-center" : ""} ${active ? "bg-white/[0.06] text-foreground" : "text-muted hover:bg-white/[0.035] hover:text-foreground"}`}>
+      {active && <span className="absolute inset-y-2 left-0 w-px bg-accent" />}
+      <Icon className={`h-4 w-4 shrink-0 ${active ? "text-accent" : ""}`} strokeWidth={1.65} />
+      {!collapsed && <span className="flex-1">{item.label}</span>}
+      {!collapsed && item.href === "/alerts" && unreadAlerts > 0 && <span className="min-w-5 rounded-full bg-error/15 px-1.5 py-0.5 text-center font-mono text-[9px] text-error">{unreadAlerts}</span>}
+    </Link>
+  );
+}
+
+function MobileNavItem({ item, pathname }: { item: NavItem; pathname: string }) {
+  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  const Icon = item.icon;
+  return (
+    <Link href={item.href} className={`flex min-w-0 flex-col items-center gap-1 px-1 py-1.5 transition-colors ${active ? "text-accent" : "text-muted hover:text-foreground"}`}>
+      <Icon className="h-[18px] w-[18px]" strokeWidth={1.7} />
+      <span className="w-full truncate text-center text-[9px] leading-none">{item.label}</span>
+    </Link>
+  );
+}
+
+function AccountFooter({ user, collapsed, logout }: { user: string; collapsed: boolean; logout: () => void }) {
+  return (
+    <div className={`flex min-h-14 items-center border-t border-border p-2 ${collapsed ? "justify-center" : "gap-2"}`}>
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-background text-[11px] font-medium uppercase text-foreground">{user.slice(0, 1)}</span>
+      {!collapsed && <span className="min-w-0 flex-1 truncate text-[11px] text-muted">{user}</span>}
+      <button type="button" onClick={logout} title="Log out" className="gc-icon-button border-transparent"><LogOut className="h-3.5 w-3.5" /></button>
+    </div>
   );
 }

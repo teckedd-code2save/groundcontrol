@@ -5,6 +5,7 @@ import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ActionConfirm } from "@/components/ActionConfirm";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 import { ContainerIcon, getContainerType } from "@/components/TopoIcons";
+import { Notice, Tabs } from "@/components/ui";
 
 const CONTAINERS_POLL_MS = 8000;
 const IMAGES_POLL_MS = 30000;
@@ -653,10 +654,12 @@ export function ContainersPanel() {
   return (
     <div>
       {error && (
-        <div className="mb-4 p-3 bg-error/10 border border-error/30 rounded-lg text-error text-xs font-mono flex items-start justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError("")} className="ml-2 hover:text-foreground">✕</button>
-        </div>
+        <Notice tone="danger" className="mb-4">
+          <span className="flex items-start justify-between gap-3">
+            <span>{error}</span>
+            <button type="button" aria-label="Dismiss error" onClick={() => setError("")} className="shrink-0 text-error hover:text-foreground">×</button>
+          </span>
+        </Notice>
       )}
 
       {toasts.length > 0 && (
@@ -689,28 +692,16 @@ export function ContainersPanel() {
         <LoaderOverlay3D open variant="container" title="Running bulk action..." />
       )}
 
-      <div className="mb-5 flex w-fit max-w-full items-center gap-1 rounded-xl bg-card p-1">
-        <button
-          onClick={() => setActiveTab("containers")}
-          className={`rounded-lg px-3 py-2 text-xs font-mono transition-colors ${
-            activeTab === "containers"
-              ? "bg-accent/10 text-accent"
-              : "text-muted hover:bg-background hover:text-foreground"
-          }`}
-        >
-          Containers ({containers.length})
-        </button>
-        <button
-          onClick={() => setActiveTab("images")}
-          className={`rounded-lg px-3 py-2 text-xs font-mono transition-colors ${
-            activeTab === "images"
-              ? "bg-accent/10 text-accent"
-              : "text-muted hover:bg-background hover:text-foreground"
-          }`}
-        >
-          Images ({images.length})
-        </button>
-      </div>
+      <Tabs
+        label="Docker resources"
+        items={[
+          { id: "containers" as const, label: "Containers", meta: containers.length },
+          { id: "images" as const, label: "Images", meta: images.length },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+        className="mb-5"
+      />
 
       {activeTab === "containers" ? (
         <>

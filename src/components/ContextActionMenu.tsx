@@ -4,6 +4,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -24,6 +25,7 @@ export function ContextActionMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<MenuPosition>({ left: 0, top: 0 });
+  const menuId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -72,14 +74,34 @@ export function ContextActionMenu({
     };
   }, [open]);
 
+  function focusMenuItem(position: "first" | "last") {
+    const items = menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']:not(:disabled):not([aria-disabled='true'])");
+    if (!items?.length) return;
+    items[position === "first" ? 0 : items.length - 1]?.focus();
+  }
+
   function onTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (event.key === "ArrowDown") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setOpen(true);
-      requestAnimationFrame(() => {
-        menuRef.current?.querySelector<HTMLElement>("button:not(:disabled), a[href]")?.focus();
-      });
+      requestAnimationFrame(() => focusMenuItem(event.key === "ArrowDown" ? "first" : "last"));
     }
+  }
+
+  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']:not(:disabled):not([aria-disabled='true'])") || []);
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      items[event.key === "Home" ? 0 : items.length - 1]?.focus();
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = (currentIndex + direction + items.length) % items.length;
+      items[nextIndex]?.focus();
+    }
+    if (event.key === "Tab") close();
   }
 
   return (
@@ -90,6 +112,7 @@ export function ContextActionMenu({
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((value) => !value)}
         onKeyDown={onTriggerKeyDown}
         className="gc-icon-button"
@@ -98,9 +121,11 @@ export function ContextActionMenu({
       </button>
       {open && typeof document !== "undefined" && createPortal(
         <div
+          id={menuId}
           ref={menuRef}
           role="menu"
           aria-label={label}
+          onKeyDown={onMenuKeyDown}
           style={{ left: position.left, top: position.top }}
           className="fixed z-[90] w-60 border border-border bg-background p-1.5 shadow-2xl shadow-black/25"
         >
@@ -131,6 +156,9 @@ export function ContextMenuAction({
       : "text-foreground/85 hover:bg-card hover:text-foreground"
   }`;
   if (href) {
+    if (disabled) {
+      return <span role="menuitem" aria-disabled="true" className={`${className} cursor-not-allowed opacity-40`}>{children}</span>;
+    }
     const external = /^https?:\/\//i.test(href);
     return <a role="menuitem" href={href} target={external ? "_blank" : undefined} rel={external ? "noreferrer" : undefined} className={className}>{children}</a>;
   }

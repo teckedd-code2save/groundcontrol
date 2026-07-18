@@ -12,6 +12,7 @@ import CloudAccountsTab from "@/components/CloudAccountsTab";
 import TerraformStacksTab from "@/components/TerraformStacksTab";
 import EnvProvidersTab from "@/components/EnvProvidersTab";
 import ConnectorsPanel from "@/components/ConnectorsPanel";
+import { Tabs } from "@/components/ui";
 
 interface VpsConfig {
   id: number;
@@ -49,7 +50,7 @@ export default function SettingsPage() {
     const tab = new URLSearchParams(window.location.search).get("tab");
     if (
       tab &&
-      ["connections", "layout", "ai", "security", "alerts", "cloudflare", "env-providers", "cloud-accounts", "deploy-targets", "infrastructure"].includes(tab)
+      ["connections", "layout", "ai", "security", "alerts", "cloudflare", "env-providers", "cloud-accounts", "deploy-targets", "infrastructure", "connectors"].includes(tab)
     ) {
       return tab as TabKey;
     }
@@ -57,29 +58,28 @@ export default function SettingsPage() {
   });
   const activeTabMeta = settingsTabs.find((tab) => tab.key === activeTab) || settingsTabs[0];
 
+  function selectTab(tab: TabKey) {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", tab);
+    window.history.replaceState({}, "", url);
+  }
+
   return (
-    <div className="p-4 md:p-8 max-w-6xl mx-auto">
+    <div className="gc-page">
       <div className="mb-5 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-xs text-muted">{activeTabMeta.description}</p>
+        <p className="gc-eyebrow">Control plane</p>
+        <h1 className="mt-2 text-[32px] font-semibold leading-none tracking-[-0.04em]">Settings</h1>
+        <p className="mt-2 text-[13px] text-muted">{activeTabMeta.description}</p>
       </div>
 
-      <div className="mb-6 flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1">
-        {settingsTabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            title={tab.description}
-            className={`shrink-0 rounded-md px-3 py-2 text-xs font-mono transition-colors whitespace-nowrap ${
-              activeTab === tab.key
-                ? "bg-accent/10 text-accent"
-                : "text-muted hover:bg-background hover:text-foreground"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs<TabKey>
+        label="Settings sections"
+        items={settingsTabs.map((tab) => ({ id: tab.key, label: tab.label }))}
+        value={activeTab}
+        onChange={selectTab}
+        className="mb-6"
+      />
 
       {activeTab === "connections" && <ConnectionsTab />}
       {activeTab === "layout" && <ServerLayoutTab />}

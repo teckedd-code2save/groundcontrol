@@ -14,10 +14,10 @@ import {
   RefreshCw,
   ServerCog,
   Settings2,
-  TerminalSquare,
 } from "lucide-react";
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { ModalSurface } from "@/components/ModalSurface";
+import { Notice, Tabs } from "@/components/ui";
 
 type Group = { id: number; name: string; slug: string; description: string };
 type Release = {
@@ -304,11 +304,6 @@ export default function DeploymentDetail({
     setImageEditorOpen(true);
   }
 
-  async function saveImageSource() {
-    setImageEditorOpen(false);
-    setMessage({ tone: "info", text: "Image source editing via compose file requires deploy integration. Use the Compose viewer to edit the docker-compose.yml directly." });
-  }
-
   const liveUrl = deployment?.publicUrl || (deployment?.domain ? `https://${deployment.domain}` : null);
   const changedFields = deployment?.releases[0]?.changedFields
     ? (() => { try { return JSON.parse(deployment.releases[0].changedFields) as string[]; } catch { return []; } })()
@@ -322,7 +317,7 @@ export default function DeploymentDetail({
     return (
       <div className="mx-auto max-w-3xl p-8">
         <Link href="/deployments" className="gc-button gc-button-quiet"><ArrowLeft size={14} />Deployments</Link>
-        <div className="mt-6 border border-error/30 bg-error/5 p-5 text-sm text-error">{message?.text || "Deployment not found."}</div>
+        <Notice tone="danger" className="mt-6">{message?.text || "Deployment not found."}</Notice>
       </div>
     );
   }
@@ -377,13 +372,7 @@ export default function DeploymentDetail({
       </header>
 
       {message && (
-        <div className={`mt-5 border px-3 py-2 text-xs ${
-          message.tone === "success"
-            ? "border-success/30 bg-success/10 text-success"
-            : message.tone === "error"
-              ? "border-error/30 bg-error/10 text-error"
-              : "border-border bg-card text-muted"
-        }`}>{message.text}</div>
+        <Notice className="mt-5" tone={message.tone === "error" ? "danger" : message.tone}>{message.text}</Notice>
       )}
 
       {showLog && redeployLog.length > 0 && (
@@ -399,21 +388,14 @@ export default function DeploymentDetail({
       )}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[220px_minmax(0,1fr)]">
-        <nav aria-label="Deployment sections" className="h-fit border border-border bg-card p-2">
-          {tabs.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setTab(item.id)}
-              className={`w-full border-l-2 px-3 py-2.5 text-left transition-colors ${
-                tab === item.id ? "border-accent bg-background text-foreground" : "border-transparent text-muted hover:bg-background/60 hover:text-foreground"
-              }`}
-            >
-              <span className="block text-xs font-medium">{item.label}</span>
-              <span className="mt-0.5 block truncate font-mono text-[9px] text-muted">{item.detail}</span>
-            </button>
-          ))}
-        </nav>
+        <Tabs<Tab>
+          label="Deployment sections"
+          orientation="vertical"
+          items={tabs.map((item) => ({ id: item.id, label: item.label, meta: item.detail }))}
+          value={tab}
+          onChange={setTab}
+          className="h-fit bg-card"
+        />
 
         <main className="min-w-0">
           {/* ===== MANAGE TAB ===== */}

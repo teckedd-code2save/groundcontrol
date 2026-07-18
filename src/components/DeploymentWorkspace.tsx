@@ -19,6 +19,7 @@ import {
   ContextMenuLabel,
 } from "@/components/ContextActionMenu";
 import { ModalSurface } from "@/components/ModalSurface";
+import { Notice } from "@/components/ui";
 
 type Group = { id: number; name: string; slug: string; description: string };
 type Candidate = {
@@ -223,15 +224,9 @@ export function DeploymentWorkspace() {
       </div>
 
       {message && (
-        <div className={`border px-3 py-2 text-xs ${
-          message.tone === "success"
-            ? "border-success/30 bg-success/10 text-success"
-            : message.tone === "error"
-              ? "border-error/30 bg-error/10 text-error"
-              : "border-border bg-card text-muted"
-        }`}>
+        <Notice tone={message.tone === "error" ? "danger" : message.tone}>
           {message.text}
-        </div>
+        </Notice>
       )}
 
       <section className="space-y-3">
