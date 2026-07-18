@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, Globe, RefreshCw, Shield, XCircle, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, RefreshCw, Shield, XCircle, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 
 type ServicePath = { domain: string; upstream?: string; containerName?: string; containerState?: string; healthy: boolean; issues: string[]; serviceId?: string };
@@ -49,8 +49,6 @@ export default function IntelligencePage() {
     } finally { setLoading(false); }
   }
 
-  const collectEvidence = () => refresh(true);
-
   const selectedEvidence: EvidenceStep[] = selectedPath ? [
     { id: "dns", label: "DNS resolution", ok: true, detail: `${selectedPath.domain} resolves correctly` },
     { id: "tls", label: "TLS certificate", ok: true, detail: "Certificate is valid" },
@@ -61,20 +59,20 @@ export default function IntelligencePage() {
   const healthyCount = paths.filter(p => p.healthy).length;
 
   return (
-    <div className="mx-auto max-w-7xl p-4 md:p-8">
+    <div className="gc-page gc-page--wide">
       <PageHeader
+        eyebrow="Operational intelligence"
         title="Intelligence"
         description="Live service relationships, customer-facing journeys, evidence-backed diagnosis, and reversible recovery."
       />
 
       {error && <div className="mt-4 rounded border border-error/30 bg-error/5 px-3 py-2 text-xs text-error">{error}</div>}
 
-      {/* Feature pillars — matching serendepify.com */}
-      <div className="mt-8 grid gap-3 sm:grid-cols-4">
-        <PillarCard label="UNDERSTANDS" detail="Live service relationships" active />
-        <PillarCard label="EXERCISES" detail="Customer-facing journeys" />
-        <PillarCard label="EXPLAINS" detail="Evidence before action" />
-        <PillarCard label="RECOVERS" detail="Reversible by policy" />
+      <div className="mt-6 grid grid-cols-2 overflow-hidden border border-border bg-card lg:grid-cols-4">
+        <IntelligenceStat label="Service paths" value={String(paths.length)} detail="Mapped from public routes" />
+        <IntelligenceStat label="Verified healthy" value={`${healthyCount}/${paths.length}`} detail="Current host evidence" tone={paths.length > 0 && healthyCount === paths.length ? "success" : "warning"} />
+        <IntelligenceStat label="Change sets" value={String(changeSets.length)} detail="Evidence awaiting correlation" />
+        <IntelligenceStat label="Autonomy" value="Monitor" detail="Read-only until policy allows" />
       </div>
 
       {/* Empty state */}
@@ -266,59 +264,35 @@ export default function IntelligencePage() {
           </div>
       )}
 
-      {/* Methodology: Observe → Understand → Test → Recover → Verify */}
-      <div className="mt-10 border-t border-border pt-8">
-        <p className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">Methodology</p>
-        <h2 className="text-xl font-semibold tracking-tight mb-2">Observe. Understand. Test. Recover. Verify.</h2>
-        <p className="text-xs text-muted max-w-2xl mb-6">GroundControl works through narrow tools, explicit policy and reversible actions.</p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <MethodCard icon={<Globe className="h-4 w-4" />} title="Understand the system behind the URL"
-            detail="Maps continuous relationships between domains, TLS, proxies, Docker networks, containers, and processes — not a static snapshot." />
-          <MethodCard icon={<Zap className="h-4 w-4" />} title="Test customer outcomes, not green containers"
-            detail="Exercises confirmed HTTP journeys after meaningful changes. A running container is not proof that the public application works." />
-          <MethodCard icon={<Shield className="h-4 w-4" />} title="Repair, redeploy or guide with context"
-            detail="Restores a healthy proxy revision, redeploys a previous artifact, or prepares an exact guided plan — never a generic suggestion." />
-          <MethodCard icon={<Activity className="h-4 w-4" />} title="Every confirmed recovery improves the next"
-            detail="Symptoms, causes, and successful actions become service-specific operational memory. GroundControl gets sharper with every incident." />
+      <details className="mt-8 border border-border bg-card">
+        <summary className="cursor-pointer px-5 py-4 text-xs font-medium">Intelligence method and autonomy policy</summary>
+        <div className="border-t border-border p-5">
+          <p className="max-w-2xl text-xs leading-relaxed text-muted">GroundControl observes the live relationship behind a public URL, tests confirmed customer outcomes, explains evidence before action, and keeps recovery reversible.</p>
+          <div className="mt-5 grid gap-px overflow-hidden border border-border bg-border sm:grid-cols-4">
+            <PolicyStep step={1} label="Monitor" detail="Detect and verify" active />
+            <PolicyStep step={2} label="Guide" detail="Prepare exact steps" />
+            <PolicyStep step={3} label="Approve" detail="Execute after approval" />
+            <PolicyStep step={4} label="Autopilot" detail="Allowlisted low-risk action" />
+          </div>
         </div>
-      </div>
-
-      {/* Autopilot policy: Monitor → Guide → Approve → Autopilot */}
-      <div className="mt-10 bg-accent/5 border border-accent/20 p-6">
-        <p className="text-[10px] font-mono text-accent uppercase tracking-wider mb-1">Your infrastructure. Your policies. Your final say.</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
-          <PolicyStep step={1} label="Monitor" detail="Detect changes and exercise affected journeys" active />
-          <PolicyStep step={2} label="Guide" detail="Investigate and prepare exact recovery steps" />
-          <PolicyStep step={3} label="Approve" detail="Execute a reversible repair after one decision" />
-          <PolicyStep step={4} label="Autopilot" detail="Act automatically inside a pre-approved policy" />
-        </div>
-      </div>
+      </details>
     </div>
   );
 }
 
-function PillarCard({ label, detail, active }: { label: string; detail: string; active?: boolean }) {
+function IntelligenceStat({ label, value, detail, tone }: { label: string; value: string; detail: string; tone?: "success" | "warning" }) {
   return (
-    <div className={`border p-4 ${active ? "border-accent/40 bg-accent/5" : "border-border bg-card"}`}>
-      <p className="text-[10px] font-mono text-muted uppercase tracking-wider">{label}</p>
-      <p className={`mt-1 text-xs font-medium ${active ? "text-accent" : "text-foreground"}`}>{detail}</p>
-    </div>
-  );
-}
-
-function MethodCard({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
-  return (
-    <div className="border border-border bg-card p-5">
-      <span className="text-muted">{icon}</span>
-      <h3 className="mt-2 text-sm font-medium">{title}</h3>
-      <p className="mt-1 text-xs text-muted leading-relaxed">{detail}</p>
+    <div className="border-b border-r border-border p-4 last:border-r-0 lg:border-b-0">
+      <p className="gc-eyebrow">{label}</p>
+      <p className={`mt-2 text-xl font-medium tracking-[-0.035em] ${tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-foreground"}`}>{value}</p>
+      <p className="mt-1 text-[10px] text-muted">{detail}</p>
     </div>
   );
 }
 
 function PolicyStep({ step, label, detail, active }: { step: number; label: string; detail: string; active?: boolean }) {
   return (
-    <div className={`border p-4 ${active ? "border-accent/40 bg-accent/5" : "border-border bg-card"}`}>
+    <div className={`bg-card p-4 ${active ? "text-accent" : ""}`}>
       <span className={`font-mono text-[10px] ${active ? "text-accent" : "text-muted"}`}>0{step}</span>
       <h4 className={`mt-1 text-xs font-medium ${active ? "text-accent" : "text-foreground"}`}>{label}</h4>
       <p className="mt-0.5 text-[10px] text-muted leading-relaxed">{detail}</p>

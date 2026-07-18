@@ -21,9 +21,9 @@ export default function ServicesPage() {
   const activeTabMeta = tabs.find((tab) => tab.key === activeTab) || tabs[0];
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto">
+    <div className="gc-page gc-page--wide">
       <div className="mb-5 flex flex-col gap-1">
-        <PageHeader title="Services" description={activeTabMeta.description} className="mb-0" />
+        <PageHeader eyebrow="Advanced operations" title="Services" description={activeTabMeta.description} className="mb-0" />
         <label className="mt-4 block md:hidden">
           <span className="mb-1 block text-[10px] font-mono text-muted">Section</span>
           <select

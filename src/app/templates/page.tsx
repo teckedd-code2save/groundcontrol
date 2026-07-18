@@ -499,7 +499,7 @@ export default function TemplatesPage() {
   });
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto">
+    <div className="gc-page">
       <h1 className="text-2xl font-semibold tracking-tight mb-1">Templates</h1>
       <p className="text-muted text-xs mb-2">
         Production-shaped workflows that create, validate and enrol a deployment—not loose boilerplate files.

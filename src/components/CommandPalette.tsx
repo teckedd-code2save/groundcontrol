@@ -44,8 +44,17 @@ export default function CommandPalette() {
         setOpen(false);
       }
     }
+    function openPalette() {
+      setQuery("");
+      setSelected(0);
+      setOpen(true);
+    }
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("gc:open-command-palette", openPalette);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("gc:open-command-palette", openPalette);
+    };
   }, []);
 
   useEffect(() => {
@@ -123,27 +132,7 @@ export default function CommandPalette() {
     }
   }
 
-  // Top-right search bar trigger
-  if (!open) {
-    return (
-      <button
-        onClick={() => {
-          setQuery("");
-          setSelected(0);
-          setOpen(true);
-        }}
-        className="fixed top-4 right-4 z-50 flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg shadow-sm hover:border-accent hover:text-accent transition-colors"
-        title="Command Palette (Cmd+K)"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="11" cy="11" r="8" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        <span className="text-xs text-muted hidden sm:inline">Search...</span>
-        <span className="hidden md:inline text-[10px] font-mono text-muted border border-border rounded px-1">⌘K</span>
-      </button>
-    );
-  }
+  if (!open) return null;
 
   const grouped = items.reduce<Record<string, CommandItem[]>>((acc, item) => {
     if (!acc[item.category]) acc[item.category] = [];
@@ -152,9 +141,9 @@ export default function CommandPalette() {
   }, {});
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-start justify-center pt-[20vh] bg-black/70 p-4">
-      <div className="w-full max-w-xl bg-card border border-border rounded-xl shadow-2xl overflow-hidden">
-        <div className="flex items-center gap-3 p-4 border-b border-border">
+    <div className="fixed inset-0 z-[70] flex items-start justify-center bg-black/75 p-4 pt-[16vh] backdrop-blur-sm" onMouseDown={() => setOpen(false)}>
+      <div className="w-full max-w-xl overflow-hidden rounded-md border border-border bg-card shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex items-center gap-3 border-b border-border p-4">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted">
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -169,7 +158,7 @@ export default function CommandPalette() {
             }}
             onKeyDown={onKeyDown}
             placeholder="Search pages, containers, projects..."
-            className="flex-1 bg-transparent text-sm outline-none text-foreground placeholder:text-muted"
+            className="gc-command-input flex-1 text-sm text-foreground outline-none placeholder:text-muted"
           />
           <span className="text-[10px] font-mono text-muted border border-border rounded px-1.5 py-0.5">ESC</span>
         </div>
@@ -180,7 +169,7 @@ export default function CommandPalette() {
           ) : (
             Object.entries(grouped).map(([category, groupItems]) => (
               <div key={category}>
-                <div className="px-4 py-2 text-[10px] font-mono uppercase tracking-wider text-muted bg-background/30">
+                <div className="border-y border-border bg-background/45 px-4 py-2 font-mono text-[9px] uppercase tracking-[0.14em] text-muted first:border-t-0">
                   {category}
                 </div>
                 {groupItems.map((item) => {
@@ -191,7 +180,7 @@ export default function CommandPalette() {
                       key={item.id}
                       onClick={() => execute(item)}
                       className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors ${
-                        isSelected ? "bg-accent/10 text-accent" : "hover:bg-background/50"
+                        isSelected ? "bg-accent/10 text-foreground" : "hover:bg-background/50"
                       }`}
                     >
                       <div>

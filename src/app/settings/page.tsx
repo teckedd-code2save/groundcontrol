@@ -58,10 +58,11 @@ export default function SettingsPage() {
   const activeTabMeta = settingsTabs.find((tab) => tab.key === activeTab) || settingsTabs[0];
 
   return (
-    <div className="p-4 md:p-8 max-w-6xl mx-auto">
+    <div className="gc-page">
       <div className="mb-5 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-xs text-muted">{activeTabMeta.description}</p>
+        <p className="gc-eyebrow">Control plane</p>
+        <h1 className="mt-2 text-[32px] font-semibold leading-none tracking-[-0.04em]">Settings</h1>
+        <p className="mt-2 text-[13px] text-muted">{activeTabMeta.description}</p>
       </div>
 
       <div className="mb-6 flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1">
