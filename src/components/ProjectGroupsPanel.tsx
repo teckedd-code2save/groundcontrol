@@ -17,6 +17,7 @@ import {
   ContextMenuLabel,
 } from "@/components/ContextActionMenu";
 import { ModalSurface } from "@/components/ModalSurface";
+import { Notice } from "@/components/ui";
 
 type DeploymentSummary = {
   id: number;
@@ -157,7 +158,7 @@ export function ProjectGroupsPanel() {
         </button>
       </div>
 
-      {message && <div className="border border-border bg-card px-3 py-2 text-xs text-muted">{message}</div>}
+      {message && <Notice>{message}</Notice>}
 
       <div className="space-y-4">
         {projects.map((project) => (

@@ -6,6 +6,8 @@ import { FolderGit2, Search } from "lucide-react";
 import type { TemplateDefinition } from "@/lib/template-engine";
 import { getTemplateSourcePlan } from "@/lib/template-source-requirements";
 import { ModalSurface } from "@/components/ModalSurface";
+import { PageHeader } from "@/components/PageHeader";
+import { Notice, ProgressSteps } from "@/components/ui";
 
 interface TemplateWithId extends TemplateDefinition {
   _filename: string;
@@ -94,15 +96,6 @@ function templateSourceModes(template: TemplateWithId): string[] {
     if (mode === "ghcr") return "GHCR / container image";
     return mode;
   });
-}
-
-function templateComplexity(template: TemplateWithId): string {
-  if (template.deploy_mode === "static" || template.category === "static") return "simple";
-  const serviceCount = template.services.length;
-  const dataCount = (template.components || []).filter((component) => component.layer === "data").length;
-  if (serviceCount <= 2 && dataCount === 0) return "simple";
-  if (serviceCount <= 4) return "standard";
-  return "full stack";
 }
 
 function isStaticTpl(t: TemplateWithId): boolean {
@@ -480,8 +473,6 @@ export default function TemplatesPage() {
     { id: "deploy" as Step, label: "Deploy" },
   ];
 
-  const currentStepIdx = steps.findIndex(s => s.id === step);
-
   function isRecommended(t: TemplateWithId): boolean {
     // First-time / Product Hunt friendly starters
     return (
@@ -500,40 +491,19 @@ export default function TemplatesPage() {
 
   return (
     <div className="gc-page">
-      <h1 className="text-2xl font-semibold tracking-tight mb-1">Templates</h1>
-      <p className="text-muted text-xs mb-2">
-        Production-shaped workflows that create, validate and enrol a deployment—not loose boilerplate files.
-      </p>
-      <p className="mb-8 text-[11px] font-mono text-muted">
-        New here? <span className="text-accent">Static Site</span> for HTML pages,{" "}
-        <span className="text-accent">Source Build</span> for Dockerfile apps, or{" "}
-        <span className="text-accent">Tunnel Private Apps</span> for no public ports.
-      </p>
+      <PageHeader
+        eyebrow="Build"
+        title="Templates"
+        description="Production-shaped workflows that validate, create, and enrol a deployment—not loose boilerplate files."
+      />
 
-      {/* Step indicator */}
-      <div className="flex items-center gap-2 mb-8 flex-wrap">
-        {steps.map((s, i) => (
-          <div key={s.id} className="flex items-center gap-2">
-            <button onClick={() => i <= currentStepIdx && setStep(s.id)}
-              className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-mono transition-colors ${
-                step === s.id ? "border border-accent text-accent bg-accent/5" :
-                i < currentStepIdx ? "text-muted hover:text-foreground" : "text-muted/40"
-              }`}>
-              <span className={`w-5 h-5 flex items-center justify-center rounded-md text-[10px] ${
-                step === s.id ? "bg-accent text-white" : "bg-card border border-border"
-              }`}>{i + 1}</span>
-              {s.label}
-            </button>
-            {i < 4 && <span className="text-muted/30 text-xs">→</span>}
-          </div>
-        ))}
-      </div>
+      <ProgressSteps label="Deployment template workflow" steps={steps} current={step} onSelect={setStep} className="mb-8" />
 
       {result && step !== "source" && (
-        <div className={`mb-6 p-3 rounded text-sm font-mono ${result.ok ? "bg-success/10 border border-success/30 text-success" : "bg-error/10 border border-error/30 text-error"}`}>
+        <Notice className="mb-6" tone={result.ok ? "success" : "danger"}>
           {result.msg}
           {result.dns && <span className="block text-[10px] mt-1 opacity-75">{result.dns}</span>}
-        </div>
+        </Notice>
       )}
 
       {deployStatus && (
@@ -670,14 +640,10 @@ export default function TemplatesPage() {
               </ul>
             )}
             {result && (
-              <div className={`mt-4 border px-3 py-2 text-xs ${result.ok ? "border-success/30 bg-success/10 text-success" : "border-error/30 bg-error/10 text-error"}`}>
-                {result.msg}
-              </div>
+              <Notice className="mt-4" tone={result.ok ? "success" : "danger"}>{result.msg}</Notice>
             )}
             {sourceSuggestion && (
-              <p className="mt-3 text-[11px] text-amber-400/90 leading-relaxed border border-amber-500/25 bg-amber-500/5 rounded-md px-3 py-2">
-                {sourceSuggestion}
-              </p>
+              <Notice className="mt-3" tone="warning">{sourceSuggestion}</Notice>
             )}
           </div>
           <div className="flex gap-3">

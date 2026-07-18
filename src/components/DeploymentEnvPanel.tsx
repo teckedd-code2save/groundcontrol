@@ -14,6 +14,7 @@ import {
   Save,
   Trash2,
 } from "lucide-react";
+import { Notice } from "@/components/ui";
 
 export interface EnvironmentRedeployResult {
   success: boolean;
@@ -378,21 +379,11 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       </div>
 
       {notice && (
-        <div className={`mx-4 mt-4 border px-3 py-2 text-xs md:mx-5 ${
-          notice.tone === "success"
-            ? "border-success/30 bg-success/10 text-success"
-            : notice.tone === "error"
-              ? "border-error/30 bg-error/10 text-error"
-              : "border-border bg-background text-muted"
-        }`} role="status">
-          {notice.text}
-        </div>
+        <Notice className="mx-4 mt-4 md:mx-5" tone={notice.tone === "error" ? "danger" : notice.tone}>{notice.text}</Notice>
       )}
 
       {providerError && (
-        <div className="mx-4 mt-4 border border-error/30 bg-error/5 px-3 py-2 text-xs text-error md:mx-5" role="alert">
-          Infisical connection failed: {providerError}
-        </div>
+        <Notice className="mx-4 mt-4 md:mx-5" tone="danger" title="Infisical connection failed">{providerError}</Notice>
       )}
 
       <div className={`grid ${fixedScope ? "" : "md:grid-cols-[190px_minmax(0,1fr)]"}`}>

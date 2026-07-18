@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, AlertTriangle, ArrowRight, CheckCircle2, RefreshCw, Shield, XCircle, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
+import { Button, EmptyState, Notice } from "@/components/ui";
 
 type ServicePath = { domain: string; upstream?: string; containerName?: string; containerState?: string; healthy: boolean; issues: string[]; serviceId?: string };
 type EvidenceStep = { id: string; label: string; ok: boolean; detail?: string };
@@ -66,7 +67,7 @@ export default function IntelligencePage() {
         description="Live service relationships, customer-facing journeys, evidence-backed diagnosis, and reversible recovery."
       />
 
-      {error && <div className="mt-4 rounded border border-error/30 bg-error/5 px-3 py-2 text-xs text-error">{error}</div>}
+      {error && <Notice className="mt-4" tone="danger">{error}</Notice>}
 
       <div className="mt-6 grid grid-cols-2 overflow-hidden border border-border bg-card lg:grid-cols-4">
         <IntelligenceStat label="Service paths" value={String(paths.length)} detail="Mapped from public routes" />
@@ -77,19 +78,22 @@ export default function IntelligencePage() {
 
       {/* Empty state */}
       {paths.length === 0 && !loading && (
-        <div className="mt-8 flex flex-col items-center gap-4 rounded-lg border border-dashed border-border p-16 text-center">
-          <Activity className="h-10 w-10 text-muted/30" />
-          <div>
-            <h2 className="text-base font-medium">No service graph yet</h2>
-            <p className="mt-1 max-w-md text-xs text-muted leading-relaxed">
-              GroundControl reads your host to map every service from domain to container. This is read-only — nothing on your VPS changes.
-            </p>
-          </div>
-          <button onClick={() => refresh(true)} disabled={loading} className="gc-button gc-button-primary mt-2">
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            {loading ? "Collecting host evidence…" : "Collect host evidence"}
-          </button>
-        </div>
+        <EmptyState
+          className="mt-8"
+          icon={<Activity size={22} />}
+          title="No service graph yet"
+          description="GroundControl reads your host to map every service from domain to container. This is read-only—nothing on your VPS changes."
+          action={
+            <Button
+              variant="primary"
+              onClick={() => refresh(true)}
+              disabled={loading}
+              leadingIcon={<RefreshCw className={loading ? "animate-spin" : ""} size={14} />}
+            >
+              {loading ? "Collecting host evidence…" : "Collect host evidence"}
+            </Button>
+          }
+        />
       )}
 
       {paths.length > 0 && (
@@ -143,12 +147,7 @@ export default function IntelligencePage() {
                     </div>
                   </div>
                   {!selectedPath.healthy && (
-                    <div className="flex items-center gap-2 rounded border border-error/30 bg-error/5 px-3 py-2">
-                      <AlertTriangle className="h-3.5 w-3.5 text-error shrink-0" />
-                      <span className="text-xs text-error">
-                        {selectedPath.issues.join(", ") || "Service degraded"}
-                      </span>
-                    </div>
+                    <Notice tone="danger">{selectedPath.issues.join(", ") || "Service degraded"}</Notice>
                   )}
                 </div>
               )}
