@@ -523,7 +523,7 @@ export default function TerminalPage() {
         {aiSuggestion && (
           <div className="border-t border-accent/30 bg-accent/5 p-3">
             <div className="mb-2 flex items-center gap-2">
-              <span className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-white">
+              <span className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--accent-ink)]">
                 /ai
               </span>
               <span className="text-xs font-mono text-accent">
@@ -575,7 +575,7 @@ export default function TerminalPage() {
                     executeCommand(aiSuggestion.command!, cwd);
                     setAiSuggestion(null);
                   }}
-                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-mono text-white transition-colors hover:bg-accent-bright"
+                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-mono text-[var(--accent-ink)] transition-colors hover:bg-accent-bright"
                 >
                   Run
                 </button>
@@ -613,7 +613,7 @@ export default function TerminalPage() {
           <span className="text-success font-mono text-sm shrink-0">➜</span>
           <span className="text-muted font-mono text-sm shrink-0 hidden sm:inline">{cwd}</span>
           {input.startsWith("/ai") && (
-            <span className="hidden shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-white sm:inline">
+            <span className="hidden shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--accent-ink)] sm:inline">
               AI
             </span>
           )}

@@ -501,7 +501,7 @@ export default function OnboardingPage() {
                     key={s.id}
                     className={`rounded-md px-2.5 py-1 text-[10px] font-mono ${
                       active
-                        ? "bg-accent text-white"
+                        ? "bg-accent text-[var(--accent-ink)]"
                         : done
                           ? "bg-accent/15 text-accent"
                           : "bg-card text-muted border border-border"
@@ -553,7 +553,7 @@ export default function OnboardingPage() {
         <button
           type="button"
           onClick={() => setStep("connect")}
-          className="mt-8 w-full rounded-md bg-accent py-3 text-sm font-mono text-white hover:bg-accent-bright"
+          className="mt-8 w-full rounded-md bg-accent py-3 text-sm font-mono text-[var(--accent-ink)] hover:bg-accent-bright"
         >
           Get started →
         </button>
@@ -762,7 +762,7 @@ export default function OnboardingPage() {
             <button
               type="submit"
               disabled={connecting || testing}
-              className="flex-1 rounded-md bg-accent py-3 text-sm font-mono text-white hover:bg-accent-bright disabled:opacity-50"
+              className="flex-1 rounded-md bg-accent py-3 text-sm font-mono text-[var(--accent-ink)] hover:bg-accent-bright disabled:opacity-50"
             >
               {connecting ? "Saving…" : "Continue →"}
             </button>
@@ -838,7 +838,7 @@ export default function OnboardingPage() {
           <button
             type="button"
             onClick={finishDomainAndProbe}
-            className="w-full rounded-md bg-accent py-3 text-sm font-mono text-white hover:bg-accent-bright"
+            className="w-full rounded-md bg-accent py-3 text-sm font-mono text-[var(--accent-ink)] hover:bg-accent-bright"
           >
             Scan server →
           </button>
@@ -963,7 +963,7 @@ export default function OnboardingPage() {
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className="rounded-md bg-accent px-6 py-3 text-sm font-mono text-white hover:bg-accent-bright disabled:opacity-50 whitespace-nowrap"
+          className="rounded-md bg-accent px-6 py-3 text-sm font-mono text-[var(--accent-ink)] hover:bg-accent-bright disabled:opacity-50 whitespace-nowrap"
         >
           {saving ? "Saving…" : "Finish →"}
         </button>

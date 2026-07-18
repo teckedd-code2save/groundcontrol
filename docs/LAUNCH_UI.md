@@ -25,8 +25,9 @@ Capabilities remain available, but are grouped by operator intent. Intelligence 
 ## Visual rules
 
 - Graphite surfaces and warm neutral text keep the product calm under pressure.
-- Lime means verified state or the primary safe action.
-- Orange, amber, and red are reserved for consequential attention.
+- Signal blue means the primary safe action or active selection.
+- Green is reserved for verified health and successful outcomes.
+- Amber and red are reserved for consequential attention.
 - Editorial type is used for orientation; monospace is limited to identifiers, timestamps, metrics, and machine state.
 - Borders and surface contrast establish hierarchy before shadows.
 - Motion is short, functional, and disabled when reduced motion is requested.

@@ -64,7 +64,7 @@ export function InstallSetupSection() {
       className="scroll-mt-6 border-t border-white/[0.06] bg-[#0D0E10] py-20 md:py-24"
     >
       <div className="mx-auto max-w-2xl px-6 md:px-8">
-        <p className="mb-3 text-[11px] font-medium tracking-[0.16em] text-[#E8542A]/90 uppercase">
+        <p className="mb-3 text-[11px] font-medium tracking-[0.16em] text-[#7C9CFF]/90 uppercase">
           Setup
         </p>
         <h2 className="mb-3 text-[clamp(1.5rem,3.5vw,2rem)] font-medium tracking-tight text-[#F5F6F7]">
@@ -123,7 +123,7 @@ function InstallCommandCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-[#F5F6F7]">{label}</span>
             {badge ? (
-              <span className="rounded-full bg-[#E8542A]/12 px-2 py-0.5 text-[10px] font-medium tracking-wide text-[#E8542A]">
+              <span className="rounded-full bg-[#7C9CFF]/12 px-2 py-0.5 text-[10px] font-medium tracking-wide text-[#7C9CFF]">
                 {badge}
               </span>
             ) : null}
@@ -140,7 +140,7 @@ function InstallCommandCard({
           }}
           className={`shrink-0 rounded-lg px-3.5 py-2 text-[12px] font-medium transition-colors ${
             copied
-              ? "bg-[#E8542A] text-white"
+              ? "bg-[#7C9CFF] text-[#0B1020]"
               : "bg-white/[0.06] text-white/80 hover:bg-white/[0.1] hover:text-white"
           }`}
         >

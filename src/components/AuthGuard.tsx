@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { SidebarProvider } from "@/components/SidebarContext";
 import { MainLayout } from "@/components/MainLayout";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 
 interface MeResponse {
   id: number;
@@ -48,14 +49,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [pathname, router, isPublic]);
 
   if (!authChecked) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-accent animate-pulse" />
-          <span className="text-sm font-mono text-muted">Loading...</span>
-        </div>
-      </div>
-    );
+    return <LoaderOverlay3D open title="Checking your session…" subtitle="GroundControl is verifying access to this control plane." />;
   }
 
   // Public pages: render content without app layout
@@ -65,14 +59,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   // Not authenticated and not on a public page: don't render anything while redirecting
   if (!authenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-accent animate-pulse" />
-          <span className="text-sm font-mono text-muted">Redirecting...</span>
-        </div>
-      </div>
-    );
+    return <LoaderOverlay3D open title="Redirecting securely…" subtitle="The authenticated workspace is not available for this session." />;
   }
 
   // Authenticated special pages (e.g. force-password-change): no sidebar/layout

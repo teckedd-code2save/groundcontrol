@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import BrandLogo from "@/components/BrandLogo";
 import AuthCard, { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
+import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
 
 export default function SetupPage() {
   const [username, setUsername] = useState("admin");
@@ -58,15 +58,11 @@ export default function SetupPage() {
 
   if (checking) {
     return (
-      <main className="sr-theme relative min-h-screen w-full flex items-center justify-center">
-        <div className="absolute inset-0" style={{ background: "var(--sr-bg)" }} />
-        <div className="relative z-10 flex flex-col items-center gap-4">
-          <BrandLogo size={48} stroke="#1b1916" />
-          <span className="sr-mono text-sm" style={{ color: "var(--sr-text-35)" }}>
-            Loading...
-          </span>
-        </div>
-      </main>
+      <LoaderOverlay3D
+        open
+        title="Checking setup status…"
+        subtitle="GroundControl is verifying whether an administrator account already exists."
+      />
     );
   }
 

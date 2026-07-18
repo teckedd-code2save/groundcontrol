@@ -817,7 +817,7 @@ export function ProjectsPanel() {
             </p>
             <a
               href="/templates"
-              className="mt-4 rounded-md bg-accent px-3 py-1.5 text-xs font-mono text-white hover:bg-accent-bright"
+              className="mt-4 rounded-md bg-accent px-3 py-1.5 text-xs font-mono text-[var(--accent-ink)] hover:bg-accent-bright"
             >
               Browse templates
             </a>
@@ -1053,7 +1053,7 @@ export function ProjectsPanel() {
                                     <>
                                       <button
                                         onClick={() => { setRedeployAdvancedOpen(false); setRedeploySlug(project.slug); }}
-                                        className="rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-mono text-white hover:bg-accent-bright"
+                                        className="rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-ink)] hover:bg-accent-bright"
                                       >
                                         Redeploy
                                       </button>
@@ -1073,7 +1073,7 @@ export function ProjectsPanel() {
                                   ) : (
                                     <button
                                       onClick={() => setConfirmCompose({ slug: project.slug, type: "start", projectName: project.name })}
-                                      className="rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-mono text-white hover:bg-accent-bright"
+                                      className="rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-mono text-[var(--accent-ink)] hover:bg-accent-bright"
                                     >
                                       Start
                                     </button>

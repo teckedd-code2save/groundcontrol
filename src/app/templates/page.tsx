@@ -874,14 +874,14 @@ export default function TemplatesPage() {
             <BackBtn onClick={() => setStep("configure")} />
             {step === "preview" && (
               <button onClick={handleDeploy} disabled={loading}
-                className="rounded-md px-4 py-2 text-xs font-mono bg-accent text-white hover:bg-accent-bright disabled:opacity-50 transition-colors">
+                className="rounded-md px-4 py-2 text-xs font-mono bg-accent text-[var(--accent-ink)] hover:bg-accent-bright disabled:opacity-50 transition-colors">
                 {loading ? "Deploying..." : "Deploy"}
               </button>
             )}
             {step === "deploy" && (
               <>
                 <button onClick={() => router.push(deployResult?.slug ? `/deployments/${deployResult.slug}` : "/deployments")}
-                  className="rounded-md px-4 py-2 text-xs font-mono bg-accent text-white hover:bg-accent-bright transition-colors">
+                  className="rounded-md px-4 py-2 text-xs font-mono bg-accent text-[var(--accent-ink)] hover:bg-accent-bright transition-colors">
                   Open Deployments
                 </button>
                 <button onClick={() => router.push("/dashboard")}

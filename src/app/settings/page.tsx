@@ -7,9 +7,7 @@ import VpsFilePicker from "@/components/VpsFilePicker";
 import CloudflareSettingsTab from "@/components/CloudflareSettingsTab";
 import AlertSettingsTab from "@/components/AlertSettingsTab";
 import { LoaderOverlay3D } from "@/components/LoaderOverlay3D";
-import { DeployTargetsTab } from "@/components/DeployTargetsTab";
 import CloudAccountsTab from "@/components/CloudAccountsTab";
-import TerraformStacksTab from "@/components/TerraformStacksTab";
 import EnvProvidersTab from "@/components/EnvProvidersTab";
 import ConnectorsPanel from "@/components/ConnectorsPanel";
 import { Tabs } from "@/components/ui";
@@ -28,19 +26,17 @@ interface VpsConfig {
   createdAt: string;
 }
 
-type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "env-providers" | "cloud-accounts" | "deploy-targets" | "infrastructure" | "connectors";
+type TabKey = "connections" | "layout" | "ai" | "security" | "alerts" | "cloudflare" | "env-providers" | "cloud-accounts" | "connectors";
 
 const settingsTabs: { key: TabKey; label: string; description: string }[] = [
   { key: "connections", label: "VPS", description: "Hosts, SSH, and active server" },
   { key: "layout", label: "Layout", description: "Deployment roots and scan paths" },
-  { key: "ai", label: "AI", description: "Assistant provider and model" },
+  { key: "ai", label: "Assistant", description: "Assistant provider and model" },
   { key: "security", label: "Security", description: "Access, sessions, and audit" },
   { key: "cloudflare", label: "Cloudflare", description: "DNS, zones, and tunnels" },
-  { key: "env-providers", label: "Env", description: "Local and external secret sources" },
+  { key: "env-providers", label: "Secret stores", description: "GroundControl Vault and external secret providers" },
   { key: "alerts", label: "Alerts", description: "Rules, retention, and health checks" },
-  { key: "cloud-accounts", label: "Cloud", description: "Cloud credentials and tests" },
-  { key: "deploy-targets", label: "Targets", description: "Deployment backends" },
-  { key: "infrastructure", label: "Infra", description: "Terraform stacks and outputs" },
+  { key: "cloud-accounts", label: "Cloud accounts", description: "Cloud credentials and connection tests" },
   { key: "connectors", label: "Connectors", description: "GitHub, Gemini, Daytona integrations" },
 ];
 
@@ -50,7 +46,7 @@ export default function SettingsPage() {
     const tab = new URLSearchParams(window.location.search).get("tab");
     if (
       tab &&
-      ["connections", "layout", "ai", "security", "alerts", "cloudflare", "env-providers", "cloud-accounts", "deploy-targets", "infrastructure", "connectors"].includes(tab)
+      ["connections", "layout", "ai", "security", "alerts", "cloudflare", "env-providers", "cloud-accounts", "connectors"].includes(tab)
     ) {
       return tab as TabKey;
     }
@@ -73,12 +69,19 @@ export default function SettingsPage() {
         <p className="mt-2 text-[13px] text-muted">{activeTabMeta.description}</p>
       </div>
 
+      <label className="mb-6 block md:hidden">
+        <span className="gc-label">Settings section</span>
+        <select value={activeTab} onChange={(event) => selectTab(event.target.value as TabKey)} className="gc-field w-full">
+          {settingsTabs.map((tab) => <option key={tab.key} value={tab.key}>{tab.label}</option>)}
+        </select>
+      </label>
+
       <Tabs<TabKey>
         label="Settings sections"
         items={settingsTabs.map((tab) => ({ id: tab.key, label: tab.label }))}
         value={activeTab}
         onChange={selectTab}
-        className="mb-6"
+        className="mb-6 hidden md:flex"
       />
 
       {activeTab === "connections" && <ConnectionsTab />}
@@ -91,16 +94,6 @@ export default function SettingsPage() {
       {activeTab === "cloud-accounts" && (
         <div>
           <CloudAccountsTab />
-        </div>
-      )}
-      {activeTab === "deploy-targets" && (
-        <div>
-          <DeployTargetsTab />
-        </div>
-      )}
-      {activeTab === "infrastructure" && (
-        <div>
-          <TerraformStacksTab />
         </div>
       )}
       {activeTab === "connectors" && (

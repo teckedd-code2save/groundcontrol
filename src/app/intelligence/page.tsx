@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, RefreshCw, Shield, XCircle, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, CircleHelp, RefreshCw, Shield, XCircle, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button, EmptyState, Notice } from "@/components/ui";
 
 type ServicePath = { domain: string; upstream?: string; containerName?: string; containerState?: string; healthy: boolean; issues: string[]; serviceId?: string };
-type EvidenceStep = { id: string; label: string; ok: boolean; detail?: string };
+type EvidenceStep = { id: string; label: string; status: "ok" | "warning" | "unknown"; detail: string };
 type ChangeSet = { id: string; kinds: string[]; serviceIds: string[] };
+type GraphMeta = { hostId: string; source: string; reconciledAt: string; nodeCount: number; edgeCount: number; newEvents?: number };
 
 export default function IntelligencePage() {
   const [paths, setPaths] = useState<ServicePath[]>([]);
@@ -16,6 +17,7 @@ export default function IntelligencePage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<ServicePath | null>(null);
   const [run, setRun] = useState<any>(null);
+  const [graphMeta, setGraphMeta] = useState<GraphMeta | null>(null);
 
   const refresh = useCallback(async (reconcile = false) => {
     setLoading(true);
@@ -25,7 +27,17 @@ export default function IntelligencePage() {
         fetch("/api/intelligence/changes").then(r => r.json()),
       ]);
       if (g.error) throw new Error(g.error);
-      setPaths(g.paths || []);
+      const nextPaths: ServicePath[] = Array.isArray(g.paths) ? g.paths : [];
+      setPaths(nextPaths);
+      setSelectedPath((current) => current ? nextPaths.find((path) => path.domain === current.domain) || null : null);
+      setGraphMeta({
+        hostId: String(g.hostId || ""),
+        source: String(g.source || "unknown"),
+        reconciledAt: String(g.reconciledAt || ""),
+        nodeCount: Number(g.nodeCount || 0),
+        edgeCount: Number(g.edgeCount || 0),
+        newEvents: typeof g.newEvents === "number" ? g.newEvents : undefined,
+      });
       setChangeSets(c.changeSets || []);
       setError(null);
     } catch (err) {
@@ -51,10 +63,10 @@ export default function IntelligencePage() {
   }
 
   const selectedEvidence: EvidenceStep[] = selectedPath ? [
-    { id: "dns", label: "DNS resolution", ok: true, detail: `${selectedPath.domain} resolves correctly` },
-    { id: "tls", label: "TLS certificate", ok: true, detail: "Certificate is valid" },
-    { id: "proxy", label: `Proxy route ${selectedPath.upstream || "?"}`, ok: !selectedPath.issues.some(i => i.includes("proxy")), detail: selectedPath.upstream ? `Caddy routes to ${selectedPath.upstream}` : "No proxy route detected" },
-    { id: "container", label: `Container ${selectedPath.containerName || "?"}`, ok: selectedPath.healthy, detail: selectedPath.containerState ? `Listening on ${selectedPath.containerState}` : "Container not found" },
+    { id: "dns", label: "DNS resolution", status: "unknown", detail: "Not independently probed during topology reconciliation" },
+    { id: "tls", label: "TLS certificate", status: "unknown", detail: "Not independently probed during topology reconciliation" },
+    { id: "proxy", label: `Proxy route ${selectedPath.upstream || "unknown"}`, status: selectedPath.upstream ? "ok" : "warning", detail: selectedPath.upstream ? `Observed route targets ${selectedPath.upstream}` : "No proxy upstream was resolved" },
+    { id: "container", label: `Container ${selectedPath.containerName || "unknown"}`, status: selectedPath.healthy ? "ok" : "warning", detail: selectedPath.containerState ? `Observed state: ${selectedPath.containerState}` : "No matching container was found" },
   ] : [];
 
   const healthyCount = paths.filter(p => p.healthy).length;
@@ -98,54 +110,60 @@ export default function IntelligencePage() {
 
       {paths.length > 0 && (
         <div className="min-w-0 space-y-6">
-          {/* Incident header */}
-            <div className="border border-border bg-card px-5 py-4">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] font-mono text-muted">SERVICE GRAPH</span>
-                <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                <span className="text-[10px] font-mono text-success uppercase">{healthyCount}/{paths.length} healthy</span>
+            <div className="flex flex-col gap-3 border border-border bg-card px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-mono text-muted">SERVICE GRAPH</span>
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                  <span className="text-[10px] font-mono text-success uppercase">{healthyCount}/{paths.length} healthy</span>
+                </div>
+                <h2 className="text-sm font-semibold">Live host topology</h2>
+                <p className="mt-1 font-mono text-[9px] text-text-dim">
+                  {graphMeta?.source || "unknown"} · {graphMeta?.hostId || "host unavailable"} · {formatObservationTime(graphMeta?.reconciledAt)}
+                </p>
               </div>
-              <h2 className="text-sm font-semibold">Service graph updated</h2>
+              <Button
+                size="sm"
+                onClick={() => refresh(true)}
+                disabled={loading}
+                leadingIcon={<RefreshCw size={13} className={loading ? "animate-spin" : ""} />}
+              >
+                {loading ? "Scanning…" : "Scan host"}
+              </Button>
             </div>
 
-            {/* Topology flow — matching the landing page */}
-            <div className="border border-border bg-card p-6">
-              <div className="flex flex-wrap items-center justify-center gap-4 md:gap-6">
-                {paths.slice(0, 3).map((p, i) => (
-                  <div key={p.domain} className="flex items-center gap-3">
-                    <button
-                      onClick={() => setSelectedPath(selectedPath?.domain === p.domain ? null : p)}
-                      className={`rounded-lg border-2 px-4 py-3 text-left transition-colors ${
-                        selectedPath?.domain === p.domain
-                          ? "border-accent bg-accent/5"
-                          : p.healthy ? "border-success/40 bg-success/5" : "border-error/40 bg-error/5"
-                      }`}>
-                      <span className="block text-[10px] font-mono text-muted uppercase">Public</span>
-                      <span className="block mt-0.5 font-mono text-xs font-medium">{p.domain}</span>
-                    </button>
-                    {i < paths.length - 1 && (
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[10px] font-mono text-muted">HTTPS</span>
-                        <ArrowRight className="h-4 w-4 text-muted/40" />
-                      </div>
-                    )}
-                  </div>
+            <div className="border border-border bg-card">
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <span className="gc-eyebrow">Observed public paths</span>
+                <span className="font-mono text-[9px] text-muted">{paths.length} total · none hidden</span>
+              </div>
+              <div className="max-h-[460px] divide-y divide-border overflow-y-auto">
+                {paths.map((path) => (
+                  <button
+                    key={path.domain}
+                    type="button"
+                    onClick={() => setSelectedPath(selectedPath?.domain === path.domain ? null : path)}
+                    className={`grid w-full gap-3 px-4 py-3 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center ${
+                      selectedPath?.domain === path.domain ? "bg-accent/[0.07]" : "hover:bg-white/[0.025]"
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block font-mono text-[9px] uppercase text-muted">Public endpoint</span>
+                      <span className="mt-0.5 block truncate text-xs font-medium">{path.domain}</span>
+                    </span>
+                    <span className="flex min-w-0 items-center gap-2 font-mono text-[10px] text-muted">
+                      <span className="truncate">{path.upstream || "unresolved route"}</span>
+                      <ArrowRight size={12} className="shrink-0 text-text-dim" />
+                      <span className="truncate">{path.containerName || "no container"}</span>
+                    </span>
+                    <span className={`font-mono text-[9px] uppercase ${path.healthy ? "text-success" : "text-error"}`}>
+                      {path.healthy ? "healthy" : "attention"}
+                    </span>
+                  </button>
                 ))}
               </div>
               {selectedPath && (
-                <div className="mt-6 space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className={`rounded-lg border-2 px-4 py-3 ${selectedPath.upstream ? "border-success/40 bg-success/5" : "border-warning/40 bg-warning/5"}`}>
-                      <span className="block text-[10px] font-mono text-muted uppercase">Proxy</span>
-                      <span className="block mt-0.5 font-mono text-xs font-medium">{selectedPath.upstream || "unknown"}</span>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted/40" />
-                    <div className={`rounded-lg border-2 px-4 py-3 ${selectedPath.healthy ? "border-success/40 bg-success/5" : "border-error/40 bg-error/5"}`}>
-                      <span className="block text-[10px] font-mono text-muted uppercase">Service</span>
-                      <span className="block mt-0.5 font-mono text-xs font-medium">{selectedPath.containerName || "?"}</span>
-                      <span className="block text-[10px] font-mono text-muted">{selectedPath.containerState || "unknown"}</span>
-                    </div>
-                  </div>
+                <div className="space-y-3 border-t border-border bg-background/30 p-4">
                   {!selectedPath.healthy && (
                     <Notice tone="danger">{selectedPath.issues.join(", ") || "Service degraded"}</Notice>
                   )}
@@ -163,10 +181,12 @@ export default function IntelligencePage() {
                   {selectedEvidence.map((step, i) => (
                     <div key={step.id} className="flex items-start gap-3 px-5 py-3">
                       <span className="mt-0.5 font-mono text-[10px] text-muted w-4">{(i + 1).toString().padStart(2, "0")}</span>
-                      {step.ok ? (
+                      {step.status === "ok" ? (
                         <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 text-success shrink-0" />
-                      ) : (
+                      ) : step.status === "warning" ? (
                         <XCircle className="mt-0.5 h-3.5 w-3.5 text-error shrink-0" />
+                      ) : (
+                        <CircleHelp className="mt-0.5 h-3.5 w-3.5 text-muted shrink-0" />
                       )}
                       <div>
                         <p className="text-xs">{step.label}</p>
@@ -297,4 +317,11 @@ function PolicyStep({ step, label, detail, active }: { step: number; label: stri
       <p className="mt-0.5 text-[10px] text-muted leading-relaxed">{detail}</p>
     </div>
   );
+}
+
+function formatObservationTime(value?: string) {
+  if (!value) return "not reconciled yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown time";
+  return `observed ${date.toLocaleString()}`;
 }

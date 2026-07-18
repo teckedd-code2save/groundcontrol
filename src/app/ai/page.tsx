@@ -379,7 +379,7 @@ export default function AiCoPilotPage() {
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[85%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
-              msg.role === "user" ? "bg-accent text-white" :
+              msg.role === "user" ? "bg-accent text-[var(--accent-ink)]" :
               msg.role === "error" ? "bg-error/10 border border-error/30 text-error" :
               msg.role === "tool" ? "bg-muted/10 border border-muted/20 text-muted text-xs font-mono" :
               "bg-card border border-border markdown-body"
@@ -435,7 +435,7 @@ export default function AiCoPilotPage() {
           <button
             onClick={() => handleSend()}
             disabled={(!input.trim() && !pendingConfirm) || loading}
-            className="px-6 py-3 bg-accent text-white rounded-xl hover:bg-accent/90 transition-colors text-sm font-mono disabled:opacity-50"
+            className="px-6 py-3 bg-accent text-[var(--accent-ink)] rounded-xl hover:bg-accent/90 transition-colors text-sm font-mono disabled:opacity-50"
           >
             Send
           </button>
