@@ -123,16 +123,18 @@ generate_admin_credentials() {
   GC_ADMIN_PASSWORD="Gc-${hex1}!${hex2}A"
 }
 
-# Write install .env (JWT + admin credentials).
+# Write install .env (session key + encryption key + admin credentials).
 # Docker Compose env_file treats values literally — no shell quoting.
 # Credentials are generated without spaces / $ / # so unquoted values are safe.
 write_install_env() {
   local dest="$1"
   local jwt="$2"
-  local email="$3"
-  local pass="$4"
+  local encryption_key="$3"
+  local email="$4"
+  local pass="$5"
   cat > "$dest" <<EOF
 JWT_SECRET=${jwt}
+GROUNDCONTROL_SECRET=${encryption_key}
 GC_SETUP_USERNAME=${email}
 GC_SETUP_PASSWORD=${pass}
 EOF
@@ -673,11 +675,12 @@ if [ -z "$HOST" ]; then
   echo -e "${BLUE}→ Preparing GroundControl...${NC}"
   GC_HTTP_PORT=$(find_free_http_port_local)
   JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  GROUNDCONTROL_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
   generate_admin_credentials
   echo -e "${GREEN}✓ UI will be available on port ${GC_HTTP_PORT}${NC}"
 
   mkdir -p /opt/groundcontrol-bootstrap
-  write_install_env /opt/groundcontrol-bootstrap/.env "$JWT_SECRET" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD"
+  write_install_env /opt/groundcontrol-bootstrap/.env "$JWT_SECRET" "$GROUNDCONTROL_SECRET" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD"
   write_bootstrap_compose_yaml "$GC_HTTP_PORT" > /opt/groundcontrol-bootstrap/docker-compose.yml
   # Credentials file for the operator (same as printed)
   {
@@ -924,6 +927,7 @@ else
 fi
 GC_HTTP_PORT=$(find_free_http_port_remote)
 JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+GROUNDCONTROL_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 generate_admin_credentials
 echo -e "${GREEN}✓ UI will be available on port ${GC_HTTP_PORT}${NC}"
 
@@ -932,9 +936,9 @@ if ! remote "mkdir -p /opt/groundcontrol-bootstrap"; then
   exit 1
 fi
 
-# Write .env on remote (credentials + JWT) — unquoted Compose env_file format
-ENV_CONTENT=$(printf 'JWT_SECRET=%s\nGC_SETUP_USERNAME=%s\nGC_SETUP_PASSWORD=%s\n' \
-  "$JWT_SECRET" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD")
+# Write .env on remote (credentials + session/encryption keys) — unquoted Compose env_file format
+ENV_CONTENT=$(printf 'JWT_SECRET=%s\nGROUNDCONTROL_SECRET=%s\nGC_SETUP_USERNAME=%s\nGC_SETUP_PASSWORD=%s\n' \
+  "$JWT_SECRET" "$GROUNDCONTROL_SECRET" "$GC_ADMIN_EMAIL" "$GC_ADMIN_PASSWORD")
 ENV_B64=$(printf '%s' "$ENV_CONTENT" | base64 | tr -d '\n')
 if ! remote "echo '${ENV_B64}' | base64 -d > /opt/groundcontrol-bootstrap/.env && chmod 600 /opt/groundcontrol-bootstrap/.env"; then
   remote "echo '${ENV_B64}' | openssl base64 -d -A > /opt/groundcontrol-bootstrap/.env && chmod 600 /opt/groundcontrol-bootstrap/.env" || {

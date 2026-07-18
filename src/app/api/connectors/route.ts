@@ -4,16 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { handleApiError } from "@/lib/errors";
 import { decryptMaybe, encrypt } from "@/lib/crypto";
 
-const ALLOWED_CONNECTORS = ["github", "gemini", "daytona"];
+const ALLOWED_CONNECTORS = ["gemini", "daytona"];
 
 const CONNECTOR_META: Record<string, { name: string; description: string; purpose: string; provider: string; icon: string }> = {
-  github: {
-    name: "GitHub",
-    description: "GitHub Container Registry pull access and image tag syncing.",
-    purpose: "Authenticates docker pull from ghcr.io and enables automatic image tag updates via CI pipeline.",
-    provider: "github.com",
-    icon: "github",
-  },
   gemini: {
     name: "Gemini",
     description: "Structured incident investigation and recovery planning.",
