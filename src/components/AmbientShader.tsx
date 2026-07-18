@@ -17,8 +17,8 @@ function CssMeshFallback({ className = "" }: { className?: string }) {
         className="absolute inset-0 opacity-80"
         style={{
           background: `
-            radial-gradient(ellipse 80% 60% at 20% 30%, rgba(124,156,255,0.22), transparent 55%),
-            radial-gradient(ellipse 70% 50% at 80% 70%, rgba(124,156,255,0.12), transparent 50%),
+            radial-gradient(ellipse 80% 60% at 20% 30%, rgba(78,95,213,0.24), transparent 55%),
+            radial-gradient(ellipse 70% 50% at 80% 70%, rgba(78,95,213,0.14), transparent 50%),
             radial-gradient(ellipse 50% 40% at 50% 100%, rgba(245,246,247,0.04), transparent 45%),
             linear-gradient(165deg, #0D0E10 0%, #141618 45%, #202427 100%)
           `,
@@ -71,7 +71,7 @@ function PaperMeshInner({ className = "" }: { className?: string }) {
     <div className={`pointer-events-none absolute inset-0 overflow-hidden ${className}`} aria-hidden>
       <Shader
         className="absolute inset-0 h-full w-full"
-        colors={["#0D0E10", "#202427", "#7C9CFF", "#141618"]}
+        colors={["#0D0E10", "#202427", "#4E5FD5", "#141618"]}
         speed={0.12}
         style={{ width: "100%", height: "100%" }}
       />

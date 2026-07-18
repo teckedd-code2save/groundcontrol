@@ -5,7 +5,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
 import * as THREE from "three";
 
-const ACCENT = new THREE.Color("#7c9cff");
+const ACCENT = new THREE.Color("#4e5fd5");
 const ACCENT_SECONDARY = new THREE.Color("#c77dff");
 const BG = "#0a0a0a";
 

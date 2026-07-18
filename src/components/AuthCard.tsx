@@ -28,14 +28,14 @@ export default function AuthCard({
         className="pointer-events-none absolute -top-[20%] -right-[8%] w-[46%] aspect-square rounded-full opacity-60"
         style={{
           background:
-            "radial-gradient(circle at 50% 50%, rgba(124, 156, 255, 0.16), transparent 68%)",
+            "radial-gradient(circle at 50% 50%, rgba(78, 95, 213, 0.18), transparent 68%)",
         }}
       />
       <div
         className="pointer-events-none absolute bottom-0 left-0 w-full h-1/2 opacity-40"
         style={{
           background:
-            "linear-gradient(to top, rgba(124, 156, 255, 0.04) 0%, transparent 100%)",
+            "linear-gradient(to top, rgba(78, 95, 213, 0.05) 0%, transparent 100%)",
         }}
       />
 

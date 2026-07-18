@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, Settings, Sparkles } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 
 const sectionNames: Record<string, string> = {
@@ -39,16 +40,25 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
           <span className="hidden text-text-dim sm:inline">/</span>
           <span className="truncate font-medium text-muted">{sectionName}</span>
         </div>
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent("gc:open-command-palette"))}
-          className="flex h-8 min-w-8 items-center gap-2 rounded-sm border border-border bg-card px-2.5 text-muted transition-colors hover:border-accent/35 hover:text-foreground"
-          aria-label="Open command palette"
-        >
-          <Search className="h-3.5 w-3.5" />
-          <span className="hidden text-[11px] sm:inline">Search commands</span>
-          <kbd className="hidden border-l border-border pl-2 font-mono text-[9px] text-text-dim md:inline">⌘K</kbd>
-        </button>
+        <div className="flex items-center gap-1.5">
+          <Link href="/settings" className="flex h-8 items-center gap-1.5 rounded-sm border border-border bg-card px-2.5 text-[10px] font-medium text-muted transition-colors hover:border-accent/45 hover:text-foreground md:hidden" aria-label="Open Settings">
+            <Settings className="h-3.5 w-3.5" />
+            <span>Settings</span>
+          </Link>
+          <Link href="/ai" className="gc-icon-button md:hidden" aria-label="Open Assistant">
+            <Sparkles className="h-3.5 w-3.5" />
+          </Link>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("gc:open-command-palette"))}
+            className="flex h-8 min-w-8 items-center gap-2 rounded-sm border border-border bg-card px-2.5 text-muted transition-colors hover:border-accent/35 hover:text-foreground"
+            aria-label="Open command palette"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span className="hidden text-[11px] sm:inline">Search commands</span>
+            <kbd className="hidden border-l border-border pl-2 font-mono text-[9px] text-text-dim md:inline">⌘K</kbd>
+          </button>
+        </div>
       </header>
       <div>{children}</div>
     </main>

@@ -69,6 +69,28 @@ describe("M1: service graph reconciliation", () => {
     expect(path!.healthy).toBe(false);
     expect(path!.issues).toContain("wrong_upstream_port");
   });
+
+  it("links loopback proxy upstreams through observed Docker host-port publishing", () => {
+    const fx = fixtureWrongUpstreamPort();
+    const observation = {
+      ...fx.healthyObservation,
+      containers: fx.healthyObservation.containers.map((container) => ({
+        ...container,
+        name: "rentaweekend-api-1",
+        composeService: "api",
+        ports: [{ host: 7848, container: 3000, protocol: "tcp" }],
+      })),
+      proxy: fx.healthyObservation.proxy && {
+        ...fx.healthyObservation.proxy,
+        routes: [{ domain: "app.example.com", path: "/", upstream: "127.0.0.1:7848", listenPort: 443 }],
+      },
+    };
+    const path = resolveServicePath(reconcileServiceGraph(observation), "app.example.com");
+    expect(path?.containerName).toBe("rentaweekend-api-1");
+    expect(path?.linkMethod).toBe("published_port");
+    expect(path?.containerPort).toBe(3000);
+    expect(path?.healthy).toBe(true);
+  });
 });
 
 describe("M1: change ledger debounce", () => {

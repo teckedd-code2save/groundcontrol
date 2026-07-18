@@ -45,6 +45,27 @@ describe("proxy-parse", () => {
     );
     expect(r[0].upstream).toBe("api:8080");
   });
+
+  it("parses nested Caddy blocks and multiple site files without truncating routes", () => {
+    const routes = parseCaddyfileRoutes(`{
+  email ops@example.com
+}
+app.example.com {
+  encode zstd gzip
+  handle_path /api/* {
+    reverse_proxy api:3000
+  }
+}
+admin.example.com, www.admin.example.com {
+  reverse_proxy 127.0.0.1:7848
+}
+`);
+    expect(routes.map((route) => [route.domain, route.upstream])).toEqual([
+      ["app.example.com", "api:3000"],
+      ["admin.example.com", "127.0.0.1:7848"],
+      ["www.admin.example.com", "127.0.0.1:7848"],
+    ]);
+  });
 });
 
 describe("M4 Daytona + blueprints", () => {

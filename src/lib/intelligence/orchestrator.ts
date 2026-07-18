@@ -8,6 +8,7 @@ import type {
   CustomerJourney,
   LoopRun,
   OperationalEvent,
+  ProbeResult,
   ProxyRevision,
   ServiceGraph,
 } from "./types";
@@ -45,6 +46,8 @@ export interface LoopEngineState {
   revisions: Map<string, ProxyRevision>;
   lastHealthy: LastHealthyStore;
   runs: Map<string, LoopRun>;
+  /** Latest real external reachability probe for each public domain. */
+  pathProbes: Map<string, ProbeResult>;
   /** Current proxy content after observed or approved live mutations. */
   proxyContentByHost: Map<string, string>;
   /** Last ingested observation — used to re-reconcile graph after proxy recovery. */
@@ -66,6 +69,7 @@ export function createEngineState(): LoopEngineState {
     revisions: new Map(),
     lastHealthy: new LastHealthyStore(),
     runs: new Map(),
+    pathProbes: new Map(),
     proxyContentByHost: new Map(),
   };
 }

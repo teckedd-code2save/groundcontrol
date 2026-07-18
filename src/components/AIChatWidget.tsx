@@ -726,7 +726,7 @@ export default function AIChatWidget() {
     <>
       <button
         onClick={toggleOpen}
-        className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 w-12 items-center justify-center rounded-md bg-accent text-[var(--accent-ink)] shadow-lg shadow-black/30 transition-colors hover:bg-accent-bright md:bottom-6 md:right-6 md:z-50 md:h-14 md:w-14"
+        className="fixed bottom-6 right-6 z-50 hidden h-14 w-14 items-center justify-center rounded-md bg-accent text-[var(--accent-ink)] shadow-lg shadow-black/30 transition-colors hover:bg-accent-bright md:flex"
         aria-label="Toggle AI Chat"
       >
         {open ? (

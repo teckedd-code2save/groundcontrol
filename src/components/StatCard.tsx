@@ -36,8 +36,8 @@ export function StatCard({ title, value, subtitle, trend = "neutral", icon }: St
           <div
             className="w-9 h-9 rounded-lg flex items-center justify-center text-sm transition-transform duration-300 group-hover:scale-110"
             style={{
-              background: "rgba(124, 156, 255, 0.10)",
-              border: "1px solid rgba(124, 156, 255, 0.20)",
+              background: "rgba(78, 95, 213, 0.12)",
+              border: "1px solid rgba(78, 95, 213, 0.24)",
               color: "var(--accent)",
             }}
           >

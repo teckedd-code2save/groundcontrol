@@ -11,7 +11,7 @@ export default function BrandLogo({
   size = 64,
   className = "",
   stroke = "currentColor",
-  accent = "#7C9CFF",
+  accent = "#4E5FD5",
 }: BrandLogoProps) {
   return (
     <svg

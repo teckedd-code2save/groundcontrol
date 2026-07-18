@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import {
   createHttpJourney,
+  createHttpProbeExecutor,
   detectContainerChange,
   detectProxyChange,
   getGraphSummary,
@@ -9,6 +10,7 @@ import {
   ingestEvents,
   ingestObservation,
   registerJourney,
+  runProbes,
   setLoopEngine,
   shouldUseLiveRecovery,
   type LoopEngineState,
@@ -26,12 +28,28 @@ function readiness(state: LoopEngineState) {
   const hasGemini = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY);
   const hasDaytona = Boolean(process.env.DAYTONA_API_KEY || process.env.DAYTONA_TOKEN);
   const hasGraph = state.graph.nodes.length > 0;
-  const hasPublicPath = getGraphSummary(state).paths.length > 0;
+  const paths = getGraphSummary(state).paths;
+  const linkedPathCount = paths.filter((path) => Boolean(path.containerName)).length;
+  const hasPublicPath = linkedPathCount > 0;
   const hasJourneys = state.journeys.some((journey) => journey.confirmed);
   return [
     { id: "host", label: "Live host evidence", ready: hasGraph, detail: hasGraph ? `${state.graph.nodes.length} topology nodes observed` : "Connect a host and collect evidence" },
-    { id: "path", label: "Public service path", ready: hasPublicPath, detail: hasPublicPath ? "Proxy route maps to runtime evidence" : "Configure a Caddy or Nginx public route" },
-    { id: "journey", label: "Customer journey", ready: hasJourneys, detail: hasJourneys ? `${state.journeys.filter((journey) => journey.confirmed).length} confirmed HTTP journey(s)` : "No confirmed journey can be executed" },
+    {
+      id: "path",
+      label: "Runtime-linked public path",
+      ready: hasPublicPath,
+      detail: paths.length === 0
+        ? "No Caddy or Nginx public route was observed"
+        : `${linkedPathCount}/${paths.length} observed route(s) linked to runtime evidence`,
+    },
+    {
+      id: "journey",
+      label: "HTTP reachability checks",
+      ready: hasJourneys,
+      detail: hasJourneys
+        ? `${state.journeys.filter((journey) => journey.confirmed).length} system-generated public check(s); configure a customer journey for feature-level proof`
+        : "No public HTTP check can be executed",
+    },
     { id: "gemini", label: "Gemini investigation", ready: hasGemini, detail: hasGemini ? "Structured Gemini investigation enabled" : "Falls back to deterministic investigation until a Google API key is configured" },
     { id: "daytona", label: "Daytona reproduction", ready: hasDaytona, detail: hasDaytona ? "Sanitized remote reproduction enabled" : "Only local sanitized reproduction is available" },
     { id: "recovery", label: "Approved recovery", ready: shouldUseLiveRecovery(), detail: shouldUseLiveRecovery() ? "Allowlisted live recovery adapter enabled" : "GC_LOOP_LIVE is off; GroundControl will not mutate the host" },
@@ -41,8 +59,27 @@ function readiness(state: LoopEngineState) {
 }
 
 function publicState(state: LoopEngineState) {
+  const summary = getGraphSummary(state);
+  const paths = summary.paths.map((path) => {
+    const probe = state.pathProbes.get(path.domain.toLowerCase());
+    return {
+      ...path,
+      topologyStatus: path.containerName ? "linked" : "partial",
+      verification: probe
+        ? {
+            status: probe.ok ? "passed" : probe.statusCode != null && probe.statusCode < 500 ? "responded" : "failed",
+            statusCode: probe.statusCode,
+            latencyMs: probe.latencyMs,
+            error: probe.error,
+            observedAt: probe.observedAt,
+            target: probe.target,
+          }
+        : { status: "not_run" },
+    };
+  });
   return {
-    ...getGraphSummary(state),
+    ...summary,
+    paths,
     maturity: state.graph.nodes.length > 0 ? "live" : "awaiting_observation",
     readiness: readiness(state),
     journeyCount: state.journeys.length,
@@ -123,6 +160,19 @@ export async function POST(req: NextRequest) {
         confirmed: true,
       }));
     }
+
+    const pathProbes = new Map(next.pathProbes);
+    const probeExecutor = createHttpProbeExecutor(8_000);
+    await Promise.all(getGraphSummary(next).paths.map(async (path) => {
+      const target = `https://${path.domain}/`;
+      const [probe] = await runProbes(
+        [{ kind: "external", target, serviceId: path.serviceId }],
+        probeExecutor,
+        observation.observedAt
+      );
+      if (probe) pathProbes.set(path.domain.toLowerCase(), probe);
+    }));
+    next = { ...next, pathProbes };
     setLoopEngine(next);
     return NextResponse.json({ ...publicState(next), newEvents: events.length });
   } catch (err) {
