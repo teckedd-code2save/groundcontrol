@@ -55,7 +55,7 @@ const groups = [
 ] as const;
 
 const mobileItems = navItems.filter((item) =>
-  ["/dashboard", "/projects", "/deployments", "/intelligence"].includes(item.href)
+  ["/dashboard", "/deployments", "/intelligence", "/settings"].includes(item.href)
 );
 
 export function Sidebar() {
@@ -136,7 +136,7 @@ function Brand({ collapsed, toggle, close }: { collapsed: boolean; toggle?: () =
     <div className={`flex h-16 shrink-0 items-center border-b border-border ${collapsed ? "justify-center px-2" : "justify-between px-4"}`}>
       <Link href="/dashboard" className="flex min-w-0 items-center gap-3" aria-label="GroundControl overview">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center border border-border bg-background">
-          <BrandLogo size={21} stroke="#f1f2eb" accent="#c8f36b" />
+          <BrandLogo size={21} stroke="#f1f2eb" accent="#7c9cff" />
         </span>
         {!collapsed && (
           <span className="min-w-0">

@@ -633,7 +633,7 @@ export default function AIChatWidget() {
               expanded ? "max-w-4xl text-base" : "max-w-[85%] text-sm"
             } ${
               m.role === "user"
-                ? "bg-accent text-white"
+                ? "bg-accent text-[var(--accent-ink)]"
                 : m.role === "error"
                 ? "border border-error/30 bg-error/10 text-error"
                 : "border border-border bg-card text-foreground"
@@ -706,7 +706,7 @@ export default function AIChatWidget() {
         <button
           onClick={sendMessage}
           disabled={loading || !input.trim()}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-[var(--accent-ink)] transition-colors hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Send"
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -726,7 +726,7 @@ export default function AIChatWidget() {
     <>
       <button
         onClick={toggleOpen}
-        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-lg bg-accent text-white shadow-lg shadow-accent/20 hover:bg-accent-bright transition-colors"
+        className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 w-12 items-center justify-center rounded-md bg-accent text-[var(--accent-ink)] shadow-lg shadow-black/30 transition-colors hover:bg-accent-bright md:bottom-6 md:right-6 md:z-50 md:h-14 md:w-14"
         aria-label="Toggle AI Chat"
       >
         {open ? (
@@ -750,7 +750,7 @@ export default function AIChatWidget() {
           className={`fixed flex flex-col border border-border bg-card shadow-2xl ${
             expanded
               ? "inset-0 z-[70] rounded-none"
-              : "bottom-24 right-2 sm:right-6 z-50 h-[500px] w-[calc(100vw-1rem)] sm:w-[380px] rounded-lg"
+              : "inset-x-2 top-16 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-50 sm:inset-x-auto sm:top-auto sm:bottom-24 sm:right-6 sm:h-[500px] sm:w-[380px] rounded-lg"
           }`}
         >
           {header}

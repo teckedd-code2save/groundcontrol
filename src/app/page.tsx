@@ -14,7 +14,7 @@ const C = {
   mut: "rgba(245,246,247,0.45)",
   dim: "rgba(245,246,247,0.22)",
   lin: "rgba(245,246,247,0.08)",
-  accent: "#E8542A",
+  accent: "#7C9CFF",
 };
 
 function BtnPrimary({
@@ -27,7 +27,7 @@ function BtnPrimary({
   href?: string;
 }) {
   const className =
-    "inline-flex items-center justify-center rounded-lg bg-[#E8542A] px-6 py-3 text-[14px] font-medium text-white transition-colors hover:bg-[#FF6A40]";
+    "inline-flex items-center justify-center rounded-lg bg-[#7C9CFF] px-6 py-3 text-[14px] font-medium text-[#0B1020] transition-colors hover:bg-[#9DB4FF]";
   if (href) {
     return (
       <Link href={href} className={className}>
@@ -150,7 +150,7 @@ export default function HomePage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#202427]">
         <div className="h-1.5 w-16 overflow-hidden rounded-full bg-white/10">
-          <div className="h-full w-1/2 animate-pulse rounded-full bg-[#E8542A]" />
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-[#7C9CFF]" />
         </div>
       </div>
     );
@@ -180,7 +180,7 @@ export default function HomePage() {
                   <div className="line-inner">Your VPS has an</div>
                 </div>
                 <div className="line-mask overflow-hidden">
-                  <div className="line-inner text-[#E8542A]">AI co-pilot</div>
+                  <div className="line-inner text-[#7C9CFF]">AI co-pilot</div>
                 </div>
               </h1>
             </div>

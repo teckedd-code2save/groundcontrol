@@ -73,7 +73,7 @@ export function ToolConfirmCard({
             type="button"
             onClick={onApprove}
             disabled={loading}
-            className="rounded-md bg-accent px-3 py-1.5 text-xs font-mono font-medium text-white transition-colors hover:bg-accent-bright disabled:opacity-50"
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-mono font-medium text-[var(--accent-ink)] transition-colors hover:bg-accent-bright disabled:opacity-50"
           >
             Approve
           </button>

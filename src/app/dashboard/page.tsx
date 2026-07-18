@@ -332,8 +332,8 @@ export default function DashboardPage() {
                   <AreaChart data={metrics}>
                     <defs>
                       <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#c8f36b" stopOpacity={0.22} />
-                        <stop offset="95%" stopColor="#c8f36b" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#7c9cff" stopOpacity={0.22} />
+                        <stop offset="95%" stopColor="#7c9cff" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid vertical={false} stroke="#2a302b" />
@@ -348,7 +348,7 @@ export default function DashboardPage() {
                       contentStyle={{ background: "#0b0e0c", border: "1px solid #3a423b", borderRadius: 4, fontSize: 11 }}
                       labelFormatter={(v) => new Date(v).toLocaleString()}
                     />
-                    <Area type="monotone" dataKey="cpuLoad1" stroke="#c8f36b" fill="url(#cpuGrad)" strokeWidth={1.5} />
+                    <Area type="monotone" dataKey="cpuLoad1" stroke="#7c9cff" fill="url(#cpuGrad)" strokeWidth={1.5} />
                   </AreaChart>
                 </ResponsiveContainer>
                   </div>

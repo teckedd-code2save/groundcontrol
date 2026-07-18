@@ -34,11 +34,11 @@ export async function buildLiveHostObservation(): Promise<HostObservation> {
     getDockerContainerLabels(vps),
     scanProjectsTree(vps),
     execOnVps(
-      `cat ${shQuote(config.caddyFile)} 2>/dev/null; for f in ${shQuote(config.caddySitesDir)}/*; do [ -f "$f" ] && cat "$f"; done 2>/dev/null || true`,
+      `cat ${shQuote(config.caddyFile)} 2>/dev/null; printf '\\n'; for f in ${shQuote(config.caddySitesDir)}/*; do [ -f "$f" ] && { cat "$f"; printf '\\n'; }; done 2>/dev/null || true`,
       vps
     ),
     execOnVps(
-      `for f in ${shQuote(config.nginxSitesDir)}/*; do [ -f "$f" ] && cat "$f"; done 2>/dev/null || true`,
+      `for f in ${shQuote(config.nginxSitesDir)}/*; do [ -f "$f" ] && { cat "$f"; printf '\\n'; }; done 2>/dev/null || true`,
       vps
     ),
   ]);

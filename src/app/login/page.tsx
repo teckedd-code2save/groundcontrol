@@ -6,7 +6,7 @@ import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 import { InstallSetupSection, scrollToInstall } from "@/components/InstallSetupSection";
 import { AmbientShader } from "@/components/AmbientShader";
 
-const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#E8542A" };
+const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#7C9CFF", accentInk: "#0B1020" };
 const PAGE2_X_LINES = [1.5, 17, 55, 84, 98.5];
 const PAGE2_Y_LINES = [13, 33.5, 38, 78, 84.5, 100];
 const PAGE2_DOTS = PAGE2_X_LINES.flatMap((x) => PAGE2_Y_LINES.map((y) => ({ x, y })));
@@ -220,7 +220,7 @@ export default function LoginPage() {
             <div className="mb-8">
               <h1 style={{ fontSize: "clamp(36px, 6.5vw, 68px)", fontWeight: 500, lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
                 <div className="line-mask" style={{ overflow: "hidden" }}><div className="line-inner">Your VPS has an</div></div>
-                <div className="line-mask" style={{ overflow: "hidden" }}><div className="line-inner" style={{ color: "#E8542A" }}>AI co-pilot</div></div>
+                <div className="line-mask" style={{ overflow: "hidden" }}><div className="line-inner" style={{ color: C.accent }}>AI co-pilot</div></div>
               </h1>
             </div>
             <p className="fade-up" style={{ fontSize: 17, color: C.mut, lineHeight: 1.7, marginBottom: 36, maxWidth: 440 }}>
@@ -233,7 +233,7 @@ export default function LoginPage() {
                 style={{
                   padding: "12px 22px",
                   background: C.accent,
-                  color: "#fff",
+                  color: C.accentInk,
                   border: "none",
                   borderRadius: 8,
                   fontFamily: "inherit",
@@ -509,7 +509,7 @@ export default function LoginPage() {
               style={{
                 padding: "12px 22px",
                 background: C.accent,
-                color: "#fff",
+                color: C.accentInk,
                 border: "none",
                 borderRadius: 8,
                 fontFamily: "inherit",
