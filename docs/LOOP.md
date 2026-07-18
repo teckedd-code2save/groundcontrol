@@ -4,7 +4,7 @@
 
 ## Current implementation boundary
 
-The production Intelligence workspace can read the active host, reconcile Docker/Compose and Caddy/Nginx evidence, record meaningful changes, derive public HTTP journeys, and run evidence-backed investigations. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Gemini requires a Google API key, Daytona reproduction requires Daytona credentials, and host mutation remains disabled unless the allowlisted live-recovery adapter is explicitly enabled. The workspace exposes these prerequisites as readiness checks instead of silently appearing empty.
+The production Intelligence workspace can read the active host, reconcile Docker/Compose and Caddy/Nginx evidence, record meaningful changes, run an external HTTP check for every observed public route, and produce evidence-backed investigations. The workspace reports topology linkage and public reachability separately: discovering a proxy route never makes it healthy, and a reachable status-only endpoint is not presented as proof of a customer feature. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Gemini requires a Google API key, Daytona reproduction requires Daytona credentials, and host mutation remains disabled unless the allowlisted live-recovery adapter is explicitly enabled. The workspace exposes these prerequisites as readiness checks instead of silently appearing empty.
 
 ## Product hierarchy
 

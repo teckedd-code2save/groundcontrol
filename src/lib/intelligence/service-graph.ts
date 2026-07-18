@@ -21,6 +21,10 @@ function parseUpstream(upstream: string): { host: string; port?: number } {
   return { host: (hostPart || cleaned).toLowerCase(), port: Number.isFinite(port) ? port : undefined };
 }
 
+function isHostLoopback(host: string): boolean {
+  return ["localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"].includes(host);
+}
+
 /**
  * Reconcile a HostObservation into a ServiceGraph.
  * Pure function — no host I/O.
@@ -109,12 +113,24 @@ export function reconcileServiceGraph(obs: HostObservation): ServiceGraph {
       });
 
       const { host: upHost, port: upPort } = parseUpstream(route.upstream);
-      // Match container by name, compose service, or network alias-ish label
-      const match = obs.containers.find((c) => {
+      // Match Docker-network routes by name/service and host-loopback routes by
+      // the published host port. These are separate pieces of observed evidence.
+      const namedMatch = obs.containers.find((c) => {
         const name = c.name.toLowerCase().replace(/^\//, "");
         const svc = (c.composeService || "").toLowerCase();
-        return name === upHost || name.includes(upHost) || svc === upHost || upHost.includes(svc && svc.length > 1 ? svc : "\0");
+        return name === upHost || svc === upHost;
       });
+      const publishedPortMatch = !namedMatch && upPort != null && isHostLoopback(upHost)
+        ? obs.containers.find((container) => container.ports?.some((port) => port.host === upPort))
+        : undefined;
+      const match = namedMatch || publishedPortMatch;
+      const linkMethod = publishedPortMatch
+        ? "published_port"
+        : namedMatch?.composeService?.toLowerCase() === upHost
+          ? "compose_service"
+          : namedMatch
+            ? "container_name"
+            : undefined;
 
       if (match) {
         const cName = match.name.replace(/^\//, "");
@@ -153,7 +169,7 @@ export function reconcileServiceGraph(obs: HostObservation): ServiceGraph {
           to: containerNodeId,
           confidence: 0.9,
           observedAt: at,
-          attributes: { upstream: route.upstream, upstreamPort: upPort },
+          attributes: { upstream: route.upstream, upstreamPort: upPort, linkMethod },
         });
 
         if (upPort != null) {
@@ -331,9 +347,10 @@ export function resolveServicePath(graph: ServiceGraph, domain: string): Service
 
   const upstream = routeNode ? String(routeNode.attributes.upstream || "") : undefined;
   const { port: upstreamPort } = upstream ? parseUpstream(upstream) : { port: undefined as number | undefined };
+  const linkMethod = routesTo?.attributes?.linkMethod as ServicePath["linkMethod"] | undefined;
   const containerPorts = (containerNode?.attributes.ports as Array<{ host?: number; container?: number }>) || [];
   const listeningPorts = containerPorts
-    .map((p) => p.container ?? p.host)
+    .map((p) => linkMethod === "published_port" ? p.host : (p.container ?? p.host))
     .filter((p): p is number => typeof p === "number");
 
   const issues: string[] = [];
@@ -345,7 +362,7 @@ export function resolveServicePath(graph: ServiceGraph, domain: string): Service
   if (upstreamPort != null && listeningPorts.length > 0 && !listeningPorts.includes(upstreamPort)) {
     issues.push("wrong_upstream_port");
   }
-  if (upstreamPort != null && listeningPorts.length === 0) {
+  if (containerNode && upstreamPort != null && listeningPorts.length === 0) {
     // Unknown ports — soft issue only if we have no port metadata
     issues.push("unknown_container_ports");
   }
@@ -364,9 +381,12 @@ export function resolveServicePath(graph: ServiceGraph, domain: string): Service
     serviceId: containerNode?.serviceId || (containerNode ? String(containerNode.attributes.composeService || containerNode.label) : undefined),
     upstream,
     listenPort: routeNode?.attributes.listenPort as number | undefined,
-    containerPort: upstreamPort,
+    containerPort: linkMethod === "published_port"
+      ? containerPorts.find((port) => port.host === upstreamPort)?.container
+      : upstreamPort,
     containerName: containerNode ? String(containerNode.attributes.name || containerNode.label) : undefined,
     containerState,
+    linkMethod,
     healthy,
     issues,
   };

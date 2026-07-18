@@ -19,22 +19,25 @@ export interface ParsedProxyRoute {
  */
 export function parseCaddyfileRoutes(content: string): ParsedProxyRoute[] {
   const routes: ParsedProxyRoute[] = [];
-  const blocks =
-    content.matchAll(
-      /^([^\s{#][^\n{]*)\s*\{([^}]*)\}/gm
-    );
-
-  for (const m of blocks) {
-    const domain = m[1].trim().split(/\s+/)[0];
-    const body = m[2] || "";
-    const rp = body.match(/reverse_proxy\s+(\S+)/);
-    if (!domain || !rp) continue;
-    routes.push({
-      domain,
-      path: "/",
-      upstream: rp[1],
-      listenPort: 443,
-    });
+  for (const block of topLevelBlocks(content)) {
+    const domains = parseSiteAddresses(block.header);
+    if (domains.length === 0) continue;
+    const proxies = Array.from(block.body.matchAll(/^\s*reverse_proxy\s+([^\n#]+)/gm));
+    for (const proxy of proxies) {
+      const tokens = proxy[1].trim().split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) continue;
+      const matcher = tokens[0].startsWith("/") || tokens[0].startsWith("@") ? tokens.shift() : undefined;
+      const upstream = tokens.find((token) => !token.startsWith("{"));
+      if (!upstream) continue;
+      for (const domain of domains) {
+        routes.push({
+          domain,
+          path: matcher?.startsWith("/") ? matcher : "/",
+          upstream,
+          listenPort: 443,
+        });
+      }
+    }
   }
 
   // One-liner without braces: "example.com reverse_proxy host:port"
@@ -51,6 +54,54 @@ export function parseCaddyfileRoutes(content: string): ParsedProxyRoute[] {
   }
 
   return routes;
+}
+
+function topLevelBlocks(content: string): Array<{ header: string; body: string }> {
+  const blocks: Array<{ header: string; body: string }> = [];
+  let depth = 0;
+  let header = "";
+  let bodyStart = -1;
+  let lineStart = 0;
+  let inComment = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    if (char === "\n") {
+      lineStart = index + 1;
+      inComment = false;
+      continue;
+    }
+    if (char === "#" && !inComment) {
+      inComment = true;
+      continue;
+    }
+    if (inComment) continue;
+    if (char === "{") {
+      if (depth === 0) {
+        header = content.slice(lineStart, index).trim();
+        bodyStart = index + 1;
+      }
+      depth += 1;
+      continue;
+    }
+    if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && bodyStart >= 0) {
+        blocks.push({ header, body: content.slice(bodyStart, index) });
+        bodyStart = -1;
+      }
+    }
+  }
+  return blocks;
+}
+
+function parseSiteAddresses(header: string): string[] {
+  if (!header || header.startsWith("(") || header.startsWith("{")) return [];
+  return header
+    .split(",")
+    .map((address) => address.trim().split(/\s+/)[0])
+    .map((address) => address.replace(/^https?:\/\//, "").replace(/\/$/, ""))
+    .filter((address) => Boolean(address) && !address.startsWith(":"));
 }
 
 export function parseNginxRoutes(content: string): ParsedProxyRoute[] {

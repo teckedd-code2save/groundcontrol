@@ -111,6 +111,7 @@ export interface ServicePath {
   containerPort?: number;
   containerName?: string;
   containerState?: string;
+  linkMethod?: "container_name" | "compose_service" | "published_port";
   healthy: boolean;
   issues: string[];
 }

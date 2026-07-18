@@ -82,8 +82,6 @@ export function Sidebar() {
 
   useEffect(() => { startTransition(() => setMobileMenu(false)); }, [pathname]);
 
-  if (!user) return null;
-
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
@@ -91,7 +89,7 @@ export function Sidebar() {
 
   return (
     <>
-      <nav className="gc-sidebar fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 border-t px-1 py-1.5 md:hidden safe-area-bottom">
+      <nav className="gc-sidebar fixed inset-x-0 bottom-0 z-[60] grid min-h-16 grid-cols-5 border-t px-1 py-1.5 shadow-[0_-12px_32px_rgba(0,0,0,0.28)] md:hidden safe-area-bottom" aria-label="Primary mobile navigation">
         {mobileItems.map((item) => <MobileNavItem key={item.href} item={item} pathname={pathname} />)}
         <button type="button" onClick={() => setMobileMenu(true)} className="flex min-w-0 flex-col items-center gap-1 px-1 py-1.5 text-muted transition-colors hover:text-foreground">
           <Menu className="h-[18px] w-[18px]" strokeWidth={1.7} />
@@ -105,7 +103,7 @@ export function Sidebar() {
           <div className="gc-sidebar relative flex h-full w-[286px] flex-col border-r animate-slide-in">
             <Brand collapsed={false} close={() => setMobileMenu(false)} />
             <NavGroups pathname={pathname} unreadAlerts={unreadAlerts} collapsed={false} />
-            <AccountFooter user={user.username} collapsed={false} logout={logout} />
+            <AccountFooter user={user?.username || "Account"} collapsed={false} logout={logout} />
           </div>
         </div>
       )}
@@ -113,13 +111,16 @@ export function Sidebar() {
       <aside className={`gc-sidebar fixed inset-y-0 left-0 z-40 hidden flex-col border-r transition-[width] duration-200 md:flex ${collapsed ? "w-[72px]" : "w-60"}`}>
         <Brand collapsed={collapsed} toggle={toggleCollapsed} />
         <NavGroups pathname={pathname} unreadAlerts={unreadAlerts} collapsed={collapsed} />
-        <div className="border-t border-border p-2">
+        <div className="space-y-1 border-t border-border p-2">
+          {navItems.filter((item) => item.section === "system").map((item) => (
+            <DesktopNavItem key={item.href} item={item} pathname={pathname} unreadAlerts={unreadAlerts} collapsed={collapsed} />
+          ))}
           <Link href="/onboarding?add=1" title="Add another server" className={`flex min-h-9 items-center gap-2 rounded-sm border border-border text-[11px] text-muted transition-colors hover:border-accent/40 hover:text-foreground ${collapsed ? "justify-center px-2" : "px-3"}`}>
             <Plus className="h-3.5 w-3.5 shrink-0" />
             {!collapsed && <span>Add server</span>}
           </Link>
         </div>
-        <AccountFooter user={user.username} collapsed={collapsed} logout={logout} />
+        <AccountFooter user={user?.username || "Account"} collapsed={collapsed} logout={logout} />
       </aside>
 
       <style>{`
@@ -136,7 +137,7 @@ function Brand({ collapsed, toggle, close }: { collapsed: boolean; toggle?: () =
     <div className={`flex h-16 shrink-0 items-center border-b border-border ${collapsed ? "justify-center px-2" : "justify-between px-4"}`}>
       <Link href="/dashboard" className="flex min-w-0 items-center gap-3" aria-label="GroundControl overview">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center border border-border bg-background">
-          <BrandLogo size={21} stroke="#f1f2eb" accent="#7c9cff" />
+          <BrandLogo size={21} stroke="#f1f2eb" accent="#4e5fd5" />
         </span>
         {!collapsed && (
           <span className="min-w-0">
@@ -195,7 +196,7 @@ function MobileNavItem({ item, pathname }: { item: NavItem; pathname: string }) 
   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
   const Icon = item.icon;
   return (
-    <Link href={item.href} className={`flex min-w-0 flex-col items-center gap-1 px-1 py-1.5 transition-colors ${active ? "text-accent" : "text-muted hover:text-foreground"}`}>
+    <Link href={item.href} aria-current={active ? "page" : undefined} className={`flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-sm px-1 py-1.5 transition-colors ${active ? "bg-accent/10 text-accent" : "text-muted hover:bg-white/[0.035] hover:text-foreground"}`}>
       <Icon className="h-[18px] w-[18px]" strokeWidth={1.7} />
       <span className="w-full truncate text-center text-[9px] leading-none">{item.label}</span>
     </Link>

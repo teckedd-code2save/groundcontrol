@@ -1,327 +1,621 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, CircleHelp, RefreshCw, Shield, XCircle, Zap } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowDown,
+  CheckCircle2,
+  CircleHelp,
+  ExternalLink,
+  Fingerprint,
+  Network,
+  RefreshCw,
+  RotateCcw,
+  SearchCheck,
+  ShieldCheck,
+  Sparkles,
+  TestTube2,
+  Wrench,
+  XCircle,
+} from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
-import { Button, EmptyState, Notice } from "@/components/ui";
+import { Button, EmptyState, Notice, StatusBadge } from "@/components/ui";
 
-type ServicePath = { domain: string; upstream?: string; containerName?: string; containerState?: string; healthy: boolean; issues: string[]; serviceId?: string };
-type EvidenceStep = { id: string; label: string; status: "ok" | "warning" | "unknown"; detail: string };
-type ChangeSet = { id: string; kinds: string[]; serviceIds: string[] };
-type GraphMeta = { hostId: string; source: string; reconciledAt: string; nodeCount: number; edgeCount: number; newEvents?: number };
+type Verification = {
+  status: "passed" | "responded" | "failed" | "not_run";
+  statusCode?: number;
+  latencyMs?: number;
+  error?: string;
+  observedAt?: string;
+  target?: string;
+};
+
+type ServicePath = {
+  domain: string;
+  upstream?: string;
+  containerName?: string;
+  containerState?: string;
+  containerPort?: number;
+  healthy: boolean;
+  issues: string[];
+  serviceId?: string;
+  linkMethod?: "container_name" | "compose_service" | "published_port";
+  topologyStatus?: "linked" | "partial";
+  verification: Verification;
+};
+
+type ChangeSet = {
+  id: string;
+  kinds: string[];
+  serviceIds: string[];
+  eventIds: string[];
+  firstObservedAt: string;
+  lastObservedAt: string;
+};
+
+type ReadinessItem = { id: string; label: string; ready: boolean; detail: string };
+
+type Hypothesis = {
+  id: string;
+  statement: string;
+  status: "open" | "confirmed" | "rejected";
+  confidence: number;
+  supportingEvidenceIds: string[];
+  contradictingEvidenceIds: string[];
+};
+
+type Evidence = { id: string; kind: string; summary: string; detail?: string; observedAt: string };
+
+type ActionPlan = {
+  title: string;
+  description: string;
+  kind: string;
+  risk: "low" | "medium" | "high" | "destructive";
+  approvalRequired: boolean;
+  preconditions: string[];
+  expectedResult: string;
+  verificationJourneyIds: string[];
+  rollbackKind?: string;
+};
+
+type JourneyResult = {
+  journeyId: string;
+  ok: boolean;
+  observedAt: string;
+  stepResults: Array<{ stepIndex: number; ok: boolean; detail: string; statusCode?: number }>;
+};
+
+type LoopRun = {
+  id: string;
+  state: string;
+  serviceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  investigation?: {
+    symptom: string;
+    customerImpact: string;
+    provider: string;
+    hypotheses: Hypothesis[];
+    confirmedCause?: string;
+    uncertainty: string[];
+    evidence: Evidence[];
+  };
+  actionPlan?: ActionPlan;
+  journeyResults: JourneyResult[];
+  verification?: JourneyResult[];
+  auditLog: Array<{ at: string; action: string; detail?: string }>;
+};
+
+type GraphMeta = {
+  hostId: string;
+  source: string;
+  reconciledAt: string;
+  nodeCount: number;
+  edgeCount: number;
+  maturity: string;
+  readiness: ReadinessItem[];
+};
+
+const LOOP_STAGES = [
+  ["01", "Observe"],
+  ["02", "Understand"],
+  ["03", "Test"],
+  ["04", "Diagnose"],
+  ["05", "Recover"],
+  ["06", "Verify"],
+  ["07", "Remember"],
+] as const;
 
 export default function IntelligencePage() {
   const [paths, setPaths] = useState<ServicePath[]>([]);
   const [changeSets, setChangeSets] = useState<ChangeSet[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedPath, setSelectedPath] = useState<ServicePath | null>(null);
-  const [run, setRun] = useState<any>(null);
+  const [selectedDomain, setSelectedDomain] = useState("");
+  const [run, setRun] = useState<LoopRun | null>(null);
   const [graphMeta, setGraphMeta] = useState<GraphMeta | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [operation, setOperation] = useState<"scan" | "investigate" | "recover" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedPath = useMemo(
+    () => paths.find((path) => path.domain === selectedDomain) || paths[0] || null,
+    [paths, selectedDomain]
+  );
 
   const refresh = useCallback(async (reconcile = false) => {
     setLoading(true);
+    if (reconcile) setOperation("scan");
     try {
-      const [g, c] = await Promise.all([
-        fetch("/api/intelligence/graph", reconcile ? { method: "POST" } : undefined).then(r => r.json()),
-        fetch("/api/intelligence/changes").then(r => r.json()),
+      const [graphResponse, changesResponse] = await Promise.all([
+        fetch("/api/intelligence/graph", reconcile ? { method: "POST" } : undefined),
+        fetch("/api/intelligence/changes"),
       ]);
-      if (g.error) throw new Error(g.error);
-      const nextPaths: ServicePath[] = Array.isArray(g.paths) ? g.paths : [];
+      const [graph, changes] = await Promise.all([graphResponse.json(), changesResponse.json()]);
+      if (!graphResponse.ok || graph.error) throw new Error(graph.error || "Could not read the service graph");
+      if (!changesResponse.ok || changes.error) throw new Error(changes.error || "Could not read the change ledger");
+
+      const nextPaths = Array.isArray(graph.paths) ? graph.paths as ServicePath[] : [];
       setPaths(nextPaths);
-      setSelectedPath((current) => current ? nextPaths.find((path) => path.domain === current.domain) || null : null);
+      setSelectedDomain((current) => nextPaths.some((path) => path.domain === current) ? current : nextPaths[0]?.domain || "");
+      setChangeSets(Array.isArray(changes.changeSets) ? changes.changeSets : []);
       setGraphMeta({
-        hostId: String(g.hostId || ""),
-        source: String(g.source || "unknown"),
-        reconciledAt: String(g.reconciledAt || ""),
-        nodeCount: Number(g.nodeCount || 0),
-        edgeCount: Number(g.edgeCount || 0),
-        newEvents: typeof g.newEvents === "number" ? g.newEvents : undefined,
+        hostId: String(graph.hostId || ""),
+        source: String(graph.source || "unknown"),
+        reconciledAt: String(graph.reconciledAt || ""),
+        nodeCount: Number(graph.nodeCount || 0),
+        edgeCount: Number(graph.edgeCount || 0),
+        maturity: String(graph.maturity || "awaiting_observation"),
+        readiness: Array.isArray(graph.readiness) ? graph.readiness : [],
       });
-      setChangeSets(c.changeSets || []);
       setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load intelligence data");
-    } finally { setLoading(false); }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load Intelligence");
+    } finally {
+      setLoading(false);
+      setOperation(null);
+    }
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  async function runInvestigation(domain: string) {
-    setLoading(true); setError(null);
+  async function runInvestigation() {
+    if (!selectedPath) return;
+    setLoading(true);
+    setOperation("investigate");
+    setError(null);
     try {
-      const res = await fetch("/api/loop/runs", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain }),
+      const response = await fetch("/api/loop/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: selectedPath.domain, changeSetId: changeSets[0]?.id }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Investigation failed");
       setRun(data.run);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Investigation failed");
-    } finally { setLoading(false); }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Investigation failed");
+    } finally {
+      setLoading(false);
+      setOperation(null);
+    }
   }
 
-  const selectedEvidence: EvidenceStep[] = selectedPath ? [
-    { id: "dns", label: "DNS resolution", status: "unknown", detail: "Not independently probed during topology reconciliation" },
-    { id: "tls", label: "TLS certificate", status: "unknown", detail: "Not independently probed during topology reconciliation" },
-    { id: "proxy", label: `Proxy route ${selectedPath.upstream || "unknown"}`, status: selectedPath.upstream ? "ok" : "warning", detail: selectedPath.upstream ? `Observed route targets ${selectedPath.upstream}` : "No proxy upstream was resolved" },
-    { id: "container", label: `Container ${selectedPath.containerName || "unknown"}`, status: selectedPath.healthy ? "ok" : "warning", detail: selectedPath.containerState ? `Observed state: ${selectedPath.containerState}` : "No matching container was found" },
-  ] : [];
+  async function approveRecovery() {
+    if (!run) return;
+    setLoading(true);
+    setOperation("recover");
+    setError(null);
+    try {
+      const response = await fetch(`/api/loop/runs/${encodeURIComponent(run.id)}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Recovery could not be applied");
+      setRun(data.run);
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Recovery could not be applied");
+    } finally {
+      setLoading(false);
+      setOperation(null);
+    }
+  }
 
-  const healthyCount = paths.filter(p => p.healthy).length;
+  const passedCount = paths.filter((path) => path.verification?.status === "passed").length;
+  const failedCount = paths.filter((path) => path.verification?.status === "failed").length;
+  const linkedCount = paths.filter((path) => path.topologyStatus === "linked").length;
+  const recoveryReady = graphMeta?.readiness.find((item) => item.id === "recovery")?.ready ?? false;
+  const persistenceReady = graphMeta?.readiness.find((item) => item.id === "persistence")?.ready ?? false;
 
   return (
     <div className="gc-page gc-page--wide">
       <PageHeader
-        eyebrow="Operational intelligence"
-        title="Intelligence"
-        description="Live service relationships, customer-facing journeys, evidence-backed diagnosis, and reversible recovery."
+        eyebrow="Loop · operational intelligence"
+        title="Investigate the system behind the URL"
+        description="Observe host changes, trace the affected service path, test the public outcome, diagnose with evidence, recover by policy, verify externally, and retain the result."
+        actions={(
+          <Button
+            variant="primary"
+            onClick={() => refresh(true)}
+            disabled={loading}
+            leadingIcon={<RefreshCw size={14} className={operation === "scan" ? "animate-spin" : ""} />}
+          >
+            {operation === "scan" ? "Scanning and testing…" : "Scan host"}
+          </Button>
+        )}
       />
 
-      {error && <Notice className="mt-4" tone="danger">{error}</Notice>}
+      {error && <Notice className="mt-5" tone="danger" title="Operation did not complete">{error}</Notice>}
 
-      <div className="mt-6 grid grid-cols-2 overflow-hidden border border-border bg-card lg:grid-cols-4">
-        <IntelligenceStat label="Service paths" value={String(paths.length)} detail="Mapped from public routes" />
-        <IntelligenceStat label="Verified healthy" value={`${healthyCount}/${paths.length}`} detail="Current host evidence" tone={paths.length > 0 && healthyCount === paths.length ? "success" : "warning"} />
-        <IntelligenceStat label="Change sets" value={String(changeSets.length)} detail="Evidence awaiting correlation" />
-        <IntelligenceStat label="Autonomy" value="Monitor" detail="Read-only until policy allows" />
+      <div className="mt-6 border border-border bg-card">
+        <div className="grid gap-px bg-border sm:grid-cols-4">
+          <SummaryCell label="Observed paths" value={String(paths.length)} detail={`${linkedCount} linked to runtime`} />
+          <SummaryCell label="Publicly verified" value={`${passedCount}/${paths.length}`} detail="Real external HTTP checks" tone={failedCount > 0 ? "danger" : passedCount > 0 ? "success" : "neutral"} />
+          <SummaryCell label="Open failures" value={String(failedCount)} detail="Customer reachability failures" tone={failedCount > 0 ? "danger" : "neutral"} />
+          <SummaryCell label="Autonomy" value="Monitor" detail="Mutation remains policy gated" />
+        </div>
       </div>
 
-      {/* Empty state */}
-      {paths.length === 0 && !loading && (
+      <StageRail run={run} selectedPath={selectedPath} hasGraph={paths.length > 0} />
+
+      {paths.length === 0 && !loading ? (
         <EmptyState
-          className="mt-8"
+          className="mt-6"
           icon={<Activity size={22} />}
-          title="No service graph yet"
-          description="GroundControl reads your host to map every service from domain to container. This is read-only—nothing on your VPS changes."
-          action={
-            <Button
-              variant="primary"
-              onClick={() => refresh(true)}
-              disabled={loading}
-              leadingIcon={<RefreshCw className={loading ? "animate-spin" : ""} size={14} />}
-            >
-              {loading ? "Collecting host evidence…" : "Collect host evidence"}
-            </Button>
-          }
+          title="No live system has been identified yet"
+          description="Scan the active host to read proxy routes, Docker and Compose evidence, then run a real public reachability check for every discovered domain."
+          action={<Button variant="primary" onClick={() => refresh(true)} leadingIcon={<SearchCheck size={14} />}>Identify this system</Button>}
         />
-      )}
-
-      {paths.length > 0 && (
-        <div className="min-w-0 space-y-6">
-            <div className="flex flex-col gap-3 border border-border bg-card px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-mono text-muted">SERVICE GRAPH</span>
-                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                  <span className="text-[10px] font-mono text-success uppercase">{healthyCount}/{paths.length} healthy</span>
-                </div>
-                <h2 className="text-sm font-semibold">Live host topology</h2>
-                <p className="mt-1 font-mono text-[9px] text-text-dim">
-                  {graphMeta?.source || "unknown"} · {graphMeta?.hostId || "host unavailable"} · {formatObservationTime(graphMeta?.reconciledAt)}
-                </p>
-              </div>
-              <Button
-                size="sm"
-                onClick={() => refresh(true)}
-                disabled={loading}
-                leadingIcon={<RefreshCw size={13} className={loading ? "animate-spin" : ""} />}
-              >
-                {loading ? "Scanning…" : "Scan host"}
-              </Button>
-            </div>
-
+      ) : paths.length > 0 ? (
+        <div className="mt-6 grid min-w-0 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+          <aside className="min-w-0 lg:sticky lg:top-20 lg:self-start">
             <div className="border border-border bg-card">
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <span className="gc-eyebrow">Observed public paths</span>
-                <span className="font-mono text-[9px] text-muted">{paths.length} total · none hidden</span>
+              <div className="border-b border-border px-4 py-3">
+                <p className="gc-eyebrow">System identity</p>
+                <p className="mt-1 truncate text-sm font-semibold">{selectedPath?.serviceId || selectedPath?.domain}</p>
+                <p className="mt-1 break-all font-mono text-[9px] text-text-dim">{graphMeta?.hostId || "host not identified"}</p>
               </div>
-              <div className="max-h-[460px] divide-y divide-border overflow-y-auto">
+              <div className="max-h-[420px] divide-y divide-border overflow-y-auto">
                 {paths.map((path) => (
                   <button
                     key={path.domain}
                     type="button"
-                    onClick={() => setSelectedPath(selectedPath?.domain === path.domain ? null : path)}
-                    className={`grid w-full gap-3 px-4 py-3 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center ${
-                      selectedPath?.domain === path.domain ? "bg-accent/[0.07]" : "hover:bg-white/[0.025]"
-                    }`}
+                    onClick={() => { setSelectedDomain(path.domain); setRun(null); setError(null); }}
+                    className={`w-full px-4 py-3 text-left transition-colors ${selectedPath?.domain === path.domain ? "bg-accent/10" : "hover:bg-white/[0.025]"}`}
                   >
-                    <span className="min-w-0">
-                      <span className="block font-mono text-[9px] uppercase text-muted">Public endpoint</span>
-                      <span className="mt-0.5 block truncate text-xs font-medium">{path.domain}</span>
-                    </span>
-                    <span className="flex min-w-0 items-center gap-2 font-mono text-[10px] text-muted">
-                      <span className="truncate">{path.upstream || "unresolved route"}</span>
-                      <ArrowRight size={12} className="shrink-0 text-text-dim" />
-                      <span className="truncate">{path.containerName || "no container"}</span>
-                    </span>
-                    <span className={`font-mono text-[9px] uppercase ${path.healthy ? "text-success" : "text-error"}`}>
-                      {path.healthy ? "healthy" : "attention"}
-                    </span>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="min-w-0 truncate text-xs font-medium">{path.domain}</span>
+                      <PathStatus status={path.verification?.status || "not_run"} compact />
+                    </div>
+                    <p className="mt-1 truncate font-mono text-[9px] text-muted">{path.upstream || "proxy target unresolved"}</p>
                   </button>
                 ))}
               </div>
-              {selectedPath && (
-                <div className="space-y-3 border-t border-border bg-background/30 p-4">
-                  {!selectedPath.healthy && (
-                    <Notice tone="danger">{selectedPath.issues.join(", ") || "Service degraded"}</Notice>
-                  )}
-                </div>
-              )}
+              <div className="border-t border-border px-4 py-3 font-mono text-[9px] text-text-dim">
+                {graphMeta?.nodeCount || 0} nodes · {graphMeta?.edgeCount || 0} relationships · {formatTime(graphMeta?.reconciledAt)}
+              </div>
             </div>
+          </aside>
 
-            {/* Evidence stream */}
-            {selectedPath && (
-              <div className="border border-border bg-card">
-                <div className="border-b border-border px-5 py-3">
-                  <span className="text-[10px] font-mono text-muted uppercase">Live topology + evidence</span>
+          {selectedPath && (
+            <main className="min-w-0 border border-border bg-card">
+              <StageSection number="01" label="Observe" icon={<Activity size={16} />} state="complete" summary="Host and change evidence collected">
+                <div className="grid gap-px border border-border bg-border sm:grid-cols-3">
+                  <Fact label="Observation source" value={graphMeta?.source || "unknown"} />
+                  <Fact label="Last reconciliation" value={formatTime(graphMeta?.reconciledAt)} />
+                  <Fact label="Relevant change sets" value={String(changeSets.length)} />
                 </div>
-                <div className="divide-y divide-border">
-                  {selectedEvidence.map((step, i) => (
-                    <div key={step.id} className="flex items-start gap-3 px-5 py-3">
-                      <span className="mt-0.5 font-mono text-[10px] text-muted w-4">{(i + 1).toString().padStart(2, "0")}</span>
-                      {step.status === "ok" ? (
-                        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 text-success shrink-0" />
-                      ) : step.status === "warning" ? (
-                        <XCircle className="mt-0.5 h-3.5 w-3.5 text-error shrink-0" />
-                      ) : (
-                        <CircleHelp className="mt-0.5 h-3.5 w-3.5 text-muted shrink-0" />
-                      )}
-                      <div>
-                        <p className="text-xs">{step.label}</p>
-                        <p className="text-[10px] text-muted">{step.detail}</p>
+                {changeSets.length > 0 ? (
+                  <div className="mt-4 divide-y divide-border border border-border">
+                    {changeSets.slice(0, 4).map((change) => (
+                      <div key={change.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[110px_minmax(0,1fr)_auto] sm:items-center">
+                        <span className="font-mono text-[9px] text-text-dim">{change.id}</span>
+                        <span className="flex flex-wrap gap-1.5">{change.kinds.map((kind) => <StatusBadge key={kind} dot={false}>{humanize(kind)}</StatusBadge>)}</span>
+                        <span className="font-mono text-[9px] text-muted">{formatTime(change.lastObservedAt)}</span>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Investigation trigger + results */}
-            <div className="border border-border bg-card">
-              <div className="border-b border-border px-5 py-3 flex items-center justify-between">
-                <span className="text-[10px] font-mono text-muted uppercase">Investigation</span>
-                <button
-                  onClick={() => {
-                    const target = selectedPath?.domain || paths[0]?.domain;
-                    if (target) runInvestigation(target);
-                  }}
-                  disabled={loading || paths.length === 0}
-                  className="gc-button gc-button-secondary text-[11px]">
-                  <Zap className="h-3 w-3" />
-                  {loading ? "Running…" : run ? "Run again" : "Run investigation"}
-                </button>
-              </div>
-              {run?.investigation ? (
-                <div className="divide-y divide-border px-5">
-                  <div className="py-3">
-                    <p className="text-xs font-medium">Symptom</p>
-                    <p className="text-xs text-muted mt-1">{run.investigation.symptom}</p>
-                    <p className="text-[10px] text-muted mt-0.5">Impact: {run.investigation.customerImpact} · Provider: {run.investigation.provider || "deterministic"}</p>
+                    ))}
                   </div>
-                  {run.investigation.hypotheses?.length > 0 && (
-                    <div className="py-3">
-                      <p className="text-xs font-medium mb-2">Hypotheses</p>
-                      {run.investigation.hypotheses.map((h: any) => (
-                        <div key={h.id} className="flex items-start gap-2 mb-2 last:mb-0">
-                          {h.status === "confirmed" ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 text-success shrink-0" /> :
-                           h.status === "rejected" ? <XCircle className="mt-0.5 h-3.5 w-3.5 text-error shrink-0" /> :
-                           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-warning shrink-0" />}
-                          <div>
-                            <p className="text-[11px]">{h.statement}</p>
-                            <p className="text-[10px] text-muted">{(h.confidence * 100).toFixed(0)}% confidence · {h.status}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {run.investigation.confirmedCause && (
-                    <div className="py-3">
-                      <p className="text-xs font-medium">Confirmed cause</p>
-                      <p className="font-mono text-xs text-accent mt-1">{run.investigation.confirmedCause}</p>
-                    </div>
-                  )}
-                  {run.actionPlan && (
-                    <div className="py-3 flex items-center gap-2">
-                      <Shield className="h-3.5 w-3.5 text-accent" />
-                      <span className="text-xs">{run.actionPlan.title}</span>
-                      {run.actionPlan.approvalRequired && <span className="text-[10px] text-warning bg-warning/10 px-1 py-0.5 rounded">Approval required</span>}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="px-5 py-4 text-xs text-muted">
-                  {paths.length === 0
-                    ? "Collect host evidence first, then run an investigation on a healthy service path."
-                    : "Run an investigation on a service path to diagnose issues with Gemini or the deterministic engine."}
-                </div>
-              )}
-            </div>
+                ) : <Notice className="mt-4">No meaningful change is recorded yet. The scan still establishes current system identity and reachability.</Notice>}
+              </StageSection>
 
-            {/* Change ledger */}
-            {changeSets.length > 0 && (
-              <div className="border border-border bg-card">
-                <div className="border-b border-border px-5 py-3 flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-muted uppercase">Change ledger</span>
-                  <button onClick={() => refresh(true)} disabled={loading} className="text-[10px] font-mono text-accent hover:underline">
-                    <RefreshCw className={`inline h-3 w-3 mr-1 ${loading ? "animate-spin" : ""}`} />Refresh
-                  </button>
+              <StageSection number="02" label="Understand" icon={<Network size={16} />} state={selectedPath.topologyStatus === "linked" ? "complete" : "attention"} summary="Trace the customer path through observed infrastructure">
+                <RelationshipChain path={selectedPath} />
+                {selectedPath.issues.length > 0 && (
+                  <Notice className="mt-4" tone="warning" title="Topology uncertainty">
+                    {selectedPath.issues.map(humanize).join(" · ")}. This does not by itself prove the public application is down.
+                  </Notice>
+                )}
+              </StageSection>
+
+              <StageSection number="03" label="Test" icon={<TestTube2 size={16} />} state={selectedPath.verification.status === "passed" ? "complete" : selectedPath.verification.status === "not_run" ? "pending" : "attention"} summary="Verify the outcome from outside the container">
+                <div className="flex flex-col gap-4 border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <PathStatus status={selectedPath.verification.status} />
+                    <p className="mt-2 break-all font-mono text-[10px] text-muted">{selectedPath.verification.target || `https://${selectedPath.domain}/`}</p>
+                    <p className="mt-1 text-xs text-muted">{probeDetail(selectedPath.verification)}</p>
+                  </div>
+                  <a href={`https://${selectedPath.domain}/`} target="_blank" rel="noreferrer" className="gc-button shrink-0">
+                    Open endpoint <ExternalLink size={13} />
+                  </a>
                 </div>
-                <div className="divide-y divide-border max-h-48 overflow-auto">
-                  {changeSets.slice(0, 10).map(cs => (
-                    <div key={cs.id} className="flex items-center justify-between gap-4 px-5 py-2.5">
-                      <div className="flex flex-wrap gap-1">
-                        {cs.kinds.map(k => <span key={k} className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[9px]">{k}</span>)}
+                <Notice className="mt-4" tone="info" title="Current test depth">
+                  This is a real external HTTP reachability check. Browser interactions, authentication, checkout, and other customer-feature journeys remain unavailable until explicitly configured; GroundControl does not label them verified.
+                </Notice>
+              </StageSection>
+
+              <StageSection number="04" label="Diagnose" icon={<Sparkles size={16} />} state={run?.investigation ? "complete" : run?.state === "remembered" ? "complete" : "pending"} summary="Correlate impact, changes, evidence, and uncertainty">
+                <div className="flex flex-col gap-3 border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-medium">{run ? `Loop run ${run.id}` : "No Loop run for this path"}</p>
+                    <p className="mt-1 text-xs text-muted">{run ? `Current state: ${humanize(run.state)}` : "Start after a scan has produced a real change set."}</p>
+                  </div>
+                  <Button onClick={runInvestigation} disabled={loading || changeSets.length === 0} leadingIcon={<SearchCheck size={14} />}>
+                    {operation === "investigate" ? "Investigating…" : run ? "Run again" : "Run investigation"}
+                  </Button>
+                </div>
+                {run?.investigation ? <InvestigationView investigation={run.investigation} /> : run?.state === "remembered" ? (
+                  <Notice className="mt-4" tone="success" title="No failure confirmed">The selected public journey passed, so this run ended after verification and recorded the healthy result.</Notice>
+                ) : (
+                  <Notice className="mt-4">Diagnosis is not prefilled. GroundControl will show hypotheses only after the selected real journey runs.</Notice>
+                )}
+              </StageSection>
+
+              <StageSection number="05" label="Recover" icon={<Wrench size={16} />} state={run?.actionPlan ? "attention" : run?.state === "remembered" ? "complete" : "pending"} summary="Prepare the smallest reversible action under policy">
+                {run?.actionPlan ? (
+                  <RecoveryPlanView plan={run.actionPlan} runState={run.state} recoveryReady={recoveryReady} loading={operation === "recover"} onApprove={approveRecovery} />
+                ) : (
+                  <Notice tone={run?.state === "remembered" ? "success" : "neutral"} title={run?.state === "remembered" ? "No recovery required" : "No safe action prepared"}>
+                    {run?.state === "remembered" ? "The external check passed; mutating this host would be unjustified." : "A recovery plan appears only when evidence supports an allowlisted, reversible action."}
+                  </Notice>
+                )}
+              </StageSection>
+
+              <StageSection number="06" label="Verify" icon={<ShieldCheck size={16} />} state={verificationState(run)} summary="Re-run the customer outcome and roll back if proof fails">
+                <JourneyResults title="Initial customer test" results={run?.journeyResults || []} />
+                <JourneyResults className="mt-4" title="Post-recovery verification" results={run?.verification || []} />
+                {run?.state === "rolling_back" && <Notice className="mt-4" tone="warning" title="Verification failed">GroundControl is reversing the attempted change before continuing investigation.</Notice>}
+              </StageSection>
+
+              <StageSection number="07" label="Remember" icon={<Fingerprint size={16} />} state={run?.state === "remembered" ? "complete" : "pending"} summary="Retain the evidence chain and successful outcome">
+                {run?.auditLog?.length ? (
+                  <div className="divide-y divide-border border border-border">
+                    {run.auditLog.map((entry, index) => (
+                      <div key={`${entry.at}-${index}`} className="grid gap-1 px-4 py-3 sm:grid-cols-[150px_180px_minmax(0,1fr)]">
+                        <span className="font-mono text-[9px] text-text-dim">{formatTime(entry.at)}</span>
+                        <span className="font-mono text-[10px]">{humanize(entry.action)}</span>
+                        <span className="text-[10px] text-muted">{entry.detail || "State transition recorded"}</span>
                       </div>
-                      <span className="font-mono text-[9px] text-muted shrink-0">{cs.serviceIds.join(", ") || "host"}</span>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                ) : <Notice>No Loop audit trail exists for this path yet.</Notice>}
+                {!persistenceReady && <Notice className="mt-4" tone="warning" title="Memory limitation">Current Loop memory is process-local and resets when the GroundControl process restarts. The interface does not present it as durable operational memory.</Notice>}
+              </StageSection>
+            </main>
+          )}
+        </div>
+      ) : null}
+
+      {graphMeta?.readiness?.length ? (
+        <details className="mt-8 border border-border bg-card">
+          <summary className="cursor-pointer px-5 py-4 text-xs font-medium">Capability readiness and limits</summary>
+          <div className="grid gap-px border-t border-border bg-border sm:grid-cols-2 lg:grid-cols-4">
+            {graphMeta.readiness.map((item) => (
+              <div key={item.id} className="bg-card p-4">
+                <StatusBadge tone={item.ready ? "success" : "warning"}>{item.ready ? "Ready" : "Not ready"}</StatusBadge>
+                <p className="mt-3 text-xs font-medium">{item.label}</p>
+                <p className="mt-1 text-[10px] leading-relaxed text-muted">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function StageRail({ run, selectedPath, hasGraph }: { run: LoopRun | null; selectedPath: ServicePath | null; hasGraph: boolean }) {
+  return (
+    <div className="mt-6 overflow-x-auto border border-border bg-card" aria-label="Loop investigation stages">
+      <div className="grid min-w-[760px] grid-cols-7">
+        {LOOP_STAGES.map(([number, label], index) => {
+          const active = stageReached(index, run, selectedPath, hasGraph);
+          return (
+            <div key={number} className={`relative border-r border-border px-3 py-3 last:border-r-0 ${active ? "bg-accent/[0.07]" : ""}`}>
+              <span className={`font-mono text-[9px] ${active ? "text-accent" : "text-text-dim"}`}>{number}</span>
+              <p className={`mt-1 text-[11px] font-medium ${active ? "text-foreground" : "text-muted"}`}>{label}</p>
+              {active && <span className="absolute inset-x-0 bottom-0 h-px bg-accent" />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StageSection({ number, label, icon, state, summary, children }: { number: string; label: string; icon: ReactNode; state: "complete" | "attention" | "pending"; summary: string; children: ReactNode }) {
+  return (
+    <section className="border-b border-border last:border-b-0">
+      <div className="flex items-start gap-3 border-b border-border bg-background/30 px-4 py-4 sm:px-5">
+        <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center border ${state === "complete" ? "border-success/35 text-success" : state === "attention" ? "border-warning/40 text-warning" : "border-border text-muted"}`}>{icon}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[9px] text-text-dim">{number}</span>
+            <h2 className="text-sm font-semibold">{label}</h2>
+            <StatusBadge tone={state === "complete" ? "success" : state === "attention" ? "warning" : "neutral"}>{state === "complete" ? "Complete" : state === "attention" ? "Needs attention" : "Pending"}</StatusBadge>
+          </div>
+          <p className="mt-1 text-[11px] text-muted">{summary}</p>
+        </div>
+      </div>
+      <div className="p-4 sm:p-5">{children}</div>
+    </section>
+  );
+}
+
+function RelationshipChain({ path }: { path: ServicePath }) {
+  const items = [
+    { label: "Public domain", value: path.domain, status: "observed" as const, detail: "Read from the active proxy configuration" },
+    { label: "DNS", value: path.domain, status: "unknown" as const, detail: "Not separately resolved by topology scan" },
+    { label: "TLS", value: ":443", status: "unknown" as const, detail: "Certificate validity is not independently probed yet" },
+    { label: "Proxy route", value: path.upstream || "unresolved", status: path.upstream ? "observed" as const : "failed" as const, detail: "Read from Caddy or Nginx" },
+    { label: "Runtime link", value: path.linkMethod ? humanize(path.linkMethod) : "not linked", status: path.containerName ? "observed" as const : "unknown" as const, detail: path.linkMethod === "published_port" ? "Matched through Docker host-port publishing" : "Matched through Docker identity" },
+    { label: "Container", value: path.containerName || "unknown", status: path.containerState?.toLowerCase() === "running" ? "observed" as const : path.containerName ? "failed" as const : "unknown" as const, detail: path.containerState ? `Observed state: ${path.containerState}` : "No runtime match" },
+    { label: "Process and dependencies", value: "not observed", status: "unknown" as const, detail: "Process sockets and downstream dependencies are not collected in this scan" },
+  ];
+  return (
+    <div className="overflow-x-auto">
+      <div className="flex min-w-[760px] items-stretch">
+        {items.map((item, index) => (
+          <div key={item.label} className="flex flex-1 items-center">
+            <div className="h-full min-w-[130px] flex-1 border border-border p-3">
+              <PathNodeStatus status={item.status} />
+              <p className="mt-3 font-mono text-[9px] uppercase text-text-dim">{item.label}</p>
+              <p className="mt-1 break-all text-[11px] font-medium">{item.value}</p>
+              <p className="mt-1 text-[9px] leading-relaxed text-muted">{item.detail}</p>
+            </div>
+            {index < items.length - 1 && <ArrowDown className="mx-1 h-3.5 w-3.5 shrink-0 -rotate-90 text-text-dim" />}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InvestigationView({ investigation }: { investigation: NonNullable<LoopRun["investigation"]> }) {
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="border border-border p-4">
+        <p className="gc-eyebrow">Customer impact</p>
+        <p className="mt-2 text-sm font-medium">{investigation.symptom}</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted">{investigation.customerImpact}</p>
+        <p className="mt-3 font-mono text-[9px] text-text-dim">Provider: {humanize(investigation.provider)}</p>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="border border-border">
+          <div className="border-b border-border px-4 py-3"><p className="gc-eyebrow">Hypotheses</p></div>
+          <div className="divide-y divide-border">
+            {investigation.hypotheses.map((hypothesis) => (
+              <div key={hypothesis.id} className="p-4">
+                <div className="flex items-start gap-2">
+                  {hypothesis.status === "confirmed" ? <CheckCircle2 className="mt-0.5 shrink-0 text-success" size={14} /> : hypothesis.status === "rejected" ? <XCircle className="mt-0.5 shrink-0 text-error" size={14} /> : <AlertTriangle className="mt-0.5 shrink-0 text-warning" size={14} />}
+                  <div>
+                    <p className="text-[11px] leading-relaxed">{hypothesis.statement}</p>
+                    <p className="mt-1 font-mono text-[9px] text-muted">{Math.round(hypothesis.confidence * 100)}% · {hypothesis.status} · {hypothesis.supportingEvidenceIds.length} supporting · {hypothesis.contradictingEvidenceIds.length} contradicting</p>
+                  </div>
                 </div>
               </div>
-            )}
-          </div>
-      )}
-
-      <details className="mt-8 border border-border bg-card">
-        <summary className="cursor-pointer px-5 py-4 text-xs font-medium">Intelligence method and autonomy policy</summary>
-        <div className="border-t border-border p-5">
-          <p className="max-w-2xl text-xs leading-relaxed text-muted">GroundControl observes the live relationship behind a public URL, tests confirmed customer outcomes, explains evidence before action, and keeps recovery reversible.</p>
-          <div className="mt-5 grid gap-px overflow-hidden border border-border bg-border sm:grid-cols-4">
-            <PolicyStep step={1} label="Monitor" detail="Detect and verify" active />
-            <PolicyStep step={2} label="Guide" detail="Prepare exact steps" />
-            <PolicyStep step={3} label="Approve" detail="Execute after approval" />
-            <PolicyStep step={4} label="Autopilot" detail="Allowlisted low-risk action" />
+            ))}
           </div>
         </div>
-      </details>
+        <div className="border border-border">
+          <div className="border-b border-border px-4 py-3"><p className="gc-eyebrow">Evidence and uncertainty</p></div>
+          <div className="max-h-[340px] divide-y divide-border overflow-y-auto">
+            {investigation.evidence.map((evidence) => (
+              <div key={evidence.id} className="p-4">
+                <p className="font-mono text-[9px] uppercase text-text-dim">{humanize(evidence.kind)} · {evidence.id}</p>
+                <p className="mt-1 text-[11px]">{evidence.summary}</p>
+              </div>
+            ))}
+            {investigation.uncertainty.map((item, index) => (
+              <div key={`${item}-${index}`} className="flex gap-2 p-4 text-[11px] text-warning"><CircleHelp className="mt-0.5 shrink-0" size={14} />{item}</div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {investigation.confirmedCause && <Notice tone="warning" title="Confirmed cause">{investigation.confirmedCause}</Notice>}
     </div>
   );
 }
 
-function IntelligenceStat({ label, value, detail, tone }: { label: string; value: string; detail: string; tone?: "success" | "warning" }) {
+function RecoveryPlanView({ plan, runState, recoveryReady, loading, onApprove }: { plan: ActionPlan; runState: string; recoveryReady: boolean; loading: boolean; onApprove: () => void }) {
+  const canApprove = runState === "awaiting_approval" && recoveryReady;
   return (
-    <div className="border-b border-r border-border p-4 last:border-r-0 lg:border-b-0">
-      <p className="gc-eyebrow">{label}</p>
-      <p className={`mt-2 text-xl font-medium tracking-[-0.035em] ${tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-foreground"}`}>{value}</p>
-      <p className="mt-1 text-[10px] text-muted">{detail}</p>
+    <div className="space-y-4">
+      <div className="border border-border">
+        <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="gc-eyebrow">Proposed resolution · {humanize(plan.kind)}</p>
+            <h3 className="mt-2 text-sm font-semibold">{plan.title}</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{plan.description}</p>
+          </div>
+          <StatusBadge tone={plan.risk === "low" ? "success" : plan.risk === "medium" ? "warning" : "danger"}>{plan.risk} risk</StatusBadge>
+        </div>
+        <div className="grid gap-px bg-border md:grid-cols-3">
+          <PlanFact label="Policy decision" value={plan.approvalRequired ? "Explicit approval required" : "Guided only"} icon={<ShieldCheck size={14} />} />
+          <PlanFact label="Expected result" value={plan.expectedResult} icon={<CheckCircle2 size={14} />} />
+          <PlanFact label="Exact rollback" value={plan.rollbackKind ? humanize(plan.rollbackKind) : "No automatic rollback supplied"} icon={<RotateCcw size={14} />} />
+        </div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="border border-border p-4"><p className="gc-eyebrow">Preconditions</p><ul className="mt-3 space-y-2 text-[11px] text-muted">{plan.preconditions.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 shrink-0 text-success" size={13} />{item}</li>)}</ul></div>
+        <div className="border border-border p-4"><p className="gc-eyebrow">Verification plan</p><ul className="mt-3 space-y-2 text-[11px] text-muted">{plan.verificationJourneyIds.length ? plan.verificationJourneyIds.map((item) => <li key={item} className="flex gap-2"><TestTube2 className="mt-0.5 shrink-0 text-accent" size={13} />{item}</li>) : <li>No verification journey is attached.</li>}</ul></div>
+      </div>
+      {!recoveryReady && <Notice tone="warning" title="Live recovery is disabled">The plan is visible and reviewable, but GroundControl will not mutate the host until the allowlisted live-recovery adapter is explicitly enabled.</Notice>}
+      <Button variant="primary" onClick={onApprove} disabled={!canApprove || loading} leadingIcon={<Wrench size={14} />}>{loading ? "Applying and verifying…" : "Approve exact recovery"}</Button>
     </div>
   );
 }
 
-function PolicyStep({ step, label, detail, active }: { step: number; label: string; detail: string; active?: boolean }) {
+function JourneyResults({ title, results, className = "" }: { title: string; results: JourneyResult[]; className?: string }) {
   return (
-    <div className={`bg-card p-4 ${active ? "text-accent" : ""}`}>
-      <span className={`font-mono text-[10px] ${active ? "text-accent" : "text-muted"}`}>0{step}</span>
-      <h4 className={`mt-1 text-xs font-medium ${active ? "text-accent" : "text-foreground"}`}>{label}</h4>
-      <p className="mt-0.5 text-[10px] text-muted leading-relaxed">{detail}</p>
+    <div className={`border border-border ${className}`}>
+      <div className="flex items-center justify-between border-b border-border px-4 py-3"><p className="gc-eyebrow">{title}</p><span className="font-mono text-[9px] text-text-dim">{results.length} result(s)</span></div>
+      {results.length ? <div className="divide-y divide-border">{results.map((result) => <div key={`${result.journeyId}-${result.observedAt}`} className="p-4"><div className="flex items-center justify-between gap-3"><p className="font-mono text-[10px]">{result.journeyId}</p><StatusBadge tone={result.ok ? "success" : "danger"}>{result.ok ? "Passed" : "Failed"}</StatusBadge></div><div className="mt-3 space-y-2">{result.stepResults.map((step) => <div key={step.stepIndex} className="flex items-start gap-2 text-[10px] text-muted">{step.ok ? <CheckCircle2 className="mt-0.5 shrink-0 text-success" size={12} /> : <XCircle className="mt-0.5 shrink-0 text-error" size={12} />}<span>{step.detail}</span></div>)}</div></div>)}</div> : <p className="px-4 py-4 text-xs text-muted">No result has been recorded for this stage.</p>}
     </div>
   );
 }
 
-function formatObservationTime(value?: string) {
-  if (!value) return "not reconciled yet";
+function SummaryCell({ label, value, detail, tone = "neutral" }: { label: string; value: string; detail: string; tone?: "neutral" | "success" | "danger" }) {
+  return <div className="bg-card p-4"><p className="gc-eyebrow">{label}</p><p className={`mt-2 text-xl font-semibold tracking-tight ${tone === "success" ? "text-success" : tone === "danger" ? "text-error" : ""}`}>{value}</p><p className="mt-1 text-[10px] text-muted">{detail}</p></div>;
+}
+
+function Fact({ label, value }: { label: string; value: string }) { return <div className="bg-card p-4"><p className="gc-eyebrow">{label}</p><p className="mt-2 break-all font-mono text-[10px]">{value}</p></div>; }
+
+function PlanFact({ label, value, icon }: { label: string; value: string; icon: ReactNode }) { return <div className="bg-card p-4"><span className="text-accent">{icon}</span><p className="mt-3 gc-eyebrow">{label}</p><p className="mt-2 text-[11px] leading-relaxed">{value}</p></div>; }
+
+function PathStatus({ status, compact = false }: { status: Verification["status"]; compact?: boolean }) {
+  if (status === "passed") return <StatusBadge tone="success">{compact ? "Passed" : "Public check passed"}</StatusBadge>;
+  if (status === "responded") return <StatusBadge tone="warning">{compact ? "Responded" : "Public endpoint responded"}</StatusBadge>;
+  if (status === "failed") return <StatusBadge tone="danger">{compact ? "Failed" : "Public check failed"}</StatusBadge>;
+  return <StatusBadge tone="neutral">{compact ? "Not run" : "Public check not run"}</StatusBadge>;
+}
+
+function PathNodeStatus({ status }: { status: "observed" | "failed" | "unknown" }) {
+  if (status === "observed") return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-success"><CheckCircle2 size={11} />Observed</span>;
+  if (status === "failed") return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-error"><XCircle size={11} />Mismatch</span>;
+  return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-muted"><CircleHelp size={11} />Unknown</span>;
+}
+
+function probeDetail(verification: Verification) {
+  if (verification.status === "passed") return `HTTP ${verification.statusCode || "success"} in ${verification.latencyMs ?? "unknown"}ms · ${formatTime(verification.observedAt)}`;
+  if (verification.status === "responded") return `HTTP ${verification.statusCode} reached the application in ${verification.latencyMs ?? "unknown"}ms, but it did not match the default root-path expectation.`;
+  if (verification.status === "failed") return verification.error || `HTTP ${verification.statusCode || "failure"} in ${verification.latencyMs ?? "unknown"}ms`;
+  return "Run Scan host to execute a real external reachability check.";
+}
+
+function verificationState(run: LoopRun | null): "complete" | "attention" | "pending" {
+  if (!run) return "pending";
+  if (run.state === "rolling_back" || run.state === "failed") return "attention";
+  if (run.state === "remembered" || run.state === "recovered" || run.verification?.length) return "complete";
+  return "pending";
+}
+
+function stageReached(index: number, run: LoopRun | null, path: ServicePath | null, hasGraph: boolean) {
+  if (index === 0) return hasGraph;
+  if (index === 1) return Boolean(path);
+  if (index === 2) return path?.verification?.status !== "not_run";
+  if (index === 3) return Boolean(run);
+  if (index === 4) return Boolean(run?.actionPlan) || run?.state === "remembered";
+  if (index === 5) return verificationState(run) === "complete";
+  return run?.state === "remembered";
+}
+
+function humanize(value: string) { return value.replace(/[_:]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+
+function formatTime(value?: string) {
+  if (!value) return "not observed";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "unknown time";
-  return `observed ${date.toLocaleString()}`;
+  return date.toLocaleString();
 }

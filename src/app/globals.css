@@ -10,14 +10,14 @@
   --text-dim: #626960;
   --line: #2a302b;
   --line-strong: #3a423b;
-  --accent: #7c9cff;
-  --accent-bright: #9db4ff;
-  --accent-ink: #0b1020;
+  --accent: #4e5fd5;
+  --accent-bright: #6578ea;
+  --accent-ink: #f7f8ff;
   --success: #94d85a;
   --warning: #e7b75b;
   --error: #f06b52;
-  --signal: #8f75ff;
-  --ring: rgba(124, 156, 255, 0.24);
+  --signal: #765ed0;
+  --ring: rgba(78, 95, 213, 0.3);
   --sidebar: #0a0d0b;
 
   --radius-sm: 4px;
@@ -64,7 +64,7 @@ body {
 }
 
 ::selection {
-  background: rgba(124, 156, 255, 0.24);
+  background: rgba(78, 95, 213, 0.28);
   color: var(--text);
 }
 
@@ -210,7 +210,7 @@ body {
 
 .gc-button:hover:not(:disabled),
 .gc-icon-button:hover:not(:disabled) {
-  border-color: rgba(124, 156, 255, 0.48);
+  border-color: rgba(78, 95, 213, 0.58);
   background: var(--bg-raised);
   color: var(--text);
 }
@@ -446,7 +446,7 @@ summary:focus-visible {
 .scrollbar-thin::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:var(--radius-sm)}
 
 /* Animations */
-@keyframes pulse-glow{0%,100%{box-shadow:0 0 8px rgba(124,156,255,0.1)}50%{box-shadow:0 0 16px rgba(124,156,255,0.18)}}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 8px rgba(78,95,213,0.12)}50%{box-shadow:0 0 16px rgba(78,95,213,0.22)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes shimmer{to{transform:translateX(100%)}}
 .orb-pulse{animation:pulse-glow 3s ease-in-out infinite}

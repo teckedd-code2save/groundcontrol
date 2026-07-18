@@ -6,7 +6,7 @@ import { AuthInput, AuthButton, AuthError } from "@/components/AuthCard";
 import { InstallSetupSection, scrollToInstall } from "@/components/InstallSetupSection";
 import { AmbientShader } from "@/components/AmbientShader";
 
-const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#7C9CFF", accentInk: "#0B1020" };
+const C = { bg: "#202427", dark: "#141618", darker: "#0D0E10", text: "#F5F6F7", mut: "rgba(245,246,247,0.45)", dim: "rgba(245,246,247,0.22)", lin: "rgba(245,246,247,0.08)", accent: "#4E5FD5", accentInk: "#F7F8FF" };
 const PAGE2_X_LINES = [1.5, 17, 55, 84, 98.5];
 const PAGE2_Y_LINES = [13, 33.5, 38, 78, 84.5, 100];
 const PAGE2_DOTS = PAGE2_X_LINES.flatMap((x) => PAGE2_Y_LINES.map((y) => ({ x, y })));
