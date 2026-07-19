@@ -27,4 +27,8 @@ The manifest requests read access to metadata, contents and Actions, and write a
 
 Repositories are linked automatically to enrolled deployments when their normalized GitHub URL matches the deployment repository identity. Unmatched repositories remain visible as **not linked** instead of being guessed from names.
 
-Legacy GHCR credentials are separate registry credentials. They are not treated as a GitHub repository connection and are not migrated into the App automatically.
+## Private container images
+
+The Settings experience remains one GitHub connector. Repository access uses the GitHub App, while private GHCR pulls can be enabled as an optional capability inside the same connector because GitHub's container registry does not accept App installation tokens.
+
+GroundControl stores the package credential encrypted, sends it to Docker through standard input, and keeps Docker authentication in `$HOME/.groundcontrol/docker` on the active VPS. Managed Compose operations use that isolated configuration automatically. When a recent GHCR image is known, setup verifies access to its manifest instead of treating registry login alone as proof of package access. Disconnecting GitHub removes both the App credentials and the managed GHCR login.
