@@ -8,6 +8,7 @@ import {
   FolderGit2,
   GitBranch,
   Link2,
+  PackageCheck,
   RefreshCw,
   ShieldCheck,
   Unplug,
@@ -57,6 +58,24 @@ type GithubAppState = {
   installations: Installation[];
 };
 
+type RegistryState = {
+  status: "not_configured" | "ready" | "error";
+  configured: boolean;
+  username: string;
+  verifiedImage: string;
+  lastCheckedAt: string;
+  error: string;
+};
+
+const EMPTY_REGISTRY: RegistryState = {
+  status: "not_configured",
+  configured: false,
+  username: "",
+  verifiedImage: "",
+  lastCheckedAt: "",
+  error: "",
+};
+
 const EMPTY_STATE: GithubAppState = {
   status: "not_configured",
   publicUrl: "",
@@ -71,19 +90,31 @@ const EMPTY_STATE: GithubAppState = {
 
 export default function GithubAppPanel() {
   const [state, setState] = useState<GithubAppState>(EMPTY_STATE);
+  const [registry, setRegistry] = useState<RegistryState>(EMPTY_REGISTRY);
   const [publicUrl, setPublicUrl] = useState("");
+  const [registryOpen, setRegistryOpen] = useState(false);
+  const [registryDraft, setRegistryDraft] = useState({ username: "", token: "" });
   const [loading, setLoading] = useState(true);
-  const [operation, setOperation] = useState<"create" | "sync" | "disconnect" | null>(null);
+  const [operation, setOperation] = useState<"create" | "sync" | "registry" | "disconnect" | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/github/app");
-      const data = await response.json();
+      const [response, registryResponse] = await Promise.all([
+        fetch("/api/github/app"),
+        fetch("/api/github/registry"),
+      ]);
+      const [data, registryData] = await Promise.all([response.json(), registryResponse.json()]);
       if (!response.ok) throw new Error(data.error || "Could not load GitHub App status");
+      if (!registryResponse.ok) throw new Error(registryData.error || "Could not load private image status");
       setState(data);
+      setRegistry(registryData);
       setPublicUrl(data.publicUrl || (window.location.protocol === "https:" ? window.location.origin : ""));
+      setRegistryDraft({
+        username: registryData.username || data.app?.ownerLogin || "",
+        token: "",
+      });
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "Could not load GitHub App status" });
     } finally {
@@ -151,6 +182,31 @@ export default function GithubAppPanel() {
       setMessage({ tone: "success", text: "Repository access and deployment links reconciled." });
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "Repository sync failed" });
+    } finally {
+      setOperation(null);
+    }
+  }
+
+  async function saveRegistry() {
+    setOperation("registry");
+    setMessage(null);
+    try {
+      const response = await fetch("/api/github/registry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(registryDraft),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || data.state?.error || "Private image access could not be verified");
+      }
+      setRegistry(data.state);
+      setRegistryDraft((current) => ({ ...current, token: "" }));
+      setRegistryOpen(false);
+      setMessage({ tone: "success", text: data.message || "Private image access is ready." });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Private image access could not be verified" });
+      await load();
     } finally {
       setOperation(null);
     }
@@ -244,6 +300,82 @@ export default function GithubAppPanel() {
           <div className="grid gap-5 px-5 py-5 xl:grid-cols-[280px_minmax(0,1fr)]">
             <div className="space-y-4">
               <Readiness requirements={state.requirements} />
+              <div className="border border-border bg-background p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <PackageCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-medium">Private images</p>
+                      <p className="mt-1 text-[10px] leading-relaxed text-muted">
+                        {registry.status === "ready"
+                          ? `Ready as ${registry.username}`
+                          : registry.status === "error"
+                            ? "Credential connected; package access needs attention"
+                            : "Enable only when a deployment uses private GHCR images"}
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`shrink-0 rounded-sm px-2 py-0.5 font-mono text-[9px] ${
+                    registry.status === "ready"
+                      ? "bg-success/10 text-success"
+                      : registry.status === "error"
+                        ? "bg-error/10 text-error"
+                        : "bg-muted/10 text-muted"
+                  }`}>
+                    {registry.status === "ready" ? "ready" : registry.status === "error" ? "attention" : "optional"}
+                  </span>
+                </div>
+
+                {registryOpen ? (
+                  <div className="mt-3 space-y-2 border-t border-border pt-3">
+                    <input
+                      value={registryDraft.username}
+                      onChange={(event) => setRegistryDraft((current) => ({ ...current, username: event.target.value }))}
+                      placeholder="GitHub username"
+                      autoComplete="username"
+                      className="gc-field w-full font-mono"
+                    />
+                    <input
+                      type="password"
+                      value={registryDraft.token}
+                      onChange={(event) => setRegistryDraft((current) => ({ ...current, token: event.target.value }))}
+                      placeholder="GitHub package token"
+                      autoComplete="new-password"
+                      className="gc-field w-full font-mono"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <a
+                        href="https://github.com/settings/tokens/new?scopes=read:packages&description=GroundControl%20image%20pulls"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] text-accent hover:underline"
+                      >
+                        Create package credential <ExternalLink className="h-2.5 w-2.5" />
+                      </a>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setRegistryOpen(false)} disabled={operation === "registry"} className="gc-button gc-button-quiet text-[10px]">
+                          Cancel
+                        </button>
+                        <button type="button" onClick={saveRegistry} disabled={operation !== null || !registryDraft.username.trim() || !registryDraft.token.trim()} className="gc-button gc-button-primary text-[10px]">
+                          {operation === "registry" ? "Verifying…" : "Enable"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setRegistryOpen(true)}
+                    disabled={operation !== null}
+                    className="gc-button gc-button-quiet mt-3 text-[10px]"
+                  >
+                    {registry.configured ? "Update access" : "Enable private pulls"}
+                  </button>
+                )}
+
+                {registry.error && <p className="mt-2 text-[10px] leading-relaxed text-error">{registry.error}</p>}
+                {registry.verifiedImage && <p className="mt-2 break-all font-mono text-[9px] text-muted">Verified: {registry.verifiedImage}</p>}
+              </div>
               <div className="border border-border bg-background p-3">
                 <p className="gc-label">Webhook endpoint</p>
                 <p className="mt-2 break-all font-mono text-[10px] text-muted">{state.webhookUrl}</p>
