@@ -213,7 +213,7 @@ export default function GithubAppPanel() {
   }
 
   async function disconnect() {
-    if (!window.confirm("Remove the GitHub App credentials and repository links from this GroundControl instance?")) return;
+    if (!window.confirm("Remove the GitHub App, repository links and private image access from this GroundControl instance?")) return;
     setOperation("disconnect");
     try {
       const response = await fetch("/api/github/app", { method: "DELETE" });
@@ -245,7 +245,7 @@ export default function GithubAppPanel() {
               </span>
             </div>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
-              Repository-scoped access, signed change events and short-lived credentials for deployment intelligence. GroundControl never asks for a personal access token here.
+              Repository-scoped access, signed change events and private image readiness in one connection. Repository access always uses short-lived App credentials.
             </p>
           </div>
         </div>
