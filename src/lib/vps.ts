@@ -72,7 +72,8 @@ export function getKubeconfigEnv(vps?: VpsConnection | null): string {
 export async function execOnVps(
   command: string,
   vps?: VpsConnection | null,
-  cwd?: string
+  cwd?: string,
+  stdin?: string
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const conn = vps || (await getActiveVps());
   if (!conn) {
@@ -80,6 +81,22 @@ export async function execOnVps(
   }
 
   if (conn.isLocal) {
+    if (stdin !== undefined) {
+      return new Promise((resolve) => {
+        const child = exec(
+          withOsPath(command),
+          { timeout: 30000, cwd },
+          (error: any, stdout, stderr) => {
+            resolve({
+              stdout: stdout || error?.stdout || "",
+              stderr: stderr || error?.stderr || "",
+              code: error?.code || 0,
+            });
+          }
+        );
+        child.stdin?.end(stdin);
+      });
+    }
     try {
       const { stdout, stderr } = await execAsync(withOsPath(command), { timeout: 30000, cwd });
       return { stdout, stderr, code: 0 };
@@ -138,7 +155,10 @@ export async function execOnVps(
     }
   }
 
-  const result = await ssh.execCommand(withOsPath(command), { cwd: cwd || "/root" });
+  const result = await ssh.execCommand(withOsPath(command), {
+    cwd: cwd || "/root",
+    ...(stdin !== undefined ? { stdin } : {}),
+  });
   return {
     stdout: result.stdout,
     stderr: result.stderr,
@@ -650,7 +670,7 @@ export function buildManagedComposeInvocation(
     `elif [ -n "$gc_compose_base" ] && [ -n ${shQuote(composeFile || "")} ]; then`,
     `  set -- -f "$gc_compose_base";`,
     `else set --; fi;`,
-    `${composeCommand} "$@" ${args})`,
+    `DOCKER_CONFIG="${HOME}/.groundcontrol/docker" ${composeCommand} "$@" ${args})`,
   ].join(" ");
 }
 
