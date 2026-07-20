@@ -670,7 +670,7 @@ export function buildManagedComposeInvocation(
     `elif [ -n "$gc_compose_base" ] && [ -n ${shQuote(composeFile || "")} ]; then`,
     `  set -- -f "$gc_compose_base";`,
     `else set --; fi;`,
-    `DOCKER_CONFIG="${HOME}/.groundcontrol/docker" ${composeCommand} "$@" ${args})`,
+    `DOCKER_CONFIG="\${HOME}/.groundcontrol/docker" ${composeCommand} "$@" ${args})`,
   ].join(" ");
 }
 
