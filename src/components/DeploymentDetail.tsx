@@ -39,6 +39,7 @@ type ContainerInfo = {
   image: string;
   state: string;
   status: string;
+  service?: string | null;
 };
 type DeploymentDetailRecord = {
   id: number;
@@ -113,7 +114,11 @@ export default function DeploymentDetail({
   const [composeContent, setComposeContent] = useState("");
   const [composeLoading, setComposeLoading] = useState(false);
   const [imageSourceInput, setImageSourceInput] = useState("");
-  const [imageDigestInput, setImageDigestInput] = useState("");
+  const [imageService, setImageService] = useState("");
+  const [imageRuntime, setImageRuntime] = useState("");
+  const [imageConfigured, setImageConfigured] = useState("");
+  const [imageHasOverride, setImageHasOverride] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
   const [redeployLog, setRedeployLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
 
@@ -175,6 +180,7 @@ export default function DeploymentDetail({
         body: JSON.stringify({
           projectSlug: deployment.legacyProjectSlug,
           projectPath: deployment.sourcePath || undefined,
+          composePath: deployment.composePath || undefined,
           action: "redeploy",
           services: component ? [component] : undefined,
           environmentSlug,
@@ -200,34 +206,27 @@ export default function DeploymentDetail({
         setRedeployLog([]);
         setBusy(true);
 
-        // Poll logs every 2 seconds
-        const logInterval = setInterval(async () => {
+        const changed = data.changedFields as string[] | undefined;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
           try {
             const logRes = await fetch(`/api/projects/compose/log?slug=${encodeURIComponent(deployment.legacyProjectSlug!)}`);
             if (logRes.ok) {
               const logData = await readJson(logRes);
-              if (Array.isArray(logData.lines)) setRedeployLog(logData.lines);
-            }
-          } catch { /* log polling is best-effort */ }
-        }, 2000);
-
-        const changed = data.changedFields as string[] | undefined;
-        for (let attempt = 0; attempt < 20; attempt++) {
-          await new Promise(r => setTimeout(r, 3000));
-          try {
-            const healthRes = await fetch("/api/projects/compose", { signal: AbortSignal.timeout(5000) });
-            if (healthRes.ok) {
-              clearInterval(logInterval);
-              // Final log fetch
-              try {
-                const logRes = await fetch(`/api/projects/compose/log?slug=${encodeURIComponent(deployment.legacyProjectSlug!)}`);
-                if (logRes.ok) { const logData = await readJson(logRes); if (Array.isArray(logData.lines)) setRedeployLog(logData.lines); }
-              } catch {}
+              const lines = Array.isArray(logData.lines) ? logData.lines : [];
+              setRedeployLog(lines);
+              if (logData.status === "failed") {
+                setMessage({ tone: "error", text: lines.slice(-1)[0] || "Redeploy failed runtime verification." });
+                setBusy(false);
+                await load();
+                return { success: false };
+              }
+              if (logData.status !== "success") continue;
               setMessage({
                 tone: "success",
                 text: component
-                  ? `${component} redeployed${changed?.length ? ` (${changed.join(", ")})` : ""}.`
-                  : `Deployment redeployed${changed?.length ? ` (${changed.join(", ")})` : ""}.`,
+                  ? `${component} recreated and its running image verified${changed?.length ? ` (${changed.join(", ")})` : ""}.`
+                  : `Deployment recreated and running images verified${changed?.length ? ` (${changed.join(", ")})` : ""}.`,
               });
               setTimeout(() => setShowLog(false), 5000);
               setBusy(false);
@@ -235,17 +234,16 @@ export default function DeploymentDetail({
               return { success: true };
             }
           } catch { /* expected during restart */ }
-          if (attempt === 4) setMessage({ tone: "info", text: "Still waiting…" });
+          if (attempt === 7) setMessage({ tone: "info", text: "Recreating containers and verifying running images…" });
         }
-        clearInterval(logInterval);
-        setMessage({ tone: "info", text: "Redeploy may have completed — refresh to confirm." });
+        setMessage({ tone: "info", text: "Redeploy is still running. The action remains unverified until the log reports completion." });
         setTimeout(() => setShowLog(false), 10000);
         setBusy(false);
         await load();
-        return { success: true };
+        return { success: false, pending: true };
       }
 
-      setMessage({ tone: "success", text: component ? `${component} redeployed.` : "Deployment redeployed." });
+      setMessage({ tone: "success", text: component ? `${component} recreated and its running image verified.` : "Deployment recreated and running images verified." });
       await load();
       return { success: true };
     } catch (error) {
@@ -288,8 +286,12 @@ export default function DeploymentDetail({
     setComposeLoading(true);
     setComposeOpen(true);
     try {
-      const res = await fetch(`/api/projects/compose?slug=${encodeURIComponent(deployment.legacyProjectSlug)}`);
+      const params = new URLSearchParams({ slug: deployment.legacyProjectSlug });
+      if (deployment.sourcePath) params.set("path", deployment.sourcePath);
+      if (deployment.composePath) params.set("composePath", deployment.composePath);
+      const res = await fetch(`/api/projects/compose?${params.toString()}`);
       const data = await readJson(res);
+      if (!res.ok || data.error) throw new Error(data.error || "Failed to load Compose configuration.");
       setComposeContent(data.raw || "No compose file found.");
     } catch {
       setComposeContent("Failed to load compose file.");
@@ -298,10 +300,62 @@ export default function DeploymentDetail({
     }
   }
 
-  function openImageEditor(container: ContainerInfo) {
+  async function openImageEditor(container: ContainerInfo) {
+    if (!deployment?.legacyProjectSlug || !container.service) {
+      setMessage({ tone: "error", text: "This container is not linked to an exact Compose service." });
+      return;
+    }
+    setImageService(container.service);
+    setImageRuntime(container.image);
+    setImageConfigured("");
+    setImageHasOverride(false);
     setImageSourceInput(container.image);
-    setImageDigestInput("");
+    setImageLoading(true);
     setImageEditorOpen(true);
+    try {
+      const params = new URLSearchParams({ slug: deployment.legacyProjectSlug, service: container.service });
+      if (deployment.sourcePath) params.set("path", deployment.sourcePath);
+      if (deployment.composePath) params.set("composePath", deployment.composePath);
+      const response = await fetch(`/api/projects/compose/image?${params.toString()}`);
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not resolve the service image.");
+      setImageConfigured(data.configuredImage || "");
+      setImageHasOverride(Boolean(data.overrideImage));
+      setImageSourceInput(data.effectiveImage || container.image);
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      setImageEditorOpen(false);
+    } finally {
+      setImageLoading(false);
+    }
+  }
+
+  async function saveImageOverride(useComposeImage = false) {
+    if (!deployment?.legacyProjectSlug || !imageService) return;
+    setBusy(true);
+    try {
+      const response = await fetch("/api/projects/compose/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectSlug: deployment.legacyProjectSlug,
+          projectPath: deployment.sourcePath || undefined,
+          composePath: deployment.composePath || undefined,
+          service: imageService,
+          image: useComposeImage ? "" : imageSourceInput,
+        }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error) throw new Error(data.error || "Could not save the image source.");
+      setImageEditorOpen(false);
+      setBusy(false);
+      return await redeploy(imageService);
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      return { success: false };
+    } finally {
+      setBusy(false);
+    }
   }
 
   const liveUrl = deployment?.publicUrl || (deployment?.domain ? `https://${deployment.domain}` : null);
@@ -621,38 +675,42 @@ export default function DeploymentDetail({
           <div className="space-y-3">
             <textarea
               value={composeContent}
-              onChange={(event) => setComposeContent(event.target.value)}
-              className="w-full max-h-[50vh] min-h-[20vh] resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs whitespace-pre-wrap focus:border-accent focus:outline-none"
+              readOnly
+              className="w-full max-h-[50vh] min-h-[20vh] resize-y overflow-auto rounded border border-border bg-background p-4 font-mono text-xs whitespace-pre-wrap focus:outline-none"
               spellCheck={false}
             />
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] text-muted">Edit the compose file directly. Changes take effect on next redeploy.</span>
-              <div className="flex gap-2">
-                <button type="button" onClick={openComposeViewer} className="gc-button gc-button-quiet text-xs">Reset</button>
-                <button type="button" onClick={async () => {
-                  setMessage({ tone: "info", text: "Compose editing via API requires a save endpoint. Use the Terminal to edit files directly." });
-                }} className="gc-button gc-button-secondary text-xs">Save changes</button>
-              </div>
-            </div>
+            <p className="text-[10px] leading-relaxed text-muted">
+              Source Compose is read-only here. GroundControl stores image choices as a managed per-service override, so repository configuration is not silently rewritten.
+            </p>
           </div>
         )}
       </ModalSurface>
 
-      <ModalSurface open={imageEditorOpen} onClose={() => setImageEditorOpen(false)} title="Image source" description="Edit the image used by this container in docker-compose.yml">
-        <div className="space-y-4">
+      <ModalSurface open={imageEditorOpen} onClose={() => setImageEditorOpen(false)} title="Service image" description={imageService ? `Compose service · ${imageService}` : "Resolve service image"}>
+        {imageLoading ? <div className="py-8 text-center text-sm text-muted">Resolving Compose image…</div> : <div className="space-y-4">
+          <div className="grid gap-px border border-border bg-border sm:grid-cols-2">
+            <div className="bg-background p-3">
+              <span className="gc-label">Running now</span>
+              <p className="mt-1 break-all font-mono text-[10px] text-muted">{imageRuntime || "Unknown"}</p>
+            </div>
+            <div className="bg-background p-3">
+              <span className="gc-label">Repository Compose</span>
+              <p className="mt-1 break-all font-mono text-[10px] text-muted">{imageConfigured || "Build-only service"}</p>
+            </div>
+          </div>
           <label className="block">
-            <span className="gc-label">Image</span>
-            <input value={imageSourceInput} onChange={(event) => setImageSourceInput(event.target.value)} className="gc-field mt-2 w-full font-mono text-xs" />
+            <span className="gc-label">Desired image</span>
+            <input autoFocus value={imageSourceInput} onChange={(event) => setImageSourceInput(event.target.value)} placeholder="ghcr.io/owner/service:tag" className="gc-field mt-2 w-full font-mono text-xs" />
           </label>
-          <label className="block">
-            <span className="gc-label">Pin digest (optional)</span>
-            <input value={imageDigestInput} onChange={(event) => setImageDigestInput(event.target.value)} placeholder="ghcr.io/owner/repo@sha256:abc123..." className="gc-field mt-2 w-full font-mono text-xs" />
-          </label>
-          <p className="text-[10px] text-muted">Use the Compose viewer to edit docker-compose.yml directly. Image source changes require a redeploy to take effect.</p>
+          <p className="text-[10px] leading-relaxed text-muted">Saving validates the effective Compose model, pulls this service, forces container recreation, and verifies the running image before reporting success.</p>
           <div className="flex justify-end gap-2 border-t border-border pt-4">
             <button type="button" onClick={() => setImageEditorOpen(false)} className="gc-button gc-button-quiet">Close</button>
+            {imageHasOverride && <button type="button" disabled={busy} onClick={() => void saveImageOverride(true)} className="gc-button gc-button-secondary">Use Compose image</button>}
+            <button type="button" disabled={busy || !imageSourceInput.trim()} onClick={() => void saveImageOverride(false)} className="gc-button gc-button-primary">
+              {busy ? "Working…" : "Save and redeploy"}
+            </button>
           </div>
-        </div>
+        </div>}
       </ModalSurface>
     </div>
   );

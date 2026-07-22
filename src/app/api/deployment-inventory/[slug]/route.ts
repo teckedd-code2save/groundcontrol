@@ -50,6 +50,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
       savedDomain: deployment.legacyProject?.domain,
       savedRepoUrl: deployment.legacyProject?.repoUrl,
     }, containers, labels, tree.projects, hostProjects.caddySites);
+    const runtimeNames = new Set(evidence.runtime.containers.map((container) => container.name));
+    const runtimeComposePath = labels
+      .find((label) => runtimeNames.has(label.name) && label.configFiles)?.configFiles
+      .split(",")
+      .map((file) => file.trim())
+      .find((file) => file.startsWith("/")) || null;
     const runtimeEvents = await prisma.deploymentLog.findMany({
       where: {
         projectSlug: { in: Array.from(new Set([
@@ -64,6 +70,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
     return NextResponse.json({
       deployment: {
         ...deployment,
+        composePath: runtimeComposePath || deployment.composePath,
         project: deployment.projectGroup,
         projectId: deployment.projectGroupId,
         legacyProjectSlug: deployment.legacyProject?.slug || null,
