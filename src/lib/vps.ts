@@ -3,6 +3,11 @@ import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { prisma } from "./prisma";
 import { decryptMaybe } from "./crypto";
+import {
+  COMPOSE_FILE_CANDIDATES,
+  MANAGED_ENV_OVERRIDE_FILE,
+  MANAGED_IMAGE_OVERRIDE_FILE,
+} from "./compose-management";
 
 const execAsync = promisify(exec);
 const OS_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
@@ -65,7 +70,7 @@ export async function getActiveVps(): Promise<VpsConnection | null> {
   };
 }
 
-export function getKubeconfigEnv(vps?: VpsConnection | null): string {
+export function getKubeconfigEnv(_vps?: VpsConnection | null): string {
   return `KUBECONFIG=${shQuote(DEFAULT_KUBECONFIG_PATH)}`;
 }
 
@@ -563,7 +568,8 @@ export async function getDockerComposeCommand(
 export async function runDockerCompose(
   projectPath: string,
   args: string,
-  vps?: VpsConnection | null
+  vps?: VpsConnection | null,
+  composeFile?: string
 ) {
   const conn = vps || (await getActiveVps());
   const config = await getSystemConfig();
@@ -575,7 +581,7 @@ export async function runDockerCompose(
 
   for (const composeCmd of candidates) {
     const result = await execOnVps(
-      `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(composeCmd, args)}`,
+      `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`,
       conn
     );
     if (result.code === 0) return result;
@@ -645,6 +651,44 @@ export async function runDockerComposeDown(
   return last;
 }
 
+/** Resolve the exact Compose source once so view, pull, up and verification agree. */
+export async function resolveComposeFile(
+  projectPath: string,
+  vps?: VpsConnection | null,
+  requestedComposePath?: string | null
+): Promise<string | null> {
+  const conn = vps || (await getActiveVps());
+  const explicit = String(requestedComposePath || "").trim();
+  if (explicit) {
+    const result = await execOnVps(`test -f ${shQuote(explicit)} && printf '%s\\n' ${shQuote(explicit)} || exit 4`, conn);
+    if (result.code === 0 && result.stdout.trim().startsWith("/")) return result.stdout.trim().split("\n")[0];
+  }
+
+  // A running Compose container is stronger evidence than a stale inventory
+  // record, especially after repository or CI changes rename the compose file.
+  const labelFiles = (await getDockerContainerLabels(conn))
+    .filter((label) => label.workingDir === projectPath)
+    .flatMap((label) => label.configFiles.split(","))
+    .map((file) => file.trim())
+    .filter((file, index, files) => file.startsWith("/") && files.indexOf(file) === index);
+  for (const labelFile of labelFiles) {
+    const result = await execOnVps(`test -f ${shQuote(labelFile)} && printf '%s\\n' ${shQuote(labelFile)} || exit 4`, conn);
+    if (result.code === 0) return labelFile;
+  }
+
+  const command = [
+    `cd ${shQuote(projectPath)}`,
+    `for gc_file in ${COMPOSE_FILE_CANDIDATES.map((name) => shQuote(name)).join(" ")}; do`,
+    `  if [ -f "$gc_file" ]; then printf '%s/%s\\n' ${shQuote(projectPath)} "$gc_file"; exit 0; fi`,
+    `done`,
+    `exit 4`,
+  ].join("\n");
+  const result = await execOnVps(command, conn);
+  if (result.code !== 0) return null;
+  const resolved = result.stdout.trim().split("\n")[0] || "";
+  return resolved.startsWith("/") ? resolved : null;
+}
+
 /**
  * Build a POSIX-sh Compose invocation that includes GroundControl's managed
  * component environment override when it exists. Without the override it
@@ -659,17 +703,15 @@ export function buildManagedComposeInvocation(
     ? `gc_compose_base=${shQuote(composeFile)}`
     : [
         `gc_compose_base='';`,
-        `for gc_file in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do`,
+        `for gc_file in ${COMPOSE_FILE_CANDIDATES.join(" ")}; do`,
         `  if [ -f "$gc_file" ]; then gc_compose_base="$gc_file"; break; fi`,
         `done`,
       ].join(" ");
   return [
     `(${selectBase};`,
-    `if [ -n "$gc_compose_base" ] && [ -f .groundcontrol/compose.env.override.yml ]; then`,
-    `  set -- -f "$gc_compose_base" -f .groundcontrol/compose.env.override.yml;`,
-    `elif [ -n "$gc_compose_base" ] && [ -n ${shQuote(composeFile || "")} ]; then`,
-    `  set -- -f "$gc_compose_base";`,
-    `else set --; fi;`,
+    `if [ -n "$gc_compose_base" ]; then set -- -f "$gc_compose_base"; else set --; fi;`,
+    `if [ -f ${shQuote(MANAGED_IMAGE_OVERRIDE_FILE)} ]; then set -- "$@" -f ${shQuote(MANAGED_IMAGE_OVERRIDE_FILE)}; fi;`,
+    `if [ -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)} ]; then set -- "$@" -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)}; fi;`,
     `DOCKER_CONFIG="\${HOME}/.groundcontrol/docker" ${composeCommand} "$@" ${args})`,
   ].join(" ");
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "child_process";
 import { buildManagedComposeInvocation } from "./vps";
 
 describe("managed Docker Compose invocation", () => {
@@ -6,12 +7,16 @@ describe("managed Docker Compose invocation", () => {
     const command = buildManagedComposeInvocation("docker compose", "pull");
     expect(command).toContain('DOCKER_CONFIG="${HOME}/.groundcontrol/docker"');
     expect(command).toContain('docker compose "$@" pull');
+    expect(command).toContain(".groundcontrol/compose.image.override.yml");
+    expect(command).toContain(".groundcontrol/compose.env.override.yml");
   });
 
   it("keeps an explicit compose file and managed override behaviour", () => {
     const command = buildManagedComposeInvocation("docker compose", "up -d", "compose.prod.yml");
     expect(command).toContain("compose.prod.yml");
+    expect(command).toContain("compose.image.override.yml");
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
     expect(command).toContain('DOCKER_CONFIG="${HOME}/.groundcontrol/docker"');
+    expect(spawnSync("sh", ["-n"], { input: command }).status).toBe(0);
   });
 });

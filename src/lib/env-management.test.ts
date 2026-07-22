@@ -138,11 +138,13 @@ DATABASE_URL=duplicate
       .toEqual(["api:DATABASE_URL"]);
   });
 
-  it("adds the managed override to Compose only when the file exists", () => {
+  it("adds managed image and environment overrides only when they exist", () => {
     const command = buildManagedComposeInvocation("docker compose", "up -d", "compose.yml");
 
+    expect(command).toContain(".groundcontrol/compose.image.override.yml");
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
-    expect(command).toContain('set -- -f "$gc_compose_base" -f .groundcontrol/compose.env.override.yml');
+    expect(command).toContain('set -- -f "$gc_compose_base"');
+    expect(command).toContain('set -- "$@" -f');
     expect(command).toContain('docker compose "$@" up -d');
   });
 

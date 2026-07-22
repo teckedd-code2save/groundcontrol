@@ -3,14 +3,37 @@ import {
   execOnVps, resolveComposeProjectPath, runDockerCompose, shQuote,
   execDetached, getActiveVps, getDockerComposeCommand,
   buildManagedComposeInvocation, getImageDigest,
-  getPreviousDeploymentDigest, computeChangedFields,
+  getPreviousDeploymentDigest, computeChangedFields, resolveComposeFile,
 } from "@/lib/vps";
 import { parseComposeServices } from "@/lib/project-scan";
+import {
+  buildDetachedComposeRedeployCommand,
+  buildRuntimeImageVerificationCommand,
+  expectedComposeImages,
+} from "@/lib/compose-redeploy";
+import { MANAGED_IMAGE_OVERRIDE_FILE } from "@/lib/compose-management";
 import { prisma } from "@/lib/prisma";
 import { applyEnvToDeployment, MissingDeploymentEnvError } from "@/lib/env-management";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { validateSafePath } from "@/lib/host-safety";
+
+function normalizePath(value: unknown): string {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function isValidProjectSlug(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value);
+}
+
+function validateRequestedComposePath(projectPath: string, composePath: string): string | null {
+  if (!composePath) return null;
+  const pathError = validateSafePath(composePath);
+  if (pathError) return pathError;
+  if (!composePath.startsWith(`${projectPath}/`)) return "Compose file must live inside the deployment folder.";
+  if (!/\.ya?ml$/i.test(composePath)) return "Compose file must be a YAML file.";
+  return null;
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -18,6 +41,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const slug = searchParams.get("slug");
     const explicitPath = searchParams.get("path");
+    const requestedComposePath = normalizePath(searchParams.get("composePath"));
 
     if (!slug && !explicitPath) {
       return NextResponse.json({ error: "slug or path required" }, { status: 400 });
@@ -27,6 +51,8 @@ export async function GET(req: NextRequest) {
     let source: "labels" | "config" | "path";
 
     if (explicitPath && explicitPath.startsWith("/")) {
+      const pathError = validateSafePath(explicitPath);
+      if (pathError) return NextResponse.json({ error: pathError }, { status: 400 });
       projectPath = explicitPath.replace(/\/+$/, "");
       source = "path";
     } else {
@@ -35,19 +61,32 @@ export async function GET(req: NextRequest) {
       source = target.source;
     }
 
-    const result = await execOnVps(
-      `cat ${shQuote(`${projectPath}/docker-compose.yml`)} 2>/dev/null || ` +
-        `cat ${shQuote(`${projectPath}/docker-compose.yaml`)} 2>/dev/null || ` +
-        `cat ${shQuote(`${projectPath}/compose.yml`)} 2>/dev/null || ` +
-        `cat ${shQuote(`${projectPath}/compose.yaml`)} 2>/dev/null || echo ""`
-    );
+    const composePathError = validateRequestedComposePath(projectPath, requestedComposePath);
+    if (composePathError) return NextResponse.json({ error: composePathError }, { status: 400 });
+    const vps = await getActiveVps();
+    const composePath = await resolveComposeFile(projectPath, vps, requestedComposePath || undefined);
+    if (!composePath) {
+      return NextResponse.json({ error: "No compose file found", projectPath }, { status: 404 });
+    }
+    const [result, imageOverride] = await Promise.all([
+      execOnVps(`cat ${shQuote(composePath)}`, vps),
+      execOnVps(`cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, vps),
+    ]);
 
     if (!result.stdout.trim()) {
       return NextResponse.json({ error: "No compose file found", projectPath }, { status: 404 });
     }
 
     const { services, domain } = parseComposeServices(result.stdout);
-    return NextResponse.json({ services, domain, raw: result.stdout, projectPath, source });
+    return NextResponse.json({
+      services,
+      domain,
+      raw: result.stdout,
+      projectPath,
+      composePath,
+      source,
+      hasManagedImageOverrides: Boolean(imageOverride.stdout.trim()),
+    });
   } catch (err: unknown) {
     if (err instanceof MissingDeploymentEnvError) {
       return NextResponse.json({
@@ -81,9 +120,16 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     requireAuth(req);
-    const { projectSlug, projectPath: requestedPath, services, action, environmentSlug } = await req.json();
-    if (!projectSlug) {
-      return NextResponse.json({ error: "projectSlug required" }, { status: 400 });
+    const {
+      projectSlug,
+      projectPath: requestedPath,
+      composePath: requestedComposePathValue,
+      services,
+      action,
+      environmentSlug,
+    } = await req.json();
+    if (!isValidProjectSlug(projectSlug)) {
+      return NextResponse.json({ error: "A valid projectSlug is required" }, { status: 400 });
     }
 
     const explicitPath = typeof requestedPath === "string" ? requestedPath.replace(/\/+$/, "") : "";
@@ -92,6 +138,14 @@ export async function POST(req: NextRequest) {
     const target = explicitPath
       ? { projectPath: explicitPath, projectSlug, source: "config" as const }
       : await resolveComposeProjectPath(projectSlug);
+    const requestedComposePath = normalizePath(requestedComposePathValue);
+    const composePathError = validateRequestedComposePath(target.projectPath, requestedComposePath);
+    if (composePathError) return NextResponse.json({ error: composePathError }, { status: 400 });
+    const vps = await getActiveVps();
+    const composeFile = await resolveComposeFile(target.projectPath, vps, requestedComposePath || undefined);
+    if (!composeFile) {
+      return NextResponse.json({ error: "No Compose file was found for this deployment." }, { status: 404 });
+    }
     const serviceArgs = Array.isArray(services) && services.length > 0
       ? services.map((s: string) => shQuote(s)).join(" ")
       : "";
@@ -123,18 +177,16 @@ export async function POST(req: NextRequest) {
             ? `up -d --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`
             : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
 
-      const startedAt = Date.now();
       let result: { stdout: string; stderr: string; code: number };
 
-      const vps = await getActiveVps();
       if ((action === "recreate" || action === "start") && vps?.isLocal) {
         const composeCmd = await getDockerComposeCommand(vps);
-        const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args)}`;
+        const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`;
         const logFile = `/tmp/gc-${action}-${projectSlug}.log`;
         execDetached(command, logFile);
         result = { stdout: `${action} initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
       } else {
-        result = await runDockerCompose(target.projectPath, args);
+        result = await runDockerCompose(target.projectPath, args, vps, composeFile);
       }
 
       return NextResponse.json({
@@ -151,8 +203,6 @@ export async function POST(req: NextRequest) {
     // ============================
 
     const startedAt = Date.now();
-    const vps = await getActiveVps();
-
     // 1. Materialize env
     if (project) {
       await applyEnvToDeployment(
@@ -166,72 +216,65 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Pre-deploy validation: check base compose config only.
-    //    Don't include the env override (compose.env.override.yml) —
-    //    its absolute paths to /run/groundcontrol/environments/... may
-    //    not exist until the materialize step is complete, and
-    //    missing env files should not block deploys.
+    // 2. Resolve the exact effective model once. Pull, recreation and runtime
+    //    verification below all use this same base file and managed overrides.
     const composeCmd = await getDockerComposeCommand(vps);
-    const composeFile = (() => {
-      // Find whichever compose file exists in the project directory
-      for (const name of ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]) {
-        return name; // Use the first one; compose auto-detects
-      }
-      return "docker-compose.yml";
-    })();
-    let validationOutput = "";
-
-    if (vps) {
-      const configCheck = await execOnVps(
-        `cd ${shQuote(target.projectPath)} && ${composeCmd} -f ${shQuote(composeFile)} config --quiet 2>/dev/null; exit 0`,
-        vps
+    const configCheck = await execOnVps(
+      `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
+      vps
+    );
+    if (configCheck.code !== 0 || !configCheck.stdout.trim()) {
+      throw new HttpError(
+        `Effective Compose configuration is invalid: ${(configCheck.stderr || configCheck.stdout || "configuration could not be resolved").trim().slice(0, 500)}`,
+        400
       );
-      // Validation is a warning, not a blocker — bad compose syntax
-      // still produces useful output that we surface to the user.
-      validationOutput = configCheck.stdout;
-      if (configCheck.stdout.trim()) {
-        console.warn(`[redeploy] compose config warning for ${projectSlug}: ${configCheck.stdout.trim()}`);
-      }
     }
+    const selectedServices = Array.isArray(services) ? services.map((service) => String(service)) : undefined;
+    const expectedImages = expectedComposeImages(configCheck.stdout, selectedServices);
 
-    // 3. Pull latest images (best-effort — projects with local-only images
-    //    like "myapp:local" can't pull from a registry, and that's fine).
-    //    Mirror CI behaviour: run pull, log output, never block on failure.
+    // 3. Pull from that same effective model. Targeted image changes must pull
+    //    successfully; full redeploys remain tolerant of build-only services.
     const pullResult = await execOnVps(
-      `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`)} 2>&1; exit 0`,
+      `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
       vps
     );
-
-    // 4. Run database migrations (mirrors CI: prisma migrate deploy)
-    const migrateResult = await execOnVps(
-      `cd ${shQuote(target.projectPath)} && ${composeCmd} run --rm --no-deps web npx prisma migrate deploy --schema /app/db/schema.prisma 2>&1`,
-      vps
-    );
-    // Migration failure is non-fatal for non-GroundControl projects (they may not use Prisma).
-    // For GroundControl itself, migration failure means the app may crash — log it clearly.
-    if (migrateResult.code !== 0) {
-      console.warn(`[redeploy] prisma migrate deploy failed for ${projectSlug}: ${migrateResult.stderr || migrateResult.stdout}`);
+    if (serviceArgs && pullResult.code !== 0) {
+      throw new HttpError(
+        `Image pull failed: ${(pullResult.stderr || pullResult.stdout || "registry rejected the image").trim().slice(0, 500)}`,
+        400
+      );
     }
 
-    // 5. Deploy (mirrors CI: up -d --remove-orphans)
-    const deployArgs = `up -d --remove-orphans${serviceArgs ? ` ${serviceArgs}` : ""}`;
+    // 4. A pull is not a deployment. Force recreation so the running container
+    //    cannot retain the previous :local image.
+    const deployArgs = `up -d --remove-orphans --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`;
     let result: { stdout: string; stderr: string; code: number };
     let detached = false;
+    const verifyImages = buildRuntimeImageVerificationCommand(composeCmd, composeFile, expectedImages);
 
     if (vps?.isLocal) {
-      const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, deployArgs)} && ` +
-        // Health-check loop (mirrors CI: wait for healthy)
-        `for i in $(seq 1 30); do ` +
-        `if ${buildManagedComposeInvocation(composeCmd, `ps${serviceArgs ? ` ${serviceArgs}` : ""}`)} | grep -q healthy; then break; fi; ` +
-        `sleep 2; done && ` +
-        // Cleanup (mirrors CI: docker system prune -f)
-        `docker system prune -f`;
+      const command = buildDetachedComposeRedeployCommand({
+        projectPath: target.projectPath,
+        composeCommand: composeCmd,
+        composeFile,
+        deployArgs,
+        expectedImages,
+      });
       const logFile = `/tmp/gc-redeploy-${projectSlug}.log`;
+      await execOnVps(`: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)}`, vps);
       execDetached(command, logFile);
       detached = true;
       result = { stdout: `Redeploy initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
     } else {
-      result = await runDockerCompose(target.projectPath, deployArgs);
+      result = await runDockerCompose(target.projectPath, deployArgs, vps, composeFile);
+      if (result.code === 0) {
+        const verification = await execOnVps(`cd ${shQuote(target.projectPath)} && ${verifyImages}`, vps);
+        result = {
+          stdout: [result.stdout, verification.stdout].filter(Boolean).join("\n"),
+          stderr: verification.code === 0 ? result.stderr : verification.stderr || verification.stdout,
+          code: verification.code,
+        };
+      }
     }
 
     // 5. Record image digest for rollback tracking
@@ -272,10 +315,10 @@ export async function POST(req: NextRequest) {
     await prisma.deploymentLog.create({
       data: {
         projectSlug: project?.slug || projectSlug,
-        status: result.code === 0 ? "success" : "failed",
+        status: detached ? "running" : result.code === 0 ? "success" : "failed",
         output: [
-          validationOutput ? `[validate] config OK` : "",
-          pullResult.stdout ? `[pull]\n${pullResult.stdout}` : "",
+          `[validate] Effective Compose configuration OK (${composeFile})`,
+          pullResult.stdout || pullResult.stderr ? `[pull]\n${pullResult.stdout || pullResult.stderr}` : "",
           result.stdout,
         ].filter(Boolean).join("\n") || null,
         error: result.stderr || null,
@@ -291,8 +334,8 @@ export async function POST(req: NextRequest) {
           targetId: (await prisma.deploymentTarget.findFirst({
             where: { type: { in: ["compose", "docker-compose"] } },
           }))?.id ?? 1,
-          status: result.code === 0 ? "success" : "failed",
-          imageTag: `${projectSlug}:latest`,
+          status: detached ? "deploying" : result.code === 0 ? "success" : "failed",
+          imageTag: Object.values(expectedImages)[0] || `${projectSlug}:latest`,
           imageDigest: imageDigest,
           previousImageDigest: previousDigest,
           changedFields: changedFields.length > 0 ? JSON.stringify(changedFields) : null,
@@ -309,6 +352,7 @@ export async function POST(req: NextRequest) {
       output: result.stdout,
       error: result.code === 0 ? undefined : result.stderr || result.stdout || "Redeploy failed",
       projectPath: target.projectPath,
+      composePath: composeFile,
       detached: detached || undefined,
       imageDigest: imageDigest || undefined,
       changedFields: changedFields.length > 0 ? changedFields : undefined,
@@ -322,6 +366,7 @@ export async function POST(req: NextRequest) {
         missingEnvKeys: err.missing,
       }, { status: 422 });
     }
+    if (err instanceof HttpError) return handleApiError(err);
     const detail = err instanceof Error ? err.message : "The Compose action failed before it could start.";
     return handleApiError(new HttpError(`Redeploy failed: ${detail}`, 500, {
       code: "COMPOSE_REDEPLOY_FAILED",
