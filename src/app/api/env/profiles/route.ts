@@ -5,6 +5,7 @@ import { handleApiError } from "@/lib/errors";
 import {
   getProfileValues,
   getProfileValuesByComponent,
+  inspectMaterializedEnvBundle,
   deleteLocalEnvValues,
   listDeploymentEnvironments,
   normalizeEnvironmentSlug,
@@ -95,8 +96,11 @@ export async function GET(req: NextRequest) {
         providerError = error instanceof Error ? error.message : "Infisical could not be reached";
       }
     }
+    const runtime = project.path
+      ? await inspectMaterializedEnvBundle(project.path, profile.slug, values, componentValues)
+      : { status: "unavailable" as const, missingScopes: [] };
     return NextResponse.json({
-      profile: profileResponse(profile, values, componentValues),
+      profile: profileResponse(profile, values, componentValues, runtime),
       environments: environments.map(publicEnvironment),
       components: listComponents(project.dockerCompose, componentValues, parseEnvJson(profile.schemaJson)),
       providerError,
@@ -256,9 +260,13 @@ export async function POST(req: NextRequest) {
 function profileResponse(
   profile: Parameters<typeof publicProfile>[0],
   values: Record<string, string>,
-  componentValues: Record<string, Record<string, string>>
+  componentValues: Record<string, Record<string, string>>,
+  runtime?: Awaited<ReturnType<typeof inspectMaterializedEnvBundle>>
 ) {
-  return publicProfile(profile, values, parseEnvJson(profile.schemaJson), componentValues);
+  return {
+    ...publicProfile(profile, values, parseEnvJson(profile.schemaJson), componentValues),
+    runtime: runtime || { status: "not-materialized", missingScopes: [] },
+  };
 }
 
 function publicEnvironment(profile: {

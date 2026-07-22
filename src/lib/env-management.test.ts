@@ -4,6 +4,7 @@ import {
   buildMaterializeEnvBundleCommand,
   buildMaterializeEnvCommand,
   environmentDisplayName,
+  environmentExportFilename,
   hashEnvBundle,
   hashEnv,
   maskSecret,
@@ -116,8 +117,12 @@ DATABASE_URL=duplicate
     expect(command).toContain("/run/groundcontrol/environments/");
     expect(command).toContain("/worker.env");
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
+    expect(command).toContain(".groundcontrol/compose.env.files");
     expect(command).toContain("base64 -d");
     expect(command).not.toContain("postgres://db");
+    expect(command.indexOf("rm -f '.groundcontrol/compose.env.override.yml'")).toBeLessThan(
+      command.lastIndexOf("'.groundcontrol/compose.env.override.yml'.new")
+    );
   });
 
   it("allows a component redeploy when unrelated components are incomplete", () => {
@@ -170,7 +175,7 @@ DATABASE_URL=duplicate
   it("prunes only GroundControl-managed component files during deletion", () => {
     const command = buildMaterializeEnvBundleCommand("/srv/app", {}, {}, { pruneManagedFiles: true });
     expect(command).toContain("find '/run/groundcontrol/environments/");
-    expect(command).toContain("rm -f .groundcontrol/compose.env.override.yml");
+    expect(command).toContain("rm -f '.groundcontrol/compose.env.override.yml' '.groundcontrol/compose.env.files'");
     expect(command).not.toContain("rm -f .env");
     expect(command).toContain("> '.env'.new");
   });
@@ -180,5 +185,12 @@ DATABASE_URL=duplicate
     expect(normalizeEnvironmentSlug(" ")).toBe("production");
     expect(environmentDisplayName("prod")).toBe("Production");
     expect(environmentDisplayName("customer-preview")).toBe("Customer Preview");
+  });
+
+  it("exports a visible, Mac-friendly env filename", () => {
+    expect(environmentExportFilename("RentAWeekend", "Production", "api"))
+      .toBe("rentaweekend.production.api.env.txt");
+    expect(environmentExportFilename("RentAWeekend", "Production", ""))
+      .toBe("rentaweekend.production.shared.env.txt");
   });
 });

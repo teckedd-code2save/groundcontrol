@@ -9,6 +9,7 @@ export const COMPOSE_FILE_CANDIDATES = [
 
 export const MANAGED_IMAGE_OVERRIDE_FILE = ".groundcontrol/compose.image.override.yml";
 export const MANAGED_ENV_OVERRIDE_FILE = ".groundcontrol/compose.env.override.yml";
+export const MANAGED_ENV_FILES_MANIFEST = ".groundcontrol/compose.env.files";
 
 type ComposeDocument = {
   services?: Record<string, Record<string, unknown>>;

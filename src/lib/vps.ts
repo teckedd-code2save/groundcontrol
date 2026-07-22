@@ -5,6 +5,7 @@ import { prisma } from "./prisma";
 import { decryptMaybe } from "./crypto";
 import {
   COMPOSE_FILE_CANDIDATES,
+  MANAGED_ENV_FILES_MANIFEST,
   MANAGED_ENV_OVERRIDE_FILE,
   MANAGED_IMAGE_OVERRIDE_FILE,
 } from "./compose-management";
@@ -697,7 +698,8 @@ export async function resolveComposeFile(
 export function buildManagedComposeInvocation(
   composeCommand: string,
   args: string,
-  composeFile?: string
+  composeFile?: string,
+  options: { includeEnvironment?: boolean } = {}
 ): string {
   const selectBase = composeFile
     ? `gc_compose_base=${shQuote(composeFile)}`
@@ -707,11 +709,25 @@ export function buildManagedComposeInvocation(
         `  if [ -f "$gc_file" ]; then gc_compose_base="$gc_file"; break; fi`,
         `done`,
       ].join(" ");
+  const environmentOverlay = options.includeEnvironment === false
+    ? []
+    : [
+        `if [ -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)} ]; then`,
+        `  if [ ! -f ${shQuote(MANAGED_ENV_FILES_MANIFEST)} ]; then printf '%s\\n' '[groundcontrol] managed environment is not materialized' >&2; exit 46; fi;`,
+        `  gc_env_ready=1; gc_env_seen=0;`,
+        `  while IFS= read -r gc_env_file; do`,
+        `    [ -z "$gc_env_file" ] && continue; gc_env_seen=1;`,
+        `    if [ ! -f "$gc_env_file" ]; then printf '%s\\n' "[groundcontrol] managed environment file missing: $gc_env_file" >&2; gc_env_ready=0; break; fi;`,
+        `  done < ${shQuote(MANAGED_ENV_FILES_MANIFEST)};`,
+        `  if [ "$gc_env_ready" -ne 1 ] || [ "$gc_env_seen" -ne 1 ]; then exit 46; fi;`,
+        `  set -- "$@" -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)};`,
+        `fi;`,
+      ];
   return [
     `(${selectBase};`,
     `if [ -n "$gc_compose_base" ]; then set -- -f "$gc_compose_base"; else set --; fi;`,
     `if [ -f ${shQuote(MANAGED_IMAGE_OVERRIDE_FILE)} ]; then set -- "$@" -f ${shQuote(MANAGED_IMAGE_OVERRIDE_FILE)}; fi;`,
-    `if [ -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)} ]; then set -- "$@" -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)}; fi;`,
+    ...environmentOverlay,
     `DOCKER_CONFIG="\${HOME}/.groundcontrol/docker" ${composeCommand} "$@" ${args})`,
   ].join(" ");
 }
