@@ -10,6 +10,10 @@ import {
   listInfisicalSecrets,
   type InfisicalProviderConfig,
 } from "./infisical";
+import {
+  MANAGED_ENV_FILES_MANIFEST,
+  MANAGED_ENV_OVERRIDE_FILE,
+} from "./compose-management";
 
 export interface EnvSchemaEntry {
   key: string;
@@ -32,6 +36,13 @@ export interface ResolvedDeploymentEnv {
   validation: EnvValidationResult;
 }
 
+export type EnvRuntimeStatus = "materialized" | "not-materialized" | "not-required" | "unavailable";
+
+export interface EnvRuntimeReadiness {
+  status: EnvRuntimeStatus;
+  missingScopes: string[];
+}
+
 export function normalizeEnvironmentSlug(value?: string | null): string {
   const slug = String(value || "production")
     .trim()
@@ -41,12 +52,72 @@ export function normalizeEnvironmentSlug(value?: string | null): string {
   return slug || "production";
 }
 
+export function managedEnvRuntimeDirectory(deployPath: string, environmentSlug?: string | null): string {
+  const namespace = createHash("sha256").update(deployPath).digest("hex").slice(0, 16);
+  return `/run/groundcontrol/environments/${namespace}/${normalizeEnvironmentSlug(environmentSlug)}`;
+}
+
+export async function inspectMaterializedEnvBundle(
+  deployPath: string,
+  environmentSlug: string,
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>,
+  vps?: VpsConnection | null
+): Promise<EnvRuntimeReadiness> {
+  const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
+  const componentScopes = Object.keys(componentValues)
+    .filter(isSafeComposeServiceName)
+    .filter((component) => Object.keys(componentValues[component]).length > 0)
+    .sort();
+  const checks = [
+    ...(Object.keys(values).length > 0 ? [{ scope: "deployment", path: `${deployPath}/.env` }] : []),
+    ...componentScopes.map((component) => ({ scope: component, path: `${runtimeDir}/${component}.env` })),
+    ...(componentScopes.length > 0 ? [
+      { scope: "runtime manifest", path: `${deployPath}/${MANAGED_ENV_FILES_MANIFEST}` },
+      { scope: "Compose environment overlay", path: `${deployPath}/${MANAGED_ENV_OVERRIDE_FILE}` },
+    ] : []),
+  ];
+  if (checks.length === 0) return { status: "not-required", missingScopes: [] };
+
+  const command = checks.map(({ scope, path }) => (
+    `[ -f ${shQuote(path)} ] || printf '%s\\n' ${shQuote(scope)}`
+  )).join("\n");
+  try {
+    const result = await execOnTarget(command, vps || (await getActiveVps()));
+    const missingScopes = result.stdout.split("\n").map((item) => item.trim()).filter(Boolean);
+    return {
+      status: missingScopes.length === 0 ? "materialized" : "not-materialized",
+      missingScopes,
+    };
+  } catch {
+    return { status: "unavailable", missingScopes: [] };
+  }
+}
+
 export function environmentDisplayName(value?: string | null): string {
   const slug = normalizeEnvironmentSlug(value);
   if (slug === "prod" || slug === "production") return "Production";
   if (slug === "stage" || slug === "staging") return "Staging";
   if (slug === "dev" || slug === "development") return "Development";
   return slug.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+export function environmentExportFilename(
+  projectSlug: string,
+  environmentSlug: string,
+  component?: string | null
+): string {
+  const safe = (value: string) => value
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return [
+    safe(projectSlug) || "deployment",
+    safe(environmentSlug) || "environment",
+    safe(component || "") || "shared",
+    "env",
+    "txt",
+  ].join(".");
 }
 
 export function parseEnvSchema(content?: string | null): EnvSchemaEntry[] {
@@ -453,24 +524,21 @@ export function buildMaterializeEnvBundleCommand(
   options: { pruneManagedFiles?: boolean; environmentSlug?: string } = {}
 ): string {
   const quotedPath = shQuote(deployPath);
-  const namespace = createHash("sha256").update(deployPath).digest("hex").slice(0, 16);
   const environmentSlug = normalizeEnvironmentSlug(options.environmentSlug);
-  const runtimeDir = `/run/groundcontrol/environments/${namespace}/${environmentSlug}`;
+  const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
   const quotedRuntimeDir = shQuote(runtimeDir);
   const commands = [
     "set -eu",
     `mkdir -p ${quotedPath}/.groundcontrol ${quotedRuntimeDir}`,
     `chmod 700 ${quotedRuntimeDir}`,
     `cd ${quotedPath}`,
+    // The override is the last artifact written below. Removing it first means
+    // Compose can never observe a half-materialized environment bundle.
+    `rm -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)} ${shQuote(MANAGED_ENV_FILES_MANIFEST)}`,
+    `find ${quotedRuntimeDir} -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true`,
     "find .groundcontrol/env -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true",
     "find .groundcontrol/env-backups -maxdepth 1 -type f -name '*.bak' -delete 2>/dev/null || true",
   ];
-  if (options.pruneManagedFiles) {
-    commands.push(
-      `find ${quotedRuntimeDir} -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true`,
-      "rm -f .groundcontrol/compose.env.override.yml"
-    );
-  }
   if (Object.keys(values).length > 0 || options.pruneManagedFiles) {
     commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(values)));
   }
@@ -486,6 +554,7 @@ export function buildMaterializeEnvBundleCommand(
     ));
   }
   if (components.length > 0) {
+    const runtimeFiles = components.map((component) => `${runtimeDir}/${component}.env`);
     const override = [
       "# Managed by GroundControl. Source values remain encrypted in GroundControl.",
       "services:",
@@ -497,7 +566,11 @@ export function buildMaterializeEnvBundleCommand(
       "",
     ].join("\n");
     commands.push(...atomicEnvWriteCommands(
-      ".groundcontrol/compose.env.override.yml",
+      MANAGED_ENV_FILES_MANIFEST,
+      runtimeFiles.join("\n") + "\n"
+    ));
+    commands.push(...atomicEnvWriteCommands(
+      MANAGED_ENV_OVERRIDE_FILE,
       override
     ));
   }
@@ -542,9 +615,9 @@ export async function materializeEnvBundle(
       ...Object.keys(componentValues)
         .filter(isSafeComposeServiceName)
         .filter((component) => Object.keys(componentValues[component]).length > 0)
-        .map((component) => `/run/groundcontrol/environments/${createHash("sha256").update(deployPath).digest("hex").slice(0, 16)}/${normalizeEnvironmentSlug(options.environmentSlug)}/${component}.env`),
+        .map((component) => `${managedEnvRuntimeDirectory(deployPath, options.environmentSlug)}/${component}.env`),
       ...(Object.keys(componentValues).some((component) => Object.keys(componentValues[component]).length > 0)
-        ? [".groundcontrol/compose.env.override.yml"]
+        ? [MANAGED_ENV_FILES_MANIFEST, MANAGED_ENV_OVERRIDE_FILE]
         : []),
     ],
   };
@@ -561,7 +634,12 @@ export async function applyEnvToDeployment(
   project: Project,
   deploymentId?: number,
   log?: (chunk: string) => void,
-  options: { materialize?: boolean; components?: string[]; environmentSlug?: string } = {}
+  options: {
+    materialize?: boolean;
+    components?: string[];
+    environmentSlug?: string;
+    vps?: VpsConnection | null;
+  } = {}
 ) {
   const resolved = await resolveDeploymentEnv(project, options.environmentSlug);
   if (!resolved) return null;
@@ -581,7 +659,7 @@ export async function applyEnvToDeployment(
       project.path,
       resolved.values,
       resolved.componentValues,
-      undefined,
+      options.vps,
       { environmentSlug: resolved.profile.slug }
     );
     log?.(`[env] materialized ${resolved.profile.providerType} environment (${materialized.files.join(", ")})\n`);

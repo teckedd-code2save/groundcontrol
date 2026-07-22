@@ -3,7 +3,11 @@ import { requireAuth } from "@/lib/auth";
 import { auditLog, getClientInfo } from "@/lib/audit";
 import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
-import { resolveDeploymentEnv, serializeDotenv } from "@/lib/env-management";
+import {
+  environmentExportFilename,
+  resolveDeploymentEnv,
+  serializeDotenv,
+} from "@/lib/env-management";
 
 const VALID_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
@@ -45,7 +49,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     });
 
-    const filename = component ? `${component}.env` : ".env";
+    const filename = environmentExportFilename(profile.project.slug, profile.slug, component);
     return new NextResponse(serializeDotenv(values), {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",

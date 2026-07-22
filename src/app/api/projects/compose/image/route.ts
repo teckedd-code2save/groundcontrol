@@ -124,7 +124,12 @@ export async function POST(req: NextRequest) {
 
     const composeCommand = await getDockerComposeCommand(resolved.vps);
     const validation = await execOnVps(
-      `cd ${shQuote(resolved.projectPath)} && ${buildManagedComposeInvocation(composeCommand, "config --quiet", resolved.composePath)}`,
+      `cd ${shQuote(resolved.projectPath)} && ${buildManagedComposeInvocation(
+        composeCommand,
+        "config --quiet",
+        resolved.composePath,
+        { includeEnvironment: false }
+      )}`,
       resolved.vps
     );
     if (validation.code !== 0) {

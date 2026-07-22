@@ -46,6 +46,11 @@ Saving changes updates the authoritative provider but does not mutate running
 containers. Redeploy resolves the chosen named environment, validates required
 component keys, and then injects the selected values.
 
+Provider readiness and runtime readiness are separate states. A vault may own
+valid encrypted values while a host restart has cleared their ephemeral runtime
+files. GroundControl reports those states independently and never calls a
+deployment runtime-ready solely because its provider values are valid.
+
 The deployment interface is write-only. An administrator may deliberately pull
 one component into an environment-named file for local use; every export is
 audited and returned with no-store response headers.
@@ -54,7 +59,11 @@ The current compatibility injector writes component env files beneath the
 host's `/run/groundcontrol/environments` memory-backed runtime area and points a
 GroundControl-owned Compose override at those files. It removes older
 GroundControl component files and plaintext backups from deployment directories
-during materialization. Existing deployment-wide values retain their top-level
+during materialization. A companion manifest records the expected runtime files;
+Compose lifecycle operations refuse to use the managed override unless every
+file is present. Materialization removes the old override first and publishes
+the replacement last, preventing a partially written bundle from being used.
+Existing deployment-wide values retain their top-level
 `.env` compatibility path so an upgrade does not break a running workload, but
 new values can only be created inside a component scope.
 
@@ -75,8 +84,10 @@ for applications that support `*_FILE` or configurable credential paths.
 - Version history for GroundControl Vault values and deletion markers.
 - Explicit add and environment-file import flows.
 - Audited, administrator-only environment file export.
+- Visible UTF-8 `.env.txt` exports that open directly in standard desktop text editors.
 - No automatic secret discovery from host files or containers.
 - Runtime-area Compose compatibility injection.
+- Independent vault-source and runtime-materialization status.
 - Missing-key validation mapped to components and fields.
 
 ### Next hardening

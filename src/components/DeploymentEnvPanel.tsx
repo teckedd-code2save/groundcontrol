@@ -62,6 +62,10 @@ interface EnvProfile {
   validation?: { ok: boolean; missing: string[]; hash: string };
   values: Record<string, EnvValue>;
   componentValues: Record<string, Record<string, EnvValue>>;
+  runtime?: {
+    status: "materialized" | "not-materialized" | "not-required" | "unavailable";
+    missingScopes: string[];
+  };
 }
 
 async function readJson(response: Response) {
@@ -360,7 +364,18 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               ))}
             </select>
           </label>
-          <span className="text-xs text-muted">{profile.providerType === "infisical" ? "Infisical" : "GroundControl Vault"}</span>
+          <div className="text-right text-[11px] leading-5 text-muted">
+            <div>{profile.providerType === "infisical" ? "Infisical source" : "GroundControl Vault source"}</div>
+            <div className={profile.runtime?.status === "not-materialized" ? "text-warning" : ""}>
+              {profile.runtime?.status === "materialized"
+                ? "Runtime materialized"
+                : profile.runtime?.status === "not-required"
+                  ? "No runtime values required"
+                  : profile.runtime?.status === "unavailable"
+                    ? "Runtime status unavailable"
+                    : "Runtime not materialized"}
+            </div>
+          </div>
         </div>
 
         {createOpen && (
@@ -426,7 +441,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
             <div className="flex flex-wrap gap-2">
               {selectedComponent && keys.length > 0 && (
                 <a href={exportHref} className="gc-button gc-button-quiet" title={`Download ${scopeLabel} secrets from ${profile.name}`}>
-                  <Download className="h-3.5 w-3.5" /> Pull env file
+                  <Download className="h-3.5 w-3.5" /> Download readable env
                 </a>
               )}
               <ActionButton
@@ -446,6 +461,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                       : true;
                     if (!saved) return;
                     const result = await onRedeploy(selectedComponent || undefined, profile.slug);
+                    if (result?.success) await load(profile.slug);
                     if (result && !result.success && result.missingEnvKeys?.length) {
                       setMissingKeys(new Set(result.missingEnvKeys));
                       const first = result.missingEnvKeys[0];
@@ -521,7 +537,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
                   <span className="mt-1 text-[10px] text-muted">Its values are staged locally until you save.</span>
                   <input
                     type="file"
-                    accept=".env,text/plain"
+                    accept=".env,.txt,text/plain"
                     className="sr-only"
                     onChange={async (event) => {
                       const file = event.target.files?.[0];

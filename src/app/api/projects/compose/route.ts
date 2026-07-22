@@ -35,6 +35,21 @@ function validateRequestedComposePath(projectPath: string, composePath: string):
   return null;
 }
 
+function effectiveComposeError(output: string): HttpError {
+  const detail = output.trim().slice(0, 500);
+  if (detail.includes("[groundcontrol] managed environment")) {
+    return new HttpError(
+      "This environment has vault values but its runtime files are not materialized. Open Environment and deploy the selected environment again.",
+      409,
+      { code: "ENV_RUNTIME_NOT_MATERIALIZED" }
+    );
+  }
+  return new HttpError(
+    `Effective Compose configuration is invalid: ${detail || "configuration could not be resolved"}`,
+    400
+  );
+}
+
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
@@ -161,13 +176,14 @@ export async function POST(req: NextRequest) {
     // --- Start / Restart / Recreate (non-redeploy actions) ---
 
     if (action !== "redeploy") {
-      if (action === "restart" && project) {
-        // Apply env for restart too, in case env was updated since last start
+      if (["start", "recreate", "restart"].includes(action || "start") && project) {
+        // Keep the selected vault environment materialized before any Compose
+        // lifecycle action. A host restart can legitimately clear /run.
         await applyEnvToDeployment(
           { ...project, path: target.projectPath },
           undefined, undefined,
-          { materialize: true, components: services, environmentSlug }
-        ).catch(() => undefined); // env failures shouldn't block restart
+          { materialize: true, components: services, environmentSlug, vps }
+        );
       }
 
       const args =
@@ -212,6 +228,7 @@ export async function POST(req: NextRequest) {
           materialize: true,
           components: Array.isArray(services) ? services : undefined,
           environmentSlug: typeof environmentSlug === "string" ? environmentSlug : undefined,
+          vps,
         }
       );
     }
@@ -224,10 +241,7 @@ export async function POST(req: NextRequest) {
       vps
     );
     if (configCheck.code !== 0 || !configCheck.stdout.trim()) {
-      throw new HttpError(
-        `Effective Compose configuration is invalid: ${(configCheck.stderr || configCheck.stdout || "configuration could not be resolved").trim().slice(0, 500)}`,
-        400
-      );
+      throw effectiveComposeError(configCheck.stderr || configCheck.stdout || "configuration could not be resolved");
     }
     const selectedServices = Array.isArray(services) ? services.map((service) => String(service)) : undefined;
     const expectedImages = expectedComposeImages(configCheck.stdout, selectedServices);
