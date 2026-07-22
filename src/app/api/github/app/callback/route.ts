@@ -4,8 +4,8 @@ import { encrypt } from "@/lib/crypto";
 import { exchangeGithubManifestCode, verifyGithubManifestState } from "@/lib/github-app";
 import { prisma } from "@/lib/prisma";
 
-function settingsRedirect(req: NextRequest, params: Record<string, string>) {
-  const url = new URL("/settings", req.url);
+function settingsRedirect(req: NextRequest, params: Record<string, string>, publicUrl?: string) {
+  const url = new URL("/settings", publicUrl || process.env.GC_PUBLIC_URL || req.nextUrl.origin);
   url.searchParams.set("tab", "connectors");
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   return NextResponse.redirect(url);
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
         },
       });
     });
-    return settingsRedirect(req, { github: "app-created" });
+    return settingsRedirect(req, { github: "app-created" }, state.publicUrl);
   } catch (error) {
     console.error("[github-app-callback]", error);
     return settingsRedirect(req, { github_error: "GitHub App creation could not be completed." });
