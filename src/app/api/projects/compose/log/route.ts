@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
-import { execOnVps, shQuote } from "@/lib/vps";
+import { execOnTargetStrict } from "@/lib/host-exec";
+import { getActiveVps, shQuote } from "@/lib/vps";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -19,7 +20,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid slug" }, { status: 400 });
     }
     const logFile = `/tmp/gc-redeploy-${slug}.log`;
-    const result = await execOnVps(`tail -n 200 ${shQuote(logFile)} 2>/dev/null || echo ""`);
+    const vps = await getActiveVps();
+    const result = await execOnTargetStrict(
+      `tail -n 200 ${shQuote(logFile)} 2>/dev/null || echo ""`,
+      vps
+    );
     const lines = result.stdout ? result.stdout.split("\n").filter(Boolean) : [];
     const marker = [...lines].reverse().find((line) => line.startsWith("__GC_REDEPLOY_STATUS__="));
     const status = marker === "__GC_REDEPLOY_STATUS__=success"

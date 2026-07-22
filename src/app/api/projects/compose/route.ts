@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  execOnVps, resolveComposeProjectPath, runDockerCompose, shQuote,
-  execDetached, getActiveVps, getDockerComposeCommand,
+  resolveComposeProjectPath, shQuote,
+  getActiveVps, getDockerComposeCommand,
   buildManagedComposeInvocation, getImageDigest,
   getPreviousDeploymentDigest, computeChangedFields, resolveComposeFile,
 } from "@/lib/vps";
+import { execDetachedOnTarget, execOnTargetStrict } from "@/lib/host-exec";
+import { ensureGithubRegistryLogin } from "@/lib/github-registry";
 import { parseComposeServices } from "@/lib/project-scan";
 import {
   buildDetachedComposeRedeployCommand,
@@ -84,8 +86,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "No compose file found", projectPath }, { status: 404 });
     }
     const [result, imageOverride] = await Promise.all([
-      execOnVps(`cat ${shQuote(composePath)}`, vps),
-      execOnVps(`cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, vps),
+      execOnTargetStrict(`cat ${shQuote(composePath)}`, vps),
+      execOnTargetStrict(`cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, vps),
     ]);
 
     if (!result.stdout.trim()) {
@@ -194,15 +196,18 @@ export async function POST(req: NextRequest) {
             : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
 
       let result: { stdout: string; stderr: string; code: number };
+      const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+      const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`;
 
       if ((action === "recreate" || action === "start") && vps?.isLocal) {
-        const composeCmd = await getDockerComposeCommand(vps);
-        const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`;
         const logFile = `/tmp/gc-${action}-${projectSlug}.log`;
-        execDetached(command, logFile);
+        const launch = await execDetachedOnTarget(command, logFile, vps);
+        if (launch.code !== 0) {
+          throw new HttpError(launch.stderr || `Could not start Compose ${action}.`, 500);
+        }
         result = { stdout: `${action} initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
       } else {
-        result = await runDockerCompose(target.projectPath, args, vps, composeFile);
+        result = await execOnTargetStrict(command, vps);
       }
 
       return NextResponse.json({
@@ -235,8 +240,8 @@ export async function POST(req: NextRequest) {
 
     // 2. Resolve the exact effective model once. Pull, recreation and runtime
     //    verification below all use this same base file and managed overrides.
-    const composeCmd = await getDockerComposeCommand(vps);
-    const configCheck = await execOnVps(
+    const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+    const configCheck = await execOnTargetStrict(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
       vps
     );
@@ -248,7 +253,8 @@ export async function POST(req: NextRequest) {
 
     // 3. Pull from that same effective model. Targeted image changes must pull
     //    successfully; full redeploys remain tolerant of build-only services.
-    const pullResult = await execOnVps(
+    await ensureGithubRegistryLogin(vps);
+    const pullResult = await execOnTargetStrict(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
       vps
     );
@@ -275,14 +281,20 @@ export async function POST(req: NextRequest) {
         expectedImages,
       });
       const logFile = `/tmp/gc-redeploy-${projectSlug}.log`;
-      await execOnVps(`: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)}`, vps);
-      execDetached(command, logFile);
+      await execOnTargetStrict(`: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)}`, vps);
+      const launch = await execDetachedOnTarget(command, logFile, vps);
+      if (launch.code !== 0) {
+        throw new HttpError(launch.stderr || "Could not start detached redeploy.", 500);
+      }
       detached = true;
       result = { stdout: `Redeploy initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
     } else {
-      result = await runDockerCompose(target.projectPath, deployArgs, vps, composeFile);
+      result = await execOnTargetStrict(
+        `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, deployArgs, composeFile)}`,
+        vps
+      );
       if (result.code === 0) {
-        const verification = await execOnVps(`cd ${shQuote(target.projectPath)} && ${verifyImages}`, vps);
+        const verification = await execOnTargetStrict(`cd ${shQuote(target.projectPath)} && ${verifyImages}`, vps);
         result = {
           stdout: [result.stdout, verification.stdout].filter(Boolean).join("\n"),
           stderr: verification.code === 0 ? result.stderr : verification.stderr || verification.stdout,

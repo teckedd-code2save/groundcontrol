@@ -1,9 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { BridgeDeps } from "./docker-host-bridge";
 import {
   isDockerSocketAvailable,
   canTalkToDockerDaemon,
   ensureBridgeImage,
+  execDetachedViaDockerHostBridge,
   execViaDockerHostBridge,
   canUseDockerHostBridge,
 } from "./docker-host-bridge";
@@ -179,6 +180,34 @@ describe("docker-host-bridge", () => {
       expect(result.stderr).toBe("err");
     });
 
+    it("passes stdin without exposing it in the docker command", async () => {
+      let capturedCmd = "";
+      let capturedInput = "";
+      const deps = makeDeps();
+      deps.execAsync = (async (cmd: string) => {
+        if (cmd.includes("docker images -q")) {
+          return { stdout: "abc123\n", stderr: "" };
+        }
+        throw new Error("unexpected execAsync call");
+      }) as BridgeDeps["execAsync"];
+      deps.execWithInput = async (cmd: string, input: string) => {
+        capturedCmd = cmd;
+        capturedInput = input;
+        return { stdout: "Login Succeeded", stderr: "" };
+      };
+
+      const result = await execViaDockerHostBridge(
+        "docker login ghcr.io --password-stdin",
+        { stdin: "registry-token\n" },
+        deps
+      );
+
+      expect(result.code).toBe(0);
+      expect(capturedCmd).toContain("docker run --rm -i");
+      expect(capturedCmd).not.toContain("registry-token");
+      expect(capturedInput).toBe("registry-token\n");
+    });
+
     it("fails fast when the bridge image cannot be ensured", async () => {
       const deps = makeDeps();
       deps.execAsync = (async (_cmd: string) => {
@@ -188,6 +217,32 @@ describe("docker-host-bridge", () => {
       const result = await execViaDockerHostBridge("true", undefined, deps);
       expect(result.code).toBe(1);
       expect(result.stderr).toContain("bridge image is not available");
+    });
+  });
+
+  describe("execDetachedViaDockerHostBridge", () => {
+    it("starts an ephemeral host-side runner owned by Docker", async () => {
+      let capturedCmd = "";
+      const deps = makeDeps();
+      deps.execAsync = (async (cmd: string) => {
+        if (cmd.includes("docker images -q")) {
+          return { stdout: "abc123\n", stderr: "" };
+        }
+        capturedCmd = cmd;
+        return { stdout: "runner123\n", stderr: "" };
+      }) as BridgeDeps["execAsync"];
+
+      const result = await execDetachedViaDockerHostBridge(
+        "cd /opt/app && docker compose up -d",
+        "/tmp/redeploy.log",
+        deps
+      );
+
+      expect(result).toEqual({ stdout: "runner123", stderr: "", code: 0 });
+      expect(capturedCmd).toContain("docker run -d --rm");
+      expect(capturedCmd).toContain("--pid=host");
+      expect(capturedCmd).toContain("docker compose up -d");
+      expect(capturedCmd).toContain("/tmp/redeploy.log");
     });
   });
 });

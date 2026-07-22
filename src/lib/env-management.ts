@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import type { DeploymentEnvProfile, EnvProviderAccount, Project } from "@prisma/client";
 import { prisma } from "./prisma";
 import { decryptMaybe, encryptIfNeeded } from "./crypto";
-import { execOnTarget } from "./host-exec";
+import { execOnTargetStrict } from "./host-exec";
 import { getActiveVps, shQuote, type VpsConnection } from "./vps";
 import {
   decryptInfisicalCredentials,
@@ -83,7 +83,7 @@ export async function inspectMaterializedEnvBundle(
     `[ -f ${shQuote(path)} ] || printf '%s\\n' ${shQuote(scope)}`
   )).join("\n");
   try {
-    const result = await execOnTarget(command, vps || (await getActiveVps()));
+    const result = await execOnTargetStrict(command, vps || (await getActiveVps()));
     const missingScopes = result.stdout.split("\n").map((item) => item.trim()).filter(Boolean);
     return {
       status: missingScopes.length === 0 ? "materialized" : "not-materialized",
@@ -510,7 +510,7 @@ export async function materializeEnvFile(
 ) {
   const content = serializeDotenv(values);
   const conn = vps || (await getActiveVps());
-  const result = await execOnTarget(buildMaterializeEnvCommand(deployPath, content), conn);
+  const result = await execOnTargetStrict(buildMaterializeEnvCommand(deployPath, content), conn);
   if (result.code !== 0) {
     throw new Error(result.stderr || result.stdout || "Failed to write .env");
   }
@@ -601,7 +601,7 @@ export async function materializeEnvBundle(
   options: { pruneManagedFiles?: boolean; environmentSlug?: string } = {}
 ) {
   const conn = vps || (await getActiveVps());
-  const result = await execOnTarget(
+  const result = await execOnTargetStrict(
     buildMaterializeEnvBundleCommand(deployPath, values, componentValues, options),
     conn
   );
