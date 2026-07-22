@@ -1,7 +1,8 @@
 import { decryptMaybe, encrypt } from "@/lib/crypto";
 import { HttpError } from "@/lib/errors";
+import { execOnTargetStrict } from "@/lib/host-exec";
 import { prisma } from "@/lib/prisma";
-import { execOnVps, getActiveVps, shQuote } from "@/lib/vps";
+import { getActiveVps, shQuote, type VpsConnection } from "@/lib/vps";
 
 const PREFIX = "github_registry_";
 const DOCKER_CONFIG = '"${HOME}/.groundcontrol/docker"';
@@ -41,6 +42,44 @@ async function save(input: Record<string, string>) {
   );
 }
 
+async function loginGithubRegistry(
+  username: string,
+  token: string,
+  vps: VpsConnection
+) {
+  return execOnTargetStrict(
+    `mkdir -p ${DOCKER_CONFIG} && chmod 700 ${DOCKER_CONFIG} && DOCKER_CONFIG=${DOCKER_CONFIG} docker login ghcr.io -u ${shQuote(username)} --password-stdin`,
+    vps,
+    undefined,
+    `${token}\n`
+  );
+}
+
+/**
+ * Rehydrate the saved registry credential onto the execution plane that will
+ * run Docker Compose. Tokens are passed through stdin and never shell args.
+ */
+export async function ensureGithubRegistryLogin(vps?: VpsConnection | null) {
+  const config = await values();
+  if (!config.username || !config.token) {
+    return { configured: false };
+  }
+
+  const target = vps || (await getActiveVps());
+  if (!target) {
+    throw new HttpError("Connect a VPS before pulling private images.", 400);
+  }
+
+  const login = await loginGithubRegistry(config.username, config.token, target);
+  if (login.code !== 0) {
+    throw new HttpError(
+      `GitHub package access failed: ${(login.stderr || login.stdout || "login failed").trim().slice(0, 240)}`,
+      400
+    );
+  }
+  return { configured: true };
+}
+
 export async function githubRegistryPublicState(): Promise<RegistryState> {
   const config = await values();
   const configured = Boolean(config.token && config.username);
@@ -69,12 +108,7 @@ export async function configureGithubRegistry(input: { username?: string; token?
   const vps = await getActiveVps();
   if (!vps) throw new HttpError("Connect a VPS before enabling private image access.", 400);
 
-  const login = await execOnVps(
-    `mkdir -p ${DOCKER_CONFIG} && chmod 700 ${DOCKER_CONFIG} && DOCKER_CONFIG=${DOCKER_CONFIG} docker login ghcr.io -u ${shQuote(username)} --password-stdin`,
-    vps,
-    undefined,
-    `${token}\n`
-  );
+  const login = await loginGithubRegistry(username, token, vps);
   if (login.code !== 0) {
     throw new HttpError(
       `GitHub rejected the package credential: ${(login.stderr || login.stdout || "login failed").trim().slice(0, 240)}`,
@@ -92,7 +126,7 @@ export async function configureGithubRegistry(input: { username?: string; token?
   let error = "";
 
   if (image) {
-    const probe = await execOnVps(
+    const probe = await execOnTargetStrict(
       `DOCKER_CONFIG=${DOCKER_CONFIG} docker manifest inspect ${shQuote(image)} >/dev/null 2>&1`,
       vps
     );
@@ -123,7 +157,7 @@ export async function configureGithubRegistry(input: { username?: string; token?
 export async function disconnectGithubRegistry() {
   const vps = await getActiveVps().catch(() => null);
   if (vps) {
-    await execOnVps(
+    await execOnTargetStrict(
       `DOCKER_CONFIG=${DOCKER_CONFIG} docker logout ghcr.io >/dev/null 2>&1 || true`,
       vps
     ).catch(() => undefined);

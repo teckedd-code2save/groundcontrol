@@ -13,11 +13,34 @@ const HOST_COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 export interface BridgeDeps {
   statSync: typeof fs.statSync;
   execAsync: (command: string, options?: { timeout?: number }) => Promise<{ stdout: string; stderr: string }>;
+  execWithInput?: (
+    command: string,
+    input: string,
+    options?: { timeout?: number }
+  ) => Promise<{ stdout: string; stderr: string }>;
+}
+
+function execWithInput(
+  command: string,
+  input: string,
+  options?: { timeout?: number }
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = exec(command, { timeout: options?.timeout }, (error, stdout, stderr) => {
+      if (error) {
+        reject(Object.assign(error, { stdout, stderr }));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+    child.stdin?.end(input);
+  });
 }
 
 const defaultDeps: BridgeDeps = {
   statSync: fs.statSync,
   execAsync: defaultExecAsync,
+  execWithInput,
 };
 
 function withOsPath(command: string): string {
@@ -88,7 +111,7 @@ export async function canUseDockerHostBridge(deps: BridgeDeps = defaultDeps): Pr
  */
 export async function execViaDockerHostBridge(
   command: string,
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; stdin?: string },
   deps: BridgeDeps = defaultDeps
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   if (!(await ensureBridgeImage(deps))) {
@@ -106,7 +129,7 @@ export async function execViaDockerHostBridge(
   // nsenter to enter the host mount/network namespaces. The helper container
   // is ephemeral and is removed automatically.
   const dockerCmd = [
-    "docker run --rm",
+    `docker run --rm${opts?.stdin !== undefined ? " -i" : ""}`,
     "--privileged",
     "--pid=host",
     BRIDGE_IMAGE,
@@ -116,7 +139,9 @@ export async function execViaDockerHostBridge(
   ].join(" ");
 
   try {
-    const { stdout, stderr } = await deps.execAsync(dockerCmd, { timeout: HOST_COMMAND_TIMEOUT_MS });
+    const { stdout, stderr } = opts?.stdin !== undefined
+      ? await (deps.execWithInput || execWithInput)(dockerCmd, opts.stdin, { timeout: HOST_COMMAND_TIMEOUT_MS })
+      : await deps.execAsync(dockerCmd, { timeout: HOST_COMMAND_TIMEOUT_MS });
     return { stdout, stderr, code: 0 };
   } catch (err) {
     const execErr = err as { stdout?: string; stderr?: string; code?: number };
@@ -124,6 +149,45 @@ export async function execViaDockerHostBridge(
       stdout: execErr.stdout || "",
       stderr: execErr.stderr || "",
       code: execErr.code || 1,
+    };
+  }
+}
+
+/**
+ * Start a host-namespace command in a detached helper container. Docker owns
+ * the helper lifecycle, so it survives GroundControl replacing its own app
+ * container during a self-redeploy.
+ */
+export async function execDetachedViaDockerHostBridge(
+  command: string,
+  outputFile: string,
+  deps: BridgeDeps = defaultDeps
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  if (!(await ensureBridgeImage(deps))) {
+    return { stdout: "", stderr: "Docker host bridge image is not available", code: 1 };
+  }
+
+  const wrapped = withOsPath(command);
+  const redirected = `${wrapped} > ${shQuote(outputFile)} 2>&1`;
+  const dockerCmd = [
+    "docker run -d --rm",
+    "--privileged",
+    "--pid=host",
+    BRIDGE_IMAGE,
+    "-t 1 -m -u -i -n -p --",
+    "sh -c",
+    shQuote(redirected),
+  ].join(" ");
+
+  try {
+    const { stdout, stderr } = await deps.execAsync(dockerCmd, { timeout: 30000 });
+    return { stdout: stdout.trim(), stderr, code: 0 };
+  } catch (error) {
+    const execError = error as { stdout?: string; stderr?: string; code?: number };
+    return {
+      stdout: execError.stdout || "",
+      stderr: execError.stderr || "Could not start detached host command",
+      code: execError.code || 1,
     };
   }
 }

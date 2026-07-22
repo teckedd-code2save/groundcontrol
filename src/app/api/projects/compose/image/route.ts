@@ -9,10 +9,10 @@ import {
   updateManagedImageOverride,
 } from "@/lib/compose-management";
 import { handleApiError, HttpError } from "@/lib/errors";
+import { execOnTargetStrict } from "@/lib/host-exec";
 import { validateSafePath } from "@/lib/host-safety";
 import {
   buildManagedComposeInvocation,
-  execOnVps,
   getActiveVps,
   getDockerComposeCommand,
   resolveComposeFile,
@@ -79,8 +79,8 @@ export async function GET(req: NextRequest) {
       requestedComposePath: req.nextUrl.searchParams.get("composePath") || "",
     });
     const [base, override] = await Promise.all([
-      execOnVps(`cat ${shQuote(resolved.composePath)}`, resolved.vps),
-      execOnVps(`cat ${shQuote(`${resolved.projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, resolved.vps),
+      execOnTargetStrict(`cat ${shQuote(resolved.composePath)}`, resolved.vps),
+      execOnTargetStrict(`cat ${shQuote(`${resolved.projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, resolved.vps),
     ]);
     if (base.code !== 0) throw new HttpError(base.stderr || "Could not read the Compose file.", 400);
     const services = composeServiceNames(base.stdout);
@@ -110,8 +110,8 @@ export async function POST(req: NextRequest) {
       requestedComposePath: String(body.composePath || ""),
     });
     const [base, previousOverride] = await Promise.all([
-      execOnVps(`cat ${shQuote(resolved.composePath)}`, resolved.vps),
-      execOnVps(`cat ${shQuote(`${resolved.projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, resolved.vps),
+      execOnTargetStrict(`cat ${shQuote(resolved.composePath)}`, resolved.vps),
+      execOnTargetStrict(`cat ${shQuote(`${resolved.projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, resolved.vps),
     ]);
     if (base.code !== 0) throw new HttpError(base.stderr || "Could not read the Compose file.", 400);
     if (!composeServiceNames(base.stdout).includes(service)) {
@@ -119,11 +119,11 @@ export async function POST(req: NextRequest) {
     }
 
     const update = updateManagedImageOverride(previousOverride.stdout, service, body.image);
-    const write = await execOnVps(writeOverrideCommand(resolved.projectPath, update.content), resolved.vps);
+    const write = await execOnTargetStrict(writeOverrideCommand(resolved.projectPath, update.content), resolved.vps);
     if (write.code !== 0) throw new HttpError(write.stderr || "Could not save the image override.", 500);
 
-    const composeCommand = await getDockerComposeCommand(resolved.vps);
-    const validation = await execOnVps(
+    const composeCommand = await getDockerComposeCommand(resolved.vps, execOnTargetStrict);
+    const validation = await execOnTargetStrict(
       `cd ${shQuote(resolved.projectPath)} && ${buildManagedComposeInvocation(
         composeCommand,
         "config --quiet",
@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
       resolved.vps
     );
     if (validation.code !== 0) {
-      await execOnVps(writeOverrideCommand(resolved.projectPath, previousOverride.stdout), resolved.vps).catch(() => undefined);
+      await execOnTargetStrict(writeOverrideCommand(resolved.projectPath, previousOverride.stdout), resolved.vps).catch(() => undefined);
       throw new HttpError(
         `The image override was rejected by Compose: ${(validation.stderr || validation.stdout || "invalid configuration").trim().slice(0, 400)}`,
         400

@@ -63,6 +63,10 @@ during materialization. A companion manifest records the expected runtime files;
 Compose lifecycle operations refuse to use the managed override unless every
 file is present. Materialization removes the old override first and publishes
 the replacement last, preventing a partially written bundle from being used.
+Materialization, Compose validation, image pulls, recreation, verification,
+and detached progress logs all use the same host execution plane. A
+containerized GroundControl therefore cannot report host runtime files as
+ready and then ask an inner-container Compose process to consume them.
 Existing deployment-wide values retain their top-level
 `.env` compatibility path so an upgrade does not break a running workload, but
 new values can only be created inside a component scope.
