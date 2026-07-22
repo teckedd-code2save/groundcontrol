@@ -515,7 +515,7 @@ export function ProjectsPanel() {
     }
   }
 
-  async function runCompose(slug: string, type: LifecycleAction, services?: string[], environmentSlug?: string) {
+  async function runCompose(slug: string, type: LifecycleAction, services?: string[]) {
     setComposeAction({ slug, type });
     setComposeOutput(null);
     try {
@@ -523,7 +523,7 @@ export function ProjectsPanel() {
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectSlug: slug, services, action: type, environmentSlug }),
+        body: JSON.stringify({ projectSlug: slug, services, action: type }),
       });
       const { ok, data } = await safeJson(res);
       const failed = !ok || (data.success === false && data.error);
@@ -1317,10 +1317,6 @@ export function ProjectsPanel() {
                                   <DeploymentEnvPanel
                                     projectId={dbProject.id}
                                     deploymentId={latest?.id}
-                                    onRedeploy={(_component, environmentSlug) => {
-                                      setRedeployAdvancedOpen(false);
-                                      return runCompose(project.slug, "redeploy", undefined, environmentSlug);
-                                    }}
                                   />
                                 )
                               ) : (
@@ -1512,7 +1508,6 @@ export function ProjectsPanel() {
                                       projectId={dbProject.id}
                                       deploymentId={latest?.id}
                                       componentName={svc.name}
-                                      onRedeploy={(_component, environmentSlug) => runCompose(project.slug, "redeploy", [svc.name], environmentSlug)}
                                     />
                                   )}
                                 </div>

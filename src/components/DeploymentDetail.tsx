@@ -169,7 +169,7 @@ export default function DeploymentDetail({
     }
   }
 
-  async function redeploy(component?: string, environmentSlug?: string) {
+  async function redeploy(component?: string) {
     if (!deployment?.legacyProjectSlug) return { success: false };
     setBusy(true);
     setMessage({ tone: "info", text: component ? `Redeploying ${component}…` : "Redeploying the deployment…" });
@@ -183,7 +183,6 @@ export default function DeploymentDetail({
           composePath: deployment.composePath || undefined,
           action: "redeploy",
           services: component ? [component] : undefined,
-          environmentSlug,
         }),
       });
       const data = await readJson(response);
@@ -578,7 +577,7 @@ export default function DeploymentDetail({
           {/* ===== ENVIRONMENT TAB ===== */}
           {tab === "environment" && (
             deployment.legacyProjectId ? (
-              <DeploymentEnvPanel projectId={deployment.legacyProjectId} onRedeploy={redeploy} />
+              <DeploymentEnvPanel projectId={deployment.legacyProjectId} />
             ) : (
               <div className="border border-border bg-card p-6 text-sm text-muted">Connect this deployment to a saved source before configuring environments.</div>
             )
