@@ -43,13 +43,18 @@ dual-write secrets between the built-in vault and Infisical.
 ## Runtime handling
 
 Saving changes updates the authoritative provider but does not mutate running
-containers. Redeploy resolves the chosen named environment, validates required
-component keys, and then injects the selected values.
+containers. The environment marked for deployment is configuration, not a
+separate release step. Every full or component deployment resolves that
+environment, validates the relevant component keys, prepares ephemeral runtime
+delivery, validates the effective Compose model, pulls the artifact, recreates
+the requested scope, and verifies the result. Operators never materialize or
+deploy an environment separately.
 
 Provider readiness and runtime readiness are separate states. A vault may own
 valid encrypted values while a host restart has cleared their ephemeral runtime
-files. GroundControl reports those states independently and never calls a
-deployment runtime-ready solely because its provider values are valid.
+files. GroundControl evaluates both states inside the deployment transaction,
+repairs ephemeral delivery automatically when possible, and reports one
+actionable deployment failure when it cannot proceed safely.
 
 The deployment interface is write-only. An administrator may deliberately pull
 one component into an environment-named file for local use; every export is
@@ -91,7 +96,7 @@ for applications that support `*_FILE` or configurable credential paths.
 - Visible UTF-8 `.env.txt` exports that open directly in standard desktop text editors.
 - No automatic secret discovery from host files or containers.
 - Runtime-area Compose compatibility injection.
-- Independent vault-source and runtime-materialization status.
+- Automatic deployment-time runtime delivery with actionable preparation failures.
 - Missing-key validation mapped to components and fields.
 
 ### Next hardening

@@ -16,11 +16,6 @@ import {
 } from "lucide-react";
 import { Notice } from "@/components/ui";
 
-export interface EnvironmentRedeployResult {
-  success: boolean;
-  missingEnvKeys?: string[];
-}
-
 interface Provider {
   id: number;
   name: string;
@@ -62,10 +57,6 @@ interface EnvProfile {
   validation?: { ok: boolean; missing: string[]; hash: string };
   values: Record<string, EnvValue>;
   componentValues: Record<string, Record<string, EnvValue>>;
-  runtime?: {
-    status: "materialized" | "not-materialized" | "not-required" | "unavailable";
-    missingScopes: string[];
-  };
 }
 
 async function readJson(response: Response) {
@@ -77,11 +68,10 @@ async function readJson(response: Response) {
   }
 }
 
-export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onRedeploy }: {
+export function DeploymentEnvPanel({ projectId, deploymentId, componentName }: {
   projectId: number;
   deploymentId?: number;
   componentName?: string;
-  onRedeploy?: (component?: string, environmentSlug?: string) => void | EnvironmentRedeployResult | Promise<void | EnvironmentRedeployResult>;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [environments, setEnvironments] = useState<DeploymentEnvironment[]>([]);
@@ -204,10 +194,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
     isDefault?: boolean;
     success?: string;
   } = {}) {
-    if (!profile || (!selectedComponent && !options.values && !options.deleteKeys)) {
-      setNotice({ tone: "error", text: "No changes to save." });
-      return false;
-    }
+    if (!profile) return false;
     setBusy("save");
     try {
       const response = await fetch("/api/env/profiles", {
@@ -237,7 +224,11 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       if (profile.providerType === "infisical") await load(profile.slug);
       setNotice({
         tone: "success",
-        text: options.success || `Saved ${scopeLabel} secrets for ${profile.name}. They will be used on the next deployment.`,
+        text: options.success || (
+          profile.isDefault
+            ? `Saved ${scopeLabel} secrets for ${profile.name}. GroundControl will apply them automatically on the next deployment.`
+            : `Saved ${scopeLabel} secrets for ${profile.name}. This environment is not currently used for deployments.`
+        ),
       });
       return true;
     } catch (error) {
@@ -339,7 +330,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
           <div>
             <h3 className="text-base font-semibold tracking-tight">Environment</h3>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
-              Secrets belong to a named environment and component. GroundControl never infers them from host files or running containers.
+              Store secrets by environment and component. GroundControl applies the environment marked for deployment automatically during full and component deploys.
             </p>
           </div>
           <div className="flex gap-2">
@@ -350,7 +341,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
 
         <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-end sm:justify-between">
           <label className="block min-w-56">
-            <span className="gc-label">Environment</span>
+            <span className="gc-label">Saved environment</span>
             <select
               value={selectedEnvironment || profile.slug}
               onChange={(event) => setSelectedEnvironment(event.target.value)}
@@ -364,17 +355,10 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               ))}
             </select>
           </label>
-          <div className="text-right text-[11px] leading-5 text-muted">
-            <div>{profile.providerType === "infisical" ? "Infisical source" : "GroundControl Vault source"}</div>
-            <div className={profile.runtime?.status === "not-materialized" ? "text-warning" : ""}>
-              {profile.runtime?.status === "materialized"
-                ? "Runtime materialized"
-                : profile.runtime?.status === "not-required"
-                  ? "No runtime values required"
-                  : profile.runtime?.status === "unavailable"
-                    ? "Runtime status unavailable"
-                    : "Runtime not materialized"}
-            </div>
+          <div className="text-[11px] leading-5 text-muted sm:text-right">
+            {profile.isDefault
+              ? `${profile.name} is used automatically for deployments.`
+              : `${profile.name} is saved but not used for deployments.`}
           </div>
         </div>
 
@@ -452,33 +436,6 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               >
                 Save changes
               </ActionButton>
-              {onRedeploy && (
-                <ActionButton
-                  success
-                  onClick={async () => {
-                    const saved = hasPendingChanges
-                      ? await saveEnvironment({ values: Object.fromEntries([...dirtyKeys].map((key) => [key, draft[key] || ""])) })
-                      : true;
-                    if (!saved) return;
-                    const result = await onRedeploy(selectedComponent || undefined, profile.slug);
-                    if (result?.success) await load(profile.slug);
-                    if (result && !result.success && result.missingEnvKeys?.length) {
-                      setMissingKeys(new Set(result.missingEnvKeys));
-                      const first = result.missingEnvKeys[0];
-                      const separator = first.indexOf(":");
-                      if (separator > 0) setSelectedComponent(first.slice(0, separator));
-                      const missingList = result.missingEnvKeys
-                        .map((k: string) => { const s = k.indexOf(":"); return s > 0 ? `${k.slice(0, s)}:${k.slice(s + 1)}` : k; })
-                        .join(", ");
-                      setNotice({ tone: "error", text: `Missing secrets: ${missingList}. Fill them in or mark as optional to proceed.` });
-                    }
-                  }}
-                  disabled={Boolean(busy)}
-                  icon={ChevronRight}
-                >
-                  Deploy
-                </ActionButton>
-              )}
             </div>
           </div>
 
@@ -680,7 +637,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
               )}
               <div className="flex flex-wrap justify-end gap-2 md:col-span-4">
                 {!profile.isDefault && (
-                  <ActionButton onClick={() => void saveEnvironment({ isDefault: true, success: `${profile.name} is now the default environment.` })} disabled={Boolean(busy)}>Make default</ActionButton>
+                  <ActionButton onClick={() => void saveEnvironment({ isDefault: true, success: `${profile.name} will be used automatically for future deployments.` })} disabled={Boolean(busy)}>Use for deployments</ActionButton>
                 )}
                 <ActionButton onClick={() => void saveEnvironment()} disabled={Boolean(busy)} icon={Save}>Save provider</ActionButton>
               </div>
@@ -731,16 +688,15 @@ function ScopeButton({ active, label, count, missingCount, onClick }: {
   );
 }
 
-function ActionButton({ children, icon: Icon, primary, success, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+function ActionButton({ children, icon: Icon, primary, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   icon?: React.ComponentType<{ className?: string }>;
   primary?: boolean;
-  success?: boolean;
 }) {
   return (
     <button
       type="button"
       {...props}
-      className={`gc-button ${primary ? "gc-button-primary" : success ? "border-success/40 bg-success/10 text-success hover:bg-success/15" : "gc-button-secondary"} ${props.className || ""}`}
+      className={`gc-button ${primary ? "gc-button-primary" : "gc-button-secondary"} ${props.className || ""}`}
     >
       {Icon && <Icon className="h-3.5 w-3.5" />}
       {children}

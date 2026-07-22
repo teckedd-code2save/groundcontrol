@@ -37,13 +37,17 @@ function validateRequestedComposePath(projectPath: string, composePath: string):
   return null;
 }
 
+function isManagedEnvironmentPreparationError(output: string): boolean {
+  return output.includes("[groundcontrol] managed environment");
+}
+
 function effectiveComposeError(output: string): HttpError {
   const detail = output.trim().slice(0, 500);
-  if (detail.includes("[groundcontrol] managed environment")) {
+  if (isManagedEnvironmentPreparationError(detail)) {
     return new HttpError(
-      "This environment has vault values but its runtime files are not materialized. Open Environment and deploy the selected environment again.",
+      "GroundControl could not prepare this deployment's managed environment. No deployment changes were applied. Retry the deploy; if it persists, verify host access in Settings.",
       409,
-      { code: "ENV_RUNTIME_NOT_MATERIALIZED" }
+      { code: "DEPLOYMENT_ENV_PREPARATION_FAILED" }
     );
   }
   return new HttpError(
@@ -143,7 +147,6 @@ export async function POST(req: NextRequest) {
       composePath: requestedComposePathValue,
       services,
       action,
-      environmentSlug,
     } = await req.json();
     if (!isValidProjectSlug(projectSlug)) {
       return NextResponse.json({ error: "A valid projectSlug is required" }, { status: 400 });
@@ -179,12 +182,12 @@ export async function POST(req: NextRequest) {
 
     if (action !== "redeploy") {
       if (["start", "recreate", "restart"].includes(action || "start") && project) {
-        // Keep the selected vault environment materialized before any Compose
-        // lifecycle action. A host restart can legitimately clear /run.
+        // Resolve and prepare the deployment's default environment as part of
+        // every lifecycle action. Operators never materialize runtime files.
         await applyEnvToDeployment(
           { ...project, path: target.projectPath },
           undefined, undefined,
-          { materialize: true, components: services, environmentSlug, vps }
+          { materialize: true, components: services, vps }
         );
       }
 
@@ -224,7 +227,7 @@ export async function POST(req: NextRequest) {
     // ============================
 
     const startedAt = Date.now();
-    // 1. Materialize env
+    // 1. Prepare the deployment's configured environment
     if (project) {
       await applyEnvToDeployment(
         { ...project, path: target.projectPath },
@@ -232,7 +235,6 @@ export async function POST(req: NextRequest) {
         {
           materialize: true,
           components: Array.isArray(services) ? services : undefined,
-          environmentSlug: typeof environmentSlug === "string" ? environmentSlug : undefined,
           vps,
         }
       );
@@ -241,10 +243,32 @@ export async function POST(req: NextRequest) {
     // 2. Resolve the exact effective model once. Pull, recreation and runtime
     //    verification below all use this same base file and managed overrides.
     const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
-    const configCheck = await execOnTargetStrict(
+    let configCheck = await execOnTargetStrict(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
       vps
     );
+    if (
+      project &&
+      (configCheck.code !== 0 || !configCheck.stdout.trim()) &&
+      isManagedEnvironmentPreparationError(configCheck.stderr || configCheck.stdout)
+    ) {
+      // Repair an interrupted or host-restart-cleared runtime bundle inside
+      // the deployment transaction. This is never a separate operator step.
+      await applyEnvToDeployment(
+        { ...project, path: target.projectPath },
+        undefined,
+        undefined,
+        {
+          materialize: true,
+          components: Array.isArray(services) ? services : undefined,
+          vps,
+        }
+      );
+      configCheck = await execOnTargetStrict(
+        `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
+        vps
+      );
+    }
     if (configCheck.code !== 0 || !configCheck.stdout.trim()) {
       throw effectiveComposeError(configCheck.stderr || configCheck.stdout || "configuration could not be resolved");
     }
