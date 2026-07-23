@@ -215,7 +215,12 @@ export default function DeploymentDetail({
               const lines = Array.isArray(logData.lines) ? logData.lines : [];
               setRedeployLog(lines);
               if (logData.status === "failed") {
-                setMessage({ tone: "error", text: lines.slice(-1)[0] || "Redeploy failed runtime verification." });
+                setMessage({
+                  tone: "error",
+                  text: typeof logData.error === "string" && logData.error.trim()
+                    ? logData.error
+                    : "Docker Compose failed. Open the deployment log below for the recorded evidence.",
+                });
                 setBusy(false);
                 await load();
                 return { success: false };
@@ -724,18 +729,37 @@ function ManagementLink({ icon, title, detail, href, onClick }: { icon: React.Re
 
 function RuntimeEvent({ event }: { event: { id: number; status: string; output?: string | null; error?: string | null; createdAt: string } }) {
   const [expanded, setExpanded] = useState(false);
-  const text = event.error || event.output || "Lifecycle action recorded";
-  const hasDetail = text.length > 80;
+  const summary = event.error || event.output?.split("\n").filter(Boolean).slice(-1)[0] || "Lifecycle action recorded";
+  const detail = [event.error, event.output]
+    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
+    .join("\n\n");
+  const hasDetail = detail.length > summary.length || summary.length > 80;
   return (
-    <div className="px-5 py-3 cursor-pointer hover:bg-background/50" onClick={() => setExpanded(!expanded)}>
+    <div className="px-5 py-3">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <span className="text-xs font-medium">Compose {event.status}</span>
-          <p className={`mt-1 font-mono text-[9px] text-muted ${expanded ? "whitespace-pre-wrap break-all" : "line-clamp-2"}`}>{text}</p>
+          <p className={`mt-1 font-mono text-[9px] ${event.status === "failed" ? "text-error" : "text-muted"}`}>
+            {summary}
+          </p>
+          {expanded && detail !== summary && (
+            <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words border-l border-border pl-3 font-mono text-[9px] leading-relaxed text-muted">
+              {detail}
+            </pre>
+          )}
         </div>
         <span className="shrink-0 font-mono text-[10px] text-muted">{new Date(event.createdAt).toLocaleString()}</span>
       </div>
-      {hasDetail && !expanded && <span className="mt-1 text-[10px] text-accent">Click to expand</span>}
+      {hasDetail && (
+        <button
+          type="button"
+          className="mt-2 text-[10px] text-accent hover:underline"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+        >
+          {expanded ? "Hide evidence" : "View evidence"}
+        </button>
+      )}
     </div>
   );
 }

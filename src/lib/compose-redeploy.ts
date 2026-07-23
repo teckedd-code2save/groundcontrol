@@ -1,6 +1,59 @@
 import { assertComposeServiceName, composeServiceImages } from "./compose-management";
 import { buildManagedComposeInvocation, shQuote } from "./vps";
 
+export const REDEPLOY_STATUS_PREFIX = "__GC_REDEPLOY_STATUS__=";
+
+export type DetachedRedeployStatus = "running" | "success" | "failed";
+
+export interface DetachedRedeployLog {
+  lines: string[];
+  status: DetachedRedeployStatus;
+  error: string | null;
+  exitCode: number | null;
+}
+
+/**
+ * Interpret a detached Compose log without leaking GroundControl's control
+ * marker into operator-visible output or durable release evidence.
+ */
+export function parseDetachedComposeRedeployLog(output: string): DetachedRedeployLog {
+  const rawLines = output
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => Boolean(line.trim()));
+  const marker = [...rawLines]
+    .reverse()
+    .find((line) => line.trimStart().startsWith(REDEPLOY_STATUS_PREFIX))
+    ?.trim();
+  const lines = rawLines.filter(
+    (line) => !line.trimStart().startsWith(REDEPLOY_STATUS_PREFIX)
+  );
+  const failed = marker?.match(/^__GC_REDEPLOY_STATUS__=failed:(\d+)$/);
+  const status: DetachedRedeployStatus = marker === `${REDEPLOY_STATUS_PREFIX}success`
+    ? "success"
+    : failed
+      ? "failed"
+      : "running";
+  const exitCode = failed ? Number(failed[1]) : null;
+
+  if (status !== "failed") {
+    return { lines, status, error: null, exitCode };
+  }
+
+  const phaseFailure = [...lines].reverse().find((line) =>
+    /^\[(deploy|verify)\]\s+(Docker Compose|Runtime image verification) failed\b/i.test(line.trim())
+  );
+  const lastEvidence = [...lines].reverse().find((line) =>
+    !/^\[(prepare|deploy|verify)\]/i.test(line.trim())
+  );
+  const error = lastEvidence?.trim()
+    || phaseFailure?.trim()
+    || `Docker Compose failed with exit code ${exitCode ?? "unknown"}.`;
+
+  return { lines, status, error, exitCode };
+}
+
 export function expectedComposeImages(
   effectiveCompose: string,
   selectedServices?: string[]
@@ -81,22 +134,28 @@ export function buildDetachedComposeRedeployCommand({
 
   return [
     `cd ${shQuote(projectPath)}`,
+    `printf '%s\\n' '[deploy] Starting Docker Compose recreation'`,
     `if ${deploy}; then`,
+    `  printf '%s\\n' '[deploy] Docker Compose recreation completed'`,
+    `  printf '%s\\n' '[verify] Checking running images against the effective Compose configuration'`,
     `  if (`,
     ...verify.split("\n").map((line) => `    ${line}`),
     `  ); then`,
     `    gc_status=0`,
+    `    printf '%s\\n' '[verify] Running images match the effective Compose configuration'`,
     `  else`,
     `    gc_status=$?`,
+    `    printf '%s\\n' "[verify] Runtime image verification failed (exit $gc_status)" >&2`,
     `  fi`,
     `else`,
     `  gc_status=$?`,
+    `  printf '%s\\n' "[deploy] Docker Compose failed to recreate the deployment (exit $gc_status)" >&2`,
     `fi`,
     `if [ "$gc_status" -eq 0 ]; then`,
     `  docker image prune -f >/dev/null 2>&1 || true`,
-    `  printf '%s\\n' '__GC_REDEPLOY_STATUS__=success'`,
+    `  printf '%s\\n' '${REDEPLOY_STATUS_PREFIX}success'`,
     `else`,
-    `  printf '%s\\n' "__GC_REDEPLOY_STATUS__=failed:$gc_status"`,
+    `  printf '%s\\n' "${REDEPLOY_STATUS_PREFIX}failed:$gc_status"`,
     `  exit "$gc_status"`,
     `fi`,
   ].join("\n");

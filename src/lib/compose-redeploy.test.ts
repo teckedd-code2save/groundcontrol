@@ -4,6 +4,7 @@ import {
   buildDetachedComposeRedeployCommand,
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
+  parseDetachedComposeRedeployLog,
 } from "./compose-redeploy";
 
 describe("Compose redeploy image verification", () => {
@@ -37,9 +38,42 @@ describe("Compose redeploy image verification", () => {
     });
 
     expect(script).toContain("--force-recreate 'api'");
+    expect(script).toContain("[deploy] Starting Docker Compose recreation");
+    expect(script).toContain("[deploy] Docker Compose failed to recreate the deployment");
+    expect(script).toContain("[verify] Runtime image verification failed");
     expect(script).toContain("[verify] api: expected ghcr.io/acme/api:abc123");
     expect(script.indexOf("[verify]")).toBeLessThan(script.indexOf("__GC_REDEPLOY_STATUS__=success"));
     expect(script).toContain("docker image prune -f >/dev/null 2>&1 || true");
     expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
+  });
+
+  it("removes private control markers and exposes the real Compose failure", () => {
+    const parsed = parseDetachedComposeRedeployLog([
+      "[deploy] Starting Docker Compose recreation",
+      "service api: failed to resolve image ghcr.io/acme/api:missing",
+      "[deploy] Docker Compose failed to recreate the deployment (exit 1)",
+      "__GC_REDEPLOY_STATUS__=failed:1",
+    ].join("\n"));
+
+    expect(parsed).toEqual({
+      lines: [
+        "[deploy] Starting Docker Compose recreation",
+        "service api: failed to resolve image ghcr.io/acme/api:missing",
+        "[deploy] Docker Compose failed to recreate the deployment (exit 1)",
+      ],
+      status: "failed",
+      error: "service api: failed to resolve image ghcr.io/acme/api:missing",
+      exitCode: 1,
+    });
+    expect(parsed.lines.join("\n")).not.toContain("__GC_REDEPLOY_STATUS__");
+  });
+
+  it("keeps in-flight logs running until a completion marker appears", () => {
+    expect(parseDetachedComposeRedeployLog("[deploy] Starting Docker Compose recreation\n")).toEqual({
+      lines: ["[deploy] Starting Docker Compose recreation"],
+      status: "running",
+      error: null,
+      exitCode: null,
+    });
   });
 });
