@@ -4,6 +4,7 @@ import { handleApiError } from "@/lib/errors";
 import { execOnTargetStrict } from "@/lib/host-exec";
 import { getActiveVps, shQuote } from "@/lib/vps";
 import { prisma } from "@/lib/prisma";
+import { parseDetachedComposeRedeployLog } from "@/lib/compose-redeploy";
 
 /**
  * GET /api/projects/compose/log?slug=groundcontrol
@@ -25,13 +26,8 @@ export async function GET(req: NextRequest) {
       `tail -n 200 ${shQuote(logFile)} 2>/dev/null || echo ""`,
       vps
     );
-    const lines = result.stdout ? result.stdout.split("\n").filter(Boolean) : [];
-    const marker = [...lines].reverse().find((line) => line.startsWith("__GC_REDEPLOY_STATUS__="));
-    const status = marker === "__GC_REDEPLOY_STATUS__=success"
-      ? "success"
-      : marker?.startsWith("__GC_REDEPLOY_STATUS__=failed")
-        ? "failed"
-        : "running";
+    const parsed = parseDetachedComposeRedeployLog(result.stdout || "");
+    const { lines, status, error, exitCode } = parsed;
 
     // Reconcile the durable release records after a self-hosted detached
     // redeploy. This is idempotent and only advances the newest in-flight run.
@@ -47,7 +43,8 @@ export async function GET(req: NextRequest) {
           where: { id: latestLog.id },
           data: {
             status,
-            error: status === "failed" ? lines.slice(-8).join("\n").slice(0, 2000) : null,
+            output: lines.join("\n").slice(-12000) || null,
+            error: status === "failed" ? error : null,
           },
         });
       }
@@ -62,7 +59,8 @@ export async function GET(req: NextRequest) {
             where: { id: latestRelease.id },
             data: {
               status,
-              error: status === "failed" ? lines.slice(-8).join("\n").slice(0, 2000) : null,
+              output: lines.join("\n").slice(-12000) || null,
+              error: status === "failed" ? error : null,
             },
           });
         }
@@ -71,9 +69,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       slug,
-      lines: lines.filter((line) => !line.startsWith("__GC_REDEPLOY_STATUS__=")),
+      lines,
       count: lines.length,
       status,
+      error,
+      exitCode,
       complete: status !== "running",
     });
   } catch (err: unknown) {
