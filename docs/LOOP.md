@@ -4,7 +4,9 @@
 
 ## Current implementation boundary
 
-The production Intelligence workspace can read the active host, reconcile Docker/Compose and Caddy/Nginx evidence, record meaningful changes, run an external HTTP check for every observed public route, and produce evidence-backed investigations. The workspace reports topology linkage and public reachability separately: discovering a proxy route never makes it healthy, and a reachable status-only endpoint is not presented as proof of a customer feature. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Gemini requires a Google API key, Daytona reproduction requires Daytona credentials, and host mutation remains disabled unless the allowlisted live-recovery adapter is explicitly enabled. The workspace exposes these prerequisites as readiness checks instead of silently appearing empty.
+The production Intelligence workspace can read the active host, reconcile Docker/Compose and Caddy/Nginx evidence, record meaningful changes, run an external HTTP check for every observed public route, and produce evidence-backed investigations. A failed public check is now a first-class operational event: GroundControl automatically tests the configured loopback upstream from the deployment host, checks the listening-port contract, correlates Docker/Compose identity, and isolates the first broken boundary. The interface only renders collected evidence; uncollected DNS, TLS, process or dependency layers are not shown as walls of `unknown`. An HTTP response from an HTTPS endpoint is treated as proof that edge transport completed far enough to reach the proxy.
+
+The workspace reports topology linkage and public reachability separately: discovering a proxy route never makes it healthy, and a reachable status-only endpoint is not presented as proof of a customer feature. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Gemini requires a Google API key, Daytona reproduction requires Daytona credentials, and host mutation remains disabled unless the allowlisted live-recovery adapter is explicitly enabled. The workspace exposes these prerequisites as readiness checks instead of silently appearing empty.
 
 ## Product hierarchy
 
@@ -224,6 +226,20 @@ type Investigation = {
 ~~~
 
 Application code validates the schema. A valid schema is not evidence that its claims are correct.
+
+### Deterministic isolation before model reasoning
+
+Loop isolates the live failure boundary before invoking a model:
+
+1. Run the public HTTPS check.
+2. If an HTTP response is received, mark edge transport as verified.
+3. Attribute `502` to the reverse-proxy/upstream boundary.
+4. Probe a configured loopback upstream on the actual deployment host.
+5. Compare the target port with host listeners and Docker-published ports.
+6. Correlate the route with its container, Compose service and deployment identity.
+7. Produce a concrete next safe action or abstain.
+
+Gemini may then rank competing hypotheses, correlate changes and sanitized logs, or prepare a more exact plan. Gemini does not replace these observations and cannot authorize mutation. Daytona becomes eligible only when live evidence points to a repository, configuration or deployment-behaviour defect that benefits from isolated reproduction. A basic proxy, port or runtime-link failure does not create a Daytona workspace.
 
 ## Recovery ladder
 
