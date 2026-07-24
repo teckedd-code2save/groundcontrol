@@ -9,6 +9,7 @@ import type {
   LoopRun,
   OperationalEvent,
   ProbeResult,
+  PathInspection,
   ProxyRevision,
   ServiceGraph,
 } from "./types";
@@ -48,6 +49,8 @@ export interface LoopEngineState {
   runs: Map<string, LoopRun>;
   /** Latest real external reachability probe for each public domain. */
   pathProbes: Map<string, ProbeResult>;
+  /** Deterministic failure-boundary analysis for each public domain. */
+  pathInspections: Map<string, PathInspection>;
   /** Current proxy content after observed or approved live mutations. */
   proxyContentByHost: Map<string, string>;
   /** Last ingested observation — used to re-reconcile graph after proxy recovery. */
@@ -70,6 +73,7 @@ export function createEngineState(): LoopEngineState {
     lastHealthy: new LastHealthyStore(),
     runs: new Map(),
     pathProbes: new Map(),
+    pathInspections: new Map(),
     proxyContentByHost: new Map(),
   };
 }
@@ -195,11 +199,22 @@ export async function advanceToInvestigation(args: {
   const affected = computeAffectedServiceIds(changeSet, state.events, state.graph);
   run = { ...run, serviceIds: affected };
 
-  const selected = selectJourneysForChange({
+  const selectedForChange = selectJourneysForChange({
     journeys: state.journeys,
     changeSet,
     affectedServiceIds: affected,
   });
+  const requestedDomain = args.domain?.toLowerCase();
+  const selected = requestedDomain
+    ? selectedForChange.filter((journey) => {
+        if (!journey.publicUrl) return false;
+        try {
+          return new URL(journey.publicUrl).hostname.toLowerCase() === requestedDomain;
+        } catch {
+          return false;
+        }
+      })
+    : selectedForChange;
 
   if (run.state === "stabilized") {
     run = transitionRun(run, "exercising", `selected ${selected.length} journeys`);

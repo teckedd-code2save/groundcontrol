@@ -1,9 +1,9 @@
 import {
-  execOnVps,
   getSystemConfig,
   shQuote,
   type VpsConnection,
 } from "@/lib/vps";
+import { execOnTargetStrict } from "@/lib/host-exec";
 import { parse } from "yaml";
 
 /**
@@ -258,9 +258,9 @@ export async function scanProjectsTree(
   try {
     const outputs = [];
     for (const scanRoot of scanRoots) {
-      let out = await execOnVps(buildFindCommand(scanRoot), vps);
+      let out = await execOnTargetStrict(buildFindCommand(scanRoot), vps);
       if (!out.stdout.trim()) {
-        out = await execOnVps(buildFallbackCommand(scanRoot), vps);
+        out = await execOnTargetStrict(buildFallbackCommand(scanRoot), vps);
       }
       outputs.push(out);
       if (out.code !== 0 && !out.stdout.trim() && !scanError) {
@@ -318,7 +318,7 @@ export async function scanProjectsTree(
       })
       .join("; ");
     try {
-      const catOut = await execOnVps(catScript, vps);
+      const catOut = await execOnTargetStrict(catScript, vps);
       const chunks = catOut.stdout.split(/^===PROJECT:(.+?)===$/m);
       // chunks: ["…", dir1, content1, dir2, content2, ...]
       for (let i = 1; i < chunks.length; i += 2) {
@@ -374,7 +374,7 @@ export async function scanProjectsTree(
   // --- 4: surface plain (compose-less) top-level dirs ---
   let plainDirs: string[] = [];
   try {
-    const topOut = await execOnVps(buildTopDirsCommand(root), vps);
+    const topOut = await execOnTargetStrict(buildTopDirsCommand(root), vps);
     const topDirs = Array.from(
       new Set(
         topOut.stdout
