@@ -31,6 +31,33 @@ type Verification = {
   target?: string;
 };
 
+type PathInspection = {
+  domain: string;
+  observedAt: string;
+  outcome: "healthy" | "degraded" | "failed";
+  failureBoundary?: "edge" | "proxy_to_upstream" | "upstream" | "application";
+  summary: string;
+  cause?: string;
+  confidence: number;
+  evidence: Array<{
+    id: "edge" | "proxy" | "upstream" | "runtime";
+    label: string;
+    value: string;
+    detail: string;
+    status: "verified" | "failed" | "observed";
+  }>;
+  nextAction?: {
+    title: string;
+    detail: string;
+    mode: "automatic" | "approval" | "guided";
+  };
+  deepInvestigation?: {
+    geminiEligible: boolean;
+    daytonaEligible: boolean;
+    reason: string;
+  };
+};
+
 type ServicePath = {
   domain: string;
   upstream?: string;
@@ -43,6 +70,7 @@ type ServicePath = {
   linkMethod?: "container_name" | "compose_service" | "published_port";
   topologyStatus?: "linked" | "partial";
   verification: Verification;
+  inspection?: PathInspection;
 };
 
 type ChangeSet = {
@@ -146,12 +174,11 @@ export default function IntelligencePage() {
     setLoading(true);
     if (reconcile) setOperation("scan");
     try {
-      const [graphResponse, changesResponse] = await Promise.all([
-        fetch("/api/intelligence/graph", reconcile ? { method: "POST" } : undefined),
-        fetch("/api/intelligence/changes"),
-      ]);
-      const [graph, changes] = await Promise.all([graphResponse.json(), changesResponse.json()]);
+      const graphResponse = await fetch("/api/intelligence/graph", reconcile ? { method: "POST" } : undefined);
+      const graph = await graphResponse.json();
       if (!graphResponse.ok || graph.error) throw new Error(graph.error || "Could not read the service graph");
+      const changesResponse = await fetch("/api/intelligence/changes");
+      const changes = await changesResponse.json();
       if (!changesResponse.ok || changes.error) throw new Error(changes.error || "Could not read the change ledger");
 
       const nextPaths = Array.isArray(graph.paths) ? graph.paths as ServicePath[] : [];
@@ -187,7 +214,7 @@ export default function IntelligencePage() {
       const response = await fetch("/api/loop/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: selectedPath.domain, changeSetId: changeSets[0]?.id }),
+        body: JSON.stringify({ domain: selectedPath.domain }),
       });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || "Investigation failed");
@@ -320,12 +347,15 @@ export default function IntelligencePage() {
                 ) : <Notice className="mt-4">No meaningful change is recorded yet. The scan still establishes current system identity and reachability.</Notice>}
               </StageSection>
 
-              <StageSection number="02" label="Understand" icon={<Network size={16} />} state={selectedPath.topologyStatus === "linked" ? "complete" : "attention"} summary="Trace the customer path through observed infrastructure">
+              <StageSection number="02" label="Understand" icon={<Network size={16} />} state={selectedPath.inspection?.outcome === "failed" ? "attention" : "complete"} summary="Isolate the first broken boundary with verified evidence">
                 <RelationshipChain path={selectedPath} />
-                {selectedPath.issues.length > 0 && (
-                  <Notice className="mt-4" tone="warning" title="Topology uncertainty">
-                    {selectedPath.issues.map(humanize).join(" · ")}. This does not by itself prove the public application is down.
-                  </Notice>
+                {selectedPath.inspection?.failureBoundary && (
+                  <div className="mt-4 border border-error/35 bg-error/[0.045] p-4">
+                    <p className="gc-eyebrow text-error">Failure boundary · {humanize(selectedPath.inspection.failureBoundary)}</p>
+                    <p className="mt-2 text-sm font-semibold">{selectedPath.inspection.summary}</p>
+                    {selectedPath.inspection.cause && <p className="mt-1 text-xs leading-relaxed text-muted">{selectedPath.inspection.cause}</p>}
+                    <p className="mt-3 font-mono text-[9px] text-text-dim">{Math.round(selectedPath.inspection.confidence * 100)}% confidence · deterministic host evidence</p>
+                  </div>
                 )}
               </StageSection>
 
@@ -340,34 +370,38 @@ export default function IntelligencePage() {
                     Open endpoint <ExternalLink size={13} />
                   </a>
                 </div>
-                <Notice className="mt-4" tone="info" title="Current test depth">
-                  This is a real external HTTP reachability check. Browser interactions, authentication, checkout, and other customer-feature journeys remain unavailable until explicitly configured; GroundControl does not label them verified.
-                </Notice>
+                <details className="mt-3 border-t border-border pt-3 text-[10px] text-muted">
+                  <summary className="cursor-pointer font-medium text-foreground">What this check proves</summary>
+                  <p className="mt-2 leading-relaxed">This proves external HTTP reachability. Authentication, checkout, and other product journeys are verified only after you configure them.</p>
+                </details>
               </StageSection>
 
-              <StageSection number="04" label="Diagnose" icon={<Sparkles size={16} />} state={run?.investigation ? "complete" : run?.state === "remembered" ? "complete" : "pending"} summary="Correlate impact, changes, evidence, and uncertainty">
+              <StageSection number="04" label="Diagnose" icon={<Sparkles size={16} />} state={run?.investigation || selectedPath.inspection ? selectedPath.inspection?.outcome === "failed" ? "attention" : "complete" : "pending"} summary="Explain the cause and choose the next justified action">
+                {selectedPath.inspection && <AutomaticDiagnosis inspection={selectedPath.inspection} />}
                 <div className="flex flex-col gap-3 border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="text-sm font-medium">{run ? `Loop run ${run.id}` : "No Loop run for this path"}</p>
-                    <p className="mt-1 text-xs text-muted">{run ? `Current state: ${humanize(run.state)}` : "Start after a scan has produced a real change set."}</p>
+                    <p className="text-sm font-medium">{run ? `Deep investigation ${run.id}` : "Deterministic isolation is automatic"}</p>
+                    <p className="mt-1 text-xs text-muted">{run ? `Current state: ${humanize(run.state)}` : selectedPath.inspection?.deepInvestigation?.reason || "Scan the host to collect live evidence."}</p>
                   </div>
-                  <Button onClick={runInvestigation} disabled={loading || changeSets.length === 0} leadingIcon={<SearchCheck size={14} />}>
-                    {operation === "investigate" ? "Investigating…" : run ? "Run again" : "Run investigation"}
-                  </Button>
+                  {selectedPath.inspection?.deepInvestigation?.geminiEligible && (
+                    <Button onClick={runInvestigation} disabled={loading || changeSets.length === 0} leadingIcon={<Sparkles size={14} />}>
+                      {operation === "investigate" ? "Correlating…" : run ? "Correlate again" : "Deepen with Gemini"}
+                    </Button>
+                  )}
                 </div>
                 {run?.investigation ? <InvestigationView investigation={run.investigation} /> : run?.state === "remembered" ? (
                   <Notice className="mt-4" tone="success" title="No failure confirmed">The selected public journey passed, so this run ended after verification and recorded the healthy result.</Notice>
-                ) : (
-                  <Notice className="mt-4">Diagnosis is not prefilled. GroundControl will show hypotheses only after the selected real journey runs.</Notice>
-                )}
+                ) : null}
               </StageSection>
 
-              <StageSection number="05" label="Recover" icon={<Wrench size={16} />} state={run?.actionPlan ? "attention" : run?.state === "remembered" ? "complete" : "pending"} summary="Prepare the smallest reversible action under policy">
+              <StageSection number="05" label="Recover" icon={<Wrench size={16} />} state={run?.actionPlan || selectedPath.inspection?.nextAction ? "attention" : run?.state === "remembered" || selectedPath.inspection?.outcome === "healthy" ? "complete" : "pending"} summary="Prepare the smallest reversible action under policy">
                 {run?.actionPlan ? (
                   <RecoveryPlanView plan={run.actionPlan} runState={run.state} recoveryReady={recoveryReady} loading={operation === "recover"} onApprove={approveRecovery} />
+                ) : selectedPath.inspection?.nextAction ? (
+                  <NextActionView action={selectedPath.inspection.nextAction} />
                 ) : (
-                  <Notice tone={run?.state === "remembered" ? "success" : "neutral"} title={run?.state === "remembered" ? "No recovery required" : "No safe action prepared"}>
-                    {run?.state === "remembered" ? "The external check passed; mutating this host would be unjustified." : "A recovery plan appears only when evidence supports an allowlisted, reversible action."}
+                  <Notice tone={run?.state === "remembered" || selectedPath.inspection?.outcome === "healthy" ? "success" : "neutral"} title={run?.state === "remembered" || selectedPath.inspection?.outcome === "healthy" ? "No recovery required" : "No safe action prepared"}>
+                    {run?.state === "remembered" || selectedPath.inspection?.outcome === "healthy" ? "The external check passed; mutating this host would be unjustified." : "A recovery plan appears only when evidence supports an allowlisted, reversible action."}
                   </Notice>
                 )}
               </StageSection>
@@ -454,21 +488,21 @@ function StageSection({ number, label, icon, state, summary, children }: { numbe
 }
 
 function RelationshipChain({ path }: { path: ServicePath }) {
-  const items = [
-    { label: "Public domain", value: path.domain, status: "observed" as const, detail: "Read from the active proxy configuration" },
-    { label: "DNS", value: path.domain, status: "unknown" as const, detail: "Not separately resolved by topology scan" },
-    { label: "TLS", value: ":443", status: "unknown" as const, detail: "Certificate validity is not independently probed yet" },
-    { label: "Proxy route", value: path.upstream || "unresolved", status: path.upstream ? "observed" as const : "failed" as const, detail: "Read from Caddy or Nginx" },
-    { label: "Runtime link", value: path.linkMethod ? humanize(path.linkMethod) : "not linked", status: path.containerName ? "observed" as const : "unknown" as const, detail: path.linkMethod === "published_port" ? "Matched through Docker host-port publishing" : "Matched through Docker identity" },
-    { label: "Container", value: path.containerName || "unknown", status: path.containerState?.toLowerCase() === "running" ? "observed" as const : path.containerName ? "failed" as const : "unknown" as const, detail: path.containerState ? `Observed state: ${path.containerState}` : "No runtime match" },
-    { label: "Process and dependencies", value: "not observed", status: "unknown" as const, detail: "Process sockets and downstream dependencies are not collected in this scan" },
+  const items = path.inspection?.evidence || [
+    {
+      id: "proxy" as const,
+      label: "Proxy route",
+      value: path.upstream || "No target",
+      status: path.upstream ? "observed" as const : "failed" as const,
+      detail: "Scan the host to verify the route and customer outcome.",
+    },
   ];
   return (
     <div className="overflow-x-auto">
-      <div className="flex min-w-[760px] items-stretch">
+      <div className="flex min-w-[520px] items-stretch">
         {items.map((item, index) => (
-          <div key={item.label} className="flex flex-1 items-center">
-            <div className="h-full min-w-[130px] flex-1 border border-border p-3">
+          <div key={item.id} className="flex min-w-0 flex-1 items-center">
+            <div className={`h-full min-w-[150px] flex-1 border p-3 ${item.status === "failed" ? "border-error/40 bg-error/[0.035]" : "border-border"}`}>
               <PathNodeStatus status={item.status} />
               <p className="mt-3 font-mono text-[9px] uppercase text-text-dim">{item.label}</p>
               <p className="mt-1 break-all text-[11px] font-medium">{item.value}</p>
@@ -477,6 +511,46 @@ function RelationshipChain({ path }: { path: ServicePath }) {
             {index < items.length - 1 && <ArrowDown className="mx-1 h-3.5 w-3.5 shrink-0 -rotate-90 text-text-dim" />}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function AutomaticDiagnosis({ inspection }: { inspection: PathInspection }) {
+  return (
+    <div className={`mb-4 border p-4 ${inspection.outcome === "failed" ? "border-error/35 bg-error/[0.035]" : inspection.outcome === "healthy" ? "border-success/30 bg-success/[0.03]" : "border-warning/35 bg-warning/[0.03]"}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="gc-eyebrow">{inspection.failureBoundary ? `Isolated at ${humanize(inspection.failureBoundary)}` : "Automatic diagnosis"}</p>
+          <p className="mt-2 text-sm font-semibold">{inspection.summary}</p>
+          {inspection.cause && <p className="mt-1 text-xs leading-relaxed text-muted">{inspection.cause}</p>}
+        </div>
+        <StatusBadge tone={inspection.outcome === "healthy" ? "success" : inspection.outcome === "failed" ? "danger" : "warning"}>
+          {Math.round(inspection.confidence * 100)}% confidence
+        </StatusBadge>
+      </div>
+      {inspection.deepInvestigation?.daytonaEligible && (
+        <p className="mt-3 border-t border-border pt-3 text-[10px] text-muted">Daytona is eligible only after Gemini and live evidence isolate this to a repository or configuration regression.</p>
+      )}
+    </div>
+  );
+}
+
+function NextActionView({ action }: { action: NonNullable<PathInspection["nextAction"]> }) {
+  return (
+    <div className="border border-border">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="gc-eyebrow">Next safe action</p>
+          <h3 className="mt-2 text-sm font-semibold">{action.title}</h3>
+          <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted">{action.detail}</p>
+        </div>
+        <StatusBadge tone={action.mode === "automatic" ? "success" : action.mode === "approval" ? "warning" : "neutral"}>
+          {action.mode === "approval" ? "Approval gated" : humanize(action.mode)}
+        </StatusBadge>
+      </div>
+      <div className="border-t border-border px-4 py-3 text-[10px] text-muted">
+        GroundControl will not guess or restart unrelated services. A mutation becomes available only after the target and rollback are exact.
       </div>
     </div>
   );
@@ -581,10 +655,10 @@ function PathStatus({ status, compact = false }: { status: Verification["status"
   return <StatusBadge tone="neutral">{compact ? "Not run" : "Public check not run"}</StatusBadge>;
 }
 
-function PathNodeStatus({ status }: { status: "observed" | "failed" | "unknown" }) {
-  if (status === "observed") return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-success"><CheckCircle2 size={11} />Observed</span>;
-  if (status === "failed") return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-error"><XCircle size={11} />Mismatch</span>;
-  return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-muted"><CircleHelp size={11} />Unknown</span>;
+function PathNodeStatus({ status }: { status: "verified" | "observed" | "failed" }) {
+  if (status === "verified") return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-success"><CheckCircle2 size={11} />Verified</span>;
+  if (status === "observed") return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-accent"><CheckCircle2 size={11} />Observed</span>;
+  return <span className="flex items-center gap-1 font-mono text-[8px] uppercase text-error"><XCircle size={11} />Failed here</span>;
 }
 
 function probeDetail(verification: Verification) {
@@ -605,8 +679,8 @@ function stageReached(index: number, run: LoopRun | null, path: ServicePath | nu
   if (index === 0) return hasGraph;
   if (index === 1) return Boolean(path);
   if (index === 2) return path?.verification?.status !== "not_run";
-  if (index === 3) return Boolean(run);
-  if (index === 4) return Boolean(run?.actionPlan) || run?.state === "remembered";
+  if (index === 3) return Boolean(run || path?.inspection);
+  if (index === 4) return Boolean(run?.actionPlan || path?.inspection?.nextAction) || run?.state === "remembered";
   if (index === 5) return verificationState(run) === "complete";
   return run?.state === "remembered";
 }
