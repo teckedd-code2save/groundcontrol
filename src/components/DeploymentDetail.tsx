@@ -6,6 +6,7 @@ import {
   Activity,
   ArrowLeft,
   Box,
+  ChevronRight,
   Code2,
   ExternalLink,
   FolderGit2,
@@ -539,15 +540,23 @@ export default function DeploymentDetail({
                   </div>
                   <div className="divide-y divide-border">
                     {containers.map((container) => (
-                      <div key={container.name} className="flex items-center justify-between gap-4 px-5 py-3">
-                        <div className="min-w-0">
-                          <span className="block truncate font-mono text-sm">{container.name}</span>
-                          <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{container.image}</span>
-                        </div>
+                      <div key={container.name} className="flex items-center gap-3 px-5 py-3">
+                        <Link
+                          href={`/containers/${encodeURIComponent(container.name)}`}
+                          className="group flex min-w-0 flex-1 items-center justify-between gap-4 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        >
+                          <div className="min-w-0">
+                            <span className="block truncate font-mono text-sm group-hover:text-accent">{container.name}</span>
+                            <span className="mt-0.5 block truncate font-mono text-[10px] text-muted">{container.image}</span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-3">
+                            <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${
+                              container.state === "running" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+                            }`}>{container.state}</span>
+                            <ChevronRight size={14} className="text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                          </div>
+                        </Link>
                         <div className="flex items-center gap-3 shrink-0">
-                          <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${
-                            container.state === "running" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
-                          }`}>{container.state}</span>
                           <button
                             type="button"
                             onClick={() => openImageEditor(container)}

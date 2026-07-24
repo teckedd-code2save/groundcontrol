@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
+    "@daytona/sdk": "^0.200.1",
     "@paper-design/shaders-react": "^0.0.77",
     "@prisma/client": "^5.22.0",
     "@react-three/drei": "^10.7.7",

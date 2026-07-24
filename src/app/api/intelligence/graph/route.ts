@@ -19,6 +19,7 @@ import {
   type OperationalEvent,
 } from "@/lib/intelligence";
 import { buildLiveHostObservation } from "@/lib/intelligence/live-observation";
+import { getActiveAi } from "@/lib/ai-config";
 
 function errorResponse(err: unknown, status = 500) {
   const message = err instanceof Error ? err.message : "Server error";
@@ -27,7 +28,8 @@ function errorResponse(err: unknown, status = 500) {
 }
 
 function readiness(state: LoopEngineState) {
-  const hasGemini = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY);
+  const activeAi = getActiveAi();
+  const hasAssistant = Boolean(activeAi.apiKey);
   const hasDaytona = Boolean(process.env.DAYTONA_API_KEY || process.env.DAYTONA_TOKEN);
   const hasGraph = state.graph.nodes.length > 0;
   const paths = getGraphSummary(state).paths;
@@ -52,7 +54,14 @@ function readiness(state: LoopEngineState) {
         ? `${state.journeys.filter((journey) => journey.confirmed).length} system-generated public check(s); configure a customer journey for feature-level proof`
         : "No public HTTP check can be executed",
     },
-    { id: "gemini", label: "Gemini investigation", ready: hasGemini, detail: hasGemini ? "Structured Gemini investigation enabled" : "Falls back to deterministic investigation until a Google API key is configured" },
+    {
+      id: "assistant",
+      label: "GroundControl assistant",
+      ready: hasAssistant,
+      detail: hasAssistant
+        ? `${activeAi.provider} · ${activeAi.model} can inspect the live host and prepare confirmed actions`
+        : "Configure the assistant in Settings → AI",
+    },
     { id: "daytona", label: "Daytona reproduction", ready: hasDaytona, detail: hasDaytona ? "Sanitized remote reproduction enabled" : "Only local sanitized reproduction is available" },
     { id: "recovery", label: "Approved recovery", ready: shouldUseLiveRecovery(), detail: shouldUseLiveRecovery() ? "Allowlisted live recovery adapter enabled" : "GC_LOOP_LIVE is off; GroundControl will not mutate the host" },
     { id: "browser", label: "Browser journey depth", ready: false, detail: "Current executor proves HTTP status only; browser interactions and authenticated flows are not yet implemented" },
