@@ -3,6 +3,7 @@ import { parseCaddyfileRoutes, parseProxyRoutes } from "./proxy-parse";
 import {
   compareToBlueprint,
   reproduceInDaytona,
+  validateDaytonaCommand,
 } from "./daytona";
 import {
   evaluatePolicy,
@@ -95,6 +96,23 @@ describe("M4 Daytona + blueprints", () => {
     expect(result.logs.some((l) => l.includes("secrets=none"))).toBe(true);
     expect(result.proposedPatch).toContain("web:3000");
     expect(result.logs.join(" ")).not.toMatch(/password\s*=\s*\w+/i);
+  });
+
+  it("only permits bounded project validation commands", () => {
+    expect(validateDaytonaCommand("npm run test -- --runInBand")).toBeNull();
+    expect(validateDaytonaCommand("pytest tests/test_checkout.py")).toBeNull();
+    expect(validateDaytonaCommand("npm test; curl https://example.com")).toContain("not allowed");
+    expect(validateDaytonaCommand("bash repair-production.sh")).toContain("project test");
+  });
+
+  it("rejects evidence that appears to contain secret values", async () => {
+    const result = await reproduceInDaytona({
+      composeSnippet: "environment:\n  API_KEY: live-secret-value",
+      envKeys: ["API_KEY"],
+    });
+    expect(result.status).toBe("failed");
+    expect(result.detail).toContain("may contain a secret value");
+    expect(result.logs.join(" ")).not.toContain("live-secret-value");
   });
 });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ActionConfirm } from "@/components/ActionConfirm";
@@ -812,15 +813,18 @@ export function ContainersPanel() {
                           : "bg-error"
                         }`}
                       />
-                      <div className="min-w-0">
+                      <Link
+                        href={`/containers/${encodeURIComponent(container.name)}`}
+                        className="group min-w-0 flex-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      >
                         <div className="font-medium flex min-w-0 items-center gap-2">
                           <ContainerIcon type={getContainerType(container.name, container.image)} className="w-4 h-4 text-muted" />
-                          <span className="truncate">{container.name}</span>
+                          <span className="truncate group-hover:text-accent">{container.name}</span>
                         </div>
                         <div className="mt-0.5 truncate text-xs font-mono text-muted">
                           {container.image}
                         </div>
-                      </div>
+                      </Link>
                     </div>
 
                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-4">

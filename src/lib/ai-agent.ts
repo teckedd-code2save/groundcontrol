@@ -31,6 +31,7 @@ import {
 import { isAllowedSystemPath, validateSafePath, validateSystemCommand } from "@/lib/host-safety";
 import { listPublishedGuides, getGuideBySlug, parseGuideSteps } from "@/lib/guides/loader";
 import { componentAction, getComponentStatus, type ComponentAction } from "@/lib/bootstrap";
+import { reproduceInDaytona } from "@/lib/intelligence/daytona";
 
 /**
  * GroundControl AI agent tool set.
@@ -593,6 +594,70 @@ export const AGENT_TOOLS: AgentTool[] = [
           }
         }
         return `No docker-compose/compose file found in ${projectPath}.`;
+      }),
+  },
+  {
+    name: "reproduce_incident_in_daytona",
+    description:
+      "Reproduce an incident against an exact repository revision in an isolated Daytona sandbox. Use only after live host evidence points to a repository-code, Compose, or proxy-config defect. Do not use for a stopped container, missing runtime link, unreachable host port, or another host-state failure. No production secret values are sent. Returns the bounded validation result and always destroys the sandbox.",
+    parameters: {
+      type: "object",
+      properties: {
+        repositoryUrl: {
+          type: "string",
+          description: "Credential-free HTTPS repository URL linked to the affected deployment.",
+        },
+        branch: {
+          type: "string",
+          description: "Repository branch when known.",
+        },
+        commitSha: {
+          type: "string",
+          description: "Exact deployed commit SHA when known.",
+        },
+        testCommand: {
+          type: "string",
+          description: "One bounded project validation command, such as npm test, npm run build, pytest, go test ./..., or docker compose config.",
+        },
+        composeSnippet: {
+          type: "string",
+          description: "Optional sanitized relevant Compose excerpt. Never include secret values.",
+        },
+        proxySnippet: {
+          type: "string",
+          description: "Optional sanitized relevant proxy excerpt. Never include secret values.",
+        },
+        envKeys: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional environment variable names only; never KEY=value.",
+        },
+        journeyUrl: {
+          type: "string",
+          description: "Affected public URL for incident context.",
+        },
+      },
+      required: ["repositoryUrl", "testCommand"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const envKeys = Array.isArray(args?.envKeys)
+          ? args.envKeys.map(String).filter((key) => key && !key.includes("="))
+          : [];
+        const result = await reproduceInDaytona({
+          repositoryUrl: String(args?.repositoryUrl || ""),
+          branch: args?.branch ? String(args.branch) : undefined,
+          commitSha: args?.commitSha ? String(args.commitSha) : undefined,
+          testCommand: String(args?.testCommand || ""),
+          composeSnippet: args?.composeSnippet ? String(args.composeSnippet) : undefined,
+          proxySnippet: args?.proxySnippet ? String(args.proxySnippet) : undefined,
+          envKeys,
+          journeyUrl: args?.journeyUrl ? String(args.journeyUrl) : undefined,
+          budgetSeconds: 180,
+        });
+        return JSON.stringify(result, null, 2);
       }),
   },
   {

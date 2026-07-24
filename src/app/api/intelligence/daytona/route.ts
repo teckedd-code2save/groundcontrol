@@ -18,12 +18,15 @@ export async function POST(req: NextRequest) {
   try {
     requireAuth(req);
     const body = (await req.json()) as {
+      repositoryUrl?: string;
+      branch?: string;
       commitSha?: string;
       artifactDigest?: string;
       composeSnippet?: string;
       proxySnippet?: string;
       envKeys?: string[];
       journeyUrl?: string;
+      testCommand?: string;
       blueprintId?: BlueprintId;
       topologySignals?: TopologySignals;
     };
@@ -37,12 +40,15 @@ export async function POST(req: NextRequest) {
     }
 
     const reproduction = await reproduceInDaytona({
+      repositoryUrl: body.repositoryUrl,
+      branch: body.branch,
       commitSha: body.commitSha,
       artifactDigest: body.artifactDigest,
       composeSnippet: body.composeSnippet,
       proxySnippet: body.proxySnippet,
       envKeys: body.envKeys,
       journeyUrl: body.journeyUrl,
+      testCommand: body.testCommand,
     });
 
     const blueprint = body.blueprintId
@@ -53,7 +59,7 @@ export async function POST(req: NextRequest) {
       reproduction,
       blueprint,
       maturity: reproduction.provider === "daytona" ? "early_access" : "local_sanitized",
-      note: "Daytona never receives production secrets. Network denied by default.",
+      note: "Daytona receives the exact revision and sanitized evidence, never production secret values. Network access is restricted to source and package registries.",
     });
   } catch (err) {
     return errorResponse(err);
