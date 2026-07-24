@@ -9,6 +9,8 @@ import {
   getLoopEngine,
   ingestEvents,
   ingestObservation,
+  inspectServicePath,
+  probePathUpstream,
   registerJourney,
   runProbes,
   setLoopEngine,
@@ -64,6 +66,7 @@ function publicState(state: LoopEngineState) {
     const probe = state.pathProbes.get(path.domain.toLowerCase());
     return {
       ...path,
+      inspection: state.pathInspections.get(path.domain.toLowerCase()),
       topologyStatus: path.containerName ? "linked" : "partial",
       verification: probe
         ? {
@@ -162,6 +165,8 @@ export async function POST(req: NextRequest) {
     }
 
     const pathProbes = new Map(next.pathProbes);
+    const pathInspections = new Map(next.pathInspections);
+    const probeEvents: OperationalEvent[] = [];
     const probeExecutor = createHttpProbeExecutor(8_000);
     await Promise.all(getGraphSummary(next).paths.map(async (path) => {
       const target = `https://${path.domain}/`;
@@ -170,11 +175,38 @@ export async function POST(req: NextRequest) {
         probeExecutor,
         observation.observedAt
       );
-      if (probe) pathProbes.set(path.domain.toLowerCase(), probe);
+      if (!probe) return;
+      const key = path.domain.toLowerCase();
+      pathProbes.set(key, probe);
+      const internalProbe = await probePathUpstream(path);
+      pathInspections.set(key, inspectServicePath({
+        path,
+        externalProbe: probe,
+        internalProbe,
+        observation,
+      }));
+      if (!probe.ok && (probe.statusCode == null || probe.statusCode >= 500)) {
+        probeEvents.push({
+          id: `ev_probe_${key.replace(/[^a-z0-9]+/g, "_")}_${Date.parse(observation.observedAt)}`,
+          hostId: observation.hostId,
+          serviceIds: [path.serviceId || `domain:${key}`],
+          kind: "external_probe_failed",
+          observedAt: observation.observedAt,
+          source: "probe",
+          evidenceArtifactIds: [probe.id],
+          meta: {
+            domain: path.domain,
+            statusCode: probe.statusCode,
+            upstream: path.upstream,
+            error: probe.error,
+          },
+        });
+      }
     }));
-    next = { ...next, pathProbes };
+    next = { ...next, pathProbes, pathInspections };
+    if (probeEvents.length > 0) next = ingestEvents(next, probeEvents);
     setLoopEngine(next);
-    return NextResponse.json({ ...publicState(next), newEvents: events.length });
+    return NextResponse.json({ ...publicState(next), newEvents: events.length + probeEvents.length });
   } catch (err) {
     return errorResponse(err);
   }
