@@ -35,20 +35,26 @@ export async function POST(req: NextRequest) {
       domain?: string;
     };
 
+    const domain = String(body.domain || "").trim();
+    if (!domain) {
+      return NextResponse.json({ error: "A live service domain is required." }, { status: 400 });
+    }
     const state = getLoopEngine();
-    const changeSetId = body.changeSetId || state.changeSets[0]?.id;
+    const domainChangeSet = [...state.changeSets].reverse().find((changeSet) =>
+      changeSet.eventIds.some((eventId) => {
+        const event = state.events.find((candidate) => candidate.id === eventId);
+        return String(event?.meta?.domain || "").toLowerCase() === domain.toLowerCase();
+      })
+    );
+    const changeSetId = body.changeSetId || domainChangeSet?.id || state.changeSets.at(-1)?.id;
     if (!changeSetId) {
       return NextResponse.json(
-        { error: "No real change set is available yet." },
+        { error: "Scan this system first so GroundControl can attach the investigation to live evidence." },
         { status: 400 }
       );
     }
 
     const runId = body.runId || `run_${Date.now()}`;
-    const domain = String(body.domain || "").trim();
-    if (!domain) {
-      return NextResponse.json({ error: "A live service domain is required." }, { status: 400 });
-    }
     if (state.graph.source === "fixture") {
       return NextResponse.json({ error: "Fixture graph data cannot start production Loop runs." }, { status: 409 });
     }
