@@ -116,6 +116,41 @@ export interface ServicePath {
   issues: string[];
 }
 
+export type PathEvidenceStatus = "verified" | "failed" | "observed";
+
+export interface PathEvidenceStep {
+  id: "edge" | "proxy" | "upstream" | "runtime";
+  label: string;
+  value: string;
+  detail: string;
+  status: PathEvidenceStatus;
+}
+
+/**
+ * Deterministic, read-only isolation of a public failure boundary.
+ * Unknown/uncollected layers are deliberately omitted from evidence.
+ */
+export interface PathInspection {
+  domain: string;
+  observedAt: string;
+  outcome: "healthy" | "degraded" | "failed";
+  failureBoundary?: "edge" | "proxy_to_upstream" | "upstream" | "application";
+  summary: string;
+  cause?: string;
+  confidence: number;
+  evidence: PathEvidenceStep[];
+  nextAction?: {
+    title: string;
+    detail: string;
+    mode: "automatic" | "approval" | "guided";
+  };
+  deepInvestigation?: {
+    geminiEligible: boolean;
+    daytonaEligible: boolean;
+    reason: string;
+  };
+}
+
 export type ProbeKind = "internal" | "external";
 
 export interface ProbeResult {
@@ -327,6 +362,11 @@ export interface HostObservation {
     type: "caddy" | "nginx" | "unknown";
     configContent: string;
     fingerprint: string;
+    execution?: {
+      plane: "host" | "container";
+      containerName?: string;
+      networkMode?: string;
+    };
     routes: Array<{
       domain: string;
       path?: string;
@@ -334,5 +374,6 @@ export interface HostObservation {
       listenPort?: number;
     }>;
   };
+  listeners?: Array<{ address: string; port: number }>;
   domains?: Array<{ domain: string; resolvesTo?: string; tlsValid?: boolean }>;
 }
