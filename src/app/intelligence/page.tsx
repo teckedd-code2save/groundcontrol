@@ -129,9 +129,10 @@ export default function IntelligencePage() {
       "1. Inspect the active host using the read-only GroundControl tools.",
       "2. Identify the exact deployment, Compose service, container, port, and proxy route involved.",
       "3. State the concrete root cause in one sentence.",
-      "4. If the evidence points to repository code, Compose, or proxy configuration, use reproduce_incident_in_daytona against the exact repository revision with one bounded validation command. Do not use Daytona for stopped containers, missing runtime links, or dead host ports.",
-      "5. Propose the smallest reversible fix using an available GroundControl action. If it mutates the host, present it for my confirmation.",
-      `6. After the approved action, verify https://${path.domain}/ externally.`,
+      "4. If the defect belongs to repository code, Compose, or repository-managed proxy configuration, resolve the linked repository and exact deployed commit, then use prepare_source_fix_in_daytona with the smallest complete-file candidate and one bounded validation command.",
+      "5. Show the validated diff and ask to open the fix PR. Never rewrite application source on the live host.",
+      "6. If the failure is runtime-only, prepare the smallest reversible GroundControl runtime action for confirmation. Do not use Daytona for a stopped container, missing runtime link, or dead host port.",
+      `7. After the PR is merged and the normal delivery pipeline deploys it—or after an approved runtime action—verify https://${path.domain}/ externally.`,
       "",
       "Keep the response short: Problem, Fix, Verify. Do not ask me to run shell commands unless GroundControl has no safe action for the repair.",
     ].join("\n");

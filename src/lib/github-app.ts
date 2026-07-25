@@ -91,7 +91,7 @@ export function buildGithubAppManifest(publicUrl: string, suffix = randomBytes(3
     public: false,
     default_permissions: {
       metadata: "read",
-      contents: "read",
+      contents: "write",
       actions: "read",
       checks: "write",
       statuses: "write",
@@ -148,13 +148,35 @@ export async function createGithubInstallationToken(input: {
   appId: string;
   privateKey: string;
   installationId: string;
-}): Promise<{ token: string; expiresAt: string }> {
+}): Promise<{ token: string; expiresAt: string; permissions: Record<string, string> }> {
   const appJwt = createGithubAppJwt(input.appId, input.privateKey);
-  const value = await githubFetch<{ token: string; expires_at: string }>(
+  const value = await githubFetch<{
+    token: string;
+    expires_at: string;
+    permissions?: Record<string, string>;
+  }>(
     `/app/installations/${encodeURIComponent(input.installationId)}/access_tokens`,
     { method: "POST", headers: { Authorization: `Bearer ${appJwt}` } }
   );
-  return { token: value.token, expiresAt: value.expires_at };
+  return {
+    token: value.token,
+    expiresAt: value.expires_at,
+    permissions: value.permissions || {},
+  };
+}
+
+export function githubInstallationFetch<T>(
+  token: string,
+  path: string,
+  init: RequestInit = {}
+): Promise<T> {
+  return githubFetch<T>(path, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...init.headers,
+    },
+  });
 }
 
 export async function listGithubInstallationRepositories(token: string): Promise<GithubRepositoryPayload[]> {

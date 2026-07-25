@@ -312,9 +312,19 @@ Policies are enforced outside Gemini. Model confidence cannot widen permissions.
 
 Daytona is used when a failure can be reproduced through repository code, container topology, configuration or deployment behaviour. It is not an exact production clone and is not required for every recovery.
 
-The Daytona adapter may open the exact commit, use the exact artifact digest, construct a sanitized topology, validate a Compose or proxy candidate, reproduce a journey, fork repair attempts, run tests, prepare a minimal patch, enforce budgets and clean up safely.
+The Daytona adapter may open the exact deployed commit, use the exact artifact digest, construct a sanitized topology, validate a Compose or proxy candidate, reproduce a journey, fork repair attempts, run tests, prepare a minimal patch, enforce budgets and clean up safely.
 
 Network access is denied by default and allowlisted per dependency. Daytona never receives production secret values.
+
+For repository-backed defects, the source repository remains authoritative:
+
+1. Live host evidence identifies the defect and exact deployed revision.
+2. Daytona applies the candidate only inside an ephemeral sandbox and validates it.
+3. GroundControl presents the diff and opens a non-draft pull request only after operator approval.
+4. The existing delivery pipeline deploys the merged revision.
+5. GroundControl verifies the customer outcome externally.
+
+GroundControl does not rewrite application source or repository-managed Compose files on the production host. An emergency source override is a distinct, explicitly enabled break-glass path; it is disabled by default and always requires a stated reason plus confirmation.
 
 ## Guided recovery
 

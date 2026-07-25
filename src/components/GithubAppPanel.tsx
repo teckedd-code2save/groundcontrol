@@ -54,6 +54,7 @@ type GithubAppState = {
     appCreated: boolean;
     installationConnected: boolean;
     webhookReachable: boolean;
+    sourceRepairWrite: boolean;
   };
   installations: Installation[];
 };
@@ -84,6 +85,7 @@ const EMPTY_STATE: GithubAppState = {
     appCreated: false,
     installationConnected: false,
     webhookReachable: false,
+    sourceRepairWrite: false,
   },
   installations: [],
 };
@@ -300,6 +302,24 @@ export default function GithubAppPanel() {
           <div className="grid gap-5 px-5 py-5 xl:grid-cols-[280px_minmax(0,1fr)]">
             <div className="space-y-4">
               <Readiness requirements={state.requirements} />
+              {!state.requirements.sourceRepairWrite && (
+                <div className="border border-warning/25 bg-warning/5 p-3">
+                  <p className="text-[11px] font-medium text-warning">Source repair needs one permission update</p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-muted">
+                    Validated fixes stay blocked until this App has Contents and Pull requests set to read and write. Update the App permissions on GitHub, then sync.
+                  </p>
+                  {state.app?.slug && (
+                    <a
+                      href={`https://github.com/settings/apps/${state.app.slug}/permissions`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="gc-button gc-button-quiet mt-3 text-[10px]"
+                    >
+                      Update GitHub permissions <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              )}
               <div className="border border-border bg-background p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-2">
@@ -446,6 +466,7 @@ function Readiness({ requirements }: { requirements: GithubAppState["requirement
     ["App credentials", requirements.appCreated, ShieldCheck],
     ["Repository installation", requirements.installationConnected, FolderGit2],
     ["Signed event path", requirements.webhookReachable, Check],
+    ["Source repair PRs", requirements.sourceRepairWrite, GitBranch],
   ] as const;
   return (
     <div className="border border-border bg-background p-3">

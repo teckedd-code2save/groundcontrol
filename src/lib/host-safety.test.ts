@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isAllowedSystemPath, validateSafePath, validateSystemCommand } from "./host-safety";
+import {
+  isAllowedSystemPath,
+  isApplicationSourcePath,
+  validateSafePath,
+  validateSystemCommand,
+} from "./host-safety";
 
 describe("host-safety", () => {
   describe("isAllowedSystemPath", () => {
@@ -62,6 +67,17 @@ describe("host-safety", () => {
     it("rejects unknown command heads", () => {
       expect(validateSystemCommand("docker ps")).toContain("not in the system-command allow-list");
       expect(validateSystemCommand("compose up")).toContain("not in the system-command allow-list");
+    });
+  });
+
+  describe("isApplicationSourcePath", () => {
+    it("protects common application source roots from live rewrites", () => {
+      expect(isApplicationSourcePath("/opt/urbanize/docker-compose.yml")).toBe(true);
+      expect(isApplicationSourcePath("/srv/apps/shop/compose.yml")).toBe(true);
+      expect(isApplicationSourcePath("/var/www/shop/index.js")).toBe(true);
+      expect(isApplicationSourcePath("/root/projects/api/Dockerfile")).toBe(true);
+      expect(isApplicationSourcePath("/home/deploy/app/compose.yml")).toBe(true);
+      expect(isApplicationSourcePath("/etc/caddy/Caddyfile")).toBe(false);
     });
   });
 });
