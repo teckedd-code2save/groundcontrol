@@ -16,6 +16,8 @@ import {
   recordAiUsage,
   updateAiThread,
   titleFromMessage,
+  buildAiEvidenceLedger,
+  classifyToolOutput,
   type WireMessage,
   type ToolCallRecord,
 } from "@/lib/ai-memory";
@@ -63,7 +65,8 @@ const SYSTEM_PROMPT =
   `  2) Never use write_system_file to repair application source, Compose, Dockerfiles, manifests, or ` +
   `configuration under /opt, managed deployment roots, web roots, or home directories.\n` +
   `  3) For a repository-backed code, Compose, or proxy defect, identify the linked repository and exact ` +
-  `deployed commit SHA, then call prepare_source_fix_in_daytona with the smallest complete-file candidate.\n` +
+  `deployed commit SHA, then call prepare_source_fix_in_daytona with the smallest exact source edit. ` +
+  `GroundControl fetches the complete repository file itself; never copy a live-host file into the repair.\n` +
   `  4) Daytona must validate the candidate away from production. Show the concise diff and validation result.\n` +
   `  5) Then call open_validated_fix_pr. It is confirmation-gated and changes source control only.\n` +
   `  6) After merge, the existing delivery pipeline deploys the change; then verify the public endpoint. ` +
@@ -83,6 +86,17 @@ const SYSTEM_PROMPT =
   `confirmation in the UI — you cannot perform them silently. Propose them, but the user must approve first.\n` +
   `- If a tool returns an error (e.g. the VPS is unreachable), say so plainly and suggest next steps; ` +
   `do not invent results.\n\n` +
+  `INCIDENT INTEGRITY CONTRACT:\n` +
+  `- Keep FACTS, HYPOTHESES, and CONFIRMED CAUSE separate. A log line is evidence, not automatically the cause.\n` +
+  `- Do not replace a confirmed cause unless newer evidence contradicts it; state exactly which evidence changed.\n` +
+  `- Example: a service-name lookup failure can be caused by a missing service, wrong network, stopped container, ` +
+  `or bad configuration. It does not by itself prove that an upstream URL should be edited.\n` +
+  `- A tool marked error failed. Do not describe it as progress, validated, or successful. Report the exact failure.\n` +
+  `- A successful restart, Compose command, or PR creation proves only that action completed. It does not prove ` +
+  `customer recovery. Inspect the target, then call verify_public_endpoint before saying fixed or recovered.\n` +
+  `- Never invent a manual source edit after Daytona or repository resolution fails. State the single missing ` +
+  `prerequisite and keep the incident unresolved.\n` +
+  `- For live incidents, keep the operator response short under Problem, Fix, Verify. Give one concrete next action.\n\n` +
   `Be concise and practical. Assume a Linux VPS (could be Debian/Ubuntu or Alpine/BusyBox). When useful, ` +
   `reference GroundControl dashboard pages (Terminal, Alerts, Services, Deployments, Templates, Settings). Format ` +
   `answers in clean Markdown.`;
@@ -170,10 +184,12 @@ export async function POST(req: NextRequest) {
             ? await formatGuideContextForPrompt(user.id, guideContext).catch(() => "")
             : "";
 
+          const evidenceLedger = await buildAiEvidenceLedger(threadId).catch(() => "");
           const parts = [SYSTEM_PROMPT];
           if (capabilityPreamble) parts.unshift(capabilityPreamble);
           if (runtimePreamble) parts.unshift(runtimePreamble);
           if (guidePreamble) parts.unshift(guidePreamble);
+          if (evidenceLedger) parts.push(evidenceLedger);
           const systemPrompt = parts.join("\n\n");
 
           // Let the agent know it can query/install/manage the host.
@@ -274,6 +290,7 @@ interface RunCtx {
   context: { ip: string; userAgent: string };
   systemPrompt: string;
   emit: Emit;
+  contextMessages?: WireMessage[];
   turn: {
     content: string;
     toolCalls: (ToolCallRecord & { persistedId?: number })[];
@@ -298,7 +315,7 @@ interface ConfirmedToolCtx extends RunCtx {
 }
 
 async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
-  const { confirmedTool, provider, apiKey, threadId, emit, turn, userId, context, systemPrompt } = ctx;
+  const { confirmedTool, provider, threadId, emit, turn, userId, context } = ctx;
   const tool = getTool(confirmedTool.name);
   if (!tool) {
     emit({ type: "tool", name: confirmedTool.name, status: "error", output: "Unknown tool." });
@@ -314,13 +331,14 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
 
   emit({ type: "tool", name: tool.name, args: confirmedTool.args, status: "running" });
   const output = await tool.execute(confirmedTool.args);
-  emit({ type: "tool", name: tool.name, args: confirmedTool.args, status: "done", output });
+  const status = classifyToolOutput(output);
+  emit({ type: "tool", name: tool.name, args: confirmedTool.args, status, output });
 
   turn.toolCalls.push({
     name: tool.name,
     args: confirmedTool.args,
     output,
-    status: "done",
+    status,
     readOnly: false,
     confirmedAt: new Date(),
   });
@@ -335,64 +353,25 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
     context,
   });
 
-  const convo = [
-    { role: "system", content: systemPrompt },
-    ...await loadThreadMessages(threadId),
-    {
-      role: "assistant",
-      content: `I executed the confirmed action \`${tool.name}\` with arguments ${JSON.stringify(confirmedTool.args)}.`,
-    },
-    {
-      role: "user",
-      content: `Result of ${tool.name}:\n\n${output}\n\nPlease summarize the outcome.`,
-    },
-  ] as WireMessage[];
+  if (status === "error") {
+    const note = `**Problem**\n\n\`${tool.name}\` failed: ${output}\n\n**Fix**\n\nNo further mutation was made. The incident remains unresolved.\n\n**Verify**\n\nNot run because the approved action failed.`;
+    turn.content += note;
+    emit({ type: "text", delta: note });
+    return;
+  }
 
+  const contextMessages: WireMessage[] = [{
+    role: "user",
+    content:
+      `The operator approved \`${tool.name}\` and it completed with this result:\n\n${output}\n\n` +
+      `This proves only that the action completed. Inspect the exact changed target and call ` +
+      `verify_public_endpoint for the incident URL before reporting recovery. If verification fails, ` +
+      `keep the incident open and state the next evidence-backed action.`,
+  }];
   if (provider === "anthropic") {
-    const anthropic = new Anthropic({ apiKey });
-    const stream = anthropic.messages.stream({
-      model: resolveModel(),
-      max_tokens: ANTHROPIC_MAX_TOKENS,
-      system: systemPrompt,
-      messages: convo.filter((m) => m.role !== "system") as Anthropic.MessageParam[],
-    });
-    for await (const event of stream) {
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        const delta = event.delta.text;
-        if (delta) {
-          turn.content += delta;
-          emit({ type: "text", delta });
-        }
-      }
-    }
-    const finalMsg = await stream.finalMessage();
-    if (finalMsg.usage) {
-      turn.usage = {
-        inputTokens: finalMsg.usage.input_tokens,
-        outputTokens: finalMsg.usage.output_tokens,
-      };
-    }
+    await runAnthropic({ ...ctx, contextMessages });
   } else {
-    const openai = new OpenAI({ apiKey });
-    const completion = await openai.chat.completions.create({
-      model: resolveModel(),
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...convo.filter((m) => m.role !== "system").map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })),
-      ],
-      stream: true,
-      temperature: 0.4,
-    });
-    for await (const chunk of completion) {
-      const delta = chunk.choices[0]?.delta?.content || "";
-      if (delta) {
-        turn.content += delta;
-        emit({ type: "text", delta });
-      }
-    }
+    await runOpenAI({ ...ctx, contextMessages });
   }
 }
 
@@ -401,7 +380,7 @@ async function runOpenAI(ctx: RunCtx) {
   const openai = new OpenAI({ apiKey });
   const toolSchemas = getOpenAIToolSchemas();
 
-  const history = await loadThreadMessages(threadId);
+  const history = [...await loadThreadMessages(threadId), ...(ctx.contextMessages || [])];
   const convo: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
@@ -467,9 +446,10 @@ async function runOpenAI(ctx: RunCtx) {
 
       emit({ type: "tool", name, args, status: "running" });
       const output = await tool.execute(args);
-      emit({ type: "tool", name, args, status: "done", output });
+      const status = classifyToolOutput(output);
+      emit({ type: "tool", name, args, status, output });
       convo.push({ role: "tool", tool_call_id: call.id, content: output });
-      turn.toolCalls.push({ name, args, output, status: "done", readOnly: true });
+      turn.toolCalls.push({ name, args, output, status, readOnly: true });
 
       await auditAiToolExecution(ctx.userId, {
         threadId: ctx.threadId,
@@ -512,7 +492,7 @@ async function runAnthropic(ctx: RunCtx) {
   const anthropic = new Anthropic({ apiKey });
   const tools = getAnthropicToolSchemas();
 
-  const history = await loadThreadMessages(threadId);
+  const history = [...await loadThreadMessages(threadId), ...(ctx.contextMessages || [])];
   const convo: Anthropic.MessageParam[] = history.map((m) => ({
     role: m.role as "user" | "assistant",
     content: m.content,
@@ -586,9 +566,15 @@ async function runAnthropic(ctx: RunCtx) {
 
       emit({ type: "tool", name, args, status: "running" });
       const output = await tool.execute(args);
-      emit({ type: "tool", name, args, status: "done", output });
-      toolResults.push({ type: "tool_result", tool_use_id: use.id, content: output });
-      turn.toolCalls.push({ name, args, output, status: "done", readOnly: true });
+      const status = classifyToolOutput(output);
+      emit({ type: "tool", name, args, status, output });
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: use.id,
+        content: output,
+        is_error: status === "error",
+      });
+      turn.toolCalls.push({ name, args, output, status, readOnly: true });
 
       await auditAiToolExecution(ctx.userId, {
         threadId: ctx.threadId,
