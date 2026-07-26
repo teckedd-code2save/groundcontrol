@@ -55,6 +55,13 @@ export function validateSafePath(path: string): string | null {
   return null;
 }
 
+/** Source roots that must use the repository repair workflow, not a live file write. */
+export function isApplicationSourcePath(path: string): boolean {
+  const normalized = normalizePath(path);
+  return ["/opt/", "/srv/", "/var/www/", "/root/", "/home/"]
+    .some((prefix) => normalized.startsWith(prefix));
+}
+
 /**
  * Command heads permitted through run_system_command. These are system
  * administration primitives the agent may need that are not covered by

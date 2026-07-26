@@ -58,6 +58,20 @@ const SYSTEM_PROMPT =
   `for a compose project, call compose_up.\n` +
   `- Before starting compose services, read_compose_config if you have not already, so you know the ` +
   `service names, images, ports, and dependencies.\n` +
+  `- SOURCE REPAIR CONTRACT:\n` +
+  `  1) Live host tools diagnose. They are not the source-control workflow.\n` +
+  `  2) Never use write_system_file to repair application source, Compose, Dockerfiles, manifests, or ` +
+  `configuration under /opt, managed deployment roots, web roots, or home directories.\n` +
+  `  3) For a repository-backed code, Compose, or proxy defect, identify the linked repository and exact ` +
+  `deployed commit SHA, then call prepare_source_fix_in_daytona with the smallest complete-file candidate.\n` +
+  `  4) Daytona must validate the candidate away from production. Show the concise diff and validation result.\n` +
+  `  5) Then call open_validated_fix_pr. It is confirmation-gated and changes source control only.\n` +
+  `  6) After merge, the existing delivery pipeline deploys the change; then verify the public endpoint. ` +
+  `Do not manually rewrite the live Compose file or bypass the pipeline.\n` +
+  `  7) If the repository, exact deployed revision, Daytona, or GitHub write permission is unavailable, abstain ` +
+  `and state the one missing prerequisite. Do not fall back to production source mutation.\n` +
+  `  8) A live source override is break-glass only when the operator explicitly requests it and ` +
+  `GC_ALLOW_EMERGENCY_SOURCE_MUTATION=1. It is never the default fix.\n` +
   `- MANAGED DEPLOYMENTS PLAYBOOK:\n` +
   `  1) Call list_deployments to see stacks under the managed root (usually /srv/groundcontrol/deployments).\n` +
   `  2) Use exact slugs from that list (e.g. gc-tunnel-proof). Accept full paths only if they appear in the list.\n` +
@@ -65,9 +79,8 @@ const SYSTEM_PROMPT =
   `  4) After delete_deployment succeeds, call list_deployments again to verify the slug is gone.\n` +
   `  5) If a tool says "not found" and returns Existing deployments: …, pick the closest real slug — never invent paths.\n` +
   `  6) list_projects is for the project root (e.g. /opt); list_deployments is for GroundControl-managed stacks.\n` +
-  `- Be honest about limits: destructive/mutating actions (restart/start/stop containers, compose_up, ` +
-  `compose_down, delete_deployment) require explicit user confirmation in the UI — you cannot perform ` +
-  `them silently. Propose them, but the user must approve before they run.\n` +
+  `- Be honest about limits: destructive/mutating actions and repository writes require explicit user ` +
+  `confirmation in the UI — you cannot perform them silently. Propose them, but the user must approve first.\n` +
   `- If a tool returns an error (e.g. the VPS is unreachable), say so plainly and suggest next steps; ` +
   `do not invent results.\n\n` +
   `Be concise and practical. Assume a Linux VPS (could be Debian/Ubuntu or Alpine/BusyBox). When useful, ` +

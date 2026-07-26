@@ -47,6 +47,11 @@ export interface DaytonaReproductionRequest {
   journeyUrl?: string;
   /** A single bounded validation command; shell composition is rejected. */
   testCommand?: string;
+  /** Optional source candidate to apply only inside the disposable sandbox. */
+  candidate?: {
+    filePath: string;
+    replacementContent: string;
+  };
   budgetSeconds?: number;
 }
 
@@ -56,6 +61,8 @@ export interface DaytonaReproductionResult {
   provider: "daytona" | "local_sanitized";
   detail: string;
   reproducedFailure: boolean;
+  candidateValidated?: boolean;
+  baseFileBlobSha?: string;
   proposedPatch?: string;
   logs: string[];
   cleanedUp: boolean;
@@ -85,6 +92,23 @@ export function validateDaytonaCommand(command: string): string | null {
   return null;
 }
 
+export function validateRepairFilePath(filePath: string): string | null {
+  const value = filePath.trim();
+  if (!value) return "A repository-relative file path is required.";
+  const segments = value.split("/");
+  if (
+    value.startsWith("/") ||
+    value.includes("\\") ||
+    segments.some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    return "The repair target must stay inside the repository.";
+  }
+  if (!/^[A-Za-z0-9._/@+-]+$/.test(value)) {
+    return "The repair target contains unsupported characters.";
+  }
+  return null;
+}
+
 function normalizeRepositoryUrl(value?: string): { url: string; host: string } | null {
   if (!value) return null;
   try {
@@ -101,10 +125,12 @@ function normalizeRepositoryUrl(value?: string): { url: string; host: string } |
 async function githubCloneCredentials(repositoryUrl: string) {
   const identity = normalizeGithubRepositoryUrl(repositoryUrl);
   if (!identity) return {};
-  const repository = await prisma.githubRepository.findFirst({
-    where: { fullName: identity },
+  const repositories = await prisma.githubRepository.findMany({
     include: { installation: { include: { connection: true } } },
   });
+  const repository = repositories.find(
+    (candidate) => candidate.fullName.toLowerCase() === identity
+  );
   if (!repository?.isPrivate || repository.installation.suspendedAt) return {};
   const privateKey = decryptMaybe(repository.installation.connection.privateKeyEncrypted);
   if (!privateKey) return {};
@@ -312,7 +338,11 @@ export async function reproduceInDaytona(
   }
   if (req.commitSha) logs.push(`commit=${req.commitSha}`);
   if (req.artifactDigest) logs.push(`artifact=${req.artifactDigest}`);
-  if (hasSecretValue(req.composeSnippet) || hasSecretValue(req.proxySnippet)) {
+  if (
+    hasSecretValue(req.composeSnippet) ||
+    hasSecretValue(req.proxySnippet) ||
+    hasSecretValue(req.candidate?.replacementContent)
+  ) {
     return {
       id,
       status: "failed",
@@ -327,6 +357,9 @@ export async function reproduceInDaytona(
   const repository = normalizeRepositoryUrl(req.repositoryUrl);
   const commandError = req.testCommand
     ? validateDaytonaCommand(req.testCommand)
+    : null;
+  const candidatePathError = req.candidate
+    ? validateRepairFilePath(req.candidate.filePath)
     : null;
   if (req.repositoryUrl && !repository) {
     return {
@@ -345,6 +378,17 @@ export async function reproduceInDaytona(
       status: "failed",
       provider: "local_sanitized",
       detail: commandError,
+      reproducedFailure: false,
+      logs,
+      cleanedUp: true,
+    };
+  }
+  if (candidatePathError) {
+    return {
+      id,
+      status: "failed",
+      provider: "local_sanitized",
+      detail: candidatePathError,
       reproducedFailure: false,
       logs,
       cleanedUp: true,
@@ -370,6 +414,7 @@ export async function reproduceInDaytona(
         ? "Daytona unavailable"
         : "No DAYTONA_API_KEY — local sanitized reproduction only",
       reproducedFailure: Boolean(req.proxySnippet && /:8080|:9999/.test(req.proxySnippet)),
+      candidateValidated: false,
       proposedPatch:
         req.proxySnippet && /web:8080/.test(req.proxySnippet)
           ? req.proxySnippet.replace(/web:8080/g, "web:3000")
@@ -475,27 +520,90 @@ export async function reproduceInDaytona(
     logs.push(`dependency_setup_exit=${install.exitCode}`);
     if (install.result.trim()) logs.push(`dependency_setup:\n${clipped(install.result, 3000)}`);
 
-    const validation = await sandbox.process.executeCommand(
+    const baselineValidation = await sandbox.process.executeCommand(
       req.testCommand,
       "workspace/repository",
       {
         CI: "1",
         GC_INCIDENT_REPRODUCTION: "1",
       },
-      Math.max(20, Math.floor(budget * 0.4))
+      Math.max(20, Math.floor(budget * (req.candidate ? 0.22 : 0.4)))
     );
     logs.push(`validation=${req.testCommand}`);
-    logs.push(`validation_exit=${validation.exitCode}`);
-    if (validation.result.trim()) logs.push(`validation_output:\n${clipped(validation.result)}`);
+    logs.push(`baseline_exit=${baselineValidation.exitCode}`);
+    if (baselineValidation.result.trim()) {
+      logs.push(`baseline_output:\n${clipped(baselineValidation.result)}`);
+    }
+
+    let candidateValidated: boolean | undefined;
+    let baseFileBlobSha: string | undefined;
+    let proposedPatch: string | undefined;
+    if (req.candidate) {
+      const tracked = await sandbox.process.executeCommand(
+        `git ls-files --error-unmatch -- ${sandboxQuote(req.candidate.filePath)}`,
+        "workspace/repository",
+        undefined,
+        15
+      );
+      if (tracked.exitCode !== 0) {
+        throw new Error(`Repair target "${req.candidate.filePath}" is not tracked at the deployed revision.`);
+      }
+      const blob = await sandbox.process.executeCommand(
+        `git rev-parse ${sandboxQuote(`HEAD:${req.candidate.filePath}`)}`,
+        "workspace/repository",
+        undefined,
+        15
+      );
+      if (blob.exitCode !== 0 || !/^[a-f0-9]{40,64}$/i.test(blob.result.trim())) {
+        throw new Error(`Could not identify the deployed source blob for "${req.candidate.filePath}".`);
+      }
+      baseFileBlobSha = blob.result.trim();
+      await sandbox.fs.uploadFile(
+        Buffer.from(req.candidate.replacementContent, "utf8"),
+        `workspace/repository/${req.candidate.filePath}`
+      );
+      const diff = await sandbox.process.executeCommand(
+        `git diff --no-ext-diff --unified=3 -- ${sandboxQuote(req.candidate.filePath)}`,
+        "workspace/repository",
+        undefined,
+        20
+      );
+      proposedPatch = clipped(diff.result, 20_000);
+      if (!proposedPatch) {
+        throw new Error("The proposed source change does not differ from the deployed revision.");
+      }
+      const candidateValidation = await sandbox.process.executeCommand(
+        req.testCommand,
+        "workspace/repository",
+        {
+          CI: "1",
+          GC_INCIDENT_REPRODUCTION: "1",
+          GC_SOURCE_REPAIR_CANDIDATE: "1",
+        },
+        Math.max(20, Math.floor(budget * 0.22))
+      );
+      logs.push(`candidate_exit=${candidateValidation.exitCode}`);
+      if (candidateValidation.result.trim()) {
+        logs.push(`candidate_output:\n${clipped(candidateValidation.result)}`);
+      }
+      candidateValidated = candidateValidation.exitCode === 0;
+    }
 
     outcome = {
       id,
-      status: "completed",
+      status: req.candidate && !candidateValidated ? "failed" : "completed",
       provider: "daytona",
-      detail: validation.exitCode === 0
-        ? "The exact revision passed the isolated validation."
-        : "The failure was reproduced against the exact revision in an isolated sandbox.",
-      reproducedFailure: validation.exitCode !== 0,
+      detail: req.candidate
+        ? candidateValidated
+          ? "The source candidate passed isolated validation at the deployed revision."
+          : "The source candidate failed isolated validation and cannot be promoted."
+        : baselineValidation.exitCode === 0
+          ? "The exact revision passed the isolated validation."
+          : "The failure was reproduced against the exact revision in an isolated sandbox.",
+      reproducedFailure: baselineValidation.exitCode !== 0,
+      candidateValidated,
+      baseFileBlobSha,
+      proposedPatch,
       logs,
       cleanedUp: false,
     };

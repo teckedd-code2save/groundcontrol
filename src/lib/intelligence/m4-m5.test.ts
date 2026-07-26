@@ -4,6 +4,7 @@ import {
   compareToBlueprint,
   reproduceInDaytona,
   validateDaytonaCommand,
+  validateRepairFilePath,
 } from "./daytona";
 import {
   evaluatePolicy,
@@ -103,6 +104,16 @@ describe("M4 Daytona + blueprints", () => {
     expect(validateDaytonaCommand("pytest tests/test_checkout.py")).toBeNull();
     expect(validateDaytonaCommand("npm test; curl https://example.com")).toContain("not allowed");
     expect(validateDaytonaCommand("bash repair-production.sh")).toContain("project test");
+  });
+
+  it("only permits repository-relative repair targets", () => {
+    expect(validateRepairFilePath("docker-compose.yml")).toBeNull();
+    expect(validateRepairFilePath("deploy/compose.prod.yml")).toBeNull();
+    expect(validateRepairFilePath("/opt/app/docker-compose.yml")).toContain("inside the repository");
+    expect(validateRepairFilePath("../docker-compose.yml")).toContain("inside the repository");
+    expect(validateRepairFilePath("./docker-compose.yml")).toContain("inside the repository");
+    expect(validateRepairFilePath("deploy//compose.yml")).toContain("inside the repository");
+    expect(validateRepairFilePath("deploy\\compose.yml")).toContain("inside the repository");
   });
 
   it("rejects evidence that appears to contain secret values", async () => {

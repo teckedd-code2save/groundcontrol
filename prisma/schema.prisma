@@ -650,3 +650,32 @@ model GithubWebhookDelivery {
   @@index([event, receivedAt])
   @@index([repositoryFullName, receivedAt])
 }
+
+// A source-of-truth repair prepared and validated away from production.
+// Replacement content is retained locally only long enough to open a reviewed PR.
+model SourceRepairPlan {
+  id                   String   @id
+  repositoryFullName   String
+  repositoryUrl        String
+  baseBranch           String
+  baseSha              String
+  baseFileBlobSha      String
+  filePath             String
+  replacementContent   String
+  patch                String
+  validationCommand    String
+  validationSummary    String
+  provider             String
+  incidentSummary      String   @default("")
+  verificationUrl      String   @default("")
+  status               String   @default("prepared") // prepared | opening_pr | pr_opened | stale | failed
+  branchName           String?
+  pullRequestNumber    Int?
+  pullRequestUrl       String?
+  expiresAt            DateTime
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([status, expiresAt])
+  @@index([repositoryFullName, createdAt])
+}

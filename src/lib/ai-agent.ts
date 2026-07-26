@@ -28,10 +28,19 @@ import {
   canInstallHostPackages,
   type BootstrapResult,
 } from "@/lib/bootstrap";
-import { isAllowedSystemPath, validateSafePath, validateSystemCommand } from "@/lib/host-safety";
+import {
+  isAllowedSystemPath,
+  isApplicationSourcePath,
+  validateSafePath,
+  validateSystemCommand,
+} from "@/lib/host-safety";
 import { listPublishedGuides, getGuideBySlug, parseGuideSteps } from "@/lib/guides/loader";
 import { componentAction, getComponentStatus, type ComponentAction } from "@/lib/bootstrap";
 import { reproduceInDaytona } from "@/lib/intelligence/daytona";
+import {
+  openSourceRepairPullRequest,
+  prepareSourceRepairPlan,
+} from "@/lib/source-repair";
 
 /**
  * GroundControl AI agent tool set.
@@ -216,10 +225,26 @@ async function readSystemFile(path: string, limitBytes = 128_000): Promise<strin
   return result.stdout || "(empty file)";
 }
 
-/** Write a system file if its path is allow-listed, with a backup. */
-async function writeSystemFile(path: string, content: string): Promise<string> {
+async function writeSystemFile(
+  path: string,
+  content: string,
+  emergencyOverride = false,
+  emergencyReason = ""
+): Promise<string> {
   const refusal = validateSafePath(path);
   if (refusal) return `ERROR: ${refusal}`;
+  if (isApplicationSourcePath(path)) {
+    if (
+      process.env.GC_ALLOW_EMERGENCY_SOURCE_MUTATION !== "1" ||
+      !emergencyOverride ||
+      emergencyReason.trim().length < 12
+    ) {
+      return (
+        "ERROR: Direct application-source mutation is disabled. Prepare a validated Daytona source repair and open a pull request. " +
+        "A temporary live override is available only when GC_ALLOW_EMERGENCY_SOURCE_MUTATION=1 and the operator explicitly supplies an emergency reason."
+      );
+    }
+  }
   const b64 = Buffer.from(content).toString("base64");
   const mkdir = await execOnTarget(`mkdir -p "$(dirname ${shQuote(path)})"`);
   if (mkdir.code !== 0) return `ERROR: could not create parent directory\n${mkdir.stderr}`;
@@ -227,7 +252,9 @@ async function writeSystemFile(path: string, content: string): Promise<string> {
   if (backup.code !== 0) return `ERROR: backup failed\n${backup.stderr}`;
   const result = await execOnTarget(`printf '%s' ${shQuote(b64)} | base64 -d > ${shQuote(path)} 2>&1`);
   if (result.code !== 0) return `ERROR: could not write ${path}\n${result.stderr || result.stdout}`;
-  return `Wrote ${content.length} bytes to ${path}.`;
+  return isApplicationSourcePath(path)
+    ? `EMERGENCY OVERRIDE: wrote ${content.length} bytes to ${path}. Backup created before mutation. Reason: ${emergencyReason.trim()}`
+    : `Wrote ${content.length} bytes to ${path}.`;
 }
 
 /** Map installer names to bootstrap functions. */
@@ -661,6 +688,101 @@ export const AGENT_TOOLS: AgentTool[] = [
       }),
   },
   {
+    name: "prepare_source_fix_in_daytona",
+    description:
+      "Prepare a source-of-truth repair for a repository-backed code, Compose, or proxy defect. Daytona clones the exact deployed commit, applies the candidate only inside an ephemeral sandbox, runs bounded validation before and after, captures a reviewable diff, destroys the sandbox, and stores a short-lived repair plan. This does not mutate production. Use this instead of write_system_file for files under /opt, deployment roots, web roots, or home directories.",
+    parameters: {
+      type: "object",
+      properties: {
+        repositoryUrl: {
+          type: "string",
+          description: "Credential-free HTTPS GitHub repository URL linked to the deployment.",
+        },
+        baseBranch: {
+          type: "string",
+          description: "PR target branch, normally the repository default branch.",
+        },
+        commitSha: {
+          type: "string",
+          description: "Exact full commit SHA of the deployed revision. Never guess this value.",
+        },
+        filePath: {
+          type: "string",
+          description: "Repository-relative path to the source file being corrected.",
+        },
+        replacementContent: {
+          type: "string",
+          description: "Complete candidate file content with no secret values.",
+        },
+        validationCommand: {
+          type: "string",
+          description: "One bounded project validation command such as npm test, npm run build, or docker compose config.",
+        },
+        incidentSummary: {
+          type: "string",
+          description: "Concise evidence-backed description of the production defect.",
+        },
+        verificationUrl: {
+          type: "string",
+          description: "Public endpoint GroundControl must verify after the normal deployment pipeline completes.",
+        },
+      },
+      required: [
+        "repositoryUrl",
+        "commitSha",
+        "filePath",
+        "replacementContent",
+        "validationCommand",
+        "incidentSummary",
+      ],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const result = await prepareSourceRepairPlan({
+          repositoryUrl: String(args?.repositoryUrl || ""),
+          baseBranch: args?.baseBranch ? String(args.baseBranch) : undefined,
+          commitSha: String(args?.commitSha || ""),
+          filePath: String(args?.filePath || ""),
+          replacementContent: String(args?.replacementContent || ""),
+          validationCommand: String(args?.validationCommand || ""),
+          incidentSummary: String(args?.incidentSummary || ""),
+          verificationUrl: args?.verificationUrl ? String(args.verificationUrl) : undefined,
+        });
+        return JSON.stringify(result, null, 2);
+      }),
+  },
+  {
+    name: "open_validated_fix_pr",
+    description:
+      "Open a pull request from a short-lived Daytona-validated source repair plan. This changes the repository, not the live server, and requires explicit operator confirmation. It refuses stale source, missing GitHub write permissions, expired plans, or unvalidated candidates. The normal delivery pipeline remains authoritative after merge.",
+    parameters: {
+      type: "object",
+      properties: {
+        repairPlanId: {
+          type: "string",
+          description: "Repair plan ID returned by prepare_source_fix_in_daytona.",
+        },
+        title: {
+          type: "string",
+          description: "Concise pull request title describing the repair.",
+        },
+      },
+      required: ["repairPlanId", "title"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const result = await openSourceRepairPullRequest({
+          repairPlanId: String(args?.repairPlanId || ""),
+          title: String(args?.title || ""),
+        });
+        return JSON.stringify(result, null, 2);
+      }),
+  },
+  {
     name: "list_project_containers",
     description:
       "List Docker containers that belong to a specific compose project or project directory. Use this to avoid hallucinating which containers belong to a project.",
@@ -914,12 +1036,20 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "write_system_file",
     description:
-      "Write content to an allow-listed system configuration file, creating parent directories and a .bak-<timestamp> backup if the file exists. Allow-listed paths include /etc/caddy/*, /etc/nginx/*, /etc/hosts, /etc/environment, /etc/systemd/system/*, /etc/init.d/*, /opt/*, /var/www/*, /root/*, /home/*, /tmp/*. MUTATING — requires explicit user confirmation.",
+      "Write an allow-listed host system file with a timestamped backup. This is for host-owned configuration such as /etc/caddy, /etc/nginx, systemd, and init files. Application source under /opt, managed deployment roots, web roots, or home directories is blocked by default and must use a Daytona-validated pull request. A source-path write is emergency-only, requires GC_ALLOW_EMERGENCY_SOURCE_MUTATION=1, explicit operator request, and a recorded reason. MUTATING — requires confirmation.",
     parameters: {
       type: "object",
       properties: {
         path: { type: "string", description: "Absolute file path to write." },
         content: { type: "string", description: "Full file content." },
+        emergencyOverride: {
+          type: "boolean",
+          description: "True only when the operator explicitly requests a temporary break-glass production override.",
+        },
+        emergencyReason: {
+          type: "string",
+          description: "Required operational reason for an enabled emergency source override.",
+        },
       },
       required: ["path", "content"],
       additionalProperties: false,
@@ -931,7 +1061,12 @@ export const AGENT_TOOLS: AgentTool[] = [
         const content = String(args?.content ?? "");
         if (!path) return "ERROR: path is required.";
         if (!isAllowedSystemPath(path)) return `ERROR: path ${path} is not allow-listed.`;
-        return writeSystemFile(path, content);
+        return writeSystemFile(
+          path,
+          content,
+          args?.emergencyOverride === true,
+          String(args?.emergencyReason || "")
+        );
       }),
   },
   {

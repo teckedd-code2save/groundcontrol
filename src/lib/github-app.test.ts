@@ -24,7 +24,7 @@ describe("GitHub App security and manifest helpers", () => {
     const manifest = buildGithubAppManifest("https://gc.example.com", "abc123");
     expect(manifest.name).toBe("GroundControl gc-example-com abc123");
     expect(manifest.hook_attributes.url).toBe("https://gc.example.com/api/github/webhooks");
-    expect(manifest.default_permissions.contents).toBe("read");
+    expect(manifest.default_permissions.contents).toBe("write");
     expect(manifest.default_permissions.pull_requests).toBe("write");
     expect(manifest.default_events).toContain("workflow_run");
   });

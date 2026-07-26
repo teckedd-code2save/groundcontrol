@@ -128,13 +128,19 @@ export async function syncGithubInstallation(installationId: string) {
 
   const privateKey = decryptMaybe(installation.connection.privateKeyEncrypted);
   if (!privateKey) throw new Error("GitHub App private key is unavailable");
-  const { token, expiresAt } = await createGithubInstallationToken({
+  const { token, expiresAt, permissions } = await createGithubInstallationToken({
     appId: installation.connection.appId,
     privateKey,
     installationId,
   });
   const repositories = await listGithubInstallationRepositories(token);
-  await persistRepositories(installationId, repositories);
+  await Promise.all([
+    persistRepositories(installationId, repositories),
+    prisma.githubAppConnection.update({
+      where: { id: installation.connectionId },
+      data: { permissionsJson: JSON.stringify(permissions) },
+    }),
+  ]);
   const linkedDeployments = await reconcileGithubRepositoryDeploymentLinks(installationId);
   return { repositoryCount: repositories.length, linkedDeployments, tokenExpiresAt: expiresAt };
 }
@@ -174,6 +180,7 @@ export async function githubAppPublicState() {
         appCreated: false,
         installationConnected: false,
         webhookReachable: false,
+        sourceRepairWrite: false,
       },
       installations: [],
     };
@@ -198,6 +205,7 @@ export async function githubAppPublicState() {
     })),
   }));
   const publicHttps = connection.publicUrl.startsWith("https://");
+  const appPermissions = JSON.parse(connection.permissionsJson || "{}") as Record<string, string>;
   return {
     status: installations.some((installation) => !installation.suspended) ? "connected" as const : "app_ready" as const,
     app: {
@@ -205,7 +213,7 @@ export async function githubAppPublicState() {
       slug: connection.slug,
       name: connection.name,
       ownerLogin: connection.ownerLogin,
-      permissions: JSON.parse(connection.permissionsJson || "{}"),
+      permissions: appPermissions,
       events: JSON.parse(connection.eventsJson || "[]"),
       updatedAt: connection.updatedAt,
     },
@@ -217,6 +225,9 @@ export async function githubAppPublicState() {
       appCreated: true,
       installationConnected: installations.length > 0,
       webhookReachable: publicHttps && Boolean(lastWebhook),
+      sourceRepairWrite:
+        appPermissions.contents === "write" &&
+        appPermissions.pull_requests === "write",
     },
     installations,
   };
