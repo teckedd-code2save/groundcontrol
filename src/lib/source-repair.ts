@@ -18,7 +18,7 @@ export interface PrepareSourceRepairInput {
   baseBranch?: string;
   commitSha: string;
   filePath: string;
-  replacementContent: string;
+  edits: Array<{ find: string; replace: string }>;
   validationCommand: string;
   incidentSummary?: string;
   verificationUrl?: string;
@@ -68,6 +68,29 @@ async function installationAccess(repository: NonNullable<LinkedRepository>) {
   });
 }
 
+export function applyExactSourceEdits(
+  source: string,
+  edits: Array<{ find: string; replace: string }>
+): string {
+  if (!edits.length || edits.length > 8) {
+    throw new Error("Provide between one and eight exact source edits.");
+  }
+  let candidate = source;
+  for (const [index, edit] of edits.entries()) {
+    if (!edit.find) throw new Error(`Edit ${index + 1} needs non-empty source text.`);
+    const first = candidate.indexOf(edit.find);
+    const second = first < 0 ? -1 : candidate.indexOf(edit.find, first + edit.find.length);
+    if (first < 0) {
+      throw new Error(`Edit ${index + 1} does not match the file at the deployed commit.`);
+    }
+    if (second >= 0) {
+      throw new Error(`Edit ${index + 1} is ambiguous; include more surrounding source text.`);
+    }
+    candidate = candidate.slice(0, first) + edit.replace + candidate.slice(first + edit.find.length);
+  }
+  return candidate;
+}
+
 export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
   const repository = await linkedRepository(input.repositoryUrl);
   const filePath = input.filePath.trim();
@@ -77,11 +100,27 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
   if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
     throw new Error("An exact deployed commit SHA is required before preparing a source repair.");
   }
-  if (!input.replacementContent || Buffer.byteLength(input.replacementContent, "utf8") > MAX_REPLACEMENT_BYTES) {
-    throw new Error("The replacement file must be present and smaller than 300 KB.");
+  const baseBranch = clipped(input.baseBranch || repository.defaultBranch, 120);
+  const access = await installationAccess(repository);
+  const repositoryPath = encodedRepositoryPath(repository.fullName);
+  const sourceFile = await githubInstallationFetch<{
+    sha: string;
+    content: string;
+    encoding: string;
+    type: string;
+  }>(
+    access.token,
+    `/repos/${repositoryPath}/contents/${encodedFilePath(filePath)}?ref=${encodeURIComponent(commitSha)}`
+  );
+  if (sourceFile.type !== "file" || sourceFile.encoding !== "base64") {
+    throw new Error("The repair target must be a regular repository file.");
+  }
+  const source = Buffer.from(sourceFile.content.replace(/\s/g, ""), "base64").toString("utf8");
+  const replacementContent = applyExactSourceEdits(source, input.edits);
+  if (Buffer.byteLength(replacementContent, "utf8") > MAX_REPLACEMENT_BYTES) {
+    throw new Error("The repaired file must be smaller than 300 KB.");
   }
 
-  const baseBranch = clipped(input.baseBranch || repository.defaultBranch, 120);
   const result = await reproduceInDaytona({
     repositoryUrl: repository.htmlUrl,
     branch: baseBranch,
@@ -90,7 +129,7 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
     journeyUrl: clipped(input.verificationUrl, 500),
     candidate: {
       filePath,
-      replacementContent: input.replacementContent,
+      replacementContent,
     },
     budgetSeconds: 300,
   });
@@ -123,7 +162,7 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
       baseSha: commitSha,
       baseFileBlobSha: result.baseFileBlobSha,
       filePath,
-      replacementContent: input.replacementContent,
+      replacementContent,
       patch: result.proposedPatch,
       validationCommand: input.validationCommand,
       validationSummary,
