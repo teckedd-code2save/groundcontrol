@@ -15,12 +15,13 @@ interface MeResponse {
 }
 
 const PUBLIC_PATHS = ["/login", "/setup"];
+const PUBLIC_PREFIXES = ["/shared/chat/"];
 const NO_LAYOUT_PATHS = ["/login", "/setup", "/force-password-change"];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const isPublic = PUBLIC_PATHS.includes(pathname);
+  const isPublic = PUBLIC_PATHS.includes(pathname) || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   const noLayout = NO_LAYOUT_PATHS.includes(pathname);
 
   const [authChecked, setAuthChecked] = useState(isPublic);

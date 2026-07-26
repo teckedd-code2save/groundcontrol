@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { redactSensitive } from "@/lib/errors";
 
 export type AiRole = "system" | "user" | "assistant" | "tool";
 
@@ -23,6 +24,65 @@ export interface UsageRecord {
   outputTokens?: number | null;
   totalTokens?: number | null;
   costUsd?: number | null;
+}
+
+const TOOL_ERROR_PREFIX = /^(?:ERROR:|Refused:|\[exit\s+(?!0\b)\d+\])/i;
+
+/** Convert tool text into a truthful UI/model status. */
+export function classifyToolOutput(output: string): "done" | "error" {
+  const value = String(output || "").trim();
+  if (!value || TOOL_ERROR_PREFIX.test(value)) return "error";
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (
+      parsed.status === "failed" ||
+      parsed.status === "error" ||
+      parsed.candidateValidated === false
+    ) {
+      return "error";
+    }
+  } catch {
+    // Most host tools return plain text.
+  }
+  return "done";
+}
+
+function safeJson(value: string, fallback: unknown) {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Persisted tool evidence is part of the investigation state. Without it, a
+ * later turn can silently replace a confirmed fact with a new guess.
+ */
+export async function buildAiEvidenceLedger(threadId: number, take = 24): Promise<string> {
+  const calls = await prisma.aiToolCall.findMany({
+    where: { message: { threadId } },
+    orderBy: { createdAt: "desc" },
+    take,
+    include: { message: { select: { sortOrder: true } } },
+  });
+  if (!calls.length) return "";
+
+  const rows = calls.reverse().map((call) => {
+    const args = redactSensitive(JSON.stringify(safeJson(call.args, {}))).slice(0, 700);
+    const output = redactSensitive(call.output || "(no output)").slice(0, 1_600);
+    const effectiveStatus = call.output ? classifyToolOutput(call.output) : call.status;
+    return [
+      `- turn=${call.message.sortOrder} tool=${call.name} status=${effectiveStatus}`,
+      `  args=${args}`,
+      `  result=${output.replace(/\n/g, "\n  ")}`,
+    ].join("\n");
+  });
+
+  return [
+    "PERSISTED INVESTIGATION EVIDENCE (oldest to newest; tool status is authoritative):",
+    ...rows,
+  ].join("\n").slice(0, 16_000);
 }
 
 /** Create a new thread for a user, optionally seeded with a title. */

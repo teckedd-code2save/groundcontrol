@@ -5,11 +5,12 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { renderMarkdown } from "@/lib/markdown";
 import { ToolConfirmCard } from "@/components/ToolConfirmCard";
 import { PageHeader } from "@/components/PageHeader";
+import { Check, Copy, Download, MoreHorizontal, Share2, X } from "lucide-react";
 
 interface ToolEvent {
   name: string;
   args?: Record<string, unknown>;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "pending";
   output?: string;
 }
 
@@ -70,6 +71,11 @@ export default function AiCoPilotPage() {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [guides, setGuides] = useState<GuideSummary[]>([]);
   const [showThreadMenu, setShowThreadMenu] = useState(false);
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [shareError, setShareError] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +91,9 @@ export default function AiCoPilotPage() {
   useEffect(() => {
     try { if (threadId) localStorage.setItem(STORAGE_THREAD, String(threadId)); }
     catch {}
+    setShareUrl("");
+    setShareError("");
+    setCopied(false);
   }, [threadId]);
 
   useEffect(() => {
@@ -164,6 +173,36 @@ export default function AiCoPilotPage() {
       if (threadId === id) { setThreadId(null); setMessages([{ role: "assistant", content: "Thread deleted. Start a new conversation?" }]); }
       await loadThreads();
     } catch {}
+  }
+
+  async function createShare() {
+    if (!threadId || sharing) return;
+    setSharing(true);
+    setShareError("");
+    try {
+      const res = await fetch(`/api/ai/threads/${threadId}/share`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "Could not create share link");
+      setShareUrl(`${window.location.origin}${data.url}`);
+    } catch (error) {
+      setShareError(error instanceof Error ? error.message : "Could not create share link");
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function revokeShares() {
+    if (!threadId) return;
+    await fetch(`/api/ai/threads/${threadId}/share`, { method: "DELETE" });
+    setShareUrl("");
+    setCopied(false);
+  }
+
+  async function copyShareUrl() {
+    if (!shareUrl) return;
+    await navigator.clipboard.writeText(shareUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
   }
 
   // ── Send message ─────────────────────────────────────
@@ -285,16 +324,29 @@ export default function AiCoPilotPage() {
   function ToolChips({ tools }: { tools?: ToolEvent[] }) {
     if (!tools?.length) return null;
     return (
-      <div className="mt-2 flex flex-wrap gap-1.5">
+      <div className="mt-3 space-y-1.5">
         {tools.map((t, i) => {
-          const icon = t.status === "running" ? "⏳" : t.status === "error" ? "✗" : "✓";
-          const cls = t.status === "running" ? "bg-accent/10 border-accent/30 text-accent" :
+          const icon = t.status === "running" || t.status === "pending" ? "…" : t.status === "error" ? "✗" : "✓";
+          const cls = t.status === "running" || t.status === "pending" ? "bg-accent/10 border-accent/30 text-accent" :
                       t.status === "error" ? "bg-error/10 border-error/30 text-error" :
                       "bg-success/10 border-success/30 text-success";
+          if (!t.output) {
+            return (
+              <div key={i} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] ${cls}`}>
+                {icon} {t.name}
+              </div>
+            );
+          }
           return (
-            <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono ${cls}`}>
-              {icon} {t.name}
-            </span>
+            <details key={i} className={`rounded-md border text-[10px] ${cls}`} open={t.status === "error"}>
+              <summary className="cursor-pointer list-none px-2.5 py-1.5 font-mono">
+                {icon} {t.name}
+                <span className="float-right text-current/60">{t.status === "error" ? "failed" : "details"}</span>
+              </summary>
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap border-t border-current/15 px-2.5 py-2 text-[10px] leading-4 text-foreground/80">
+                {t.output}
+              </pre>
+            </details>
           );
         })}
       </div>
@@ -355,6 +407,65 @@ export default function AiCoPilotPage() {
                   <button onClick={(e) => { e.stopPropagation(); deleteThread(t.id); }} className="text-[10px] text-muted hover:text-error ml-2 font-mono">del</button>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+        <div className="relative">
+          <button
+            type="button"
+            disabled={!threadId}
+            onClick={() => setShowShareMenu((value) => !value)}
+            className="gc-icon-button disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Share or export conversation"
+            title="Share or export"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+          {showShareMenu && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-card p-3 shadow-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium">Share conversation</p>
+                  <p className="mt-1 text-[10px] leading-4 text-muted">
+                    Public, unguessable snapshot. Expires in 7 days. Tool inputs and outputs are excluded.
+                  </p>
+                </div>
+                <button onClick={() => setShowShareMenu(false)} className="text-muted hover:text-foreground" aria-label="Close">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {shareUrl ? (
+                <div className="mt-3 flex gap-1.5">
+                  <input readOnly value={shareUrl} className="min-w-0 flex-1 rounded-sm border border-border bg-background px-2 py-1.5 font-mono text-[10px]" />
+                  <button onClick={copyShareUrl} className="gc-icon-button" aria-label="Copy share link">
+                    {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                  <button onClick={revokeShares} className="gc-icon-button text-error" aria-label="Revoke all share links">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={createShare}
+                  disabled={sharing}
+                  className="mt-3 flex h-8 w-full items-center justify-center gap-2 rounded-sm bg-accent px-3 text-[11px] font-medium text-[var(--accent-ink)] disabled:opacity-50"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  {sharing ? "Creating…" : "Create 7-day link"}
+                </button>
+              )}
+              {shareError && <p className="mt-2 text-[10px] text-error">{shareError}</p>}
+              <div className="mt-3 border-t border-border pt-3">
+                <p className="mb-2 text-[10px] uppercase tracking-[0.12em] text-muted">Private export</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <a href={`/api/ai/threads/${threadId}/export?format=markdown`} className="flex h-8 items-center justify-center gap-1.5 rounded-sm border border-border text-[10px] hover:border-accent/40">
+                    <Download className="h-3.5 w-3.5" /> Markdown
+                  </a>
+                  <a href={`/api/ai/threads/${threadId}/export?format=json`} className="flex h-8 items-center justify-center gap-1.5 rounded-sm border border-border text-[10px] hover:border-accent/40">
+                    <Download className="h-3.5 w-3.5" /> JSON
+                  </a>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -457,7 +568,7 @@ function threadMessagesToUi(thread: ThreadDetail): ChatMessage[] {
       const tools: ToolEvent[] = (m.toolCalls || []).map(tc => ({
         name: tc.name,
         args: tc.args ? JSON.parse(tc.args) : undefined,
-        status: tc.status as ToolEvent["status"],
+        status: effectiveToolStatus(tc.status, tc.output),
         output: tc.output || undefined,
       }));
       return {
@@ -466,4 +577,19 @@ function threadMessagesToUi(thread: ThreadDetail): ChatMessage[] {
         tools: tools.length > 0 ? tools : undefined,
       };
     });
+}
+
+function effectiveToolStatus(status: string, output: string | null): ToolEvent["status"] {
+  if (!output) return status === "pending" ? "pending" : status === "running" ? "running" : status === "error" ? "error" : "done";
+  const value = output.trim();
+  if (/^(?:ERROR:|Refused:|\[exit\s+(?!0\b)\d+\])/i.test(value)) return "error";
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (parsed.status === "failed" || parsed.status === "error" || parsed.candidateValidated === false) {
+      return "error";
+    }
+  } catch {
+    // Plain-text tool output.
+  }
+  return status === "error" ? "error" : "done";
 }

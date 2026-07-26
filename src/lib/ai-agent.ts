@@ -41,6 +41,10 @@ import {
   openSourceRepairPullRequest,
   prepareSourceRepairPlan,
 } from "@/lib/source-repair";
+import { redactComposeSecrets } from "@/lib/managed-deployments";
+import { createHttpProbeExecutor } from "@/lib/intelligence/probes";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 /**
  * GroundControl AI agent tool set.
@@ -105,6 +109,38 @@ async function guard(fn: () => Promise<string>): Promise<string> {
   } catch (err: unknown) {
     return `ERROR: ${err instanceof Error ? err.message : String(err)}`;
   }
+}
+
+function isPrivateAddress(address: string): boolean {
+  const normalized = address.replace(/^::ffff:/, "");
+  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
+  if (isIP(normalized) === 4) {
+    const [a, b] = normalized.split(".").map(Number);
+    return (
+      a === 10 ||
+      a === 127 ||
+      a === 0 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  return /^(?:fc|fd|fe8|fe9|fea|feb)/i.test(normalized);
+}
+
+async function assertPublicProbeUrl(value: string): Promise<URL> {
+  const url = new URL(value);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("Verification requires a credential-free HTTP or HTTPS URL.");
+  }
+  if (url.hostname === "localhost" || url.hostname.endsWith(".local") || isPrivateAddress(url.hostname)) {
+    throw new Error("External verification cannot target a local or private address.");
+  }
+  const addresses = await lookup(url.hostname, { all: true });
+  if (!addresses.length || addresses.some((item) => isPrivateAddress(item.address))) {
+    throw new Error("External verification resolved to a local or private address.");
+  }
+  return url;
 }
 
 // ---------------------------------------------------------------------------
@@ -617,7 +653,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           const path = `${projectPath}/${f}`;
           const result = await safeExecOnTarget(`cat ${shQuote(path)} 2>/dev/null`);
           if (!result.startsWith("[exit") && !result.startsWith("ERROR:")) {
-            return `===== ${path} =====\n${result}`;
+            return `===== ${path} =====\n${redactComposeSecrets(result)}`;
           }
         }
         return `No docker-compose/compose file found in ${projectPath}.`;
@@ -710,9 +746,25 @@ export const AGENT_TOOLS: AgentTool[] = [
           type: "string",
           description: "Repository-relative path to the source file being corrected.",
         },
-        replacementContent: {
-          type: "string",
-          description: "Complete candidate file content with no secret values.",
+        edits: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              find: {
+                type: "string",
+                description: "Exact unique source text from the repository file at the deployed commit.",
+              },
+              replace: {
+                type: "string",
+                description: "Exact replacement text.",
+              },
+            },
+            required: ["find", "replace"],
+            additionalProperties: false,
+          },
+          description:
+            "One to eight exact, minimal edits. GroundControl fetches the complete file from GitHub; never pass a live-host file or secret value.",
         },
         validationCommand: {
           type: "string",
@@ -731,7 +783,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         "repositoryUrl",
         "commitSha",
         "filePath",
-        "replacementContent",
+        "edits",
         "validationCommand",
         "incidentSummary",
       ],
@@ -745,7 +797,14 @@ export const AGENT_TOOLS: AgentTool[] = [
           baseBranch: args?.baseBranch ? String(args.baseBranch) : undefined,
           commitSha: String(args?.commitSha || ""),
           filePath: String(args?.filePath || ""),
-          replacementContent: String(args?.replacementContent || ""),
+          edits: Array.isArray(args?.edits)
+            ? args.edits.map((edit) => {
+                const value = edit && typeof edit === "object"
+                  ? edit as Record<string, unknown>
+                  : {};
+                return { find: String(value.find || ""), replace: String(value.replace || "") };
+              })
+            : [],
           validationCommand: String(args?.validationCommand || ""),
           incidentSummary: String(args?.incidentSummary || ""),
           verificationUrl: args?.verificationUrl ? String(args.verificationUrl) : undefined,
@@ -836,6 +895,70 @@ export const AGENT_TOOLS: AgentTool[] = [
         const err = result.stderr || "";
         if (result.code !== 0) return `ERROR: docker compose ps failed (exit ${result.code}).\n${err || out}`;
         return out || "(no services)";
+      }),
+  },
+  {
+    name: "inspect_container",
+    description:
+      "Inspect one existing Docker container without reading its injected environment values. Returns state, image, health, Compose identity, published ports, networks, labels, and healthcheck.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact existing container name." },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const name = String(args?.name || "").trim();
+        if (!name) return "ERROR: container name is required.";
+        const format = [
+          "{",
+          '"name":{{json .Name}},',
+          '"image":{{json .Config.Image}},',
+          '"state":{{json .State}},',
+          '"ports":{{json .NetworkSettings.Ports}},',
+          '"networks":{{json .NetworkSettings.Networks}},',
+          '"labels":{{json .Config.Labels}},',
+          '"healthcheck":{{json .Config.Healthcheck}}',
+          "}",
+        ].join("");
+        const output = await safeExecOnTarget(
+          `docker inspect --format ${shQuote(format)} ${shQuote(name)}`
+        );
+        return redactComposeSecrets(output);
+      }),
+  },
+  {
+    name: "verify_public_endpoint",
+    description:
+      "Perform a real external HTTP check after a repair or runtime action. It reads only status and latency, never the response body. A successful mutation is not a verified recovery until this passes.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Credential-free public HTTP or HTTPS endpoint to verify.",
+        },
+      },
+      required: ["url"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const url = await assertPublicProbeUrl(String(args?.url || ""));
+        const result = await createHttpProbeExecutor(10_000).fetchStatus(url.toString());
+        return JSON.stringify({
+          url: url.toString(),
+          ok: result.statusCode >= 200 && result.statusCode < 400,
+          statusCode: result.statusCode,
+          latencyMs: result.latencyMs,
+          observedAt: new Date().toISOString(),
+          proves: "external HTTP outcome only",
+        });
       }),
   },
   // --- Mutating tools: never auto-execute. Require explicit confirmation. ----

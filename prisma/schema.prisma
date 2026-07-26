@@ -467,8 +467,24 @@ model AiThread {
 
   user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages AiMessage[]
+  shares   AiThreadShare[]
 
   @@index([userId, updatedAt])
+}
+
+model AiThreadShare {
+  id           Int       @id @default(autoincrement())
+  threadId     Int
+  tokenHash    String    @unique
+  snapshotJson String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  thread AiThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@index([expiresAt, revokedAt])
 }
 
 model AiMessage {
