@@ -159,7 +159,7 @@ export default function ConnectorsPanel() {
                   <span className={`rounded px-1.5 py-0.5 text-[9px] font-mono ${
                     conn.status === "connected" ? "bg-success/10 text-success" : conn.status === "error" ? "bg-error/10 text-error" : "bg-warning/10 text-warning"
                   }`}>
-                    {conn.status === "connected" ? "connected" : conn.status === "error" ? "error" : "not configured"}
+                    {conn.status === "connected" ? "connected" : conn.status === "error" ? "error" : conn.configured ? "configured" : "not configured"}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-muted">{conn.description}</p>
@@ -197,7 +197,7 @@ export default function ConnectorsPanel() {
                   <div>
                     <label className="block text-[10px] font-mono text-muted mb-1">API key</label>
                     <input type="password" value={draft.apiKey || ""} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-                      placeholder="AIza..." className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent" />
+                      placeholder={conn.configured ? "Leave blank to keep current key" : "AIza..."} className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent" />
                     <p className="mt-1 text-[10px] text-muted">Get a key from{" "}
                       <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-accent hover:underline inline-flex items-center gap-0.5">
                         Google AI Studio <ExternalLink className="h-2.5 w-2.5" />
@@ -217,7 +217,7 @@ export default function ConnectorsPanel() {
                   <div>
                     <label className="block text-[10px] font-mono text-muted mb-1">API key</label>
                     <input type="password" value={draft.apiKey || ""} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-                      placeholder="dtn_..." className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent" />
+                      placeholder={conn.configured ? "Leave blank to keep current key" : "dtn_..."} className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent" />
                   </div>
                 </div>
               )}
