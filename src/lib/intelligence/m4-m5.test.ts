@@ -3,6 +3,7 @@ import { parseCaddyfileRoutes, parseProxyRoutes } from "./proxy-parse";
 import {
   compareToBlueprint,
   reproduceInDaytona,
+  resolveDaytonaRuntimeConfig,
   validateDaytonaCommand,
   validateRepairFilePath,
 } from "./daytona";
@@ -71,6 +72,20 @@ admin.example.com, www.admin.example.com {
 });
 
 describe("M4 Daytona + blueprints", () => {
+  it("prefers the encrypted connector configuration over environment fallback", () => {
+    expect(resolveDaytonaRuntimeConfig(
+      { apiKey: "stored-key", apiUrl: "https://daytona.example/api" },
+      { DAYTONA_API_KEY: "environment-key" }
+    )).toEqual({
+      apiKey: "stored-key",
+      apiUrl: "https://daytona.example/api",
+      target: undefined,
+      source: "connector",
+    });
+    expect(resolveDaytonaRuntimeConfig({}, { DAYTONA_TOKEN: "environment-token" })?.source)
+      .toBe("environment");
+  });
+
   it("compares topology to resilient blueprint", () => {
     const weak = compareToBlueprint("single_web_caddy", {});
     expect(weak.score).toBeLessThan(1);
