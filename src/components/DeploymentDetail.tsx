@@ -772,8 +772,8 @@ function DeploymentProgress({
   ];
   const percent = Math.round((steps.filter((step) => step.done).length / steps.length) * 100);
   const phases = [
-    { label: "Configure", state: "complete" },
-    { label: "Deploy", state: failed ? "failed" : deployComplete ? "complete" : "active" },
+    { label: "Prepare", state: "complete" },
+    { label: "Recreate", state: failed ? "failed" : deployComplete ? "complete" : "active" },
     { label: "Verify", state: failed ? "pending" : verifyComplete ? "complete" : verifyStarted ? "active" : "pending" },
   ];
 
@@ -781,7 +781,7 @@ function DeploymentProgress({
     <section className="mt-5 border border-border bg-card">
       <div className="grid lg:grid-cols-[180px_minmax(0,1fr)_220px]">
         <div className="border-b border-border p-4 lg:border-b-0 lg:border-r">
-          <p className="gc-eyebrow">Deployment</p>
+          <p className="gc-eyebrow">Deployment run</p>
           <div className="mt-4 space-y-2">
             {phases.map((phase) => (
               <div key={phase.label} className={`border px-3 py-2 ${
