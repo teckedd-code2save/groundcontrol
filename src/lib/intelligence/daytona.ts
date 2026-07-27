@@ -340,8 +340,7 @@ export async function reproduceInDaytona(
   if (req.artifactDigest) logs.push(`artifact=${req.artifactDigest}`);
   if (
     hasSecretValue(req.composeSnippet) ||
-    hasSecretValue(req.proxySnippet) ||
-    hasSecretValue(req.candidate?.replacementContent)
+    hasSecretValue(req.proxySnippet)
   ) {
     return {
       id,
