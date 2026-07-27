@@ -12,6 +12,71 @@ import {
 } from "@/lib/github-app";
 import { prisma } from "@/lib/prisma";
 
+export interface DaytonaRuntimeConfig {
+  apiKey: string;
+  apiUrl?: string;
+  target?: string;
+  source: "connector" | "environment";
+}
+
+export function resolveDaytonaRuntimeConfig(
+  stored: Record<string, string>,
+  environment: Record<string, string | undefined> = process.env
+): DaytonaRuntimeConfig | null {
+  const storedKey = stored.apiKey?.trim();
+  if (storedKey) {
+    return {
+      apiKey: storedKey,
+      apiUrl: stored.apiUrl?.trim() || undefined,
+      target: stored.target?.trim() || undefined,
+      source: "connector",
+    };
+  }
+  const environmentKey = (environment.DAYTONA_API_KEY || environment.DAYTONA_TOKEN || "").trim();
+  if (!environmentKey) return null;
+  return {
+    apiKey: environmentKey,
+    apiUrl: environment.DAYTONA_API_URL?.trim() || undefined,
+    target: environment.DAYTONA_TARGET?.trim() || undefined,
+    source: "environment",
+  };
+}
+
+export async function loadDaytonaRuntimeConfig(): Promise<DaytonaRuntimeConfig | null> {
+  const stored: Record<string, string> = {};
+  try {
+    const rows = await prisma.appConfig.findMany({
+      where: { key: { startsWith: "connector_daytona_" } },
+    });
+    for (const row of rows) {
+      const field = row.key.replace("connector_daytona_", "");
+      stored[field] = decryptMaybe(row.value) || row.value;
+    }
+  } catch {
+    // Database availability must not disable the documented environment fallback.
+  }
+  return resolveDaytonaRuntimeConfig(stored);
+}
+
+export async function testDaytonaConnection(
+  config?: DaytonaRuntimeConfig | null
+): Promise<{ ok: true; source: DaytonaRuntimeConfig["source"] }> {
+  const resolved = config ?? await loadDaytonaRuntimeConfig();
+  if (!resolved) throw new Error("Daytona API key is not configured.");
+  const client = new Daytona({
+    apiKey: resolved.apiKey,
+    apiUrl: resolved.apiUrl,
+    target: resolved.target,
+  });
+  try {
+    const iterator = client.list({ limit: 1 });
+    await iterator.next();
+    return { ok: true, source: resolved.source };
+  } finally {
+    await client[Symbol.asyncDispose]();
+  }
+}
+
 export type BlueprintId =
   | "single_web_caddy"
   | "frontend_api"
@@ -394,8 +459,8 @@ export async function reproduceInDaytona(
     };
   }
 
-  const token = process.env.DAYTONA_API_KEY || process.env.DAYTONA_TOKEN;
-  if (!token) {
+  const runtimeConfig = await loadDaytonaRuntimeConfig();
+  if (!runtimeConfig) {
     // Local sanitized reproduction: structural validation only
     const composeOk = !req.composeSnippet || !/password\s*[:=]\s*['"]?[^'"]+/i.test(req.composeSnippet);
     const proxyOk =
@@ -409,9 +474,7 @@ export async function reproduceInDaytona(
       id,
       status: composeOk && proxyOk ? "completed" : "failed",
       provider: "local_sanitized",
-      detail: token
-        ? "Daytona unavailable"
-        : "No DAYTONA_API_KEY — local sanitized reproduction only",
+      detail: "Daytona is not configured — local sanitized reproduction only",
       reproducedFailure: Boolean(req.proxySnippet && /:8080|:9999/.test(req.proxySnippet)),
       candidateValidated: false,
       proposedPatch:
@@ -436,9 +499,9 @@ export async function reproduceInDaytona(
   }
 
   const daytona = new Daytona({
-    apiKey: token,
-    apiUrl: process.env.DAYTONA_API_URL,
-    target: process.env.DAYTONA_TARGET,
+    apiKey: runtimeConfig.apiKey,
+    apiUrl: runtimeConfig.apiUrl,
+    target: runtimeConfig.target,
   });
   let sandbox: Sandbox | null = null;
   let cleanedUp = false;
