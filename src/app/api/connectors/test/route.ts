@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { handleApiError } from "@/lib/errors";
 import { decryptMaybe } from "@/lib/crypto";
+import { resolveDaytonaRuntimeConfig, testDaytonaConnection } from "@/lib/intelligence/daytona";
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,7 +37,10 @@ export async function POST(req: NextRequest) {
       if (!apiKey) return NextResponse.json({ error: "API key not set" }, { status: 400 });
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-        if (res.ok) return NextResponse.json({ ok: true, message: "Gemini API key is valid" });
+        if (res.ok) {
+          await recordVerifiedConnector(connectorId);
+          return NextResponse.json({ ok: true, message: "Gemini API key is valid" });
+        }
         return NextResponse.json({ error: `Gemini API returned ${res.status}` }, { status: 400 });
       } catch {
         return NextResponse.json({ error: "Could not reach Gemini API" }, { status: 400 });
@@ -44,11 +48,32 @@ export async function POST(req: NextRequest) {
     }
 
     if (connectorId === "daytona") {
-      return NextResponse.json({ ok: true, message: "Daytona connector configured" });
+      try {
+        const resolved = resolveDaytonaRuntimeConfig(config, {});
+        if (!resolved) {
+          return NextResponse.json({ error: "Daytona API key is not set" }, { status: 400 });
+        }
+        await testDaytonaConnection(resolved);
+        await recordVerifiedConnector(connectorId);
+        return NextResponse.json({ ok: true, message: "Daytona API connection verified" });
+      } catch (error) {
+        return NextResponse.json({
+          error: error instanceof Error ? error.message : "Could not reach Daytona",
+        }, { status: 400 });
+      }
     }
 
     return NextResponse.json({ error: "Unknown connector" }, { status: 400 });
   } catch (err) {
     return handleApiError(err);
   }
+}
+
+async function recordVerifiedConnector(connectorId: string) {
+  const key = `connector_${connectorId}_verifiedAt`;
+  await prisma.appConfig.upsert({
+    where: { key },
+    create: { key, value: new Date().toISOString() },
+    update: { value: new Date().toISOString() },
+  });
 }
