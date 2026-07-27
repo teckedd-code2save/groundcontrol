@@ -48,6 +48,7 @@ describe("AI incident integrity", () => {
   it("requires evidence-first Compose diagnosis and non-empty source edits", () => {
     const schemas = getOpenAIToolSchemas();
     expect(schemas.some((tool) => tool.function.name === "investigate_compose_failure")).toBe(true);
+    expect(schemas.some((tool) => tool.function.name === "read_repository_source_at_revision")).toBe(true);
     const repair = schemas.find((tool) => tool.function.name === "prepare_source_fix_in_daytona");
     const parameters = repair?.function.parameters as {
       properties?: {
