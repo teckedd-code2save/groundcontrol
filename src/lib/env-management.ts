@@ -479,6 +479,34 @@ export function hashEnvBundle(
   return createHash("sha256").update(content).digest("hex");
 }
 
+/**
+ * Compose reads `.env` for variable interpolation before it applies a
+ * service's `env_file`. Make component-scoped values available to that
+ * interpolation layer when the value is unambiguous. This lets a value scoped
+ * to `api` satisfy `${DATABASE_URL}` used by a companion `migrate` service,
+ * without flattening conflicting per-service values.
+ */
+export function composeInterpolationValues(
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>
+): Record<string, string> {
+  const candidates = new Map<string, Set<string>>();
+  for (const scopedValues of Object.values(componentValues)) {
+    for (const [key, value] of Object.entries(scopedValues)) {
+      if (values[key] !== undefined) continue;
+      const found = candidates.get(key) || new Set<string>();
+      found.add(value);
+      candidates.set(key, found);
+    }
+  }
+
+  const merged = { ...values };
+  for (const [key, found] of candidates) {
+    if (found.size === 1) merged[key] = [...found][0];
+  }
+  return merged;
+}
+
 export function normalizeProviderRuntimeEnv(values: Record<string, string>, providerType: string): Record<string, string> {
   if (providerType !== "infisical") return values;
   const next = { ...values };
@@ -527,6 +555,7 @@ export function buildMaterializeEnvBundleCommand(
   const environmentSlug = normalizeEnvironmentSlug(options.environmentSlug);
   const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
   const quotedRuntimeDir = shQuote(runtimeDir);
+  const interpolationValues = composeInterpolationValues(values, componentValues);
   const commands = [
     "set -eu",
     `mkdir -p ${quotedPath}/.groundcontrol ${quotedRuntimeDir}`,
@@ -539,8 +568,8 @@ export function buildMaterializeEnvBundleCommand(
     "find .groundcontrol/env -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true",
     "find .groundcontrol/env-backups -maxdepth 1 -type f -name '*.bak' -delete 2>/dev/null || true",
   ];
-  if (Object.keys(values).length > 0 || options.pruneManagedFiles) {
-    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(values)));
+  if (Object.keys(interpolationValues).length > 0 || options.pruneManagedFiles) {
+    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(interpolationValues)));
   }
 
   const components = Object.keys(componentValues)
@@ -611,7 +640,7 @@ export async function materializeEnvBundle(
   return {
     hash: hashEnvBundle(values, componentValues),
     files: [
-      ...(Object.keys(values).length > 0 || options.pruneManagedFiles ? [".env"] : []),
+      ...(Object.keys(composeInterpolationValues(values, componentValues)).length > 0 || options.pruneManagedFiles ? [".env"] : []),
       ...Object.keys(componentValues)
         .filter(isSafeComposeServiceName)
         .filter((component) => Object.keys(componentValues[component]).length > 0)
