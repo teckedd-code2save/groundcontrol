@@ -29,6 +29,12 @@ export interface OpenSourceRepairInput {
   title: string;
 }
 
+export interface ReadSourceAtRevisionInput {
+  repositoryUrl: string;
+  commitSha: string;
+  filePath: string;
+}
+
 function clipped(value: string | undefined, max: number) {
   return String(value || "").trim().slice(0, max);
 }
@@ -68,6 +74,65 @@ async function installationAccess(repository: NonNullable<LinkedRepository>) {
   });
 }
 
+function redactRepositorySource(source: string): string {
+  return source
+    .replace(/https:\/\/[^@\s/]+@/gi, "https://[redacted]@")
+    .replace(
+      /^(\s*(?:[A-Za-z0-9_]*(?:PASSWORD|SECRET|TOKEN|PRIVATE_KEY|ACCESS_KEY|API_KEY)[A-Za-z0-9_]*)(?:\s*[:=]\s*))(.+)$/gim,
+      (_line, prefix: string, value: string) => (
+        /\$\{|\[REDACTED\]|<SET_ME>/i.test(value)
+          ? `${prefix}${value}`
+          : `${prefix}[REDACTED]`
+      )
+    )
+    .replace(/\b(?:gh[opsu]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[REDACTED]");
+}
+
+async function repositoryFileAtRevision(input: ReadSourceAtRevisionInput) {
+  const repository = await linkedRepository(input.repositoryUrl);
+  const filePath = input.filePath.trim();
+  const pathError = validateRepairFilePath(filePath);
+  if (pathError) throw new Error(pathError);
+  const commitSha = input.commitSha.trim();
+  if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
+    throw new Error("An exact deployed commit SHA is required before reading repository source.");
+  }
+  const access = await installationAccess(repository);
+  const sourceFile = await githubInstallationFetch<{
+    sha: string;
+    content: string;
+    encoding: string;
+    type: string;
+  }>(
+    access.token,
+    `/repos/${encodedRepositoryPath(repository.fullName)}/contents/${encodedFilePath(filePath)}?ref=${encodeURIComponent(commitSha)}`
+  );
+  if (sourceFile.type !== "file" || sourceFile.encoding !== "base64") {
+    throw new Error("The source target must be a regular repository file.");
+  }
+  return {
+    repository,
+    filePath,
+    commitSha,
+    blobSha: sourceFile.sha,
+    source: Buffer.from(sourceFile.content.replace(/\s/g, ""), "base64").toString("utf8"),
+  };
+}
+
+export async function readSourceAtDeployedRevision(input: ReadSourceAtRevisionInput) {
+  const file = await repositoryFileAtRevision(input);
+  const content = redactRepositorySource(file.source);
+  return {
+    repository: file.repository.fullName,
+    deployedRevision: file.commitSha,
+    filePath: file.filePath,
+    blobSha: file.blobSha,
+    content: content.length <= 80_000 ? content : `${content.slice(0, 80_000)}\n… source clipped`,
+    instruction:
+      "Use an exact unique non-redacted excerpt from this revision as the find text. Never edit a [REDACTED] value.",
+  };
+}
+
 export function applyExactSourceEdits(
   source: string,
   edits: Array<{ find: string; replace: string }>
@@ -97,31 +162,12 @@ export function applyExactSourceEdits(
 }
 
 export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
-  const repository = await linkedRepository(input.repositoryUrl);
-  const filePath = input.filePath.trim();
-  const pathError = validateRepairFilePath(filePath);
-  if (pathError) throw new Error(pathError);
-  const commitSha = input.commitSha.trim();
-  if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
-    throw new Error("An exact deployed commit SHA is required before preparing a source repair.");
-  }
+  const file = await repositoryFileAtRevision(input);
+  const repository = file.repository;
+  const filePath = file.filePath;
+  const commitSha = file.commitSha;
   const baseBranch = clipped(input.baseBranch || repository.defaultBranch, 120);
-  const access = await installationAccess(repository);
-  const repositoryPath = encodedRepositoryPath(repository.fullName);
-  const sourceFile = await githubInstallationFetch<{
-    sha: string;
-    content: string;
-    encoding: string;
-    type: string;
-  }>(
-    access.token,
-    `/repos/${repositoryPath}/contents/${encodedFilePath(filePath)}?ref=${encodeURIComponent(commitSha)}`
-  );
-  if (sourceFile.type !== "file" || sourceFile.encoding !== "base64") {
-    throw new Error("The repair target must be a regular repository file.");
-  }
-  const source = Buffer.from(sourceFile.content.replace(/\s/g, ""), "base64").toString("utf8");
-  const replacementContent = applyExactSourceEdits(source, input.edits);
+  const replacementContent = applyExactSourceEdits(file.source, input.edits);
   if (Buffer.byteLength(replacementContent, "utf8") > MAX_REPLACEMENT_BYTES) {
     throw new Error("The repaired file must be smaller than 300 KB.");
   }
