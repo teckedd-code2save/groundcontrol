@@ -122,6 +122,7 @@ export default function DeploymentDetail({
   const [imageLoading, setImageLoading] = useState(false);
   const [redeployLog, setRedeployLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
+  const [redeployStatus, setRedeployStatus] = useState<"idle" | "deploying" | "success" | "failed">("idle");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,6 +153,7 @@ export default function DeploymentDetail({
   async function assignProject(projectGroupId: number | null) {
     if (!deployment) return;
     setBusy(true);
+    setRedeployStatus("idle");
     try {
       const response = await fetch(`/api/projects/${deployment.id}/group`, {
         method: "PATCH",
@@ -204,6 +206,7 @@ export default function DeploymentDetail({
         setMessage({ tone: "info", text: "Redeploy queued — checking status…" });
         setShowLog(true);
         setRedeployLog([]);
+        setRedeployStatus("deploying");
         setBusy(true);
 
         const changed = data.changedFields as string[] | undefined;
@@ -216,6 +219,7 @@ export default function DeploymentDetail({
               const lines = Array.isArray(logData.lines) ? logData.lines : [];
               setRedeployLog(lines);
               if (logData.status === "failed") {
+                setRedeployStatus("failed");
                 setMessage({
                   tone: "error",
                   text: typeof logData.error === "string" && logData.error.trim()
@@ -227,6 +231,7 @@ export default function DeploymentDetail({
                 return { success: false };
               }
               if (logData.status !== "success") continue;
+              setRedeployStatus("success");
               setMessage({
                 tone: "success",
                 text: component
@@ -252,6 +257,7 @@ export default function DeploymentDetail({
       await load();
       return { success: true };
     } catch (error) {
+      setRedeployStatus("failed");
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
       return { success: false };
     } finally {
@@ -432,6 +438,16 @@ export default function DeploymentDetail({
 
       {message && (
         <Notice className="mt-5" tone={message.tone === "error" ? "danger" : message.tone}>{message.text}</Notice>
+      )}
+
+      {redeployStatus !== "idle" && (
+        <DeploymentProgress
+          status={redeployStatus}
+          lines={redeployLog}
+          target={deployment.name}
+          components={containers.map((container) => container.service || container.name)}
+          onShowLog={() => setShowLog(true)}
+        />
       )}
 
       {showLog && redeployLog.length > 0 && (
@@ -726,6 +742,103 @@ export default function DeploymentDetail({
         </div>}
       </ModalSurface>
     </div>
+  );
+}
+
+function DeploymentProgress({
+  status,
+  lines,
+  target,
+  components,
+  onShowLog,
+}: {
+  status: "deploying" | "success" | "failed";
+  lines: string[];
+  target: string;
+  components: string[];
+  onShowLog: () => void;
+}) {
+  const deployStarted = lines.some((line) => line.includes("[deploy] Starting"));
+  const deployComplete = lines.some((line) => line.includes("[deploy] Docker Compose recreation completed"));
+  const verifyStarted = lines.some((line) => line.includes("[verify] Checking"));
+  const verifyComplete = status === "success";
+  const failed = status === "failed";
+  const steps = [
+    { label: "Environment resolved", done: true, active: false },
+    { label: "Compose configuration validated", done: true, active: false },
+    { label: "Images pulled", done: true, active: false },
+    { label: "Containers recreated", done: deployComplete, active: deployStarted && !deployComplete && !failed },
+    { label: "Runtime images verified", done: verifyComplete, active: verifyStarted && !verifyComplete && !failed },
+  ];
+  const percent = Math.round((steps.filter((step) => step.done).length / steps.length) * 100);
+  const phases = [
+    { label: "Configure", state: "complete" },
+    { label: "Deploy", state: failed ? "failed" : deployComplete ? "complete" : "active" },
+    { label: "Verify", state: failed ? "pending" : verifyComplete ? "complete" : verifyStarted ? "active" : "pending" },
+  ];
+
+  return (
+    <section className="mt-5 border border-border bg-card">
+      <div className="grid lg:grid-cols-[180px_minmax(0,1fr)_220px]">
+        <div className="border-b border-border p-4 lg:border-b-0 lg:border-r">
+          <p className="gc-eyebrow">Deployment</p>
+          <div className="mt-4 space-y-2">
+            {phases.map((phase) => (
+              <div key={phase.label} className={`border px-3 py-2 ${
+                phase.state === "active" ? "border-accent bg-accent/5"
+                  : phase.state === "failed" ? "border-danger/50 bg-danger/5"
+                    : "border-border"
+              }`}>
+                <p className="text-xs font-medium">{phase.label}</p>
+                <p className={`mt-0.5 font-mono text-[9px] uppercase ${
+                  phase.state === "complete" ? "text-success"
+                    : phase.state === "failed" ? "text-danger"
+                      : phase.state === "active" ? "text-accent" : "text-muted"
+                }`}>{phase.state}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-w-0 p-5">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <p className="gc-eyebrow">{status === "failed" ? "Deployment stopped" : status === "success" ? "Deployment verified" : "Deploying"}</p>
+              <p className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{percent}%</p>
+            </div>
+            <button type="button" onClick={onShowLog} className="gc-button gc-button-quiet">View evidence</button>
+          </div>
+          <div className="mt-4 h-1.5 bg-border" aria-label={`${percent}% complete`}>
+            <div
+              className={`h-full transition-[width] ${failed ? "bg-danger" : "bg-accent"}`}
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <div className="mt-4 divide-y divide-border border-y border-border">
+            {steps.map((step) => (
+              <div key={step.label} className="flex items-center justify-between gap-3 py-2 text-xs">
+                <span className={step.active ? "text-foreground" : "text-muted"}>{step.label}</span>
+                <span className={`font-mono text-[9px] uppercase ${
+                  step.done ? "text-success" : step.active ? "text-accent" : failed ? "text-muted" : "text-muted"
+                }`}>{step.done ? "complete" : step.active ? "running" : failed ? "not reached" : "pending"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <aside className="border-t border-border p-4 lg:border-l lg:border-t-0">
+          <p className="gc-eyebrow">Target</p>
+          <p className="mt-2 truncate text-sm font-medium">{target}</p>
+          <p className="mt-1 font-mono text-[9px] uppercase text-muted">VPS deployment</p>
+          <div className="mt-4 border-t border-border pt-3">
+            <p className="font-mono text-[9px] uppercase text-muted">Components</p>
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              {[...new Set(components)].filter(Boolean).join(", ") || "Resolved from Compose"}
+            </p>
+          </div>
+        </aside>
+      </div>
+    </section>
   );
 }
 
