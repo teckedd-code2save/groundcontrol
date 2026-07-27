@@ -81,6 +81,11 @@ export function applyExactSourceEdits(
     const first = candidate.indexOf(edit.find);
     const second = first < 0 ? -1 : candidate.indexOf(edit.find, first + edit.find.length);
     if (first < 0) {
+      if (edit.replace && candidate.includes(edit.replace)) {
+        throw new Error(
+          `Edit ${index + 1} is already present at the deployed commit. No source repair is needed for this change; continue the live runtime investigation.`
+        );
+      }
       throw new Error(`Edit ${index + 1} does not match the file at the deployed commit.`);
     }
     if (second >= 0) {
