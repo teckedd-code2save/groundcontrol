@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   buildMaterializeEnvBundleCommand,
   buildMaterializeEnvCommand,
+  composeInterpolationValues,
   environmentDisplayName,
   environmentExportFilename,
   hashEnvBundle,
@@ -123,6 +124,28 @@ DATABASE_URL=duplicate
     expect(command.indexOf("rm -f '.groundcontrol/compose.env.override.yml'")).toBeLessThan(
       command.lastIndexOf("'.groundcontrol/compose.env.override.yml'.new")
     );
+  });
+
+  it("shares unambiguous scoped values with Compose interpolation", () => {
+    expect(composeInterpolationValues(
+      { PUBLIC_URL: "https://app.example.com" },
+      {
+        api: { DATABASE_URL: "postgres://shared", TOKEN: "api-token" },
+        migrate: { DATABASE_URL: "postgres://shared", TOKEN: "migration-token" },
+      }
+    )).toEqual({
+      PUBLIC_URL: "https://app.example.com",
+      DATABASE_URL: "postgres://shared",
+    });
+
+    const command = buildMaterializeEnvBundleCommand(
+      "/srv/app",
+      {},
+      { api: { DATABASE_URL: "postgres://shared" } }
+    );
+    const encoded = Buffer.from("DATABASE_URL=postgres://shared\n", "utf8").toString("base64");
+    expect(command).toContain(encoded);
+    expect(command).not.toContain("postgres://shared");
   });
 
   it("allows a component redeploy when unrelated components are incomplete", () => {
