@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyToolOutput } from "./ai-memory";
 import { applyExactSourceEdits } from "./source-repair";
+import { getOpenAIToolSchemas } from "./ai-agent";
 
 describe("AI incident integrity", () => {
   it("does not display failed tools as successful", () => {
@@ -35,5 +36,30 @@ describe("AI incident integrity", () => {
       find: "PORT=4000",
       replace: "PORT=5000",
     }])).toThrow(/does not match/i);
+  });
+
+  it("returns to runtime investigation when the proposed source change already exists", () => {
+    expect(() => applyExactSourceEdits("API_UPSTREAM=http://api:4000\n", [{
+      find: "API_UPSTREAM=http://api:3000",
+      replace: "API_UPSTREAM=http://api:4000",
+    }])).toThrow(/already present.*runtime investigation/i);
+  });
+
+  it("requires evidence-first Compose diagnosis and non-empty source edits", () => {
+    const schemas = getOpenAIToolSchemas();
+    expect(schemas.some((tool) => tool.function.name === "investigate_compose_failure")).toBe(true);
+    const repair = schemas.find((tool) => tool.function.name === "prepare_source_fix_in_daytona");
+    const parameters = repair?.function.parameters as {
+      properties?: {
+        edits?: {
+          minItems?: number;
+          maxItems?: number;
+          items?: { properties?: { find?: { minLength?: number } } };
+        };
+      };
+    };
+    expect(parameters.properties?.edits?.minItems).toBe(1);
+    expect(parameters.properties?.edits?.maxItems).toBe(8);
+    expect(parameters.properties?.edits?.items?.properties?.find?.minLength).toBe(1);
   });
 });
