@@ -111,6 +111,11 @@ async function guard(fn: () => Promise<string>): Promise<string> {
   }
 }
 
+function clipOperationalEvidence(value: string, max = 8_000): string {
+  const normalized = String(value || "").trim();
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max)}\n… evidence clipped`;
+}
+
 function isPrivateAddress(address: string): boolean {
   const normalized = address.replace(/^::ffff:/, "");
   if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
@@ -748,11 +753,14 @@ export const AGENT_TOOLS: AgentTool[] = [
         },
         edits: {
           type: "array",
+          minItems: 1,
+          maxItems: 8,
           items: {
             type: "object",
             properties: {
               find: {
                 type: "string",
+                minLength: 1,
                 description: "Exact unique source text from the repository file at the deployed commit.",
               },
               replace: {
@@ -792,19 +800,23 @@ export const AGENT_TOOLS: AgentTool[] = [
     readOnly: true,
     execute: async (args) =>
       guard(async () => {
+        const edits = Array.isArray(args?.edits)
+          ? args.edits.map((edit) => {
+              const value = edit && typeof edit === "object"
+                ? edit as Record<string, unknown>
+                : {};
+              return { find: String(value.find || ""), replace: String(value.replace || "") };
+            })
+          : [];
+        if (!edits.length || edits.some((edit) => !edit.find.trim())) {
+          return "ERROR: Source repair requires one to eight non-empty exact edits from the repository file. Continue investigating until the exact deployed source text is known.";
+        }
         const result = await prepareSourceRepairPlan({
           repositoryUrl: String(args?.repositoryUrl || ""),
           baseBranch: args?.baseBranch ? String(args.baseBranch) : undefined,
           commitSha: String(args?.commitSha || ""),
           filePath: String(args?.filePath || ""),
-          edits: Array.isArray(args?.edits)
-            ? args.edits.map((edit) => {
-                const value = edit && typeof edit === "object"
-                  ? edit as Record<string, unknown>
-                  : {};
-                return { find: String(value.find || ""), replace: String(value.replace || "") };
-              })
-            : [],
+          edits,
           validationCommand: String(args?.validationCommand || ""),
           incidentSummary: String(args?.incidentSummary || ""),
           verificationUrl: args?.verificationUrl ? String(args.verificationUrl) : undefined,
@@ -895,6 +907,77 @@ export const AGENT_TOOLS: AgentTool[] = [
         const err = result.stderr || "";
         if (result.code !== 0) return `ERROR: docker compose ps failed (exit ${result.code}).\n${err || out}`;
         return out || "(no services)";
+      }),
+  },
+  {
+    name: "investigate_compose_failure",
+    description:
+      "Collect one coherent, read-only evidence bundle for a failed Compose deployment: declared services, all project containers including exited one-shot services, and bounded logs from failed, restarting, or unhealthy containers. Use this before attributing a deployment failure to source code or preparing a Daytona repair.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Project directory name or Compose project name." },
+      },
+      required: ["projectSlug"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim();
+        if (!slug) return "ERROR: projectSlug is required.";
+        const resolved = await resolveComposeProjectPath(slug);
+        const [servicesResult, psResult, containers, labels] = await Promise.all([
+          runDockerCompose(resolved.projectPath, "config --services"),
+          runDockerCompose(resolved.projectPath, "ps --all"),
+          getDockerContainers(),
+          getDockerContainerLabels(),
+        ]);
+        if (servicesResult.code !== 0) {
+          return `ERROR: effective Compose configuration could not be resolved.\n${
+            (servicesResult.stderr || servicesResult.stdout || "docker compose config failed").trim()
+          }`;
+        }
+
+        const normalized = slug.toLowerCase();
+        const labelMap = new Map(labels.map((label) => [label.name, label]));
+        const projectContainers = containers.filter((container) => {
+          const label = labelMap.get(container.name);
+          return (
+            (label?.project || "").toLowerCase() === normalized ||
+            (label?.projectSlug || "").toLowerCase() === normalized ||
+            container.name.toLowerCase().startsWith(`${normalized}-`) ||
+            container.name.toLowerCase().startsWith(`${normalized}_`)
+          );
+        });
+        const candidates = projectContainers.filter((container) => (
+          /unhealthy|restarting|dead/i.test(container.status) ||
+          (container.state !== "running" && !/exited\s+\(0\)/i.test(container.status))
+        )).slice(0, 4);
+        const failureLogs = await Promise.all(candidates.map(async (container) => ({
+          container: container.name,
+          service: labelMap.get(container.name)?.service || null,
+          evidence: clipOperationalEvidence(await getContainerLogs(container.name, 160)),
+        })));
+
+        return JSON.stringify({
+          project: slug,
+          declaredServices: servicesResult.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+          composeState: psResult.code === 0
+            ? psResult.stdout.trim()
+            : `ERROR: ${(psResult.stderr || psResult.stdout).trim()}`,
+          containers: projectContainers.map((container) => ({
+            name: container.name,
+            service: labelMap.get(container.name)?.service || null,
+            image: container.image,
+            state: container.state,
+            status: container.status,
+          })),
+          failureCandidates: failureLogs,
+          conclusionRule: failureLogs.length
+            ? "Use the earliest failed dependency supported by these logs; later missing services are symptoms until disproven."
+            : "No failed container log was found. Investigate image pulls, environment materialization, host ports, and the public route before proposing source changes.",
+        }, null, 2);
       }),
   },
   {
