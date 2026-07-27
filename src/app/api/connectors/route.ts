@@ -42,12 +42,19 @@ export async function GET(req: NextRequest) {
       }
     }
     return NextResponse.json({
-      connectors: ALLOWED_CONNECTORS.map((id) => ({
-        id,
-        ...CONNECTOR_META[id],
-        configured: Object.keys(grouped[id] || {}).length > 0,
-        config: grouped[id] || {},
-      })),
+      connectors: ALLOWED_CONNECTORS.map((id) => {
+        const stored = grouped[id] || {};
+        const configured = Boolean(stored.apiKey);
+        const { apiKey: _apiKey, verifiedAt, ...publicConfig } = stored;
+        void _apiKey;
+        return {
+          id,
+          ...CONNECTOR_META[id],
+          configured,
+          status: configured && verifiedAt ? "connected" : "disconnected",
+          config: { ...publicConfig, apiKey: "" },
+        };
+      }),
     });
   } catch (err) {
     return handleApiError(err);
@@ -71,6 +78,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No config provided" }, { status: 400 });
     }
     for (const [field, value] of Object.entries(config)) {
+      if (field === "apiKey" && !String(value || "").trim()) continue;
       const key = `connector_${connectorId}_${field}`;
       const encrypted = encrypt(value as string) || value;
       await prisma.appConfig.upsert({
@@ -79,6 +87,16 @@ export async function POST(req: NextRequest) {
         update: { value: encrypted },
       });
     }
+    const apiKey = await prisma.appConfig.findUnique({
+      where: { key: `connector_${connectorId}_apiKey` },
+      select: { value: true },
+    });
+    if (!apiKey?.value) {
+      return NextResponse.json({ error: "API key is required" }, { status: 400 });
+    }
+    await prisma.appConfig.deleteMany({
+      where: { key: `connector_${connectorId}_verifiedAt` },
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return handleApiError(err);
