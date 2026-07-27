@@ -60,6 +60,10 @@ const SYSTEM_PROMPT =
   `for a compose project, call compose_up.\n` +
   `- Before starting compose services, read_compose_config if you have not already, so you know the ` +
   `service names, images, ports, and dependencies.\n` +
+  `- For a failed Compose deployment, call investigate_compose_failure before proposing any fix. It reports ` +
+  `declared services, all running/exited containers, and bounded logs from failed or unhealthy services. Follow ` +
+  `the dependency chain: a web service waiting for a healthy API may actually be blocked by an earlier failed ` +
+  `migration. Do not diagnose the last service that failed to start as the root cause without that evidence.\n` +
   `- SOURCE REPAIR CONTRACT:\n` +
   `  1) Live host tools diagnose. They are not the source-control workflow.\n` +
   `  2) Never use write_system_file to repair application source, Compose, Dockerfiles, manifests, or ` +
@@ -92,6 +96,9 @@ const SYSTEM_PROMPT =
   `- Example: a service-name lookup failure can be caused by a missing service, wrong network, stopped container, ` +
   `or bad configuration. It does not by itself prove that an upstream URL should be edited.\n` +
   `- A tool marked error failed. Do not describe it as progress, validated, or successful. Report the exact failure.\n` +
+  `- Before preparing a source repair, compare the proposed change with read_compose_config and repository evidence. ` +
+  `If the desired value is already present, reject that hypothesis and continue investigating runtime state, ` +
+  `environment materialization, migrations, health checks, registry access, and service logs.\n` +
   `- A successful restart, Compose command, or PR creation proves only that action completed. It does not prove ` +
   `customer recovery. Inspect the target, then call verify_public_endpoint before saying fixed or recovered.\n` +
   `- Never invent a manual source edit after Daytona or repository resolution fails. State the single missing ` +
