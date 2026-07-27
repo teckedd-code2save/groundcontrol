@@ -40,6 +40,7 @@ import { reproduceInDaytona } from "@/lib/intelligence/daytona";
 import {
   openSourceRepairPullRequest,
   prepareSourceRepairPlan,
+  readSourceAtDeployedRevision,
 } from "@/lib/source-repair";
 import { redactComposeSecrets } from "@/lib/managed-deployments";
 import { createHttpProbeExecutor } from "@/lib/intelligence/probes";
@@ -727,6 +728,37 @@ export const AGENT_TOOLS: AgentTool[] = [
         });
         return JSON.stringify(result, null, 2);
       }),
+  },
+  {
+    name: "read_repository_source_at_revision",
+    description:
+      "Read one repository file from the exact deployed commit through the connected GitHub App, with likely credential values redacted. Use this before prepare_source_fix_in_daytona so every find string comes from the actual repository revision rather than a live-host copy or guess.",
+    parameters: {
+      type: "object",
+      properties: {
+        repositoryUrl: {
+          type: "string",
+          description: "Credential-free HTTPS GitHub repository URL linked to the deployment.",
+        },
+        commitSha: {
+          type: "string",
+          description: "Exact full deployed commit SHA. Never guess this value.",
+        },
+        filePath: {
+          type: "string",
+          description: "Repository-relative source file path.",
+        },
+      },
+      required: ["repositoryUrl", "commitSha", "filePath"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => JSON.stringify(await readSourceAtDeployedRevision({
+        repositoryUrl: String(args?.repositoryUrl || ""),
+        commitSha: String(args?.commitSha || ""),
+        filePath: String(args?.filePath || ""),
+      }), null, 2)),
   },
   {
     name: "prepare_source_fix_in_daytona",
