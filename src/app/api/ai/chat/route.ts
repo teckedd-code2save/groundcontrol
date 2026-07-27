@@ -69,7 +69,8 @@ const SYSTEM_PROMPT =
   `  2) Never use write_system_file to repair application source, Compose, Dockerfiles, manifests, or ` +
   `configuration under /opt, managed deployment roots, web roots, or home directories.\n` +
   `  3) For a repository-backed code, Compose, or proxy defect, identify the linked repository and exact ` +
-  `deployed commit SHA, then call prepare_source_fix_in_daytona with the smallest exact source edit. ` +
+  `deployed commit SHA, call read_repository_source_at_revision for the target file, then call ` +
+  `prepare_source_fix_in_daytona with the smallest exact non-redacted source edit. ` +
   `GroundControl fetches the complete repository file itself; never copy a live-host file into the repair.\n` +
   `  4) Daytona must validate the candidate away from production. Show the concise diff and validation result.\n` +
   `  5) Then call open_validated_fix_pr. It is confirmation-gated and changes source control only.\n` +
