@@ -121,6 +121,7 @@ DATABASE_URL=duplicate
     expect(command).toContain(".groundcontrol/compose.env.files");
     expect(command).toContain("base64 -d");
     expect(command).not.toContain("postgres://db");
+    expect(command).not.toContain(`find '/run/groundcontrol/environments/`);
     expect(command.indexOf("rm -f '.groundcontrol/compose.env.override.yml'")).toBeLessThan(
       command.lastIndexOf("'.groundcontrol/compose.env.override.yml'.new")
     );
@@ -195,10 +196,10 @@ DATABASE_URL=duplicate
     ]);
   });
 
-  it("prunes only GroundControl-managed component files during deletion", () => {
+  it("removes managed Compose references without deleting runtime files before replacement", () => {
     const command = buildMaterializeEnvBundleCommand("/srv/app", {}, {}, { pruneManagedFiles: true });
-    expect(command).toContain("find '/run/groundcontrol/environments/");
     expect(command).toContain("rm -f '.groundcontrol/compose.env.override.yml' '.groundcontrol/compose.env.files'");
+    expect(command).not.toContain("find '/run/groundcontrol/environments/");
     expect(command).not.toContain("rm -f .env");
     expect(command).toContain("> '.env'.new");
   });

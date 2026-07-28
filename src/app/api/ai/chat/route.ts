@@ -32,7 +32,8 @@ function resolveModel() {
   return getAiModel();
 }
 
-const MAX_TOOL_ITERATIONS = 6;
+const DEFAULT_MAX_TOOL_ITERATIONS = 6;
+const INCIDENT_MAX_TOOL_ITERATIONS = 14;
 const ANTHROPIC_MAX_TOKENS = 4096;
 
 const SYSTEM_PROMPT =
@@ -230,6 +231,8 @@ export async function POST(req: NextRequest) {
               `If any tool resolves a different slug or path, reject that result and stop. ` +
               `Investigate this deployment evidence-first. Runtime-only failures use the smallest typed reversible action. ` +
               `Repository, Compose, build, migration, dependency, or repository-managed proxy defects must use exact-revision source reading, Daytona reproduction and validation, then a confirmation-gated PR. ` +
+              `A failed evidence tool is not the end of the investigation when other read-only tools can establish the cause. ` +
+              `If application startup evidence reports a listening port that differs from the Compose port or healthcheck, treat that mismatch as a source hypothesis, confirm it at the deployed revision, and continue into Daytona instead of restarting the same unhealthy container. ` +
               `Never claim recovery until verify_public_endpoint passes for https://${domain}/.`
             );
           }
@@ -273,12 +276,19 @@ export async function POST(req: NextRequest) {
               userId: user.id,
               context,
               systemPrompt,
+              maxToolIterations: incidentContext ? INCIDENT_MAX_TOOL_ITERATIONS : DEFAULT_MAX_TOOL_ITERATIONS,
             });
           } else {
             if (provider === "anthropic") {
-              await runAnthropic({ apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn });
+              await runAnthropic({
+                apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn,
+                maxToolIterations: incidentContext ? INCIDENT_MAX_TOOL_ITERATIONS : DEFAULT_MAX_TOOL_ITERATIONS,
+              });
             } else {
-              await runOpenAI({ apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn });
+              await runOpenAI({
+                apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn,
+                maxToolIterations: incidentContext ? INCIDENT_MAX_TOOL_ITERATIONS : DEFAULT_MAX_TOOL_ITERATIONS,
+              });
             }
           }
 
@@ -336,6 +346,7 @@ interface RunCtx {
   userId: number;
   context: { ip: string; userAgent: string };
   systemPrompt: string;
+  maxToolIterations: number;
   emit: Emit;
   contextMessages?: WireMessage[];
   turn: {
@@ -433,7 +444,7 @@ async function runOpenAI(ctx: RunCtx) {
     ...history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
   ];
 
-  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+  for (let iter = 0; iter < ctx.maxToolIterations; iter++) {
     const completion = await openai.chat.completions.create({
       model: resolveModel(),
       messages: convo,
@@ -545,7 +556,7 @@ async function runAnthropic(ctx: RunCtx) {
     content: m.content,
   }));
 
-  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+  for (let iter = 0; iter < ctx.maxToolIterations; iter++) {
     const stream = anthropic.messages.stream({
       model: resolveModel(),
       max_tokens: ANTHROPIC_MAX_TOKENS,

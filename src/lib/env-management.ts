@@ -564,7 +564,10 @@ export function buildMaterializeEnvBundleCommand(
     // The override is the last artifact written below. Removing it first means
     // Compose can never observe a half-materialized environment bundle.
     `rm -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)} ${shQuote(MANAGED_ENV_FILES_MANIFEST)}`,
-    `find ${quotedRuntimeDir} -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true`,
+    // Keep the previous 0600 runtime files in place until every replacement
+    // has been atomically renamed and the new manifest/override is committed.
+    // Deleting first created a race where a detached Compose run could pass
+    // validation and then lose api.env before `up` opened it.
     "find .groundcontrol/env -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true",
     "find .groundcontrol/env-backups -maxdepth 1 -type f -name '*.bak' -delete 2>/dev/null || true",
   ];

@@ -10,8 +10,10 @@ import {
   runDockerComposeDown,
   resolveComposeProjectPath,
   getDockerContainerLabels,
+  getDockerComposeCommand,
+  buildManagedComposeInvocation,
 } from "@/lib/vps";
-import { execOnTarget } from "@/lib/host-exec";
+import { execOnTarget, execOnTargetStrict } from "@/lib/host-exec";
 import { prisma } from "@/lib/prisma";
 import { getHostCapabilities, clearHostCapabilitiesCache, formatCapabilitiesForPrompt } from "@/lib/host-capabilities";
 import {
@@ -210,7 +212,7 @@ const SAFE_COMMAND_HEADS = new Set([
   "ls", "dir", "stat", "file", "find", "wc", "sort", "uniq", "cut", "awk",
   "sed", "tr", "echo", "printf", "df", "du", "free", "uptime", "uname",
   "hostname", "whoami", "id", "ps", "top", "vmstat", "iostat", "mpstat",
-  "netstat", "ss", "ip", "ifconfig", "ping", "dig", "nslookup", "host",
+  "netstat", "ss", "ip", "ifconfig", "ping", "dig", "nslookup", "host", "curl",
   "docker", "systemctl", "journalctl", "date", "env", "printenv", "which",
   "command", "type", "lsof", "lsblk", "lscpu", "lsusb", "lspci",
   "tac", "nl", "basename", "dirname", "realpath", "readlink", "test",
@@ -959,16 +961,40 @@ export const AGENT_TOOLS: AgentTool[] = [
         const slug = String(args?.projectSlug || "").trim();
         if (!slug) return "ERROR: projectSlug is required.";
         const resolved = await resolveComposeProjectPath(slug);
-        const [servicesResult, psResult, containers, labels] = await Promise.all([
+        const [initialServicesResult, psResult, containers, labels] = await Promise.all([
           runDockerCompose(resolved.projectPath, "config --services"),
           runDockerCompose(resolved.projectPath, "ps --all"),
           getDockerContainers(),
           getDockerContainerLabels(),
         ]);
+        let servicesResult = initialServicesResult;
+        let composeConfigurationWarning: string | null = null;
         if (servicesResult.code !== 0) {
-          return `ERROR: effective Compose configuration could not be resolved.\n${
-            (servicesResult.stderr || servicesResult.stdout || "docker compose config failed").trim()
-          }`;
+          const detail = (servicesResult.stderr || servicesResult.stdout || "docker compose config failed").trim();
+          if (detail.includes("[groundcontrol] managed environment")) {
+            // A missing materialized secret file is itself evidence, but it
+            // must not prevent the investigator from seeing declared services,
+            // containers and failure logs. Resolve the repository model without
+            // the runtime env overlay and keep the warning in the evidence.
+            const composeCommand = await getDockerComposeCommand(undefined, execOnTargetStrict);
+            const fallback = await execOnTargetStrict(
+              `cd ${shQuote(resolved.projectPath)} && ${buildManagedComposeInvocation(
+                composeCommand,
+                "config --services",
+                undefined,
+                { includeEnvironment: false }
+              )}`
+            );
+            if (fallback.code !== 0) {
+              return `ERROR: effective Compose configuration could not be resolved.\n${detail}\n${
+                (fallback.stderr || fallback.stdout || "repository Compose model also failed").trim()
+              }`;
+            }
+            servicesResult = fallback;
+            composeConfigurationWarning = detail;
+          } else {
+            return `ERROR: effective Compose configuration could not be resolved.\n${detail}`;
+          }
         }
 
         const normalized = slug.toLowerCase();
@@ -994,6 +1020,7 @@ export const AGENT_TOOLS: AgentTool[] = [
 
         return JSON.stringify({
           project: slug,
+          composeConfigurationWarning,
           declaredServices: servicesResult.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
           composeState: psResult.code === 0
             ? psResult.stdout.trim()
