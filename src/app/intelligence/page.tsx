@@ -8,7 +8,6 @@ import {
   ExternalLink,
   RefreshCw,
   SearchCheck,
-  Sparkles,
   Wrench,
   XCircle,
 } from "lucide-react";
@@ -64,11 +63,34 @@ type GraphState = {
   readiness: ReadinessItem[];
 };
 
+type IncidentInvestigation = {
+  status: "resolved" | "ambiguous" | "unresolved";
+  domain: string;
+  problem: string;
+  fix: string;
+  verify: string;
+  target?: {
+    deploymentSlug: string;
+    deploymentName: string;
+    sourcePath?: string | null;
+    composePath?: string | null;
+    composeProject?: string | null;
+    composeServices: string[];
+    containers: string[];
+    runtimeStatus: string;
+    proxyRoute?: string | null;
+  };
+  action?: { projectSlug: string; title: string; risk: string; rollback: string } | null;
+  uncertainty?: string[];
+};
+
 export default function IntelligencePage() {
   const [graph, setGraph] = useState<GraphState | null>(null);
   const [selectedDomain, setSelectedDomain] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [investigation, setInvestigation] = useState<IncidentInvestigation | null>(null);
+  const [investigating, setInvestigating] = useState(false);
 
   const paths = useMemo(() => graph?.paths || [], [graph?.paths]);
   const selectedPath = useMemo(
@@ -93,6 +115,7 @@ export default function IntelligencePage() {
       setSelectedDomain((current) =>
         nextPaths.some((path) => path.domain === current) ? current : nextPaths[0]?.domain || ""
       );
+      setInvestigation(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GroundControl could not inspect this host.");
     } finally {
@@ -106,38 +129,26 @@ export default function IntelligencePage() {
 
   const failed = paths.filter((path) => path.verification.status === "failed").length;
   const healthy = paths.filter((path) => path.verification.status === "passed").length;
-  const assistant = graph?.readiness.find((item) => item.id === "assistant");
+  const hostEvidence = graph?.readiness.find((item) => item.id === "host");
 
-  function askAssistantToFix(path: ServicePath) {
-    const inspection = path.inspection;
-    const evidence = inspection?.evidence
-      .map((item) => `${item.label}: ${item.value} — ${item.detail}`)
-      .join("\n") || "No detailed evidence was collected.";
-    const prompt = [
-      `Resolve the live GroundControl incident for https://${path.domain}/.`,
-      "",
-      `Current result: ${probeResult(path.verification)}`,
-      `Proxy upstream: ${path.upstream || "not resolved"}`,
-      `Runtime: ${path.containerName || "not linked"}${path.containerState ? ` (${path.containerState})` : ""}`,
-      `Failure boundary: ${inspection?.failureBoundary || "not isolated"}`,
-      `Current diagnosis: ${inspection?.cause || inspection?.summary || "not available"}`,
-      "",
-      "Observed evidence:",
-      evidence,
-      "",
-      "Act as the live operations agent, not a general advisor.",
-      "1. Inspect the active host using the read-only GroundControl tools.",
-      "2. Identify the exact deployment, Compose service, container, port, and proxy route involved.",
-      "3. State the concrete root cause in one sentence.",
-      "4. If the defect belongs to repository code, Compose, or repository-managed proxy configuration, resolve the linked repository and exact deployed commit, then use prepare_source_fix_in_daytona with the smallest complete-file candidate and one bounded validation command.",
-      "5. Show the validated diff and ask to open the fix PR. Never rewrite application source on the live host.",
-      "6. If the failure is runtime-only, prepare the smallest reversible GroundControl runtime action for confirmation. Do not use Daytona for a stopped container, missing runtime link, or dead host port.",
-      `7. After the PR is merged and the normal delivery pipeline deploys it—or after an approved runtime action—verify https://${path.domain}/ externally.`,
-      "",
-      "Keep the response short: Problem, Fix, Verify. Do not ask me to run shell commands unless GroundControl has no safe action for the repair.",
-    ].join("\n");
-
-    window.dispatchEvent(new CustomEvent("gc:ai-chat-query", { detail: prompt }));
+  async function investigate(path: ServicePath) {
+    setInvestigating(true);
+    setError(null);
+    setInvestigation(null);
+    try {
+      const response = await fetch("/api/intelligence/investigate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: path.domain }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "GroundControl could not resolve this incident.");
+      setInvestigation(data as IncidentInvestigation);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "GroundControl could not resolve this incident.");
+    } finally {
+      setInvestigating(false);
+    }
   }
 
   return (
@@ -145,7 +156,7 @@ export default function IntelligencePage() {
       <PageHeader
         eyebrow="Intelligence"
         title="Fix what is broken"
-        description="Choose a failing endpoint. GroundControl isolates the break; the assistant inspects the live host and prepares the fix."
+        description="Choose a failing endpoint. GroundControl isolates the break, resolves the exact deployment, and refuses to act on an ambiguous target."
         actions={(
           <Button
             variant="primary"
@@ -176,8 +187,8 @@ export default function IntelligencePage() {
             <span className="text-success"><strong>{healthy}</strong> healthy</span>
             <span className="text-muted">Checked {formatTime(graph?.reconciledAt)}</span>
             <span className="ml-auto">
-              <StatusBadge tone={assistant?.ready ? "success" : "warning"}>
-                {assistant?.ready ? "Assistant ready" : "Assistant not configured"}
+              <StatusBadge tone={hostEvidence?.ready ? "success" : "warning"}>
+                {hostEvidence?.ready ? "Host evidence ready" : "Host evidence unavailable"}
               </StatusBadge>
             </span>
           </div>
@@ -212,10 +223,11 @@ export default function IntelligencePage() {
               <main className="min-w-0">
                 <ResolutionSurface
                   path={selectedPath}
-                  assistantReady={Boolean(assistant?.ready)}
-                  onFix={() => askAssistantToFix(selectedPath)}
+                  onFix={() => investigate(selectedPath)}
                   onRescan={() => refresh(true)}
                   loading={loading}
+                  investigating={investigating}
+                  investigation={investigation?.domain === selectedPath.domain ? investigation : null}
                 />
               </main>
             )}
@@ -228,16 +240,18 @@ export default function IntelligencePage() {
 
 function ResolutionSurface({
   path,
-  assistantReady,
   onFix,
   onRescan,
   loading,
+  investigating,
+  investigation,
 }: {
   path: ServicePath;
-  assistantReady: boolean;
   onFix: () => void;
   onRescan: () => void;
   loading: boolean;
+  investigating: boolean;
+  investigation: IncidentInvestigation | null;
 }) {
   const inspection = path.inspection;
   const isHealthy = path.verification.status === "passed";
@@ -286,17 +300,17 @@ function ResolutionSurface({
 
           <div className="mt-4 flex flex-col gap-3 border border-accent/35 bg-accent/[0.035] p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-semibold">Let GroundControl finish the investigation</p>
+              <p className="text-sm font-semibold">Resolve this incident</p>
               <p className="mt-1 text-[11px] text-muted">
-                It will inspect the live host, identify the exact target, and present any mutation for approval.
+                GroundControl locks the investigation to this endpoint and refuses an ambiguous deployment target.
               </p>
             </div>
-            {assistantReady ? (
-              <Button variant="primary" onClick={onFix} leadingIcon={<Wrench size={14} />}>Fix this</Button>
-            ) : (
-              <a href="/settings?tab=ai" className="gc-button gc-button--primary">Configure assistant</a>
-            )}
+            <Button variant="primary" onClick={onFix} disabled={investigating} leadingIcon={<Wrench size={14} />}>
+              {investigating ? "Investigating…" : "Investigate"}
+            </Button>
           </div>
+
+          {investigation && <IncidentResult investigation={investigation} />}
 
           <details className="mt-4 border border-border">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-medium">
@@ -330,10 +344,37 @@ function ResolutionSurface({
       ) : (
         <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <p className="text-sm text-muted">This endpoint responded, but its expected customer outcome has not been configured.</p>
-          <Button onClick={onFix} leadingIcon={<Sparkles size={13} />}>Inspect with assistant</Button>
+          <Button onClick={onFix} leadingIcon={<SearchCheck size={13} />}>Inspect path</Button>
         </div>
       )}
     </section>
+  );
+}
+
+function IncidentResult({ investigation }: { investigation: IncidentInvestigation }) {
+  const target = investigation.target;
+  return (
+    <div className="mt-4 border border-border">
+      <div className="grid gap-px bg-border md:grid-cols-3">
+        {(["Problem", "Fix", "Verify"] as const).map((label) => (
+          <div key={label} className="bg-card p-4">
+            <p className="gc-eyebrow">{label}</p>
+            <p className="mt-2 text-xs leading-relaxed">{investigation[label.toLowerCase() as "problem" | "fix" | "verify"]}</p>
+          </div>
+        ))}
+      </div>
+      {target && (
+        <div className="border-t border-border p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div><p className="text-xs font-semibold">{target.deploymentName}</p><p className="mt-1 font-mono text-[10px] text-muted">{target.deploymentSlug}</p></div>
+            <a href={`/deployments/${target.deploymentSlug}`} className="gc-button">Open deployment</a>
+          </div>
+          <p className="mt-3 break-all font-mono text-[10px] text-muted">{target.composePath || target.sourcePath || "Compose source not discovered"} · {target.composeServices.join(", ") || "No service resolved"} · {target.proxyRoute || "No route resolved"}</p>
+          {investigation.action && <Notice className="mt-4" tone="warning" title={`Approval required · ${investigation.action.title}`}>Exact target: {investigation.action.projectSlug}. Risk: {investigation.action.risk}. Rollback: {investigation.action.rollback}.</Notice>}
+        </div>
+      )}
+      {investigation.uncertainty && investigation.uncertainty.length > 0 && <div className="border-t border-border p-3 text-[10px] text-muted">Uncertainty: {investigation.uncertainty.join(" ")}</div>}
+    </div>
   );
 }
 
