@@ -22,12 +22,18 @@ export async function GET(req: NextRequest) {
     }
     const logFile = `/tmp/gc-redeploy-${slug}.log`;
     const vps = await getActiveVps();
-    const result = await execOnTargetStrict(
-      `tail -n 200 ${shQuote(logFile)} 2>/dev/null || echo ""`,
-      vps
-    );
+    const [result, modified] = await Promise.all([
+      execOnTargetStrict(`tail -n 200 ${shQuote(logFile)} 2>/dev/null || echo ""`, vps),
+      execOnTargetStrict(`stat -c %Y ${shQuote(logFile)} 2>/dev/null || echo 0`, vps),
+    ]);
     const parsed = parseDetachedComposeRedeployLog(result.stdout || "");
-    const { lines, status, error, exitCode } = parsed;
+    const { lines, exitCode } = parsed;
+    let { status, error } = parsed;
+    const modifiedAt = Number(modified.stdout.trim() || 0) * 1000;
+    if (status === "running" && modifiedAt > 0 && Date.now() - modifiedAt > 10 * 60 * 1000) {
+      status = "failed";
+      error = "Deployment run stalled: no new execution evidence was recorded for 10 minutes.";
+    }
 
     // Reconcile the durable release records after a self-hosted detached
     // redeploy. This is idempotent and only advances the newest in-flight run.
