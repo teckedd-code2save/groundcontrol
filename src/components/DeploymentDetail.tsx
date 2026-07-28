@@ -86,7 +86,7 @@ type DeploymentDetailRecord = {
   identitySource?: string;
 };
 
-type Tab = "manage" | "environment" | "releases";
+type Tab = "manage" | "environment" | "releases" | "deploy";
 
 async function readJson(response: Response) {
   try { return await response.json(); } catch { return {}; }
@@ -146,9 +146,44 @@ export default function DeploymentDetail({
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    const resolved = initialTab === "environment" || initialTab === "releases" ? initialTab as Tab : "manage";
+    const resolved = ["environment", "releases", "deploy"].includes(initialTab || "") ? initialTab as Tab : "manage";
     setTab(resolved);
   }, [initialTab]);
+
+  useEffect(() => {
+    const latest = deployment?.runtimeEvents?.[0];
+    if (!latest || redeployStatus !== "idle") return;
+    setRedeployLog((latest.output || "").split("\n").filter(Boolean));
+    if (latest.status === "running") setRedeployStatus("deploying");
+    else if (latest.status === "success") setRedeployStatus("success");
+    else if (latest.status === "failed") setRedeployStatus("failed");
+  }, [deployment, redeployStatus]);
+
+  useEffect(() => {
+    if (redeployStatus !== "deploying" || !deployment?.legacyProjectSlug || busy) return;
+    let disposed = false;
+    const reconcile = async () => {
+      try {
+        const response = await fetch(`/api/projects/compose/log?slug=${encodeURIComponent(deployment.legacyProjectSlug!)}`);
+        if (!response.ok || disposed) return;
+        const data = await readJson(response);
+        setRedeployLog(Array.isArray(data.lines) ? data.lines : []);
+        if (data.status === "success" || data.status === "failed") {
+          setRedeployStatus(data.status);
+          setMessage({
+            tone: data.status === "success" ? "success" : "error",
+            text: data.status === "success"
+              ? "Deployment completed and its running images were verified."
+              : data.error || "Deployment failed. Review the recorded evidence.",
+          });
+          await load();
+        }
+      } catch { /* the durable run remains active and will be retried */ }
+    };
+    void reconcile();
+    const timer = window.setInterval(() => void reconcile(), 3000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [busy, deployment?.legacyProjectSlug, load, redeployStatus]);
 
   async function assignProject(projectGroupId: number | null) {
     if (!deployment) return;
@@ -391,6 +426,7 @@ export default function DeploymentDetail({
     { id: "manage", label: "Manage", detail: "Containers, sources, configuration" },
     { id: "environment", label: "Environment", detail: deployment.envProfile?.name || "Configure" },
     { id: "releases", label: "Releases", detail: `${deployment.releases.length} recent` },
+    { id: "deploy", label: "Deploy", detail: redeployStatus === "deploying" ? "Run active" : deployment.runtimeEvents?.[0]?.status || "Ready" },
   ];
 
   return (
@@ -410,12 +446,6 @@ export default function DeploymentDetail({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {deployment.kind === "compose" && deployment.legacyProjectSlug && (
-              <button type="button" disabled={busy} onClick={() => void redeploy()} className="gc-button gc-button-secondary">
-                <RefreshCw size={14} aria-hidden="true" />
-                {busy ? "Working…" : "Redeploy"}
-              </button>
-            )}
             {deployment.repoUrl && (
               <a href={deployment.repoUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-secondary">
                 <FolderGit2 size={14} aria-hidden="true" />
@@ -440,28 +470,6 @@ export default function DeploymentDetail({
         <Notice className="mt-5" tone={message.tone === "error" ? "danger" : message.tone}>{message.text}</Notice>
       )}
 
-      {redeployStatus !== "idle" && (
-        <DeploymentProgress
-          status={redeployStatus}
-          lines={redeployLog}
-          target={deployment.name}
-          components={containers.map((container) => container.service || container.name)}
-          onShowLog={() => setShowLog(true)}
-        />
-      )}
-
-      {showLog && redeployLog.length > 0 && (
-        <div className="mt-3 border border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="text-[10px] font-mono text-muted">Redeploy log</span>
-            <button onClick={() => setShowLog(false)} className="text-[10px] font-mono text-muted hover:text-foreground">Hide</button>
-          </div>
-          <pre className="max-h-48 overflow-auto p-3 font-mono text-[10px] leading-relaxed text-muted whitespace-pre-wrap">
-            {redeployLog.join("\n")}
-          </pre>
-        </div>
-      )}
-
       <div className="mt-6 grid gap-6 xl:grid-cols-[220px_minmax(0,1fr)]">
         <Tabs<Tab>
           label="Deployment sections"
@@ -473,6 +481,37 @@ export default function DeploymentDetail({
         />
 
         <main className="min-w-0">
+          {tab === "deploy" && (
+            <div className="space-y-5">
+              <section className="border border-border bg-card p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="gc-eyebrow">Delivery</p>
+                    <h2 className="mt-2 text-lg font-semibold">Deploy this workload</h2>
+                    <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">Resolve environment, validate Compose, pull images, recreate the runtime and verify it as one recorded run.</p>
+                  </div>
+                  {deployment.kind === "compose" && deployment.legacyProjectSlug && (
+                    <button type="button" disabled={busy || redeployStatus === "deploying"} onClick={() => void redeploy()} className="gc-button gc-button-primary">
+                      <RefreshCw size={14} />{redeployStatus === "deploying" ? "Run active" : busy ? "Starting…" : "Redeploy"}
+                    </button>
+                  )}
+                </div>
+              </section>
+              {redeployStatus !== "idle"
+                ? <DeploymentProgress status={redeployStatus} lines={redeployLog} target={deployment.name} components={containers.map((container) => container.service || container.name)} onShowLog={() => setShowLog(true)} />
+                : <Notice tone="neutral">No active deployment run. Recorded runs are shown below.</Notice>}
+              {showLog && redeployLog.length > 0 && (
+                <div className="border border-border bg-card">
+                  <div className="flex items-center justify-between border-b border-border px-3 py-2"><span className="font-mono text-[10px] text-muted">Run evidence</span><button onClick={() => setShowLog(false)} className="font-mono text-[10px] text-muted">Hide</button></div>
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 font-mono text-[10px] text-muted">{redeployLog.join("\n")}</pre>
+                </div>
+              )}
+              <section className="border border-border bg-card">
+                <div className="border-b border-border px-5 py-4"><p className="gc-eyebrow">Run history</p><h2 className="mt-1 text-base font-medium">Recorded deployment activity</h2></div>
+                <div className="divide-y divide-border">{(deployment.runtimeEvents || []).length > 0 ? deployment.runtimeEvents!.map((event) => <RuntimeEvent key={event.id} event={event} />) : <p className="px-5 py-6 text-xs text-muted">No deployment runs recorded.</p>}</div>
+              </section>
+            </div>
+          )}
           {/* ===== MANAGE TAB ===== */}
           {tab === "manage" && (
             <div className="space-y-6">
@@ -758,15 +797,17 @@ function DeploymentProgress({
   components: string[];
   onShowLog: () => void;
 }) {
+  const configComplete = lines.some((line) => line.includes("[validate] Effective Compose configuration OK"));
+  const pullComplete = lines.some((line) => line.includes("[pull]"));
   const deployStarted = lines.some((line) => line.includes("[deploy] Starting"));
   const deployComplete = lines.some((line) => line.includes("[deploy] Docker Compose recreation completed"));
   const verifyStarted = lines.some((line) => line.includes("[verify] Checking"));
   const verifyComplete = status === "success";
   const failed = status === "failed";
   const steps = [
-    { label: "Environment resolved", done: true, active: false },
-    { label: "Compose configuration validated", done: true, active: false },
-    { label: "Images pulled", done: true, active: false },
+    { label: "Environment resolved", done: configComplete, active: !configComplete && !failed },
+    { label: "Compose configuration validated", done: configComplete, active: false },
+    { label: "Images pulled", done: pullComplete, active: configComplete && !pullComplete && !failed },
     { label: "Containers recreated", done: deployComplete, active: deployStarted && !deployComplete && !failed },
     { label: "Runtime images verified", done: verifyComplete, active: verifyStarted && !verifyComplete && !failed },
   ];
