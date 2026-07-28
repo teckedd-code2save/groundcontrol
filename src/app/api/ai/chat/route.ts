@@ -116,6 +116,14 @@ interface RequestBody {
   message?: string;
   confirmedTool?: ConfirmedTool;
   guideContext?: { guideSlug: string; stepId?: string };
+  incidentContext?: {
+    domain: string;
+    deploymentSlug: string;
+    sourcePath?: string | null;
+    composePath?: string | null;
+    repository?: string | null;
+    deployedCommit?: string | null;
+  };
 }
 
 const encoder = new TextEncoder();
@@ -144,7 +152,7 @@ export async function POST(req: NextRequest) {
     const user = requireAuth(req);
 
     const body = (await req.json()) as RequestBody;
-    const { threadId: existingThreadId, message, confirmedTool, guideContext } = body;
+    const { threadId: existingThreadId, message, confirmedTool, guideContext, incidentContext } = body;
 
     const { provider, apiKey } = getActiveAi();
     if (!apiKey) {
@@ -194,6 +202,37 @@ export async function POST(req: NextRequest) {
 
           const evidenceLedger = await buildAiEvidenceLedger(threadId).catch(() => "");
           const parts = [SYSTEM_PROMPT];
+          if (incidentContext) {
+            const domain = String(incidentContext.domain || "").trim().toLowerCase();
+            const deploymentSlug = String(incidentContext.deploymentSlug || "").trim();
+            if (!domain || !deploymentSlug) throw new Error("Incident target is incomplete.");
+            const { prisma } = await import("@/lib/prisma");
+            const lockedDeployment = await prisma.enrolledDeployment.findUnique({
+              where: { slug: deploymentSlug },
+              select: { slug: true, sourcePath: true, composePath: true },
+            });
+            if (!lockedDeployment) throw new Error("The locked incident deployment no longer exists.");
+            if (
+              incidentContext.sourcePath &&
+              lockedDeployment.sourcePath &&
+              incidentContext.sourcePath !== lockedDeployment.sourcePath
+            ) {
+              throw new Error("Incident source identity changed. Refresh Intelligence before continuing.");
+            }
+            parts.unshift(
+              `INCIDENT TARGET LOCK — this turn belongs only to:\n` +
+              `Domain: ${domain}\nDeployment: ${deploymentSlug}\n` +
+              `Source path: ${lockedDeployment.sourcePath || "unresolved"}\n` +
+              `Compose path: ${lockedDeployment.composePath || incidentContext.composePath || "unresolved"}\n` +
+              `Repository: ${incidentContext.repository || "unresolved"}\n` +
+              `Deployed commit: ${incidentContext.deployedCommit || "unresolved"}\n\n` +
+              `Do not select, inspect, mutate, or propose an action for another deployment. ` +
+              `If any tool resolves a different slug or path, reject that result and stop. ` +
+              `Investigate this deployment evidence-first. Runtime-only failures use the smallest typed reversible action. ` +
+              `Repository, Compose, build, migration, dependency, or repository-managed proxy defects must use exact-revision source reading, Daytona reproduction and validation, then a confirmation-gated PR. ` +
+              `Never claim recovery until verify_public_endpoint passes for https://${domain}/.`
+            );
+          }
           if (capabilityPreamble) parts.unshift(capabilityPreamble);
           if (runtimePreamble) parts.unshift(runtimePreamble);
           if (guidePreamble) parts.unshift(guidePreamble);

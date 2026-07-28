@@ -79,9 +79,24 @@ type IncidentInvestigation = {
     containers: string[];
     runtimeStatus: string;
     proxyRoute?: string | null;
+    repository?: string | null;
+    deployedCommit?: string | null;
   };
   action?: { projectSlug: string; title: string; risk: string; rollback: string } | null;
   uncertainty?: string[];
+};
+
+type AgentToolEvent = {
+  name: string;
+  status: "running" | "success" | "error" | "pending";
+  output?: string;
+  args?: Record<string, unknown>;
+};
+
+type AgentConfirmation = {
+  name: string;
+  args: Record<string, unknown>;
+  description: string;
 };
 
 export default function IntelligencePage() {
@@ -91,11 +106,18 @@ export default function IntelligencePage() {
   const [error, setError] = useState<string | null>(null);
   const [investigation, setInvestigation] = useState<IncidentInvestigation | null>(null);
   const [investigating, setInvestigating] = useState(false);
+  const [showHealthy, setShowHealthy] = useState(false);
+  const [agentText, setAgentText] = useState("");
+  const [agentTools, setAgentTools] = useState<AgentToolEvent[]>([]);
+  const [agentConfirm, setAgentConfirm] = useState<AgentConfirmation | null>(null);
+  const [agentThreadId, setAgentThreadId] = useState<number | null>(null);
 
   const paths = useMemo(() => graph?.paths || [], [graph?.paths]);
+  const incidentPaths = useMemo(() => paths.filter((path) => path.verification.status !== "passed"), [paths]);
+  const visiblePaths = showHealthy ? paths : incidentPaths;
   const selectedPath = useMemo(
-    () => paths.find((path) => path.domain === selectedDomain) || paths[0] || null,
-    [paths, selectedDomain]
+    () => visiblePaths.find((path) => path.domain === selectedDomain) || visiblePaths[0] || null,
+    [visiblePaths, selectedDomain]
   );
 
   const refresh = useCallback(async (scan = false) => {
@@ -116,6 +138,10 @@ export default function IntelligencePage() {
         nextPaths.some((path) => path.domain === current) ? current : nextPaths[0]?.domain || ""
       );
       setInvestigation(null);
+      setAgentText("");
+      setAgentTools([]);
+      setAgentConfirm(null);
+      setAgentThreadId(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GroundControl could not inspect this host.");
     } finally {
@@ -143,9 +169,116 @@ export default function IntelligencePage() {
       });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || "GroundControl could not resolve this incident.");
-      setInvestigation(data as IncidentInvestigation);
+      const resolved = data as IncidentInvestigation;
+      setInvestigation(resolved);
+      if (resolved.status === "resolved" && resolved.target) {
+        await runIncidentAgent(resolved, path);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GroundControl could not resolve this incident.");
+    } finally {
+      setInvestigating(false);
+    }
+  }
+
+  async function runIncidentAgent(
+    resolved: IncidentInvestigation,
+    path: ServicePath,
+    confirmedTool?: { name: string; args: Record<string, unknown> }
+  ) {
+    setInvestigating(true);
+    if (!confirmedTool) {
+      setAgentText("");
+      setAgentTools([]);
+      setAgentConfirm(null);
+    } else {
+      setAgentConfirm(null);
+    }
+    const target = resolved.target!;
+    const body: Record<string, unknown> = {
+      threadId: agentThreadId,
+      incidentContext: {
+        domain: resolved.domain,
+        deploymentSlug: target.deploymentSlug,
+        sourcePath: target.sourcePath,
+        composePath: target.composePath,
+        repository: target.repository,
+        deployedCommit: target.deployedCommit,
+      },
+    };
+    if (confirmedTool) body.confirmedTool = confirmedTool;
+    else {
+      body.message = [
+        `Resolve the production failure for https://${resolved.domain}/.`,
+        `Observed boundary: ${path.inspection?.failureBoundary || "unresolved"}.`,
+        `Observed cause: ${path.inspection?.cause || path.inspection?.summary || resolved.problem}.`,
+        `Configured upstream: ${path.upstream || target.proxyRoute || "unresolved"}.`,
+        "Act as the dedicated incident SRE. Investigate the exact locked deployment only.",
+        "For Compose failures, inspect the declared dependency chain, all containers including exited one-shots, bounded failure logs, environment schema, route and recent release.",
+        "If source-related, reproduce and validate the smallest repair in Daytona and prepare the confirmation-gated PR.",
+        "If runtime-only, prepare the smallest typed reversible action.",
+        `Verify https://${resolved.domain}/ externally before reporting recovery.`,
+      ].join("\n");
+    }
+    try {
+      const response = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "The incident agent could not start.");
+      }
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let answer = confirmedTool ? agentText : "";
+      const handleEvent = (event: Record<string, unknown>) => {
+        if (event.type === "thread") setAgentThreadId(Number(event.threadId));
+        if (event.type === "text") {
+          answer += String(event.delta || "");
+          setAgentText(answer);
+        }
+        if (event.type === "confirm") {
+          setAgentConfirm({
+            name: String(event.name || ""),
+            args: (event.args || {}) as Record<string, unknown>,
+            description: String(event.description || "Approval required"),
+          });
+        }
+        if (event.type === "tool") {
+          const next: AgentToolEvent = {
+            name: String(event.name || ""),
+            status: String(event.status || "running") as AgentToolEvent["status"],
+            output: typeof event.output === "string" ? event.output : undefined,
+            args: (event.args || {}) as Record<string, unknown>,
+          };
+          setAgentTools((current) => {
+            const index = current.findIndex((item) => item.name === next.name && item.status === "running");
+            if (index < 0) return [...current, next];
+            const copy = [...current];
+            copy[index] = next;
+            return copy;
+          });
+        }
+        if (event.type === "error") throw new Error(String(event.error || "Incident agent failed."));
+      };
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let newline;
+          while ((newline = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (line) handleEvent(JSON.parse(line));
+          }
+        }
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Incident agent failed.");
     } finally {
       setInvestigating(false);
     }
@@ -171,20 +304,23 @@ export default function IntelligencePage() {
 
       {error && <Notice className="mt-5" tone="danger" title="Check failed">{error}</Notice>}
 
-      {paths.length === 0 && !loading ? (
+      {incidentPaths.length === 0 && !loading ? (
         <EmptyState
           className="mt-6"
           icon={<Activity size={22} />}
-          title="No public endpoints found"
-          description="Check the host to discover proxy routes and test them from the public internet."
+          title="No broken deployments"
+          description="No customer-facing failure currently needs an investigation."
           action={<Button variant="primary" onClick={() => refresh(true)} leadingIcon={<SearchCheck size={14} />}>Check host</Button>}
         />
-      ) : paths.length > 0 ? (
+      ) : incidentPaths.length > 0 ? (
         <>
           <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-border py-3 text-xs">
-            <span><strong className="text-foreground">{paths.length}</strong> endpoints</span>
+            <span><strong className="text-foreground">{incidentPaths.length}</strong> incidents</span>
             <span className="text-error"><strong>{failed}</strong> failing</span>
             <span className="text-success"><strong>{healthy}</strong> healthy</span>
+            <button type="button" onClick={() => setShowHealthy((value) => !value)} className="text-muted hover:text-foreground">
+              {showHealthy ? "Hide healthy" : `View healthy (${healthy})`}
+            </button>
             <span className="text-muted">Checked {formatTime(graph?.reconciledAt)}</span>
             <span className="ml-auto">
               <StatusBadge tone={hostEvidence?.ready ? "success" : "warning"}>
@@ -193,18 +329,27 @@ export default function IntelligencePage() {
             </span>
           </div>
 
-          <div className="mt-5 grid min-w-0 gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+          <div className={`mt-5 grid min-w-0 gap-5 ${investigation ? "lg:grid-cols-[210px_minmax(0,1fr)]" : "lg:grid-cols-[300px_minmax(0,1fr)]"}`}>
             <aside className="min-w-0 border border-border bg-card lg:sticky lg:top-20 lg:self-start">
               <div className="border-b border-border px-4 py-3">
-                <p className="text-xs font-semibold">Endpoints</p>
-                <p className="mt-1 text-[10px] text-muted">Failures first</p>
+                <p className="text-xs font-semibold">{investigation ? "Switch incident" : "Broken deployments"}</p>
+                <p className="mt-1 text-[10px] text-muted">Customer impact first</p>
               </div>
               <div className="max-h-[620px] divide-y divide-border overflow-y-auto">
-                {[...paths].sort(pathPriority).map((path) => (
+                {[...visiblePaths].sort(pathPriority).map((path) => (
                   <button
                     key={path.domain}
                     type="button"
-                    onClick={() => setSelectedDomain(path.domain)}
+                    onClick={() => {
+                      setSelectedDomain(path.domain);
+                      if (investigation?.domain !== path.domain) {
+                        setInvestigation(null);
+                        setAgentText("");
+                        setAgentTools([]);
+                        setAgentConfirm(null);
+                        setAgentThreadId(null);
+                      }
+                    }}
                     className={`w-full px-4 py-3 text-left transition-colors ${
                       selectedPath?.domain === path.domain ? "bg-accent/[0.08]" : "hover:bg-white/[0.025]"
                     }`}
@@ -228,6 +373,11 @@ export default function IntelligencePage() {
                   loading={loading}
                   investigating={investigating}
                   investigation={investigation?.domain === selectedPath.domain ? investigation : null}
+                  agentText={agentText}
+                  agentTools={agentTools}
+                  agentConfirm={agentConfirm}
+                  onApproveAgent={() => agentConfirm && investigation && runIncidentAgent(investigation, selectedPath, { name: agentConfirm.name, args: agentConfirm.args })}
+                  onExitFocus={() => setInvestigation(null)}
                 />
               </main>
             )}
@@ -245,6 +395,11 @@ function ResolutionSurface({
   loading,
   investigating,
   investigation,
+  agentText,
+  agentTools,
+  agentConfirm,
+  onApproveAgent,
+  onExitFocus,
 }: {
   path: ServicePath;
   onFix: () => void;
@@ -252,6 +407,11 @@ function ResolutionSurface({
   loading: boolean;
   investigating: boolean;
   investigation: IncidentInvestigation | null;
+  agentText: string;
+  agentTools: AgentToolEvent[];
+  agentConfirm: AgentConfirmation | null;
+  onApproveAgent: () => void;
+  onExitFocus: () => void;
 }) {
   const inspection = path.inspection;
   const isHealthy = path.verification.status === "passed";
@@ -310,7 +470,18 @@ function ResolutionSurface({
             </Button>
           </div>
 
-          {investigation && <IncidentResult investigation={investigation} />}
+          {investigation && (
+            <>
+              <IncidentResult investigation={investigation} onExitFocus={onExitFocus} />
+              <IncidentAgent
+                tools={agentTools}
+                text={agentText}
+                confirmation={agentConfirm}
+                running={investigating}
+                onApprove={onApproveAgent}
+              />
+            </>
+          )}
 
           <details className="mt-4 border border-border">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-medium">
@@ -351,7 +522,7 @@ function ResolutionSurface({
   );
 }
 
-function IncidentResult({ investigation }: { investigation: IncidentInvestigation }) {
+function IncidentResult({ investigation, onExitFocus }: { investigation: IncidentInvestigation; onExitFocus: () => void }) {
   const target = investigation.target;
   return (
     <div className="mt-4 border border-border">
@@ -367,7 +538,10 @@ function IncidentResult({ investigation }: { investigation: IncidentInvestigatio
         <div className="border-t border-border p-4">
           <div className="flex items-center justify-between gap-3">
             <div><p className="text-xs font-semibold">{target.deploymentName}</p><p className="mt-1 font-mono text-[10px] text-muted">{target.deploymentSlug}</p></div>
-            <a href={`/deployments/${target.deploymentSlug}`} className="gc-button">Open deployment</a>
+            <div className="flex gap-2">
+              <button type="button" onClick={onExitFocus} className="gc-button gc-button-quiet">Back to incidents</button>
+              <a href={`/deployments/${target.deploymentSlug}?tab=deploy`} className="gc-button">Open deploy run</a>
+            </div>
           </div>
           <p className="mt-3 break-all font-mono text-[10px] text-muted">{target.composePath || target.sourcePath || "Compose source not discovered"} · {target.composeServices.join(", ") || "No service resolved"} · {target.proxyRoute || "No route resolved"}</p>
           {investigation.action && <Notice className="mt-4" tone="warning" title={`Approval required · ${investigation.action.title}`}>Exact target: {investigation.action.projectSlug}. Risk: {investigation.action.risk}. Rollback: {investigation.action.rollback}.</Notice>}
@@ -375,6 +549,57 @@ function IncidentResult({ investigation }: { investigation: IncidentInvestigatio
       )}
       {investigation.uncertainty && investigation.uncertainty.length > 0 && <div className="border-t border-border p-3 text-[10px] text-muted">Uncertainty: {investigation.uncertainty.join(" ")}</div>}
     </div>
+  );
+}
+
+function IncidentAgent({
+  tools,
+  text,
+  confirmation,
+  running,
+  onApprove,
+}: {
+  tools: AgentToolEvent[];
+  text: string;
+  confirmation: AgentConfirmation | null;
+  running: boolean;
+  onApprove: () => void;
+}) {
+  return (
+    <section className="mt-4 border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div>
+          <p className="gc-eyebrow">GroundControl SRE</p>
+          <p className="mt-1 text-xs font-medium">{running ? "Investigating the locked deployment…" : "Investigation evidence"}</p>
+        </div>
+        <StatusBadge tone={running ? "warning" : confirmation ? "warning" : "neutral"}>
+          {running ? "Running" : confirmation ? "Awaiting approval" : "Evidence ready"}
+        </StatusBadge>
+      </div>
+      {tools.length > 0 && (
+        <div className="divide-y divide-border border-b border-border">
+          {tools.map((tool, index) => (
+            <details key={`${tool.name}-${index}`} className="px-4 py-3">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
+                <span className="font-mono">{humanize(tool.name)}</span>
+                <span className={`font-mono text-[9px] uppercase ${tool.status === "success" ? "text-success" : tool.status === "error" ? "text-error" : "text-accent"}`}>{tool.status}</span>
+              </summary>
+              {tool.output && <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap border-l border-border pl-3 font-mono text-[9px] leading-relaxed text-muted">{tool.output}</pre>}
+            </details>
+          ))}
+        </div>
+      )}
+      {text && <div className="whitespace-pre-wrap px-4 py-4 text-xs leading-relaxed text-muted">{text}</div>}
+      {confirmation && (
+        <div className="border-t border-warning/40 bg-warning/[0.04] p-4">
+          <p className="text-xs font-semibold">Approval required</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">{confirmation.description}</p>
+          <Button className="mt-3" variant="primary" disabled={running} onClick={onApprove}>
+            {running ? "Applying…" : `Approve ${humanize(confirmation.name)}`}
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }
 
