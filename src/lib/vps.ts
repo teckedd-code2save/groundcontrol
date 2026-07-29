@@ -186,10 +186,12 @@ export async function execOnVps(
  */
 export function execDetached(
   command: string,
-  outputFile?: string
+  outputFile?: string,
+  options?: { append?: boolean }
 ): void {
+  const redirect = options?.append ? ">>" : ">";
   const wrapped = outputFile
-    ? `nohup sh -c ${shQuote(command)} > ${shQuote(outputFile)} 2>&1 &`
+    ? `nohup sh -c ${shQuote(command)} ${redirect} ${shQuote(outputFile)} 2>&1 &`
     : `nohup sh -c ${shQuote(command)} > /dev/null 2>&1 &`;
   
   const child = spawn(wrapped, [], {
