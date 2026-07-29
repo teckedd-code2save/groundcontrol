@@ -40,6 +40,9 @@ describe("Compose redeploy image verification", () => {
     expect(script).toContain("--force-recreate 'api'");
     expect(script).toContain("[deploy] Starting Docker Compose recreation");
     expect(script).toContain("[deploy] Docker Compose failed to recreate the deployment");
+    expect(script).toContain("[evidence] Compose state after failure");
+    expect(script).toContain("[failure] container={{.Name}}");
+    expect(script).toContain("docker logs --tail 60");
     expect(script).toContain("[verify] Runtime image verification failed");
     expect(script).toContain("[verify] api: expected ghcr.io/acme/api:abc123");
     expect(script.indexOf("[verify]")).toBeLessThan(script.indexOf("__GC_REDEPLOY_STATUS__=success"));
@@ -75,5 +78,17 @@ describe("Compose redeploy image verification", () => {
       error: null,
       exitCode: null,
     });
+  });
+
+  it("prefers exact failed-container evidence over a generic exit code", () => {
+    const parsed = parseDetachedComposeRedeployLog([
+      "[deploy] Starting Docker Compose recreation",
+      "[deploy] Docker Compose failed to recreate the deployment (exit 1)",
+      "[evidence] Compose state after failure",
+      "[failure] container=/api status=running health=unhealthy exit=0 error=",
+      "__GC_REDEPLOY_STATUS__=failed:1",
+    ].join("\n"));
+
+    expect(parsed.error).toBe("[failure] container=/api status=running health=unhealthy exit=0 error=");
   });
 });
