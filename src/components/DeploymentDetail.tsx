@@ -19,6 +19,7 @@ import {
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { ModalSurface } from "@/components/ModalSurface";
 import { Notice, Tabs } from "@/components/ui";
+import { deploymentRunProgress } from "@/lib/operator-progress";
 
 type Group = { id: number; name: string; slug: string; description: string };
 type Release = {
@@ -123,6 +124,9 @@ export default function DeploymentDetail({
   const [redeployLog, setRedeployLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [redeployStatus, setRedeployStatus] = useState<"idle" | "deploying" | "success" | "failed">("idle");
+  const [runFailure, setRunFailure] = useState<string | null>(null);
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [runElapsed, setRunElapsed] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,10 +158,20 @@ export default function DeploymentDetail({
     const latest = deployment?.runtimeEvents?.[0];
     if (!latest || redeployStatus !== "idle") return;
     setRedeployLog((latest.output || "").split("\n").filter(Boolean));
+    setRunFailure(latest.error || null);
+    setRunStartedAt(new Date(latest.createdAt).getTime());
     if (latest.status === "running") setRedeployStatus("deploying");
     else if (latest.status === "success") setRedeployStatus("success");
     else if (latest.status === "failed") setRedeployStatus("failed");
   }, [deployment, redeployStatus]);
+
+  useEffect(() => {
+    if (redeployStatus !== "deploying" || !runStartedAt) return;
+    const update = () => setRunElapsed(Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [redeployStatus, runStartedAt]);
 
   useEffect(() => {
     if (redeployStatus !== "deploying" || !deployment?.legacyProjectSlug || busy) return;
@@ -210,6 +224,9 @@ export default function DeploymentDetail({
   async function redeploy(component?: string) {
     if (!deployment?.legacyProjectSlug) return { success: false };
     setBusy(true);
+    setRunFailure(null);
+    setRunStartedAt(Date.now());
+    setRunElapsed(0);
     setMessage({ tone: "info", text: component ? `Redeploying ${component}…` : "Redeploying the deployment…" });
     try {
       const response = await fetch("/api/projects/compose", {
@@ -234,6 +251,8 @@ export default function DeploymentDetail({
             ? `Missing secrets: ${missingEnvKeys.map((k: string) => { const s = k.indexOf(":"); return s > 0 ? k.slice(s + 1) : k; }).join(", ")}`
             : data.error || "Redeploy failed",
         });
+        setRunFailure(data.error || "Redeploy failed");
+        setRedeployStatus("failed");
         return { success: false, missingEnvKeys };
       }
 
@@ -255,6 +274,7 @@ export default function DeploymentDetail({
               setRedeployLog(lines);
               if (logData.status === "failed") {
                 setRedeployStatus("failed");
+                setRunFailure(typeof logData.error === "string" ? logData.error : "Docker Compose failed.");
                 setMessage({
                   tone: "error",
                   text: typeof logData.error === "string" && logData.error.trim()
@@ -294,6 +314,7 @@ export default function DeploymentDetail({
     } catch (error) {
       setRedeployStatus("failed");
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      setRunFailure(error instanceof Error ? error.message : String(error));
       return { success: false };
     } finally {
       setBusy(false);
@@ -483,32 +504,51 @@ export default function DeploymentDetail({
         <main className="min-w-0">
           {tab === "deploy" && (
             <div className="space-y-5">
-              <section className="border border-border bg-card p-5">
+              <section className="border border-border bg-card">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
+                  <div className="p-5">
                     <p className="gc-eyebrow">Delivery</p>
-                    <h2 className="mt-2 text-lg font-semibold">Deploy this workload</h2>
-                    <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">Resolve environment, validate Compose, pull images, recreate the runtime and verify it as one recorded run.</p>
+                    <h2 className="mt-2 text-lg font-semibold">
+                      {redeployStatus === "deploying" ? "Deployment in progress"
+                        : redeployStatus === "failed" ? "Latest deployment failed"
+                          : redeployStatus === "success" ? "Latest deployment verified"
+                            : "Ready to deploy"}
+                    </h2>
+                    <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
+                      One recorded run resolves environment, validates Compose, pulls images, recreates the runtime and verifies the running images.
+                    </p>
                   </div>
                   {deployment.kind === "compose" && deployment.legacyProjectSlug && (
-                    <button type="button" disabled={busy || redeployStatus === "deploying"} onClick={() => void redeploy()} className="gc-button gc-button-primary">
+                    <button type="button" disabled={busy || redeployStatus === "deploying"} onClick={() => void redeploy()} className="gc-button gc-button-primary m-5">
                       <RefreshCw size={14} />{redeployStatus === "deploying" ? "Run active" : busy ? "Starting…" : "Redeploy"}
                     </button>
                   )}
                 </div>
               </section>
               {redeployStatus !== "idle"
-                ? <DeploymentProgress status={redeployStatus} lines={redeployLog} target={deployment.name} components={containers.map((container) => container.service || container.name)} onShowLog={() => setShowLog(true)} />
+                ? <DeploymentProgress
+                    status={redeployStatus}
+                    lines={redeployLog}
+                    failure={runFailure}
+                    elapsed={runElapsed}
+                    onShowLog={() => setShowLog((value) => !value)}
+                    intelligenceHref={deployment.domain ? `/intelligence?domain=${encodeURIComponent(deployment.domain)}` : "/intelligence"}
+                  />
                 : <Notice tone="neutral">No active deployment run. Recorded runs are shown below.</Notice>}
-              {showLog && redeployLog.length > 0 && (
+              {(showLog || redeployStatus === "failed") && (redeployLog.length > 0 || runFailure) && (
                 <div className="border border-border bg-card">
-                  <div className="flex items-center justify-between border-b border-border px-3 py-2"><span className="font-mono text-[10px] text-muted">Run evidence</span><button onClick={() => setShowLog(false)} className="font-mono text-[10px] text-muted">Hide</button></div>
-                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 font-mono text-[10px] text-muted">{redeployLog.join("\n")}</pre>
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <span className="font-mono text-[10px] uppercase text-muted">Run evidence</span>
+                    {redeployStatus !== "failed" && <button onClick={() => setShowLog(false)} className="font-mono text-[10px] text-muted">Hide</button>}
+                  </div>
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-4 font-mono text-[10px] leading-relaxed text-muted">
+                    {[...redeployLog, runFailure || ""].filter(Boolean).join("\n")}
+                  </pre>
                 </div>
               )}
               <section className="border border-border bg-card">
                 <div className="border-b border-border px-5 py-4"><p className="gc-eyebrow">Run history</p><h2 className="mt-1 text-base font-medium">Recorded deployment activity</h2></div>
-                <div className="divide-y divide-border">{(deployment.runtimeEvents || []).length > 0 ? deployment.runtimeEvents!.map((event) => <RuntimeEvent key={event.id} event={event} />) : <p className="px-5 py-6 text-xs text-muted">No deployment runs recorded.</p>}</div>
+                <div className="divide-y divide-border">{(deployment.runtimeEvents || []).length > 0 ? deployment.runtimeEvents!.slice(0, 8).map((event) => <RuntimeEvent key={event.id} event={event} />) : <p className="px-5 py-6 text-xs text-muted">No deployment runs recorded.</p>}</div>
               </section>
             </div>
           )}
@@ -787,100 +827,82 @@ export default function DeploymentDetail({
 function DeploymentProgress({
   status,
   lines,
-  target,
-  components,
+  failure,
+  elapsed,
   onShowLog,
+  intelligenceHref,
 }: {
   status: "deploying" | "success" | "failed";
   lines: string[];
-  target: string;
-  components: string[];
+  failure?: string | null;
+  elapsed: number;
   onShowLog: () => void;
+  intelligenceHref: string;
 }) {
-  const configComplete = lines.some((line) => line.includes("[validate] Effective Compose configuration OK"));
-  const pullComplete = lines.some((line) => line.includes("[pull]"));
-  const deployStarted = lines.some((line) => line.includes("[deploy] Starting"));
-  const deployComplete = lines.some((line) => line.includes("[deploy] Docker Compose recreation completed"));
-  const verifyStarted = lines.some((line) => line.includes("[verify] Checking"));
-  const verifyComplete = status === "success";
-  const failed = status === "failed";
-  const steps = [
-    { label: "Environment resolved", done: configComplete, active: !configComplete && !failed },
-    { label: "Compose configuration validated", done: configComplete, active: false },
-    { label: "Images pulled", done: pullComplete, active: configComplete && !pullComplete && !failed },
-    { label: "Containers recreated", done: deployComplete, active: deployStarted && !deployComplete && !failed },
-    { label: "Runtime images verified", done: verifyComplete, active: verifyStarted && !verifyComplete && !failed },
-  ];
-  const percent = Math.round((steps.filter((step) => step.done).length / steps.length) * 100);
-  const phases = [
-    { label: "Prepare", state: "complete" },
-    { label: "Recreate", state: failed ? "failed" : deployComplete ? "complete" : "active" },
-    { label: "Verify", state: failed ? "pending" : verifyComplete ? "complete" : verifyStarted ? "active" : "pending" },
-  ];
+  const progress = deploymentRunProgress(status, lines, failure);
 
   return (
-    <section className="mt-5 border border-border bg-card">
-      <div className="grid lg:grid-cols-[180px_minmax(0,1fr)_220px]">
-        <div className="border-b border-border p-4 lg:border-b-0 lg:border-r">
-          <p className="gc-eyebrow">Deployment run</p>
-          <div className="mt-4 space-y-2">
-            {phases.map((phase) => (
-              <div key={phase.label} className={`border px-3 py-2 ${
-                phase.state === "active" ? "border-accent bg-accent/5"
-                  : phase.state === "failed" ? "border-danger/50 bg-danger/5"
-                    : "border-border"
-              }`}>
-                <p className="text-xs font-medium">{phase.label}</p>
-                <p className={`mt-0.5 font-mono text-[9px] uppercase ${
-                  phase.state === "complete" ? "text-success"
-                    : phase.state === "failed" ? "text-danger"
-                      : phase.state === "active" ? "text-accent" : "text-muted"
-                }`}>{phase.state}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="min-w-0 p-5">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <p className="gc-eyebrow">{status === "failed" ? "Deployment stopped" : status === "success" ? "Deployment verified" : "Deploying"}</p>
-              <p className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{percent}%</p>
-            </div>
-            <button type="button" onClick={onShowLog} className="gc-button gc-button-quiet">View evidence</button>
-          </div>
-          <div className="mt-4 h-1.5 bg-border" aria-label={`${percent}% complete`}>
-            <div
-              className={`h-full transition-[width] ${failed ? "bg-danger" : "bg-accent"}`}
-              style={{ width: `${percent}%` }}
-            />
-          </div>
-          <div className="mt-4 divide-y divide-border border-y border-border">
-            {steps.map((step) => (
-              <div key={step.label} className="flex items-center justify-between gap-3 py-2 text-xs">
-                <span className={step.active ? "text-foreground" : "text-muted"}>{step.label}</span>
-                <span className={`font-mono text-[9px] uppercase ${
-                  step.done ? "text-success" : step.active ? "text-accent" : failed ? "text-muted" : "text-muted"
-                }`}>{step.done ? "complete" : step.active ? "running" : failed ? "not reached" : "pending"}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <aside className="border-t border-border p-4 lg:border-l lg:border-t-0">
-          <p className="gc-eyebrow">Target</p>
-          <p className="mt-2 truncate text-sm font-medium">{target}</p>
-          <p className="mt-1 font-mono text-[9px] uppercase text-muted">VPS deployment</p>
-          <div className="mt-4 border-t border-border pt-3">
-            <p className="font-mono text-[9px] uppercase text-muted">Components</p>
-            <p className="mt-2 text-xs leading-relaxed text-muted">
-              {[...new Set(components)].filter(Boolean).join(", ") || "Resolved from Compose"}
+    <section className="border border-border bg-card" aria-live="polite">
+      <div className={`border-b px-5 py-4 ${status === "failed" ? "border-error/40 bg-error/[0.035]" : "border-border"}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="gc-eyebrow">Latest run</p>
+            <h2 className="mt-1 text-base font-semibold">{progress.summary}</h2>
+            <p className="mt-1 font-mono text-[10px] text-muted">
+              {status === "deploying" ? `${formatRunElapsed(elapsed)} elapsed` : status === "success" ? "All recorded stages completed" : progress.evidence || "The run stopped before evidence was recorded."}
             </p>
           </div>
-        </aside>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={onShowLog} className="gc-button gc-button-quiet">
+              {status === "failed" ? "Review evidence" : "View evidence"}
+            </button>
+            {status === "failed" && <Link href={intelligenceHref} className="gc-button gc-button-primary">Investigate failure</Link>}
+          </div>
+        </div>
+        {status === "deploying" && (
+          <div className="mt-4 h-1 overflow-hidden bg-border" aria-label={`${progress.percent || 0}% complete`}>
+            <div className="h-full bg-accent motion-safe:transition-all" style={{ width: `${Math.max(8, progress.percent || 0)}%` }} />
+          </div>
+        )}
+      </div>
+
+      <div className="grid divide-y divide-border sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+        {progress.stages.map((stage, index) => (
+          <div key={stage.id} className={`relative p-4 ${
+            stage.status === "failed" ? "bg-error/[0.035]"
+              : stage.status === "running" ? "bg-accent/[0.04]" : ""
+          }`}>
+            <div className="flex items-center gap-2">
+              <span className={`flex h-5 w-5 items-center justify-center border font-mono text-[9px] ${
+                stage.status === "complete" ? "border-success/50 text-success"
+                  : stage.status === "failed" ? "border-error/50 text-error"
+                    : stage.status === "running" ? "border-accent text-accent" : "border-border text-muted"
+              }`}>
+                {stage.status === "complete" ? "✓" : index + 1}
+              </span>
+              <span className={`text-[11px] font-medium ${stage.status === "running" || stage.status === "failed" ? "text-foreground" : "text-muted"}`}>
+                {stage.label}
+              </span>
+            </div>
+            <p className={`mt-2 font-mono text-[9px] uppercase ${
+              stage.status === "complete" ? "text-success"
+                : stage.status === "failed" ? "text-error"
+                  : stage.status === "running" ? "text-accent" : "text-muted"
+            }`}>
+              {stage.status}
+            </p>
+            {stage.status === "running" && <div className="absolute inset-x-0 bottom-0 h-0.5 bg-accent motion-safe:animate-pulse" />}
+          </div>
+        ))}
       </div>
     </section>
   );
+}
+
+function formatRunElapsed(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
 function ManagementLink({ icon, title, detail, href, onClick }: { icon: React.ReactNode; title: string; detail: string; href?: string; onClick?: () => void }) {
@@ -892,7 +914,9 @@ function ManagementLink({ icon, title, detail, href, onClick }: { icon: React.Re
 
 function RuntimeEvent({ event }: { event: { id: number; status: string; output?: string | null; error?: string | null; createdAt: string } }) {
   const [expanded, setExpanded] = useState(false);
-  const summary = event.error || event.output?.split("\n").filter(Boolean).slice(-1)[0] || "Lifecycle action recorded";
+  const status = event.status === "running" ? "deploying" : event.status === "success" ? "success" : "failed";
+  const progress = deploymentRunProgress(status, (event.output || "").split("\n").filter(Boolean), event.error);
+  const summary = progress.evidence || event.error || "Lifecycle action recorded";
   const detail = [event.error, event.output]
     .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
     .join("\n\n");
@@ -901,7 +925,7 @@ function RuntimeEvent({ event }: { event: { id: number; status: string; output?:
     <div className="px-5 py-3">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <span className="text-xs font-medium">Compose {event.status}</span>
+          <span className="text-xs font-medium">{progress.summary}</span>
           <p className={`mt-1 font-mono text-[9px] ${event.status === "failed" ? "text-error" : "text-muted"}`}>
             {summary}
           </p>
