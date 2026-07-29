@@ -56,6 +56,21 @@ function effectiveComposeError(output: string): HttpError {
   );
 }
 
+async function recordRedeployEvidence(
+  logFile: string,
+  line: string,
+  vps: Awaited<ReturnType<typeof getActiveVps>>,
+  reset = false
+): Promise<void> {
+  const command = reset
+    ? `: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)} && printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`
+    : `printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`;
+  const result = await execOnTargetStrict(command, vps);
+  if (result.code !== 0) {
+    throw new HttpError(result.stderr || "GroundControl could not record deployment progress.", 500);
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
@@ -139,6 +154,9 @@ export async function GET(req: NextRequest) {
  *   stop    — handled by separate compose-down endpoint
  */
 export async function POST(req: NextRequest) {
+  let redeployLogFile: string | null = null;
+  let redeployVps: Awaited<ReturnType<typeof getActiveVps>> = null;
+  let redeployPhase = "prepare";
   try {
     requireAuth(req);
     const {
@@ -162,6 +180,16 @@ export async function POST(req: NextRequest) {
     const composePathError = validateRequestedComposePath(target.projectPath, requestedComposePath);
     if (composePathError) return NextResponse.json({ error: composePathError }, { status: 400 });
     const vps = await getActiveVps();
+    if (action === "redeploy") {
+      redeployLogFile = `/tmp/gc-redeploy-${projectSlug}.log`;
+      redeployVps = vps;
+      await recordRedeployEvidence(
+        redeployLogFile,
+        "[prepare] Deployment request accepted",
+        vps,
+        true
+      );
+    }
     const composeFile = await resolveComposeFile(target.projectPath, vps, requestedComposePath || undefined);
     if (!composeFile) {
       return NextResponse.json({ error: "No Compose file was found for this deployment." }, { status: 404 });
@@ -228,6 +256,14 @@ export async function POST(req: NextRequest) {
 
     const startedAt = Date.now();
     // 1. Prepare the deployment's configured environment
+    redeployPhase = "configuration";
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      project
+        ? "[configuration] Loading the deployment's managed configuration"
+        : "[configuration] No managed configuration is linked; using the Compose defaults",
+      vps
+    );
     if (project) {
       await applyEnvToDeployment(
         { ...project, path: target.projectPath },
@@ -239,9 +275,20 @@ export async function POST(req: NextRequest) {
         }
       );
     }
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      "[configuration] Deployment configuration ready",
+      vps
+    );
 
     // 2. Resolve the exact effective model once. Pull, recreation and runtime
     //    verification below all use this same base file and managed overrides.
+    redeployPhase = "compose";
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      "[compose] Validating the effective Compose configuration",
+      vps
+    );
     const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
     let configCheck = await execOnTargetStrict(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
@@ -272,12 +319,34 @@ export async function POST(req: NextRequest) {
     if (configCheck.code !== 0 || !configCheck.stdout.trim()) {
       throw effectiveComposeError(configCheck.stderr || configCheck.stdout || "configuration could not be resolved");
     }
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      `[compose] Effective Compose configuration valid (${composeFile})`,
+      vps
+    );
     const selectedServices = Array.isArray(services) ? services.map((service) => String(service)) : undefined;
     const expectedImages = expectedComposeImages(configCheck.stdout, selectedServices);
 
     // 3. Pull from that same effective model. Targeted image changes must pull
     //    successfully; full redeploys remain tolerant of build-only services.
+    redeployPhase = "registry";
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      "[registry] Authenticating configured container registry",
+      vps
+    );
     await ensureGithubRegistryLogin(vps);
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      "[registry] Registry authentication ready",
+      vps
+    );
+    redeployPhase = "pull";
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      "[pull] Pulling images from the effective Compose configuration",
+      vps
+    );
     const pullResult = await execOnTargetStrict(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
       vps
@@ -288,9 +357,17 @@ export async function POST(req: NextRequest) {
         400
       );
     }
+    await recordRedeployEvidence(
+      redeployLogFile!,
+      pullResult.code === 0
+        ? "[pull] Images resolved"
+        : "[pull] Image pull completed with build-only services skipped",
+      vps
+    );
 
     // 4. A pull is not a deployment. Force recreation so the running container
     //    cannot retain the previous :local image.
+    redeployPhase = "recreate";
     const deployArgs = `up -d --remove-orphans --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`;
     let result: { stdout: string; stderr: string; code: number };
     let detached = false;
@@ -304,15 +381,19 @@ export async function POST(req: NextRequest) {
         deployArgs,
         expectedImages,
       });
-      const logFile = `/tmp/gc-redeploy-${projectSlug}.log`;
-      await execOnTargetStrict(`: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)}`, vps);
-      const launch = await execDetachedOnTarget(command, logFile, vps);
+      const logFile = redeployLogFile!;
+      const launch = await execDetachedOnTarget(command, logFile, vps, { append: true });
       if (launch.code !== 0) {
         throw new HttpError(launch.stderr || "Could not start detached redeploy.", 500);
       }
       detached = true;
       result = { stdout: `Redeploy initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
     } else {
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[deploy] Starting Docker Compose recreation",
+        vps
+      );
       result = await execOnTargetStrict(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, deployArgs, composeFile)}`,
         vps
@@ -325,6 +406,19 @@ export async function POST(req: NextRequest) {
           code: verification.code,
         };
       }
+      if (result.stdout.trim()) {
+        await recordRedeployEvidence(redeployLogFile!, result.stdout.trim().slice(-8000), vps);
+      }
+      if (result.stderr.trim()) {
+        await recordRedeployEvidence(redeployLogFile!, result.stderr.trim().slice(-8000), vps);
+      }
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        result.code === 0
+          ? "__GC_REDEPLOY_STATUS__=success"
+          : `__GC_REDEPLOY_STATUS__=failed:${result.code || 1}`,
+        vps
+      );
     }
 
     // 5. Record image digest for rollback tracking
@@ -408,6 +502,17 @@ export async function POST(req: NextRequest) {
       changedFields: changedFields.length > 0 ? changedFields : undefined,
     });
   } catch (err: unknown) {
+    if (redeployLogFile) {
+      const detail = err instanceof Error ? err.message : "The deployment request failed.";
+      await recordRedeployEvidence(
+        redeployLogFile,
+        `[failure] phase=${redeployPhase} error=${detail.slice(0, 1000)}`,
+        redeployVps
+      ).then(
+        () => recordRedeployEvidence(redeployLogFile!, "__GC_REDEPLOY_STATUS__=failed:1", redeployVps),
+        () => undefined
+      ).catch(() => undefined);
+    }
     if (err instanceof MissingDeploymentEnvError) {
       return NextResponse.json({
         success: false,
