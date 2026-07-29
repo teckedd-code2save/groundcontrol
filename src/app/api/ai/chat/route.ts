@@ -90,6 +90,10 @@ const SYSTEM_PROMPT =
   `  6) list_projects is for the project root (e.g. /opt); list_deployments is for GroundControl-managed stacks.\n` +
   `- Be honest about limits: destructive/mutating actions and repository writes require explicit user ` +
   `confirmation in the UI — you cannot perform them silently. Propose them, but the user must approve first.\n` +
+  `- Never request approval only in prose. When a concrete mutation is the next safe action, call the exact ` +
+  `mutating tool with its fully resolved arguments so GroundControl can render the typed approval control. ` +
+  `If the target is not exact enough to call the tool, report the single blocker and do not ask the operator ` +
+  `to confirm an action that does not exist.\n` +
   `- If a tool returns an error (e.g. the VPS is unreachable), say so plainly and suggest next steps; ` +
   `do not invent results.\n\n` +
   `INCIDENT INTEGRITY CONTRACT:\n` +
