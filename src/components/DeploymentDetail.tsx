@@ -174,7 +174,7 @@ export default function DeploymentDetail({
   }, [redeployStatus, runStartedAt]);
 
   useEffect(() => {
-    if (redeployStatus !== "deploying" || !deployment?.legacyProjectSlug || busy) return;
+    if (redeployStatus !== "deploying" || !deployment?.legacyProjectSlug) return;
     let disposed = false;
     const reconcile = async () => {
       try {
@@ -184,6 +184,7 @@ export default function DeploymentDetail({
         setRedeployLog(Array.isArray(data.lines) ? data.lines : []);
         if (data.status === "success" || data.status === "failed") {
           setRedeployStatus(data.status);
+          setRunFailure(data.status === "failed" ? data.error || "Deployment failed." : null);
           setMessage({
             tone: data.status === "success" ? "success" : "error",
             text: data.status === "success"
@@ -194,10 +195,14 @@ export default function DeploymentDetail({
         }
       } catch { /* the durable run remains active and will be retried */ }
     };
-    void reconcile();
+    const initial = window.setTimeout(() => void reconcile(), 600);
     const timer = window.setInterval(() => void reconcile(), 3000);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, [busy, deployment?.legacyProjectSlug, load, redeployStatus]);
+    return () => {
+      disposed = true;
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
+  }, [deployment?.legacyProjectSlug, load, redeployStatus]);
 
   async function assignProject(projectGroupId: number | null) {
     if (!deployment) return;
@@ -227,6 +232,9 @@ export default function DeploymentDetail({
     setRunFailure(null);
     setRunStartedAt(Date.now());
     setRunElapsed(0);
+    setRedeployLog(["[prepare] Deployment request accepted"]);
+    setRedeployStatus("deploying");
+    setShowLog(true);
     setMessage({ tone: "info", text: component ? `Redeploying ${component}…` : "Redeploying the deployment…" });
     try {
       const response = await fetch("/api/projects/compose", {
@@ -257,57 +265,12 @@ export default function DeploymentDetail({
       }
 
       if (data.detached) {
-        setMessage({ tone: "info", text: "Redeploy queued — checking status…" });
-        setShowLog(true);
-        setRedeployLog([]);
-        setRedeployStatus("deploying");
-        setBusy(true);
-
-        const changed = data.changedFields as string[] | undefined;
-        for (let attempt = 0; attempt < 40; attempt++) {
-          await new Promise(r => setTimeout(r, 2000));
-          try {
-            const logRes = await fetch(`/api/projects/compose/log?slug=${encodeURIComponent(deployment.legacyProjectSlug!)}`);
-            if (logRes.ok) {
-              const logData = await readJson(logRes);
-              const lines = Array.isArray(logData.lines) ? logData.lines : [];
-              setRedeployLog(lines);
-              if (logData.status === "failed") {
-                setRedeployStatus("failed");
-                setRunFailure(typeof logData.error === "string" ? logData.error : "Docker Compose failed.");
-                setMessage({
-                  tone: "error",
-                  text: typeof logData.error === "string" && logData.error.trim()
-                    ? logData.error
-                    : "Docker Compose failed. Open the deployment log below for the recorded evidence.",
-                });
-                setBusy(false);
-                await load();
-                return { success: false };
-              }
-              if (logData.status !== "success") continue;
-              setRedeployStatus("success");
-              setMessage({
-                tone: "success",
-                text: component
-                  ? `${component} recreated and its running image verified${changed?.length ? ` (${changed.join(", ")})` : ""}.`
-                  : `Deployment recreated and running images verified${changed?.length ? ` (${changed.join(", ")})` : ""}.`,
-              });
-              setTimeout(() => setShowLog(false), 5000);
-              setBusy(false);
-              await load();
-              return { success: true };
-            }
-          } catch { /* expected during restart */ }
-          if (attempt === 7) setMessage({ tone: "info", text: "Recreating containers and verifying running images…" });
-        }
-        setMessage({ tone: "info", text: "Redeploy is still running. The action remains unverified until the log reports completion." });
-        setTimeout(() => setShowLog(false), 10000);
-        setBusy(false);
-        await load();
-        return { success: false, pending: true };
+        setMessage({ tone: "info", text: "Deployment is running. Progress and evidence update automatically." });
+        return { success: true, pending: true };
       }
 
+      setRedeployStatus("success");
+      setRunFailure(null);
       setMessage({ tone: "success", text: component ? `${component} recreated and its running image verified.` : "Deployment recreated and running images verified." });
       await load();
       return { success: true };
@@ -515,7 +478,7 @@ export default function DeploymentDetail({
                             : "Ready to deploy"}
                     </h2>
                     <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
-                      One recorded run resolves environment, validates Compose, pulls images, recreates the runtime and verifies the running images.
+                      One recorded run loads managed configuration when linked, validates Compose, authenticates the registry, pulls images, recreates the runtime, and verifies the result.
                     </p>
                   </div>
                   {deployment.kind === "compose" && deployment.legacyProjectSlug && (
@@ -532,7 +495,8 @@ export default function DeploymentDetail({
                     failure={runFailure}
                     elapsed={runElapsed}
                     onShowLog={() => setShowLog((value) => !value)}
-                    intelligenceHref={deployment.domain ? `/intelligence?domain=${encodeURIComponent(deployment.domain)}` : "/intelligence"}
+                    domain={deployment.domain}
+                    deploymentSlug={deployment.slug}
                   />
                 : <Notice tone="neutral">No active deployment run. Recorded runs are shown below.</Notice>}
               {(showLog || redeployStatus === "failed") && (redeployLog.length > 0 || runFailure) && (
@@ -830,16 +794,29 @@ function DeploymentProgress({
   failure,
   elapsed,
   onShowLog,
-  intelligenceHref,
+  domain,
+  deploymentSlug,
 }: {
   status: "deploying" | "success" | "failed";
   lines: string[];
   failure?: string | null;
   elapsed: number;
   onShowLog: () => void;
-  intelligenceHref: string;
+  domain?: string | null;
+  deploymentSlug: string;
 }) {
   const progress = deploymentRunProgress(status, lines, failure);
+  const intelligenceHref = (() => {
+    if (!domain) return "/intelligence";
+    const params = new URLSearchParams({
+      domain,
+      deployment: deploymentSlug,
+      stage: progress.failedStage || "unknown",
+      error: (progress.evidence || failure || "Deployment failed.").slice(0, 600),
+      autostart: "1",
+    });
+    return `/intelligence?${params.toString()}`;
+  })();
 
   return (
     <section className="border border-border bg-card" aria-live="polite">
@@ -865,6 +842,13 @@ function DeploymentProgress({
           </div>
         )}
       </div>
+
+      {status === "failed" && progress.evidence && (
+        <div className="border-b border-error/30 bg-error/[0.025] px-5 py-4">
+          <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-error">Failure evidence</p>
+          <p className="mt-2 break-words font-mono text-[10px] leading-relaxed text-foreground">{progress.evidence}</p>
+        </div>
+      )}
 
       <div className="grid divide-y divide-border sm:grid-cols-5 sm:divide-x sm:divide-y-0">
         {progress.stages.map((stage, index) => (
