@@ -161,6 +161,7 @@ export async function execViaDockerHostBridge(
 export async function execDetachedViaDockerHostBridge(
   command: string,
   outputFile: string,
+  options?: { append?: boolean },
   deps: BridgeDeps = defaultDeps
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   if (!(await ensureBridgeImage(deps))) {
@@ -168,7 +169,8 @@ export async function execDetachedViaDockerHostBridge(
   }
 
   const wrapped = withOsPath(command);
-  const redirected = `${wrapped} > ${shQuote(outputFile)} 2>&1`;
+  const redirect = options?.append ? ">>" : ">";
+  const redirected = `${wrapped} ${redirect} ${shQuote(outputFile)} 2>&1`;
   const dockerCmd = [
     "docker run -d --rm",
     "--privileged",
