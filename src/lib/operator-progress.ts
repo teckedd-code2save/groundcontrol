@@ -23,9 +23,9 @@ export type DeploymentRunProgress = {
 };
 
 const STAGE_LABELS: Record<DeploymentStageId, string> = {
-  environment: "Resolve environment",
+  environment: "Load configuration",
   compose: "Validate Compose",
-  pull: "Pull images",
+  pull: "Authenticate and pull",
   recreate: "Recreate runtime",
   verify: "Verify runtime images",
 };
@@ -84,10 +84,16 @@ export function deploymentRunProgress(
 ): DeploymentRunProgress {
   const evidenceLines = [...lines, failure || ""].map((line) => line.trim()).filter(Boolean);
   const includes = (pattern: RegExp) => evidenceLines.some((line) => pattern.test(line));
-  const environmentComplete = includes(/\[env\].*materialized|environment materialized/i)
+  const environmentStarted = includes(/\[(configuration|env)\]/i);
+  const environmentComplete = includes(/\[configuration\]\s+deployment configuration ready/i)
+    || includes(/\[env\].*materialized|environment materialized/i)
     || includes(/\[validate\]\s+effective compose configuration ok/i);
-  const composeComplete = includes(/\[validate\]\s+effective compose configuration ok/i);
-  const pullComplete = includes(/^\[pull\]/i);
+  const composeStarted = includes(/\[(compose|validate)\]/i);
+  const composeComplete = includes(/\[compose\]\s+effective compose configuration valid/i)
+    || includes(/\[validate\]\s+effective compose configuration ok/i);
+  const pullStarted = includes(/\[(registry|pull)\]/i);
+  const pullComplete = includes(/\[pull\]\s+(images resolved|image pull completed)/i)
+    || includes(/^\[pull\]\s*$/i);
   const recreateStarted = includes(/\[deploy\]\s+starting/i);
   const recreateComplete = includes(/\[deploy\]\s+docker compose recreation completed/i);
   const verifyStarted = includes(/\[verify\]\s+checking/i);
@@ -105,17 +111,18 @@ export function deploymentRunProgress(
   if (status === "deploying") {
     activeStage = verifyStarted ? "verify"
       : recreateStarted ? "recreate"
-        : composeComplete && !pullComplete ? "pull"
-          : environmentComplete && !composeComplete ? "compose"
-            : "environment";
+        : pullStarted && !pullComplete ? "pull"
+          : composeStarted && !composeComplete ? "compose"
+            : environmentStarted && !environmentComplete ? "environment"
+              : null;
   }
 
   let failedStage: DeploymentStageId | null = null;
   if (status === "failed") {
-    failedStage = includes(/runtime image verification failed|running image does not match/i) ? "verify"
-      : includes(/docker compose failed|compose.*exit|recreate/i) ? "recreate"
-        : includes(/image pull failed|pull access denied|manifest unknown/i) ? "pull"
-          : includes(/compose configuration|compose config|yaml|validation/i) ? "compose"
+    failedStage = includes(/\[failure\]\s+phase=(verify)\b|runtime image verification failed|running image does not match/i) ? "verify"
+      : includes(/\[failure\]\s+phase=(recreate|deploy)\b|docker compose failed|compose.*exit|recreate/i) ? "recreate"
+        : includes(/\[failure\]\s+phase=(registry|pull)\b|image pull failed|pull access denied|manifest unknown/i) ? "pull"
+          : includes(/\[failure\]\s+phase=compose\b|compose configuration|compose config|yaml|validation/i) ? "compose"
             : "environment";
   }
 
@@ -131,9 +138,9 @@ export function deploymentRunProgress(
     };
   });
   const completedCount = stages.filter((stage) => stage.status === "complete").length;
-  const evidence = [...evidenceLines].reverse().find((line) =>
-    !/^__GC_REDEPLOY_STATUS__/.test(line)
-  ) || null;
+  const evidence = [...evidenceLines].reverse().find((line) => /^\[failure\]\s+/i.test(line))
+    || [...evidenceLines].reverse().find((line) => !/^__GC_REDEPLOY_STATUS__/.test(line))
+    || null;
 
   return {
     stages,
@@ -144,7 +151,9 @@ export function deploymentRunProgress(
       ? `${STAGE_LABELS[failedStage || "environment"]} failed`
       : status === "success"
         ? "Deployment verified"
-        : `${STAGE_LABELS[activeStage || "environment"]} in progress`,
+        : activeStage
+          ? `${STAGE_LABELS[activeStage]} in progress`
+          : "Starting deployment",
     evidence,
   };
 }
