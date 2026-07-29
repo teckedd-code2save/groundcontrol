@@ -235,6 +235,7 @@ describe("docker-host-bridge", () => {
       const result = await execDetachedViaDockerHostBridge(
         "cd /opt/app && docker compose up -d",
         "/tmp/redeploy.log",
+        undefined,
         deps
       );
 
@@ -242,6 +243,26 @@ describe("docker-host-bridge", () => {
       expect(capturedCmd).toContain("docker run -d --rm");
       expect(capturedCmd).toContain("--pid=host");
       expect(capturedCmd).toContain("docker compose up -d");
+      expect(capturedCmd).toContain("/tmp/redeploy.log");
+    });
+
+    it("can append to phase evidence recorded before the detached command starts", async () => {
+      let capturedCmd = "";
+      const deps = makeDeps();
+      deps.execAsync = (async (cmd: string) => {
+        if (cmd.includes("docker images -q")) return { stdout: "abc123\n", stderr: "" };
+        capturedCmd = cmd;
+        return { stdout: "runner123\n", stderr: "" };
+      }) as BridgeDeps["execAsync"];
+
+      await execDetachedViaDockerHostBridge(
+        "docker compose up -d",
+        "/tmp/redeploy.log",
+        { append: true },
+        deps
+      );
+
+      expect(capturedCmd).toContain(">>");
       expect(capturedCmd).toContain("/tmp/redeploy.log");
     });
   });
