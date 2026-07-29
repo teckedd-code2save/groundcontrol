@@ -40,4 +40,41 @@ describe("operator progress", () => {
     expect(progress.activeStage).toBe("recreate");
     expect(progress.percent).toBe(60);
   });
+
+  it("does not invent an environment phase before evidence arrives", () => {
+    const progress = deploymentRunProgress("deploying", [
+      "[prepare] Deployment request accepted",
+    ]);
+    expect(progress.activeStage).toBeNull();
+    expect(progress.summary).toBe("Starting deployment");
+    expect(progress.stages.every((stage) => stage.status === "pending")).toBe(true);
+  });
+
+  it("distinguishes registry and image work from configuration loading", () => {
+    const progress = deploymentRunProgress("deploying", [
+      "[configuration] Deployment configuration ready",
+      "[compose] Effective Compose configuration valid (/opt/app/compose.yml)",
+      "[registry] Authenticating configured container registry",
+    ]);
+    expect(progress.activeStage).toBe("pull");
+    expect(progress.summary).toBe("Authenticate and pull in progress");
+  });
+
+  it("shows exact recorded failure evidence ahead of a generic client error", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[failure] phase=pull error=denied: repository access is unavailable",
+    ], "Redeploy failed");
+    expect(progress.failedStage).toBe("pull");
+    expect(progress.evidence).toBe("[failure] phase=pull error=denied: repository access is unavailable");
+  });
+
+  it("attributes an explicitly recorded Compose phase failure without guessing", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[configuration] Deployment configuration ready",
+      "[compose] Validating the effective Compose configuration",
+      "[failure] phase=compose error=service api has neither an image nor a build context",
+    ]);
+    expect(progress.failedStage).toBe("compose");
+    expect(progress.stages.find((stage) => stage.id === "environment")?.status).toBe("complete");
+  });
 });

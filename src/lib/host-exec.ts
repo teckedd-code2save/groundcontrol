@@ -345,7 +345,8 @@ export async function execOnTargetStrict(
 export async function execDetachedOnTarget(
   command: string,
   outputFile: string,
-  vps?: VpsConnection | null
+  vps?: VpsConnection | null,
+  options?: { append?: boolean }
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const conn = vps ?? null;
 
@@ -360,16 +361,17 @@ export async function execDetachedOnTarget(
         code: 1,
       };
     }
-    return execDetachedViaDockerHostBridge(command, outputFile);
+    return execDetachedViaDockerHostBridge(command, outputFile, options);
   }
 
   if (!conn || conn.isLocal) {
-    execDetached(command, outputFile);
+    execDetached(command, outputFile, options);
     return { stdout: "", stderr: "", code: 0 };
   }
 
+  const redirect = options?.append ? ">>" : ">";
   return execOnVps(
-    `nohup sh -c ${shQuote(command)} > ${shQuote(outputFile)} 2>&1 &`,
+    `nohup sh -c ${shQuote(command)} ${redirect} ${shQuote(outputFile)} 2>&1 &`,
     conn
   );
 }

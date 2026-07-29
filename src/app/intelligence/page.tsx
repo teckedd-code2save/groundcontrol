@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -114,8 +114,14 @@ export default function IntelligencePage() {
   const [agentThreadId, setAgentThreadId] = useState<number | null>(null);
   const [diagnosisStartedAt, setDiagnosisStartedAt] = useState<number | null>(null);
   const [diagnosisElapsed, setDiagnosisElapsed] = useState(0);
+  const [linkedIncident, setLinkedIncident] = useState<ServicePath | null>(null);
+  const booted = useRef(false);
 
-  const paths = useMemo(() => graph?.paths || [], [graph?.paths]);
+  const paths = useMemo(() => {
+    const discovered = graph?.paths || [];
+    if (!linkedIncident) return discovered;
+    return [linkedIncident, ...discovered.filter((path) => path.domain !== linkedIncident.domain)];
+  }, [graph?.paths, linkedIncident]);
   const incidentPaths = useMemo(() => paths.filter((path) => path.verification.status !== "passed"), [paths]);
   const visiblePaths = showHealthy ? paths : incidentPaths;
   const selectedPath = useMemo(
@@ -141,7 +147,7 @@ export default function IntelligencePage() {
         const requested = typeof window !== "undefined"
           ? new URLSearchParams(window.location.search).get("domain") || ""
           : "";
-        if (requested && nextPaths.some((path) => path.domain === requested)) return requested;
+        if (requested) return requested;
         return nextPaths.some((path) => path.domain === current) ? current : nextPaths[0]?.domain || "";
       });
       setInvestigation(null);
@@ -151,16 +157,14 @@ export default function IntelligencePage() {
       setAgentThreadId(null);
       setDiagnosisStartedAt(null);
       setDiagnosisElapsed(0);
+      return nextPaths;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GroundControl could not inspect this host.");
+      return [] as ServicePath[];
     } finally {
       setLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   useEffect(() => {
     if (!investigating || !diagnosisStartedAt) return;
@@ -199,6 +203,67 @@ export default function IntelligencePage() {
       setInvestigating(false);
     }
   }
+
+  useEffect(() => {
+    if (booted.current) return;
+    booted.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const domain = params.get("domain")?.trim() || "";
+    if (!domain) {
+      void refresh();
+      return;
+    }
+
+    const deployment = params.get("deployment")?.trim() || domain;
+    const stage = params.get("stage")?.trim() || "deployment";
+    const failure = params.get("error")?.trim() || "The deployment run failed before verification.";
+    const linked: ServicePath = {
+      domain,
+      topologyStatus: "partial",
+      verification: {
+        status: "failed",
+        error: failure,
+        observedAt: new Date().toISOString(),
+        target: domain,
+      },
+      inspection: {
+        outcome: "failed",
+        failureBoundary: "application",
+        summary: `${deployment} failed during ${stage}.`,
+        cause: failure,
+        confidence: 1,
+        evidence: [{
+          id: "deployment-run",
+          label: "Deployment run",
+          value: stage,
+          detail: failure,
+          status: "failed",
+        }],
+        nextAction: {
+          title: "Investigate the failed deployment",
+          detail: "Inspect the locked deployment, its Compose runtime, and recorded failure evidence.",
+          mode: "guided",
+        },
+      },
+    };
+    setLinkedIncident(linked);
+    setSelectedDomain(domain);
+
+    void (async () => {
+      const scanned = await refresh(true);
+      const discovered = scanned.find(
+        (path) => path.domain === domain && path.verification.status !== "passed"
+      );
+      const incident = discovered || linked;
+      setLinkedIncident(incident);
+      setSelectedDomain(domain);
+      if (params.get("autostart") === "1") {
+        await investigate(incident);
+      }
+    })();
+    // This is an intentional one-shot handoff from the deployment URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function runIncidentAgent(
     resolved: IncidentInvestigation,
@@ -325,7 +390,22 @@ export default function IntelligencePage() {
 
       {error && <Notice className="mt-5" tone="danger" title="Check failed">{error}</Notice>}
 
-      {incidentPaths.length === 0 && !loading ? (
+      {incidentPaths.length === 0 && loading ? (
+        <section className="mt-6 border border-border bg-card px-5 py-8" aria-live="polite">
+          <div className="flex items-start gap-4">
+            <RefreshCw size={18} className="mt-0.5 shrink-0 animate-spin text-accent" />
+            <div>
+              <p className="text-sm font-semibold">Checking deployment paths</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Resolving public endpoints, proxy routes, deployment identity, and runtime evidence.
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 h-1 overflow-hidden bg-border">
+            <div className="h-full w-2/3 bg-accent motion-safe:animate-pulse" />
+          </div>
+        </section>
+      ) : incidentPaths.length === 0 && !loading ? (
         <EmptyState
           className="mt-6"
           icon={<Activity size={22} />}
@@ -504,6 +584,18 @@ function ResolutionSurface({
               {investigating ? "Investigating…" : "Investigate"}
             </Button>
           </div>
+
+          {investigating && !investigation && (
+            <div className="mt-4 border border-border px-4 py-3" aria-live="polite">
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <span className="font-mono uppercase text-accent">Locking deployment and collecting evidence</span>
+                <span className="font-mono text-muted">{formatElapsed(diagnosisElapsed)}</span>
+              </div>
+              <div className="mt-2 h-1 overflow-hidden bg-border">
+                <div className="h-full w-2/3 bg-accent motion-safe:animate-pulse" />
+              </div>
+            </div>
+          )}
 
           {investigation && (
             <>
