@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button, EmptyState, Notice, StatusBadge } from "@/components/ui";
+import { narrativeRequestsAction, parseOperatorNarrative } from "@/lib/operator-progress";
 
 type Verification = {
   status: "passed" | "responded" | "failed" | "not_run";
@@ -111,6 +112,8 @@ export default function IntelligencePage() {
   const [agentTools, setAgentTools] = useState<AgentToolEvent[]>([]);
   const [agentConfirm, setAgentConfirm] = useState<AgentConfirmation | null>(null);
   const [agentThreadId, setAgentThreadId] = useState<number | null>(null);
+  const [diagnosisStartedAt, setDiagnosisStartedAt] = useState<number | null>(null);
+  const [diagnosisElapsed, setDiagnosisElapsed] = useState(0);
 
   const paths = useMemo(() => graph?.paths || [], [graph?.paths]);
   const incidentPaths = useMemo(() => paths.filter((path) => path.verification.status !== "passed"), [paths]);
@@ -134,14 +137,20 @@ export default function IntelligencePage() {
         paths: nextPaths,
         readiness: Array.isArray(data.readiness) ? data.readiness : [],
       });
-      setSelectedDomain((current) =>
-        nextPaths.some((path) => path.domain === current) ? current : nextPaths[0]?.domain || ""
-      );
+      setSelectedDomain((current) => {
+        const requested = typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("domain") || ""
+          : "";
+        if (requested && nextPaths.some((path) => path.domain === requested)) return requested;
+        return nextPaths.some((path) => path.domain === current) ? current : nextPaths[0]?.domain || "";
+      });
       setInvestigation(null);
       setAgentText("");
       setAgentTools([]);
       setAgentConfirm(null);
       setAgentThreadId(null);
+      setDiagnosisStartedAt(null);
+      setDiagnosisElapsed(0);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GroundControl could not inspect this host.");
     } finally {
@@ -153,12 +162,22 @@ export default function IntelligencePage() {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!investigating || !diagnosisStartedAt) return;
+    const update = () => setDiagnosisElapsed(Math.max(0, Math.floor((Date.now() - diagnosisStartedAt) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [diagnosisStartedAt, investigating]);
+
   const failed = paths.filter((path) => path.verification.status === "failed").length;
   const healthy = paths.filter((path) => path.verification.status === "passed").length;
   const hostEvidence = graph?.readiness.find((item) => item.id === "host");
 
   async function investigate(path: ServicePath) {
     setInvestigating(true);
+    setDiagnosisStartedAt(Date.now());
+    setDiagnosisElapsed(0);
     setError(null);
     setInvestigation(null);
     try {
@@ -184,10 +203,11 @@ export default function IntelligencePage() {
   async function runIncidentAgent(
     resolved: IncidentInvestigation,
     path: ServicePath,
-    confirmedTool?: { name: string; args: Record<string, unknown> }
+    confirmedTool?: { name: string; args: Record<string, unknown> },
+    continuationMessage?: string
   ) {
     setInvestigating(true);
-    if (!confirmedTool) {
+    if (!confirmedTool && !continuationMessage) {
       setAgentText("");
       setAgentTools([]);
       setAgentConfirm(null);
@@ -207,6 +227,7 @@ export default function IntelligencePage() {
       },
     };
     if (confirmedTool) body.confirmedTool = confirmedTool;
+    else if (continuationMessage) body.message = continuationMessage;
     else {
       body.message = [
         `Resolve the production failure for https://${resolved.domain}/.`,
@@ -233,7 +254,7 @@ export default function IntelligencePage() {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let answer = confirmedTool ? agentText : "";
+      let answer = confirmedTool || continuationMessage ? agentText : "";
       const handleEvent = (event: Record<string, unknown>) => {
         if (event.type === "thread") setAgentThreadId(Number(event.threadId));
         if (event.type === "text") {
@@ -377,6 +398,14 @@ export default function IntelligencePage() {
                   agentTools={agentTools}
                   agentConfirm={agentConfirm}
                   onApproveAgent={() => agentConfirm && investigation && runIncidentAgent(investigation, selectedPath, { name: agentConfirm.name, args: agentConfirm.args })}
+                  onCancelAgent={() => setAgentConfirm(null)}
+                  onPrepareAgentAction={() => investigation && runIncidentAgent(
+                    investigation,
+                    selectedPath,
+                    undefined,
+                    "Your previous conclusion requested operator confirmation without creating a typed action. Continue this locked investigation now. Call the exact confirmation-gated tool for the proposed mutation, or state one concrete blocker. Do not ask for confirmation in prose."
+                  )}
+                  diagnosisElapsed={diagnosisElapsed}
                   onExitFocus={() => setInvestigation(null)}
                 />
               </main>
@@ -399,6 +428,9 @@ function ResolutionSurface({
   agentTools,
   agentConfirm,
   onApproveAgent,
+  onCancelAgent,
+  onPrepareAgentAction,
+  diagnosisElapsed,
   onExitFocus,
 }: {
   path: ServicePath;
@@ -411,6 +443,9 @@ function ResolutionSurface({
   agentTools: AgentToolEvent[];
   agentConfirm: AgentConfirmation | null;
   onApproveAgent: () => void;
+  onCancelAgent: () => void;
+  onPrepareAgentAction: () => void;
+  diagnosisElapsed: number;
   onExitFocus: () => void;
 }) {
   const inspection = path.inspection;
@@ -479,6 +514,9 @@ function ResolutionSurface({
                 confirmation={agentConfirm}
                 running={investigating}
                 onApprove={onApproveAgent}
+                onCancel={onCancelAgent}
+                onPrepareAction={onPrepareAgentAction}
+                elapsed={diagnosisElapsed}
               />
             </>
           )}
@@ -558,24 +596,49 @@ function IncidentAgent({
   confirmation,
   running,
   onApprove,
+  onCancel,
+  onPrepareAction,
+  elapsed,
 }: {
   tools: AgentToolEvent[];
   text: string;
   confirmation: AgentConfirmation | null;
   running: boolean;
   onApprove: () => void;
+  onCancel: () => void;
+  onPrepareAction: () => void;
+  elapsed: number;
 }) {
+  const sections = parseOperatorNarrative(text);
+  const missingTypedAction = !running && !confirmation && narrativeRequestsAction(text);
+  const completedTools = tools.filter((tool) => tool.status === "success" || tool.status === "error").length;
+  const progressLabel = confirmation
+    ? "Awaiting approval"
+    : running
+      ? tools.length === 0 ? "Locking target" : `Collecting evidence · ${completedTools} checks`
+      : missingTypedAction ? "Action incomplete" : "Evidence ready";
   return (
     <section className="mt-4 border border-border bg-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
           <p className="gc-eyebrow">GroundControl SRE</p>
-          <p className="mt-1 text-xs font-medium">{running ? "Investigating the locked deployment…" : "Investigation evidence"}</p>
+          <p className="mt-1 text-xs font-medium">{progressLabel}</p>
         </div>
-        <StatusBadge tone={running ? "warning" : confirmation ? "warning" : "neutral"}>
-          {running ? "Running" : confirmation ? "Awaiting approval" : "Evidence ready"}
+        <StatusBadge tone={running || confirmation || missingTypedAction ? "warning" : "neutral"}>
+          {running ? "Running" : confirmation ? "Awaiting approval" : missingTypedAction ? "Action incomplete" : "Evidence ready"}
         </StatusBadge>
       </div>
+      {(running || confirmation) && (
+        <div className="border-b border-border px-4 py-3" aria-live="polite">
+          <div className="flex items-center justify-between gap-3 text-[10px]">
+            <span className="font-mono uppercase text-accent">{progressLabel}</span>
+            <span className="font-mono text-muted">{formatElapsed(elapsed)}</span>
+          </div>
+          <div className="mt-2 h-1 overflow-hidden bg-border">
+            <div className={`h-full bg-accent ${running ? "w-2/3 motion-safe:animate-pulse" : "w-full"}`} />
+          </div>
+        </div>
+      )}
       {tools.length > 0 && (
         <div className="divide-y divide-border border-b border-border">
           {tools.map((tool, index) => (
@@ -589,14 +652,44 @@ function IncidentAgent({
           ))}
         </div>
       )}
-      {text && <div className="whitespace-pre-wrap px-4 py-4 text-xs leading-relaxed text-muted">{text}</div>}
+      {sections.length > 0 && (
+        <div className="grid gap-px bg-border sm:grid-cols-2">
+          {sections.map((section, index) => (
+            <article key={`${section.title}-${index}`} className="bg-card px-4 py-4">
+              <h3 className="text-xs font-semibold text-foreground">{section.title}</h3>
+              <div className="mt-2 space-y-2 text-[11px] leading-relaxed text-muted">
+                {section.paragraphs.map((paragraph, paragraphIndex) => <p key={paragraphIndex}>{paragraph}</p>)}
+                {section.bullets.length > 0 && (
+                  <ul className="space-y-1.5">
+                    {section.bullets.map((bullet, bulletIndex) => (
+                      <li key={bulletIndex} className="flex gap-2"><span className="text-accent">•</span><span>{bullet}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      {missingTypedAction && (
+        <div className="border-t border-warning/40 bg-warning/[0.04] p-4">
+          <p className="text-xs font-semibold">Action was not prepared</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">
+            The diagnosis requested confirmation without producing a scoped executable action. GroundControl does not accept prose as authorization.
+          </p>
+          <Button className="mt-3" variant="primary" onClick={onPrepareAction}>Prepare safe action</Button>
+        </div>
+      )}
       {confirmation && (
         <div className="border-t border-warning/40 bg-warning/[0.04] p-4">
           <p className="text-xs font-semibold">Approval required</p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted">{confirmation.description}</p>
-          <Button className="mt-3" variant="primary" disabled={running} onClick={onApprove}>
-            {running ? "Applying…" : `Approve ${humanize(confirmation.name)}`}
-          </Button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button variant="primary" disabled={running} onClick={onApprove}>
+              {running ? "Applying…" : `Approve ${humanize(confirmation.name)}`}
+            </Button>
+            <Button disabled={running} onClick={onCancel}>Cancel</Button>
+          </div>
         </div>
       )}
     </section>
@@ -628,6 +721,12 @@ function probeResult(verification: Verification) {
 
 function humanize(value: string) {
   return value.replace(/[_:]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatElapsed(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
 function formatTime(value?: string) {
