@@ -44,10 +44,19 @@ export function parseDetachedComposeRedeployLog(output: string): DetachedRedeplo
   const phaseFailure = [...lines].reverse().find((line) =>
     /^\[(deploy|verify)\]\s+(Docker Compose|Runtime image verification) failed\b/i.test(line.trim())
   );
+  const containerFailure = [...lines].reverse().find((line) =>
+    /^\[failure\]\s+/i.test(line.trim())
+  );
+  const diagnosticFailure = [...lines].reverse().find((line) =>
+    !/^\[(prepare|deploy|verify)\]/i.test(line.trim())
+    && /\b(error|fatal|exception|failed|unhealthy|refused|denied|timeout)\b/i.test(line)
+  );
   const lastEvidence = [...lines].reverse().find((line) =>
     !/^\[(prepare|deploy|verify)\]/i.test(line.trim())
   );
-  const error = lastEvidence?.trim()
+  const error = containerFailure?.trim()
+    || diagnosticFailure?.trim()
+    || lastEvidence?.trim()
     || phaseFailure?.trim()
     || `Docker Compose failed with exit code ${exitCode ?? "unknown"}.`;
 
@@ -131,6 +140,8 @@ export function buildDetachedComposeRedeployCommand({
 }): string {
   const deploy = buildManagedComposeInvocation(composeCommand, deployArgs, composeFile);
   const verify = buildRuntimeImageVerificationCommand(composeCommand, composeFile, expectedImages);
+  const composeState = buildManagedComposeInvocation(composeCommand, "ps --all", composeFile);
+  const composeContainers = buildManagedComposeInvocation(composeCommand, "ps -q --all", composeFile);
 
   return [
     `cd ${shQuote(projectPath)}`,
@@ -150,6 +161,12 @@ export function buildDetachedComposeRedeployCommand({
     `else`,
     `  gc_status=$?`,
     `  printf '%s\\n' "[deploy] Docker Compose failed to recreate the deployment (exit $gc_status)" >&2`,
+    `  printf '%s\\n' '[evidence] Compose state after failure'`,
+    `  ${composeState} 2>&1 || true`,
+    `  for gc_container_id in $( ${composeContainers} 2>/dev/null ); do`,
+    `    docker inspect --format ${shQuote("[failure] container={{.Name}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} exit={{.State.ExitCode}} error={{.State.Error}}")} "$gc_container_id" 2>/dev/null || true`,
+    `    docker logs --tail 60 "$gc_container_id" 2>&1 | tail -n 60 || true`,
+    `  done`,
     `fi`,
     `if [ "$gc_status" -eq 0 ]; then`,
     `  docker image prune -f >/dev/null 2>&1 || true`,
