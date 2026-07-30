@@ -222,20 +222,29 @@ export async function POST(req: NextRequest) {
             const { prisma } = await import("@/lib/prisma");
             const lockedDeployment = await prisma.enrolledDeployment.findUnique({
               where: { slug: deploymentSlug },
-              select: { slug: true, sourcePath: true, composePath: true },
+              select: {
+                slug: true,
+                sourcePath: true,
+                composePath: true,
+                legacyProject: { select: { path: true } },
+              },
             });
             if (!lockedDeployment) throw new Error("The locked incident deployment no longer exists.");
+            const permittedSourcePaths = new Set([
+              lockedDeployment.sourcePath,
+              lockedDeployment.legacyProject?.path,
+            ].filter((value): value is string => Boolean(value)));
             if (
               incidentContext.sourcePath &&
-              lockedDeployment.sourcePath &&
-              incidentContext.sourcePath !== lockedDeployment.sourcePath
+              permittedSourcePaths.size > 0 &&
+              !permittedSourcePaths.has(incidentContext.sourcePath)
             ) {
               throw new Error("Incident source identity changed. Refresh Intelligence before continuing.");
             }
             parts.unshift(
               `INCIDENT TARGET LOCK — this turn belongs only to:\n` +
               `Domain: ${domain}\nDeployment: ${deploymentSlug}\n` +
-              `Source path: ${lockedDeployment.sourcePath || "unresolved"}\n` +
+              `Source path: ${incidentContext.sourcePath || lockedDeployment.legacyProject?.path || lockedDeployment.sourcePath || "unresolved"}\n` +
               `Compose path: ${lockedDeployment.composePath || incidentContext.composePath || "unresolved"}\n` +
               `Repository: ${incidentContext.repository || "unresolved"}\n` +
               `Deployed commit: ${incidentContext.deployedCommit || "unresolved"}\n\n` +
