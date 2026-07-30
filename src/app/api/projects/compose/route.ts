@@ -13,7 +13,16 @@ import {
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
 } from "@/lib/compose-redeploy";
-import { MANAGED_IMAGE_OVERRIDE_FILE } from "@/lib/compose-management";
+import {
+  MANAGED_ENV_FILES_MANIFEST,
+  MANAGED_ENV_OVERRIDE_FILE,
+  MANAGED_IMAGE_OVERRIDE_FILE,
+} from "@/lib/compose-management";
+import {
+  composeProjectCandidates,
+  requestedComposePathForCandidate,
+  type ComposeProjectTarget,
+} from "@/lib/redeploy-target";
 import { prisma } from "@/lib/prisma";
 import { applyEnvToDeployment, MissingDeploymentEnvError } from "@/lib/env-management";
 import { requireAuth } from "@/lib/auth";
@@ -173,12 +182,15 @@ export async function POST(req: NextRequest) {
     const explicitPath = typeof requestedPath === "string" ? requestedPath.replace(/\/+$/, "") : "";
     const pathError = explicitPath ? validateSafePath(explicitPath) : null;
     if (pathError) return NextResponse.json({ error: pathError }, { status: 400 });
-    const target = explicitPath
-      ? { projectPath: explicitPath, projectSlug, source: "config" as const }
-      : await resolveComposeProjectPath(projectSlug);
     const requestedComposePath = normalizePath(requestedComposePathValue);
-    const composePathError = validateRequestedComposePath(target.projectPath, requestedComposePath);
-    if (composePathError) return NextResponse.json({ error: composePathError }, { status: 400 });
+    const requestedComposePathError = requestedComposePath
+      ? validateSafePath(requestedComposePath) || (!/\.ya?ml$/i.test(requestedComposePath)
+        ? "Compose file must be a YAML file."
+        : null)
+      : null;
+    if (requestedComposePathError) {
+      return NextResponse.json({ error: requestedComposePathError }, { status: 400 });
+    }
     const vps = await getActiveVps();
     if (action === "redeploy") {
       redeployLogFile = `/tmp/gc-redeploy-${projectSlug}.log`;
@@ -190,9 +202,37 @@ export async function POST(req: NextRequest) {
         true
       );
     }
-    const composeFile = await resolveComposeFile(target.projectPath, vps, requestedComposePath || undefined);
-    if (!composeFile) {
-      return NextResponse.json({ error: "No Compose file was found for this deployment." }, { status: 404 });
+    const resolvedTarget = await resolveComposeProjectPath(projectSlug, undefined, vps);
+    const targetCandidates = composeProjectCandidates(resolvedTarget, explicitPath);
+    let target: ComposeProjectTarget | null = null;
+    let composeFile: string | null = null;
+    for (const candidate of targetCandidates) {
+      const candidateComposePath = requestedComposePathForCandidate(
+        requestedComposePath,
+        candidate.projectPath
+      );
+      const found = await resolveComposeFile(
+        candidate.projectPath,
+        vps,
+        candidateComposePath
+      );
+      if (!found) continue;
+      target = candidate;
+      composeFile = found;
+      break;
+    }
+    if (!target || !composeFile) {
+      throw new HttpError(
+        `No Compose file was found for this deployment. Checked: ${targetCandidates.map((candidate) => candidate.projectPath).join(", ") || "no resolved deployment path"}.`,
+        404
+      );
+    }
+    if (action === "redeploy") {
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        `[target] Using ${target.projectPath} (${target.source})`,
+        vps
+      );
     }
     const serviceArgs = Array.isArray(services) && services.length > 0
       ? services.map((s: string) => shQuote(s)).join(" ")
@@ -255,16 +295,33 @@ export async function POST(req: NextRequest) {
     // ============================
 
     const startedAt = Date.now();
-    // 1. Prepare the deployment's configured environment
+    // 1. Reuse the already materialized environment. Provider synchronization
+    //    is explicit; a routine redeploy should not block on a remote vault.
     redeployPhase = "configuration";
+    const environmentProfile = project
+      ? await prisma.deploymentEnvProfile.findFirst({
+          where: { projectId: project.id },
+          orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
+          select: { id: true },
+        })
+      : null;
+    const environmentBundle = environmentProfile
+      ? await execOnTargetStrict(
+          `cd ${shQuote(target.projectPath)} && test -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)} && test -f ${shQuote(MANAGED_ENV_FILES_MANIFEST)}`,
+          vps
+        )
+      : null;
+    const needsEnvironmentRestore = Boolean(environmentProfile && environmentBundle?.code !== 0);
     await recordRedeployEvidence(
       redeployLogFile!,
-      project
-        ? "[configuration] Loading the deployment's managed configuration"
-        : "[configuration] No managed configuration is linked; using the Compose defaults",
+      needsEnvironmentRestore
+        ? "[configuration] Restoring the deployment's synchronized configuration"
+        : environmentProfile
+          ? "[configuration] Reusing the synchronized deployment configuration"
+          : "[configuration] Using the Compose defaults",
       vps
     );
-    if (project) {
+    if (project && needsEnvironmentRestore) {
       await applyEnvToDeployment(
         { ...project, path: target.projectPath },
         undefined, undefined,
