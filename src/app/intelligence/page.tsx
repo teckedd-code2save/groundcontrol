@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button, EmptyState, Notice, StatusBadge } from "@/components/ui";
-import { narrativeRequestsAction, parseOperatorNarrative } from "@/lib/operator-progress";
+import {
+  narrativeRequestsAction,
+  operatorNarrativeIsComplete,
+  parseOperatorNarrative,
+} from "@/lib/operator-progress";
 
 type Verification = {
   status: "passed" | "responded" | "failed" | "not_run";
@@ -334,9 +338,15 @@ export default function IntelligencePage() {
           });
         }
         if (event.type === "tool") {
+          const wireStatus = String(event.status || "running");
+          const status: AgentToolEvent["status"] =
+            wireStatus === "done" ? "success"
+              : wireStatus === "error" ? "error"
+                : wireStatus === "pending" ? "pending"
+                  : "running";
           const next: AgentToolEvent = {
             name: String(event.name || ""),
-            status: String(event.status || "running") as AgentToolEvent["status"],
+            status,
             output: typeof event.output === "string" ? event.output : undefined,
             args: (event.args || {}) as Record<string, unknown>,
           };
@@ -485,6 +495,12 @@ export default function IntelligencePage() {
                     undefined,
                     "Your previous conclusion requested operator confirmation without creating a typed action. Continue this locked investigation now. Call the exact confirmation-gated tool for the proposed mutation, or state one concrete blocker. Do not ask for confirmation in prose."
                   )}
+                  onContinueAgent={() => investigation && runIncidentAgent(
+                    investigation,
+                    selectedPath,
+                    undefined,
+                    "The previous automatic pass ended without a complete evidence-backed outcome. Continue the same locked investigation now. Do not stop at a refused or failed generic tool; use the dedicated read-only tools, preserve successful evidence, and finish with a typed safe action, a Daytona-validated source repair, or one concrete blocker under Problem, Fix, Verify."
+                  )}
                   diagnosisElapsed={diagnosisElapsed}
                   onExitFocus={() => setInvestigation(null)}
                 />
@@ -510,6 +526,7 @@ function ResolutionSurface({
   onApproveAgent,
   onCancelAgent,
   onPrepareAgentAction,
+  onContinueAgent,
   diagnosisElapsed,
   onExitFocus,
 }: {
@@ -525,6 +542,7 @@ function ResolutionSurface({
   onApproveAgent: () => void;
   onCancelAgent: () => void;
   onPrepareAgentAction: () => void;
+  onContinueAgent: () => void;
   diagnosisElapsed: number;
   onExitFocus: () => void;
 }) {
@@ -608,6 +626,7 @@ function ResolutionSurface({
                 onApprove={onApproveAgent}
                 onCancel={onCancelAgent}
                 onPrepareAction={onPrepareAgentAction}
+                onContinue={onContinueAgent}
                 elapsed={diagnosisElapsed}
               />
             </>
@@ -690,6 +709,7 @@ function IncidentAgent({
   onApprove,
   onCancel,
   onPrepareAction,
+  onContinue,
   elapsed,
 }: {
   tools: AgentToolEvent[];
@@ -699,16 +719,28 @@ function IncidentAgent({
   onApprove: () => void;
   onCancel: () => void;
   onPrepareAction: () => void;
+  onContinue: () => void;
   elapsed: number;
 }) {
   const sections = parseOperatorNarrative(text);
   const missingTypedAction = !running && !confirmation && narrativeRequestsAction(text);
+  const completeNarrative = operatorNarrativeIsComplete(text);
+  const lastTool = tools.at(-1);
+  const incompleteInvestigation =
+    !running &&
+    !confirmation &&
+    !missingTypedAction &&
+    (lastTool?.status === "error" || !completeNarrative);
   const completedTools = tools.filter((tool) => tool.status === "success" || tool.status === "error").length;
   const progressLabel = confirmation
     ? "Awaiting approval"
     : running
       ? tools.length === 0 ? "Locking target" : `Collecting evidence · ${completedTools} checks`
-      : missingTypedAction ? "Action incomplete" : "Evidence ready";
+      : missingTypedAction
+        ? "Action incomplete"
+        : incompleteInvestigation
+          ? "Investigation incomplete"
+          : "Evidence ready";
   return (
     <section className="mt-4 border border-border bg-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -716,8 +748,16 @@ function IncidentAgent({
           <p className="gc-eyebrow">GroundControl SRE</p>
           <p className="mt-1 text-xs font-medium">{progressLabel}</p>
         </div>
-        <StatusBadge tone={running || confirmation || missingTypedAction ? "warning" : "neutral"}>
-          {running ? "Running" : confirmation ? "Awaiting approval" : missingTypedAction ? "Action incomplete" : "Evidence ready"}
+        <StatusBadge tone={running || confirmation || missingTypedAction || incompleteInvestigation ? "warning" : "neutral"}>
+          {running
+            ? "Running"
+            : confirmation
+              ? "Awaiting approval"
+              : missingTypedAction
+                ? "Action incomplete"
+                : incompleteInvestigation
+                  ? "Incomplete"
+                  : "Evidence ready"}
         </StatusBadge>
       </div>
       {(running || confirmation) && (
@@ -737,7 +777,9 @@ function IncidentAgent({
             <details key={`${tool.name}-${index}`} className="px-4 py-3">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
                 <span className="font-mono">{humanize(tool.name)}</span>
-                <span className={`font-mono text-[9px] uppercase ${tool.status === "success" ? "text-success" : tool.status === "error" ? "text-error" : "text-accent"}`}>{tool.status}</span>
+                <span className={`font-mono text-[9px] uppercase ${tool.status === "success" ? "text-success" : tool.status === "error" ? "text-error" : "text-accent"}`}>
+                  {tool.status === "success" ? "complete" : tool.status}
+                </span>
               </summary>
               {tool.output && <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap border-l border-border pl-3 font-mono text-[9px] leading-relaxed text-muted">{tool.output}</pre>}
             </details>
@@ -770,6 +812,17 @@ function IncidentAgent({
             The diagnosis requested confirmation without producing a scoped executable action. GroundControl does not accept prose as authorization.
           </p>
           <Button className="mt-3" variant="primary" onClick={onPrepareAction}>Prepare safe action</Button>
+        </div>
+      )}
+      {incompleteInvestigation && (
+        <div className="border-t border-warning/40 bg-warning/[0.04] p-4">
+          <p className="text-xs font-semibold">The automatic investigation stopped early</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">
+            GroundControl has retained this deployment and its evidence. Continue here; you do not need to select the incident again.
+          </p>
+          <Button className="mt-3" variant="primary" onClick={onContinue}>
+            Continue investigation
+          </Button>
         </div>
       )}
       {confirmation && (

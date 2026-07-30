@@ -6,6 +6,7 @@ import {
   getOpenAIToolSchemas,
   getAnthropicToolSchemas,
   isReadOnlyTool,
+  resolveAgentToolCall,
 } from "@/lib/ai-agent";
 import { auditAiToolExecution } from "@/lib/audit";
 import {
@@ -18,6 +19,7 @@ import {
   titleFromMessage,
   buildAiEvidenceLedger,
   classifyToolOutput,
+  incidentTurnNeedsContinuation,
   type WireMessage,
   type ToolCallRecord,
 } from "@/lib/ai-memory";
@@ -50,6 +52,9 @@ const SYSTEM_PROMPT =
   `container_stats, container_logs, list_projects, list_deployments, inspect_deployment, disk_usage, ` +
   `read_proxy_config, read_compose_config, list_project_containers, compose_ps). Use run_diagnostic ` +
   `only for read-only inspection that no dedicated tool covers.\n` +
+  `- Never call run_system_command for read-only commands such as ls, cat, grep, find, ps, df, or Docker ` +
+  `inspection. Use the matching dedicated tool or run_diagnostic. A refused tool is recoverable evidence: ` +
+  `choose the valid read-only path and continue automatically.\n` +
   `- Chain tools as needed: e.g. to find which service uses the most memory, call top_memory_processes ` +
   `and/or container_stats, then summarize.\n` +
   `- DO NOT assume every container belongs to the project the user mentioned. Use list_project_containers ` +
@@ -109,7 +114,10 @@ const SYSTEM_PROMPT =
   `customer recovery. Inspect the target, then call verify_public_endpoint before saying fixed or recovered.\n` +
   `- Never invent a manual source edit after Daytona or repository resolution fails. State the single missing ` +
   `prerequisite and keep the incident unresolved.\n` +
-  `- For live incidents, keep the operator response short under Problem, Fix, Verify. Give one concrete next action.\n\n` +
+  `- For live incidents, keep the operator response short under Problem, Fix, Verify. Give one concrete next action.\n` +
+  `- A live incident is not complete while the last tool is an error, while evidence is still missing, or until ` +
+  `the response contains all three clean sections: Problem, Fix, Verify. Continue automatically after recoverable ` +
+  `tool failures. Stop only for a typed approval, a Daytona-validated repair ready for PR approval, or one exact blocker.\n\n` +
   `Be concise and practical. Assume a Linux VPS (could be Debian/Ubuntu or Alpine/BusyBox). When useful, ` +
   `reference GroundControl dashboard pages (Terminal, Alerts, Services, Deployments, Templates, Settings). Format ` +
   `answers in clean Markdown.`;
@@ -296,6 +304,44 @@ export async function POST(req: NextRequest) {
             }
           }
 
+          if (
+            incidentContext &&
+            incidentTurnNeedsContinuation(turn.toolCalls, turn.content)
+          ) {
+            const recentEvidence = turn.toolCalls.slice(-8).map((call) => {
+              const result = String(call.output || "(no output)").slice(0, 1_200);
+              return `- ${call.name}: ${call.status}\n  ${result.replace(/\n/g, "\n  ")}`;
+            }).join("\n");
+            const contextMessages: WireMessage[] = [{
+              role: "user",
+              content:
+                "The automatic incident run ended prematurely. Continue the same locked incident now. " +
+                "Do not repeat successful checks unless newer evidence requires it. A refused or failed tool " +
+                "is not the incident cause. Use a dedicated read-only tool or run_diagnostic for missing evidence. " +
+                "Finish only with a typed approval action, a Daytona-validated source repair ready for PR approval, " +
+                "or one concrete prerequisite that blocks further work. Return a clean Problem, Fix, Verify result.\n\n" +
+                `Evidence from the interrupted attempt:\n${recentEvidence || "(no tool evidence recorded)"}\n\n` +
+                `Incomplete draft:\n${turn.content.slice(-2_000) || "(none)"}`,
+            }];
+            if (turn.content && !turn.content.endsWith("\n")) {
+              turn.content += "\n\n";
+              emit({ type: "text", delta: "\n\n" });
+            }
+            if (provider === "anthropic") {
+              await runAnthropic({
+                apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn,
+                contextMessages,
+                maxToolIterations: INCIDENT_MAX_TOOL_ITERATIONS,
+              });
+            } else {
+              await runOpenAI({
+                apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn,
+                contextMessages,
+                maxToolIterations: INCIDENT_MAX_TOOL_ITERATIONS,
+              });
+            }
+          }
+
           // Persist the assistant message and its tool calls.
           const assistantMsg = await appendAiMessage(threadId, "assistant", turn.content, {
             provider,
@@ -378,7 +424,8 @@ interface ConfirmedToolCtx extends RunCtx {
 
 async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
   const { confirmedTool, provider, threadId, emit, turn, userId, context } = ctx;
-  const tool = getTool(confirmedTool.name);
+  const resolved = resolveAgentToolCall(confirmedTool.name, confirmedTool.args);
+  const tool = getTool(resolved.name);
   if (!tool) {
     emit({ type: "tool", name: confirmedTool.name, status: "error", output: "Unknown tool." });
     turn.toolCalls.push({
@@ -391,44 +438,55 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
     return;
   }
 
-  emit({ type: "tool", name: tool.name, args: confirmedTool.args, status: "running" });
-  const output = await tool.execute(confirmedTool.args);
+  emit({ type: "tool", name: tool.name, args: resolved.args, status: "running" });
+  const output = await tool.execute(resolved.args);
   const status = classifyToolOutput(output);
-  emit({ type: "tool", name: tool.name, args: confirmedTool.args, status, output });
+  emit({ type: "tool", name: tool.name, args: resolved.args, status, output });
 
   turn.toolCalls.push({
     name: tool.name,
-    args: confirmedTool.args,
+    args: resolved.args,
     output,
     status,
-    readOnly: false,
+    readOnly: tool.readOnly,
     confirmedAt: new Date(),
   });
 
   await auditAiToolExecution(userId, {
     threadId,
     name: tool.name,
-    args: confirmedTool.args,
+    args: resolved.args,
     output,
-    readOnly: false,
+    readOnly: tool.readOnly,
     confirmed: true,
     context,
   });
 
   if (status === "error") {
-    const note = `**Problem**\n\n\`${tool.name}\` failed: ${output}\n\n**Fix**\n\nNo further mutation was made. The incident remains unresolved.\n\n**Verify**\n\nNot run because the approved action failed.`;
-    turn.content += note;
-    emit({ type: "text", delta: note });
+    const contextMessages: WireMessage[] = [{
+      role: "user",
+      content:
+        `The attempted \`${tool.name}\` action failed:\n\n${output}\n\n` +
+        "Treat this as new evidence, not as the end of the incident. Continue the exact locked investigation " +
+        "with dedicated read-only tools. Do not repeat the failed mutation. Prepare the next smallest typed " +
+        "reversible action, a Daytona-validated source repair, or state one concrete blocker.",
+    }];
+    if (provider === "anthropic") {
+      await runAnthropic({ ...ctx, contextMessages });
+    } else {
+      await runOpenAI({ ...ctx, contextMessages });
+    }
     return;
   }
 
   const contextMessages: WireMessage[] = [{
     role: "user",
-    content:
-      `The operator approved \`${tool.name}\` and it completed with this result:\n\n${output}\n\n` +
-      `This proves only that the action completed. Inspect the exact changed target and call ` +
-      `verify_public_endpoint for the incident URL before reporting recovery. If verification fails, ` +
-      `keep the incident open and state the next evidence-backed action.`,
+    content: tool.readOnly
+      ? `The read-only diagnostic \`${tool.name}\` completed:\n\n${output}\n\nContinue the locked investigation automatically.`
+      : `The operator approved \`${tool.name}\` and it completed with this result:\n\n${output}\n\n` +
+        `This proves only that the action completed. Inspect the exact changed target and call ` +
+        `verify_public_endpoint for the incident URL before reporting recovery. If verification fails, ` +
+        `keep the incident open and state the next evidence-backed action.`,
   }];
   if (provider === "anthropic") {
     await runAnthropic({ ...ctx, contextMessages });
@@ -480,7 +538,7 @@ async function runOpenAI(ctx: RunCtx) {
 
     for (const call of toolCalls) {
       if (call.type !== "function") continue;
-      const name = call.function.name;
+      const requestedName = call.function.name;
       let args: Record<string, unknown> = {};
       try {
         args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
@@ -488,9 +546,12 @@ async function runOpenAI(ctx: RunCtx) {
         args = {};
       }
 
+      const resolved = resolveAgentToolCall(requestedName, args);
+      const name = resolved.name;
+      args = resolved.args;
       const tool = getTool(name);
       if (!tool) {
-        convo.push({ role: "tool", tool_call_id: call.id, content: `ERROR: unknown tool "${name}".` });
+        convo.push({ role: "tool", tool_call_id: call.id, content: `ERROR: unknown tool "${requestedName}".` });
         continue;
       }
 
@@ -599,15 +660,18 @@ async function runAnthropic(ctx: RunCtx) {
     let awaitingConfirmation = false;
 
     for (const use of toolUses) {
-      const name = use.name;
-      const args = (use.input as Record<string, unknown>) || {};
+      const requestedName = use.name;
+      const requestedArgs = (use.input as Record<string, unknown>) || {};
+      const resolved = resolveAgentToolCall(requestedName, requestedArgs);
+      const name = resolved.name;
+      const args = resolved.args;
       const tool = getTool(name);
 
       if (!tool) {
         toolResults.push({
           type: "tool_result",
           tool_use_id: use.id,
-          content: `ERROR: unknown tool "${name}".`,
+          content: `ERROR: unknown tool "${requestedName}".`,
           is_error: true,
         });
         continue;

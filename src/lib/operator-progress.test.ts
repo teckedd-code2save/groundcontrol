@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deploymentRunProgress,
   narrativeRequestsAction,
+  operatorNarrativeIsComplete,
   parseOperatorNarrative,
 } from "./operator-progress";
 
@@ -17,6 +18,12 @@ describe("operator progress", () => {
   it("detects prose-only approval requests", () => {
     expect(narrativeRequestsAction("Please confirm if you would like me to proceed with this action.")).toBe(true);
     expect(narrativeRequestsAction("The service is stopped. No safe action is available.")).toBe(false);
+  });
+
+  it("only treats a structured Problem, Fix, Verify result as complete", () => {
+    expect(operatorNarrativeIsComplete("### Problem\nDown\n### Fix\nRestart\n### Verify\nProbe")).toBe(true);
+    expect(operatorNarrativeIsComplete("Assessment\nA tool was refused.")).toBe(false);
+    expect(operatorNarrativeIsComplete("Please confirm.Problem\nFailed\nFix\nNone\nVerify\nNot run")).toBe(false);
   });
 
   it("attributes a failed run to its real stage and removes meaningless percentages", () => {
@@ -76,5 +83,29 @@ describe("operator progress", () => {
     ]);
     expect(progress.failedStage).toBe("compose");
     expect(progress.stages.find((stage) => stage.id === "environment")?.status).toBe("complete");
+  });
+
+  it("cannot fail a stage that its own evidence marks complete", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[configuration] Deployment configuration ready",
+      "[compose] Effective Compose configuration valid (/opt/app/compose.yml)",
+      "[pull] Images resolved",
+    ], "Effective Compose configuration is invalid");
+
+    expect(progress.failedStage).toBe("recreate");
+    expect(progress.summary).toBe("Recreate runtime failed");
+    expect(progress.stages.find((stage) => stage.id === "compose")?.status).toBe("complete");
+    expect(progress.evidence).toBe("Effective Compose configuration is invalid");
+  });
+
+  it("does not turn the last successful phase into failure evidence", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[configuration] Deployment configuration ready",
+      "[compose] Effective Compose configuration valid (/opt/app/compose.yml)",
+      "[pull] Images resolved",
+    ]);
+
+    expect(progress.evidence).toMatch(/terminal failure evidence was not recorded/i);
+    expect(progress.evidence).not.toContain("[pull] Images resolved");
   });
 });

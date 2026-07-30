@@ -91,4 +91,17 @@ describe("Compose redeploy image verification", () => {
 
     expect(parsed.error).toBe("[failure] container=/api status=running health=unhealthy exit=0 error=");
   });
+
+  it("never presents a successful phase marker as failure evidence", () => {
+    const parsed = parseDetachedComposeRedeployLog([
+      "[configuration] Deployment configuration ready",
+      "[compose] Effective Compose configuration valid (/opt/app/compose.yml)",
+      "[pull] Images resolved",
+      "__GC_REDEPLOY_STATUS__=failed:1",
+    ].join("\n"));
+
+    expect(parsed.status).toBe("failed");
+    expect(parsed.error).toBe("Docker Compose failed with exit code 1.");
+    expect(parsed.error).not.toContain("Images resolved");
+  });
 });

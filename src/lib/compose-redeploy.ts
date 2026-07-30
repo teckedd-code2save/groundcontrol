@@ -51,12 +51,8 @@ export function parseDetachedComposeRedeployLog(output: string): DetachedRedeplo
     !/^\[(prepare|deploy|verify)\]/i.test(line.trim())
     && /\b(error|fatal|exception|failed|unhealthy|refused|denied|timeout)\b/i.test(line)
   );
-  const lastEvidence = [...lines].reverse().find((line) =>
-    !/^\[(prepare|deploy|verify)\]/i.test(line.trim())
-  );
   const error = containerFailure?.trim()
     || diagnosticFailure?.trim()
-    || lastEvidence?.trim()
     || phaseFailure?.trim()
     || `Docker Compose failed with exit code ${exitCode ?? "unknown"}.`;
 

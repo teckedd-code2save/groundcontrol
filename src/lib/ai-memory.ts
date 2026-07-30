@@ -47,6 +47,23 @@ export function classifyToolOutput(output: string): "done" | "error" {
   return "done";
 }
 
+export function hasStructuredIncidentConclusion(content: string): boolean {
+  const matches = String(content || "").matchAll(
+    /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*)?(problem|fix|verify)(?:\*\*)?\s*:?\s*(?=\n|$)/gim
+  );
+  const sections = new Set(Array.from(matches, (match) => match[1].toLowerCase()));
+  return ["problem", "fix", "verify"].every((section) => sections.has(section));
+}
+
+export function incidentTurnNeedsContinuation(
+  toolCalls: Pick<ToolCallRecord, "status">[],
+  content: string
+): boolean {
+  if (toolCalls.some((call) => call.status === "pending")) return false;
+  const lastTool = toolCalls.at(-1);
+  return lastTool?.status === "error" || !hasStructuredIncidentConclusion(content);
+}
+
 function safeJson(value: string, fallback: unknown) {
   try {
     return JSON.parse(value) as unknown;
