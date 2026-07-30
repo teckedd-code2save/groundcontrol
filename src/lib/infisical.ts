@@ -43,22 +43,33 @@ export function decryptInfisicalCredentials(value?: string | null): InfisicalCre
 }
 
 async function infisicalRequest<T>(url: string, init: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const text = await response.text();
-  let json: unknown = {};
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`Infisical returned non-JSON response (HTTP ${response.status})`);
+    const response = await fetch(url, { ...init, signal: init.signal || controller.signal });
+    const text = await response.text();
+    let json: unknown = {};
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`Infisical returned non-JSON response (HTTP ${response.status})`);
+    }
+    if (!response.ok) {
+      const message =
+        typeof json === "object" && json && "message" in json
+          ? String((json as { message?: unknown }).message)
+          : `HTTP ${response.status}`;
+      throw new Error(`Infisical API error: ${message}`);
+    }
+    return json as T;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Infisical did not respond within 15 seconds");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!response.ok) {
-    const message =
-      typeof json === "object" && json && "message" in json
-        ? String((json as { message?: unknown }).message)
-        : `HTTP ${response.status}`;
-    throw new Error(`Infisical API error: ${message}`);
-  }
-  return json as T;
 }
 
 export async function loginInfisicalUniversalAuth(
