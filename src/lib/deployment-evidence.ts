@@ -6,10 +6,87 @@ import type { DockerContainerLabelInfo } from "./vps";
 export interface DeploymentEvidenceInput {
   slug: string;
   sourcePath?: string | null;
+  composePath?: string | null;
   containerName?: string | null;
   metadataJson?: string | null;
   savedDomain?: string | null;
   savedRepoUrl?: string | null;
+}
+
+export type DeploymentExecutionIdentity = {
+  sourcePath: string | null;
+  composePath: string | null;
+  composeProject: string | null;
+  source: "runtime-label" | "saved-project" | "enrollment";
+};
+
+function normalizedIdentity(value?: string | null): string {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function firstComposeFile(value?: string | null): string | null {
+  return String(value || "")
+    .split(",")
+    .map((file) => file.trim())
+    .find((file) => file.startsWith("/") && /\.ya?ml$/i.test(file)) || null;
+}
+
+export function resolveDeploymentExecutionIdentity(
+  deployment: DeploymentEvidenceInput & {
+    legacyProjectPath?: string | null;
+    legacyProjectSlug?: string | null;
+  },
+  labels: DockerContainerLabelInfo[],
+  linkedContainerNames: string[] = []
+): DeploymentExecutionIdentity {
+  let metadataComposeProject = "";
+  try {
+    metadataComposeProject = String(
+      (JSON.parse(deployment.metadataJson || "{}") as { composeProject?: unknown }).composeProject || ""
+    );
+  } catch {}
+  const identities = new Set([
+    deployment.slug,
+    deployment.legacyProjectSlug,
+    metadataComposeProject,
+  ].map(normalizedIdentity).filter(Boolean));
+  const linked = new Set(linkedContainerNames);
+  const ranked = labels
+    .map((label) => {
+      let score = 0;
+      if (linked.has(label.name) || deployment.containerName === label.name) score += 120;
+      if (deployment.composePath && firstComposeFile(label.configFiles) === deployment.composePath) score += 100;
+      if (deployment.legacyProjectPath && label.workingDir === deployment.legacyProjectPath) score += 90;
+      if (deployment.sourcePath && label.workingDir === deployment.sourcePath) score += 80;
+      if (identities.has(normalizedIdentity(label.project))) score += 70;
+      if (identities.has(normalizedIdentity(label.workingDir.split("/").filter(Boolean).at(-1)))) score += 55;
+      return { label, score };
+    })
+    .filter((candidate) => candidate.score > 0 && candidate.label.workingDir)
+    .sort((a, b) => b.score - a.score);
+  const runtime = ranked[0]?.label;
+  if (runtime) {
+    return {
+      sourcePath: runtime.workingDir,
+      composePath: firstComposeFile(runtime.configFiles) || deployment.composePath || null,
+      composeProject: runtime.project || metadataComposeProject || null,
+      source: "runtime-label",
+    };
+  }
+  if (deployment.legacyProjectPath) {
+    return {
+      sourcePath: deployment.legacyProjectPath,
+      composePath: deployment.composePath || null,
+      composeProject: metadataComposeProject || null,
+      source: "saved-project",
+    };
+  }
+  return {
+    sourcePath: deployment.sourcePath || null,
+    composePath: deployment.composePath || null,
+    composeProject: metadataComposeProject || null,
+    source: "enrollment",
+  };
 }
 
 export function readDeploymentOverrides(metadataJson?: string | null) {
