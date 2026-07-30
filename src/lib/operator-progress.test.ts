@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deploymentRunProgress,
+  incidentRecoveryOutcome,
   narrativeRequestsAction,
   operatorNarrativeIsComplete,
   parseOperatorNarrative,
@@ -24,6 +25,20 @@ describe("operator progress", () => {
     expect(operatorNarrativeIsComplete("### Problem\nDown\n### Fix\nRestart\n### Verify\nProbe")).toBe(true);
     expect(operatorNarrativeIsComplete("Assessment\nA tool was refused.")).toBe(false);
     expect(operatorNarrativeIsComplete("Please confirm.Problem\nFailed\nFix\nNone\nVerify\nNot run")).toBe(false);
+  });
+
+  it("surfaces one honest recovery outcome from the strongest completed evidence", () => {
+    expect(incidentRecoveryOutcome([{
+      name: "verify_public_endpoint",
+      status: "success",
+      output: "HTTP 200 · endpoint healthy",
+    }], "", null)?.kind).toBe("verified");
+    expect(incidentRecoveryOutcome([{
+      name: "prepare_source_fix_in_daytona",
+      status: "success",
+      output: "Validation passed",
+    }], "", null)?.kind).toBe("source-repair");
+    expect(incidentRecoveryOutcome([], "", "compose_up")?.kind).toBe("action-ready");
   });
 
   it("attributes a failed run to its real stage and removes meaningless percentages", () => {

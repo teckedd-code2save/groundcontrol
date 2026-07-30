@@ -14,6 +14,7 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { Button, EmptyState, Notice, StatusBadge } from "@/components/ui";
 import {
+  incidentRecoveryOutcome,
   narrativeRequestsAction,
   operatorNarrativeIsComplete,
   parseOperatorNarrative,
@@ -384,8 +385,8 @@ export default function IntelligencePage() {
     <div className="gc-page gc-page--wide">
       <PageHeader
         eyebrow="Intelligence"
-        title="Fix what is broken"
-        description="Choose a failing endpoint. GroundControl isolates the break, resolves the exact deployment, and refuses to act on an ambiguous target."
+        title="Recover a broken deployment"
+        description="Choose a customer-facing failure. GroundControl locks the exact workload, builds an evidence chain, prepares the safest repair, and verifies the result from outside the host."
         actions={(
           <Button
             variant="primary"
@@ -393,7 +394,7 @@ export default function IntelligencePage() {
             disabled={loading}
             leadingIcon={<RefreshCw size={14} className={loading ? "animate-spin" : ""} />}
           >
-            {loading ? "Checking…" : "Check all"}
+            {loading ? "Refreshing…" : "Refresh endpoints"}
           </Button>
         )}
       />
@@ -591,22 +592,22 @@ function ResolutionSurface({
             </div>
           </div>
 
-          <div className="mt-4 flex flex-col gap-3 border border-accent/35 bg-accent/[0.035] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-4 flex flex-col gap-3 border border-border bg-background/40 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-semibold">Resolve this incident</p>
+              <p className="text-sm font-semibold">Run safe recovery</p>
               <p className="mt-1 text-[11px] text-muted">
-                GroundControl locks the investigation to this endpoint and refuses an ambiguous deployment target.
+                One locked run collects evidence, chooses a reversible runtime action or a Daytona-validated source repair, and verifies the public result.
               </p>
             </div>
             <Button variant="primary" onClick={onFix} disabled={investigating} leadingIcon={<Wrench size={14} />}>
-              {investigating ? "Investigating…" : "Investigate"}
+              {investigating ? "Recovery running…" : "Start recovery"}
             </Button>
           </div>
 
           {investigating && !investigation && (
             <div className="mt-4 border border-border px-4 py-3" aria-live="polite">
               <div className="flex items-center justify-between gap-3 text-[10px]">
-                <span className="font-mono uppercase text-accent">Locking deployment and collecting evidence</span>
+                <span className="font-mono text-accent">Locking deployment and collecting evidence</span>
                 <span className="font-mono text-muted">{formatElapsed(diagnosisElapsed)}</span>
               </div>
               <div className="mt-2 h-1 overflow-hidden bg-border">
@@ -640,7 +641,7 @@ function ResolutionSurface({
             <div className="divide-y divide-border border-t border-border">
               {(inspection?.evidence || []).map((item) => (
                 <div key={item.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_160px_minmax(0,1fr)] sm:items-start">
-                  <span className={`font-mono text-[9px] uppercase ${item.status === "failed" ? "text-error" : item.status === "verified" ? "text-success" : "text-accent"}`}>
+                  <span className={`font-mono text-[9px] ${item.status === "failed" ? "text-error" : item.status === "verified" ? "text-success" : "text-accent"}`}>
                     {item.status}
                   </span>
                   <span className="break-all text-[11px] font-medium">{item.label}: {item.value}</span>
@@ -731,6 +732,7 @@ function IncidentAgent({
     !confirmation &&
     !missingTypedAction &&
     (lastTool?.status === "error" || !completeNarrative);
+  const outcome = incidentRecoveryOutcome(tools, text, confirmation?.name);
   const completedTools = tools.filter((tool) => tool.status === "success" || tool.status === "error").length;
   const progressLabel = confirmation
     ? "Awaiting approval"
@@ -740,12 +742,19 @@ function IncidentAgent({
         ? "Action incomplete"
         : incompleteInvestigation
           ? "Investigation incomplete"
-          : "Evidence ready";
+          : outcome?.title || "Recovery outcome ready";
+  const outcomeBadge = outcome?.kind === "verified"
+    ? "Recovered"
+    : outcome?.kind === "source-repair"
+      ? "Repair ready"
+      : outcome?.kind === "action-ready"
+        ? "Action ready"
+        : "Decision ready";
   return (
     <section className="mt-4 border border-border bg-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
-          <p className="gc-eyebrow">GroundControl SRE</p>
+          <p className="gc-eyebrow">Recovery run</p>
           <p className="mt-1 text-xs font-medium">{progressLabel}</p>
         </div>
         <StatusBadge tone={running || confirmation || missingTypedAction || incompleteInvestigation ? "warning" : "neutral"}>
@@ -757,17 +766,34 @@ function IncidentAgent({
                 ? "Action incomplete"
                 : incompleteInvestigation
                   ? "Incomplete"
-                  : "Evidence ready"}
+                  : outcomeBadge}
         </StatusBadge>
       </div>
       {(running || confirmation) && (
         <div className="border-b border-border px-4 py-3" aria-live="polite">
           <div className="flex items-center justify-between gap-3 text-[10px]">
-            <span className="font-mono uppercase text-accent">{progressLabel}</span>
+            <span className="font-mono text-accent">{progressLabel}</span>
             <span className="font-mono text-muted">{formatElapsed(elapsed)}</span>
           </div>
           <div className="mt-2 h-1 overflow-hidden bg-border">
             <div className={`h-full bg-accent ${running ? "w-2/3 motion-safe:animate-pulse" : "w-full"}`} />
+          </div>
+        </div>
+      )}
+      {outcome && !running && (
+        <div className={`border-b border-border px-4 py-4 ${
+          outcome.kind === "verified" ? "bg-success/[0.045]" : "bg-background/40"
+        }`}>
+          <div className="flex items-start gap-3">
+            <CheckCircle2
+              size={17}
+              className={`mt-0.5 shrink-0 ${outcome.kind === "verified" ? "text-success" : "text-accent"}`}
+              aria-hidden="true"
+            />
+            <div>
+              <p className="text-sm font-semibold">{outcome.title}</p>
+              <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-muted">{outcome.detail}</p>
+            </div>
           </div>
         </div>
       )}
@@ -777,7 +803,7 @@ function IncidentAgent({
             <details key={`${tool.name}-${index}`} className="px-4 py-3">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
                 <span className="font-mono">{humanize(tool.name)}</span>
-                <span className={`font-mono text-[9px] uppercase ${tool.status === "success" ? "text-success" : tool.status === "error" ? "text-error" : "text-accent"}`}>
+                <span className={`font-mono text-[9px] ${tool.status === "success" ? "text-success" : tool.status === "error" ? "text-error" : "text-accent"}`}>
                   {tool.status === "success" ? "complete" : tool.status}
                 </span>
               </summary>

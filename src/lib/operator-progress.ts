@@ -22,6 +22,12 @@ export type DeploymentRunProgress = {
   evidence: string | null;
 };
 
+export type IncidentRecoveryOutcome = {
+  kind: "verified" | "source-repair" | "action-ready" | "decision-ready";
+  title: string;
+  detail: string;
+};
+
 const STAGE_LABELS: Record<DeploymentStageId, string> = {
   environment: "Load configuration",
   compose: "Validate Compose",
@@ -82,6 +88,51 @@ export function operatorNarrativeIsComplete(value: string): boolean {
     parseOperatorNarrative(value).map((section) => section.title.trim().toLowerCase())
   );
   return ["problem", "fix", "verify"].every((title) => titles.has(title));
+}
+
+export function incidentRecoveryOutcome(
+  tools: Array<{ name: string; status: string; output?: string }>,
+  content: string,
+  confirmationName?: string | null
+): IncidentRecoveryOutcome | null {
+  const successfulVerification = [...tools].reverse().find((tool) =>
+    tool.name === "verify_public_endpoint"
+    && tool.status === "success"
+    && /\b(http\s+2\d\d|status(?:code)?\s*[:=]?\s*2\d\d|passed|healthy|reachable)\b/i.test(tool.output || "")
+    && !/\b(failed|unhealthy|unreachable|refused)\b/i.test(tool.output || "")
+  );
+  if (successfulVerification) {
+    return {
+      kind: "verified",
+      title: "Customer endpoint verified",
+      detail: "GroundControl completed the repair loop and confirmed the public result from outside the runtime.",
+    };
+  }
+  const validatedSourceRepair = [...tools].reverse().find((tool) =>
+    tool.name === "prepare_source_fix_in_daytona" && tool.status === "success"
+  );
+  if (validatedSourceRepair) {
+    return {
+      kind: "source-repair",
+      title: "Source repair validated",
+      detail: "The candidate fix reproduced and passed validation away from production. It is ready for the source-control approval step.",
+    };
+  }
+  if (confirmationName) {
+    return {
+      kind: "action-ready",
+      title: "Safe action ready",
+      detail: "The exact target and reversible action are resolved. GroundControl will execute only after approval, then verify the public endpoint.",
+    };
+  }
+  if (operatorNarrativeIsComplete(content)) {
+    return {
+      kind: "decision-ready",
+      title: "Evidence-backed decision ready",
+      detail: "The run reached a concrete Problem, Fix, Verify outcome without inventing a production mutation.",
+    };
+  }
+  return null;
 }
 
 export function deploymentRunProgress(

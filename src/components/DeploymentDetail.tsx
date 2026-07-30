@@ -478,7 +478,7 @@ export default function DeploymentDetail({
                             : "Ready to deploy"}
                     </h2>
                     <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
-                      One recorded run loads managed configuration when linked, validates Compose, authenticates the registry, pulls images, recreates the runtime, and verifies the result.
+                      One recorded run resolves the live Compose target, reuses synchronized configuration, validates the workload, recreates the runtime, and verifies the public result.
                     </p>
                   </div>
                   {deployment.kind === "compose" && deployment.legacyProjectSlug && (
@@ -502,7 +502,7 @@ export default function DeploymentDetail({
               {(showLog || redeployStatus === "failed") && (redeployLog.length > 0 || runFailure) && (
                 <div className="border border-border bg-card">
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                    <span className="font-mono text-[10px] uppercase text-muted">Run evidence</span>
+                    <span className="font-mono text-[10px] text-muted">Run evidence</span>
                     {redeployStatus !== "failed" && <button onClick={() => setShowLog(false)} className="font-mono text-[10px] text-muted">Hide</button>}
                   </div>
                   <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-4 font-mono text-[10px] leading-relaxed text-muted">
@@ -672,7 +672,7 @@ export default function DeploymentDetail({
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-medium">{release.target?.name || release.target?.type || "Deployment"}</span>
-                          <span className="border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted">{release.status}</span>
+                          <span className="border border-border px-1.5 py-0.5 font-mono text-[9px] text-muted">{release.status}</span>
                         </div>
                         <p className="mt-1 font-mono text-[10px] text-muted">
                           {release.commitSha?.slice(0, 10) || release.branch || "No commit recorded"}
@@ -712,11 +712,11 @@ export default function DeploymentDetail({
 
       <ModalSurface open={projectOpen} onClose={() => setProjectOpen(false)} title="Change project">
         <div className="space-y-1">
-          <button type="button" disabled={busy} onClick={() => void assignProject(null)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
+          <button type="button" disabled={busy} onClick={() => void assignProject(null)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:bg-card">
             <span>Ungrouped</span><span className="font-mono text-[10px] text-muted">No project</span>
           </button>
           {projects.map((project) => (
-            <button key={project.id} type="button" disabled={busy} onClick={() => void assignProject(project.id)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
+            <button key={project.id} type="button" disabled={busy} onClick={() => void assignProject(project.id)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:bg-card">
               <span>{project.name}</span><span className="font-mono text-[10px] text-muted">{project.slug}</span>
             </button>
           ))}
@@ -845,7 +845,7 @@ function DeploymentProgress({
 
       {status === "failed" && progress.evidence && (
         <div className="border-b border-error/30 bg-error/[0.025] px-5 py-4">
-          <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-error">Failure evidence</p>
+          <p className="font-mono text-[9px] text-error">Failure evidence</p>
           <p className="mt-2 break-words font-mono text-[10px] leading-relaxed text-foreground">{progress.evidence}</p>
         </div>
       )}
@@ -860,7 +860,7 @@ function DeploymentProgress({
               <span className={`flex h-5 w-5 items-center justify-center border font-mono text-[9px] ${
                 stage.status === "complete" ? "border-success/50 text-success"
                   : stage.status === "failed" ? "border-error/50 text-error"
-                    : stage.status === "running" ? "border-accent text-accent" : "border-border text-muted"
+                    : stage.status === "running" ? "border-border text-accent" : "border-border text-muted"
               }`}>
                 {stage.status === "complete" ? "✓" : index + 1}
               </span>
@@ -868,7 +868,7 @@ function DeploymentProgress({
                 {stage.label}
               </span>
             </div>
-            <p className={`mt-2 font-mono text-[9px] uppercase ${
+            <p className={`mt-2 font-mono text-[9px] ${
               stage.status === "complete" ? "text-success"
                 : stage.status === "failed" ? "text-error"
                   : stage.status === "running" ? "text-accent" : "text-muted"
@@ -891,7 +891,7 @@ function formatRunElapsed(seconds: number) {
 
 function ManagementLink({ icon, title, detail, href, onClick }: { icon: React.ReactNode; title: string; detail: string; href?: string; onClick?: () => void }) {
   const content = <><span className="mt-0.5 text-muted">{icon}</span><span><span className="block text-xs font-medium">{title}</span><span className="mt-0.5 block text-[10px] text-muted">{detail}</span></span></>;
-  const className = "flex min-h-16 items-start gap-3 border border-border bg-background/40 p-3 text-left transition-colors hover:border-accent/40 hover:bg-background";
+  const className = "flex min-h-16 items-start gap-3 border border-border bg-background/40 p-3 text-left transition-colors hover:bg-background";
   if (href) return <Link href={href} className={className}>{content}</Link>;
   return <button type="button" onClick={onClick} className={className}>{content}</button>;
 }

@@ -507,7 +507,7 @@ export default function TemplatesPage() {
       )}
 
       {deployStatus && (
-        <div className="mb-6 border-l-2 border-accent bg-card px-3 py-2 text-xs font-mono text-muted">
+        <div className="mb-6 border-l-2 border-border bg-card px-3 py-2 text-xs font-mono text-muted">
           {loading ? <span className="text-accent">Working · </span> : <span className="text-success">Complete · </span>}
           {deployStatus}
         </div>
@@ -522,12 +522,10 @@ export default function TemplatesPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {sortedTemplates.map(t => (
             <button key={t._filename} onClick={() => selectTemplate(t)}
-              className={`text-left p-4 bg-card border transition-colors hover:border-accent/40 ${
-                isRecommended(t) ? "border-accent/40" : "border-border"
-              }`}>
+              className="border border-border bg-card p-4 text-left transition-colors hover:bg-background/60">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <h3 className="font-medium text-sm truncate">{t.name}</h3>
-                <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase text-muted border border-border">
+                <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-mono text-muted border border-border">
                   {t.deploy_mode === "static" ? "static" : "compose"}
                 </span>
               </div>
@@ -689,7 +687,7 @@ export default function TemplatesPage() {
                   Use a domain from a connected Cloudflare zone. GroundControl only reports success after the public route responds.
                 </p>
                 {resolvedDomain && resolvedDomain !== String(inputs.domain || "").trim() && (
-                  <div className="mt-1.5 rounded border border-accent/30 bg-accent/5 px-2.5 py-1.5">
+                  <div className="mt-1.5 rounded border border-border bg-background/50 px-2.5 py-1.5">
                     <p className="text-[10px] text-muted mb-0.5">Final domain with zone:</p>
                     <p className="font-mono text-xs text-accent font-medium">{resolvedDomain}</p>
                     <p className="mt-1 text-[9px] text-muted">The DNS record will be created for this full domain. Caddy will serve at this address.</p>
@@ -814,7 +812,7 @@ export default function TemplatesPage() {
       {(step === "preview" || step === "deploy") && (
         <div className="space-y-6">
           {previewText && (
-            <div className="bg-card border border-accent/30 p-5">
+            <div className="border border-border bg-card p-5">
               <h3 className="text-sm font-medium mb-3">Generated Configuration</h3>
               <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background p-4 max-h-[50vh] overflow-y-auto leading-relaxed">{previewText}</pre>
             </div>
@@ -933,7 +931,7 @@ export default function TemplatesPage() {
                   setResult(null);
                   setGithubOpen(false);
                 }}
-                className="flex w-full items-start justify-between gap-4 border border-border px-3 py-3 text-left hover:border-accent/50 hover:bg-card"
+                className="flex w-full items-start justify-between gap-4 border border-border px-3 py-3 text-left hover:bg-card"
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium">{repo.fullName}</span>
@@ -955,7 +953,7 @@ export default function TemplatesPage() {
 // ── Sub-components ──────────────────────────────────────
 
 function Tag({ children }: { children: React.ReactNode }) {
-  return <span className="text-[9px] px-1.5 py-0.5 bg-accent/10 text-accent border border-accent/20 font-mono">{children}</span>;
+  return <span className="border border-border bg-background/50 px-1.5 py-0.5 font-mono text-[9px] text-muted">{children}</span>;
 }
 
 function BackBtn({ onClick }: { onClick: () => void }) {
@@ -976,15 +974,15 @@ function SelectedTemplateCard({ selected }: { selected: TemplateWithId }) {
       <p className="text-xs text-muted">{templatePurpose(selected)}</p>
       <div className="grid gap-2 md:grid-cols-3">
         <div className="border border-border bg-background/40 p-3">
-          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Best for</div>
+          <div className="mb-1 text-[10px] font-mono text-muted">Best for</div>
           <p className="text-xs text-muted leading-relaxed">{selected.description}</p>
         </div>
         <div className="border border-border bg-background/40 p-3">
-          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Exposure</div>
+          <div className="mb-1 text-[10px] font-mono text-muted">Exposure</div>
           <p className="text-xs text-muted leading-relaxed">{templateExposure(selected)}</p>
         </div>
         <div className="border border-border bg-background/40 p-3">
-          <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-muted">Source</div>
+          <div className="mb-1 text-[10px] font-mono text-muted">Source</div>
           <p className="text-xs text-muted leading-relaxed">{templateSourceModes(selected).join(" or ")}</p>
         </div>
       </div>
@@ -992,7 +990,7 @@ function SelectedTemplateCard({ selected }: { selected: TemplateWithId }) {
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {Object.entries(grouped).map(([layer, components]) => (
             <div key={layer} className="border border-border bg-background/40 p-3">
-              <div className="mb-2 text-[10px] font-mono uppercase tracking-wider text-accent">{layer}</div>
+              <div className="mb-2 text-[10px] font-mono text-muted">{layer}</div>
               <div className="space-y-1">
                 {components.map((component) => (
                   <div key={component.id} className="flex items-center justify-between gap-2 text-xs">

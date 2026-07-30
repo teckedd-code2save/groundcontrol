@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
-import { resolveDeploymentEvidence } from "@/lib/deployment-evidence";
+import {
+  resolveDeploymentEvidence,
+  resolveDeploymentExecutionIdentity,
+} from "@/lib/deployment-evidence";
 import { scanProjectsTree } from "@/lib/project-scan";
 import {
   getActiveVps,
@@ -39,8 +42,17 @@ export async function POST(req: NextRequest) {
       const evidence = resolveDeploymentEvidence({ ...deployment, savedDomain: deployment.legacyProject?.domain, savedRepoUrl: deployment.legacyProject?.repoUrl }, containers, labels, tree.projects, hostProjects.caddySites);
       const identities = [deployment.legacyProject?.domain, evidence.publicUrl, evidence.route?.domain, latestRelease?.publicUrl, latestRelease?.previewUrl].map(hostname).filter(Boolean);
       if (!identities.includes(domain)) return [];
-      const project = tree.projects.find((candidate) => candidate.path === deployment.sourcePath) || tree.projects.find((candidate) => candidate.slug === deployment.slug);
-      return [{ deployment, evidence, project, latestRelease }];
+      const execution = resolveDeploymentExecutionIdentity({
+        ...deployment,
+        legacyProjectPath: deployment.legacyProject?.path,
+        legacyProjectSlug: deployment.legacyProject?.slug,
+      }, labels, evidence.runtime.containers.map((container) => container.name));
+      const project = tree.projects.find((candidate) => candidate.path === execution.sourcePath)
+        || tree.projects.find((candidate) => candidate.composePath === execution.composePath)
+        || tree.projects.find((candidate) => candidate.path === deployment.legacyProject?.path)
+        || tree.projects.find((candidate) => candidate.slug === deployment.legacyProject?.slug)
+        || tree.projects.find((candidate) => candidate.slug === deployment.slug);
+      return [{ deployment, evidence, execution, project, latestRelease }];
     });
     if (matches.length !== 1) return NextResponse.json({
       status: matches.length > 1 ? "ambiguous" : "unresolved", domain,
@@ -50,7 +62,7 @@ export async function POST(req: NextRequest) {
       verify: `Re-run the endpoint check for https://${domain}/ after the deployment identity is corrected.`,
     });
 
-    const [{ deployment, evidence, project, latestRelease }] = matches;
+    const [{ deployment, evidence, execution, project, latestRelease }] = matches;
     const runtime = evidence.runtime;
     const runtimeNames = runtime.containers.map((container) => container.name);
     const services = runtime.containers.map((container) => container.service).filter(Boolean);
@@ -59,9 +71,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       status: "resolved", domain,
       problem: runtimeMissing ? `The proxy route for ${domain} points to ${route?.proxy || "an unavailable upstream"}, but deployment ${deployment.slug} has no running linked runtime.` : `Deployment ${deployment.slug} is linked, but its route-to-runtime path is still failing.`,
-      target: { deploymentSlug: deployment.slug, deploymentName: deployment.name, sourcePath: deployment.sourcePath, composePath: deployment.composePath || project?.composePath || null, composeProject: runtime.composeProject || null, composeServices: services.length > 0 ? services : project?.services.map((service) => service.name) || [], containers: runtimeNames, runtimeStatus: runtime.status, proxyRoute: route?.proxy || null, repository: evidence.repoUrl, deployedCommit: latestRelease?.commitSha || null },
+      target: { deploymentSlug: deployment.slug, deploymentName: deployment.name, sourcePath: execution.sourcePath || project?.path || null, composePath: execution.composePath || project?.composePath || null, composeProject: execution.composeProject || runtime.composeProject || null, composeServices: services.length > 0 ? services : project?.services.map((service) => service.name) || [], containers: runtimeNames, runtimeStatus: runtime.status, proxyRoute: route?.proxy || null, repository: evidence.repoUrl, deployedCommit: latestRelease?.commitSha || null },
       fix: runtimeMissing ? "Restore this deployment from its exact Compose source. No code sandbox is justified for a missing runtime." : "Inspect only this deployment's failing containers and route before proposing a repository change.",
-      action: runtimeMissing && project ? { kind: "compose_up", projectSlug: project.slug, title: `Start ${deployment.name}`, risk: "medium", approvalRequired: true, rollback: `docker compose down for ${project.slug}` } : null,
+      action: runtimeMissing && project ? { kind: "compose_up", projectSlug: deployment.legacyProject?.slug || project.slug, title: `Start ${deployment.name}`, risk: "medium", approvalRequired: true, rollback: `docker compose down for ${deployment.legacyProject?.slug || project.slug}` } : null,
       uncertainty: [!project ? "The enrolled deployment has no currently discovered Compose source." : null].filter(Boolean),
       verify: `After an approved repair, GroundControl will check https://${domain}/ externally.`,
     });

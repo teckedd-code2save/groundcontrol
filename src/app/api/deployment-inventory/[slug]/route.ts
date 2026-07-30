@@ -5,7 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { getActiveVps, getDockerContainerLabels, getDockerContainers } from "@/lib/vps";
 import { scanProjects } from "@/lib/vps";
 import { scanProjectsTree } from "@/lib/project-scan";
-import { resolveDeploymentEvidence } from "@/lib/deployment-evidence";
+import {
+  resolveDeploymentEvidence,
+  resolveDeploymentExecutionIdentity,
+} from "@/lib/deployment-evidence";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: string }> }) {
   try {
@@ -51,11 +54,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
       savedRepoUrl: deployment.legacyProject?.repoUrl,
     }, containers, labels, tree.projects, hostProjects.caddySites);
     const runtimeNames = new Set(evidence.runtime.containers.map((container) => container.name));
-    const runtimeComposePath = labels
-      .find((label) => runtimeNames.has(label.name) && label.configFiles)?.configFiles
-      .split(",")
-      .map((file) => file.trim())
-      .find((file) => file.startsWith("/")) || null;
+    const execution = resolveDeploymentExecutionIdentity({
+      ...deployment,
+      legacyProjectPath: deployment.legacyProject?.path,
+      legacyProjectSlug: deployment.legacyProject?.slug,
+    }, labels, [...runtimeNames]);
     const runtimeEvents = await prisma.deploymentLog.findMany({
       where: {
         projectSlug: { in: Array.from(new Set([
@@ -70,7 +73,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
     return NextResponse.json({
       deployment: {
         ...deployment,
-        composePath: runtimeComposePath || deployment.composePath,
+        sourcePath: execution.sourcePath,
+        composePath: execution.composePath,
+        composeProject: execution.composeProject,
+        executionSource: execution.source,
         project: deployment.projectGroup,
         projectId: deployment.projectGroupId,
         legacyProjectSlug: deployment.legacyProject?.slug || null,
