@@ -43,7 +43,7 @@ describe("infisical provider", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://secrets.example.com/api/v1/auth/universal-auth/login",
-      expect.objectContaining({ method: "POST" })
+      expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) })
     );
   });
 
