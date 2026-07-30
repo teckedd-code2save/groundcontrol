@@ -69,6 +69,12 @@ export interface AgentTool {
   execute: (args: Record<string, unknown>) => Promise<string>;
 }
 
+export type ResolvedAgentToolCall = {
+  name: string;
+  args: Record<string, unknown>;
+  reroutedFrom?: string;
+};
+
 /** Safe wrapper: run a command, never throw, surface stderr/exit code clearly. */
 async function safeExec(command: string): Promise<string> {
   try {
@@ -254,6 +260,28 @@ export function checkDiagnosticCommand(command: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * Correct a model selecting the mutating system escape hatch for a command
+ * that the read-only diagnostic policy already permits. Safety and approval
+ * are deterministic; a model's tool-name mistake must not create a fake
+ * mutation or terminate an incident.
+ */
+export function resolveAgentToolCall(
+  name: string,
+  args: Record<string, unknown>
+): ResolvedAgentToolCall {
+  if (name !== "run_system_command") return { name, args };
+  const command = String(args.command || "").trim();
+  if (command && checkDiagnosticCommand(command) === null) {
+    return {
+      name: "run_diagnostic",
+      args: { command },
+      reroutedFrom: name,
+    };
+  }
+  return { name, args };
 }
 
 // ---------------------------------------------------------------------------
