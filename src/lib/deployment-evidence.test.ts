@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveDeploymentEvidence } from "./deployment-evidence";
+import {
+  resolveDeploymentEvidence,
+  resolveDeploymentExecutionIdentity,
+} from "./deployment-evidence";
 
 describe("deployment evidence resolver", () => {
   it("uses a matching Caddy route when no release URL was captured", () => {
@@ -42,5 +45,40 @@ describe("deployment evidence resolver", () => {
     expect(evidence.publicUrl).toBe("https://confirmed.example.com/app");
     expect(evidence.repoUrl).toBe("https://github.com/example/app");
     expect(evidence.identitySource).toBe("operator");
+  });
+
+  it("uses live Compose labels instead of a stale enrolled folder", () => {
+    const identity = resolveDeploymentExecutionIdentity({
+      slug: "rentaweekend",
+      sourcePath: "/opt/github-com-teckedd-code2save-company-site-git",
+      composePath: "/opt/github-com-teckedd-code2save-company-site-git/docker-compose.yml",
+      legacyProjectPath: "/opt/agent-flow/RentAWeekend",
+      legacyProjectSlug: "rentaweekend",
+    }, [{
+      name: "rentaweekend-api-1",
+      project: "rentaweekend",
+      service: "api",
+      workingDir: "/opt/agent-flow/RentAWeekend",
+      configFiles: "/opt/agent-flow/RentAWeekend/docker-compose.yml",
+      projectSlug: "RentAWeekend",
+    }]);
+
+    expect(identity).toEqual({
+      sourcePath: "/opt/agent-flow/RentAWeekend",
+      composePath: "/opt/agent-flow/RentAWeekend/docker-compose.yml",
+      composeProject: "rentaweekend",
+      source: "runtime-label",
+    });
+  });
+
+  it("falls back to the saved project before stale enrollment metadata", () => {
+    expect(resolveDeploymentExecutionIdentity({
+      slug: "app",
+      sourcePath: "/opt/old-app",
+      legacyProjectPath: "/opt/current-app",
+    }, [])).toMatchObject({
+      sourcePath: "/opt/current-app",
+      source: "saved-project",
+    });
   });
 });
