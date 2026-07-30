@@ -8,6 +8,8 @@ The production Intelligence workspace can read the active host, reconcile Docker
 
 The configured GroundControl assistant is the default interactive investigation path. It receives the scoped incident evidence, uses existing read-only host tools to identify the exact runtime and repair target, and presents mutating tools through the existing confirmation gate. Gemini remains an optional structured-investigation provider rather than a requirement. Daytona reproduction remains reserved for eligible code or configuration defects.
 
+Every recovery run ends in one explicit operator outcome: customer endpoint verified, source repair validated in Daytona, safe runtime action ready for approval, or an evidence-backed blocker. Routine redeploy resolves the live Compose identity before acting and reuses the synchronized environment bundle; it contacts the configured secret provider only when that local bundle is absent or invalid.
+
 The workspace reports topology linkage and public reachability separately: discovering a proxy route never makes it healthy, and a reachable status-only endpoint is not presented as proof of a customer feature. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Host mutation remains policy and confirmation gated.
 
 ## Product hierarchy
