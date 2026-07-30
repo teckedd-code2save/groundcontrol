@@ -77,6 +77,13 @@ export function narrativeRequestsAction(value: string): boolean {
   return /\b(please\s+confirm|confirm\s+(?:if|to)|would\s+you\s+like\s+to\s+proceed|i\s+will\s+(?:proceed|start|restart|apply|create)|approve\s+(?:this|the)\s+action)\b/i.test(value);
 }
 
+export function operatorNarrativeIsComplete(value: string): boolean {
+  const titles = new Set(
+    parseOperatorNarrative(value).map((section) => section.title.trim().toLowerCase())
+  );
+  return ["problem", "fix", "verify"].every((title) => titles.has(title));
+}
+
 export function deploymentRunProgress(
   status: "deploying" | "success" | "failed",
   lines: string[],
@@ -125,6 +132,9 @@ export function deploymentRunProgress(
           : includes(/\[failure\]\s+phase=compose\b|compose configuration|compose config|yaml|validation/i) ? "compose"
             : "environment";
   }
+  if (failedStage && completed[failedStage]) {
+    failedStage = order.find((id) => !completed[id]) || failedStage;
+  }
 
   const stages = order.map((id, index): DeploymentStage => {
     if (completed[id]) return { id, label: STAGE_LABELS[id], status: "complete" };
@@ -138,9 +148,26 @@ export function deploymentRunProgress(
     };
   });
   const completedCount = stages.filter((stage) => stage.status === "complete").length;
-  const evidence = [...evidenceLines].reverse().find((line) => /^\[failure\]\s+/i.test(line))
-    || [...evidenceLines].reverse().find((line) => !/^__GC_REDEPLOY_STATUS__/.test(line))
-    || null;
+  const recordedFailure = [...lines].reverse().find((line) =>
+    /^\[failure\]\s+/i.test(line.trim())
+  );
+  const phaseFailure = [...lines].reverse().find((line) =>
+    /^\[(deploy|verify)\].*\b(failed|unhealthy|does not match)\b/i.test(line.trim())
+  );
+  const diagnosticFailure = [...lines].reverse().find((line) =>
+    /\b(error|fatal|exception|failed|unhealthy|refused|denied|timeout)\b/i.test(line)
+    && !/^\[(configuration|compose|registry|pull)\].*\b(ready|valid|resolved|completed)\b/i.test(line.trim())
+  );
+  const evidence = recordedFailure?.trim()
+    || failure?.trim()
+    || diagnosticFailure?.trim()
+    || phaseFailure?.trim()
+    || (status === "failed" ? (() => {
+      const lastCompleted = [...stages].reverse().find((stage) => stage.status === "complete");
+      return lastCompleted
+        ? `Deployment stopped after ${lastCompleted.label}; terminal failure evidence was not recorded.`
+        : "Deployment stopped before any phase completed; terminal failure evidence was not recorded.";
+    })() : null);
 
   return {
     stages,
