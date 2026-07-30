@@ -158,9 +158,8 @@ body {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.025em;
   line-height: 1.4;
-  text-transform: uppercase;
 }
 
 .gc-label { margin-bottom: 6px; }
@@ -304,7 +303,12 @@ body {
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+}
+
+/* Operational copy should read naturally. Monospace still distinguishes
+   evidence and state without making the interface shout. */
+.gc-page :where(.uppercase) {
+  text-transform: none;
 }
 
 .gc-badge__dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
@@ -336,7 +340,7 @@ body {
 }
 
 .gc-tab:hover:not(:disabled) { color: var(--text); }
-.gc-tab[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text); }
+.gc-tab[aria-selected="true"] { border-bottom-color: var(--text-dim); color: var(--text); }
 .gc-tab:disabled { cursor: not-allowed; opacity: 0.4; }
 .gc-tab__meta { color: var(--text-dim); font-family: var(--font-mono); font-size: 9px; }
 
@@ -361,7 +365,7 @@ body {
 }
 
 .gc-tabs--vertical .gc-tab[aria-selected="true"] {
-  border-left-color: var(--accent);
+  border-left-color: transparent;
   background: var(--bg-darker);
 }
 
