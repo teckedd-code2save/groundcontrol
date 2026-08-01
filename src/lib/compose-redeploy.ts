@@ -44,6 +44,10 @@ export function parseDetachedComposeRedeployLog(output: string): DetachedRedeplo
   const phaseFailure = [...lines].reverse().find((line) =>
     /^\[(deploy|verify)\]\s+(Docker Compose|Runtime image verification) failed\b/i.test(line.trim())
   );
+  const containerLogFailure = [...lines].reverse().find((line) =>
+    /^\[container-log\]\s+/i.test(line.trim())
+    && /\b(error|fatal|exception|failed|unhealthy|refused|denied|timeout|not found|missing|invalid)\b/i.test(line)
+  );
   const containerFailure = [...lines].reverse().find((line) =>
     /^\[failure\]\s+/i.test(line.trim())
   );
@@ -51,10 +55,11 @@ export function parseDetachedComposeRedeployLog(output: string): DetachedRedeplo
     !/^\[(prepare|deploy|verify)\]/i.test(line.trim())
     && /\b(error|fatal|exception|failed|unhealthy|refused|denied|timeout)\b/i.test(line)
   );
-  const error = containerFailure?.trim()
+  const error = containerLogFailure?.trim()
+    || containerFailure?.trim()
     || diagnosticFailure?.trim()
     || phaseFailure?.trim()
-    || `Docker Compose failed with exit code ${exitCode ?? "unknown"}.`;
+    || "Compose stopped before GroundControl captured a service or container error. The run evidence is incomplete and no automatic repair should be proposed from this result alone.";
 
   return { lines, status, error, exitCode };
 }
@@ -141,6 +146,7 @@ export function buildDetachedComposeRedeployCommand({
 
   return [
     `cd ${shQuote(projectPath)}`,
+    `printf '%s\\n' ${shQuote(`[deploy] Compose source ${composeFile}`)}`,
     `printf '%s\\n' '[deploy] Starting Docker Compose recreation'`,
     `if ${deploy}; then`,
     `  printf '%s\\n' '[deploy] Docker Compose recreation completed'`,
@@ -159,10 +165,18 @@ export function buildDetachedComposeRedeployCommand({
     `  printf '%s\\n' "[deploy] Docker Compose failed to recreate the deployment (exit $gc_status)" >&2`,
     `  printf '%s\\n' '[evidence] Compose state after failure'`,
     `  ${composeState} 2>&1 || true`,
-    `  for gc_container_id in $( ${composeContainers} 2>/dev/null ); do`,
-    `    docker inspect --format ${shQuote("[failure] container={{.Name}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} exit={{.State.ExitCode}} error={{.State.Error}}")} "$gc_container_id" 2>/dev/null || true`,
-    `    docker logs --tail 60 "$gc_container_id" 2>&1 | tail -n 60 || true`,
-    `  done`,
+    `  gc_container_ids=$( ${composeContainers} 2>/dev/null || true )`,
+    `  if [ -z "$gc_container_ids" ]; then`,
+    `    printf '%s\\n' '[failure] Compose created no containers; inspect the service definition, image, build context, and dependency graph.'`,
+    `  else`,
+    `    for gc_container_id in $gc_container_ids; do`,
+    `      gc_container_name=$(docker inspect --format '{{.Name}}' "$gc_container_id" 2>/dev/null | sed 's#^/##')`,
+    `      docker inspect --format ${shQuote("[failure] container={{.Name}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} exit={{.State.ExitCode}} error={{.State.Error}}")} "$gc_container_id" 2>/dev/null || true`,
+    `      docker logs --tail 60 "$gc_container_id" 2>&1 | tail -n 60 | while IFS= read -r gc_line; do`,
+    `        printf '%s\\n' "[container-log] container=$gc_container_name $gc_line"`,
+    `      done`,
+    `    done`,
+    `  fi`,
     `fi`,
     `if [ "$gc_status" -eq 0 ]; then`,
     `  docker image prune -f >/dev/null 2>&1 || true`,
