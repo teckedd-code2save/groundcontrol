@@ -112,6 +112,10 @@ export interface DaytonaReproductionRequest {
   journeyUrl?: string;
   /** A single bounded validation command; shell composition is rejected. */
   testCommand?: string;
+  /** Independent bounded checks that must still pass after a repair candidate. */
+  regressionCommands?: string[];
+  /** A source repair must prove that the baseline fails and the candidate passes. */
+  requireReproduction?: boolean;
   /** Optional source candidate to apply only inside the disposable sandbox. */
   candidate?: {
     filePath: string;
@@ -127,10 +131,35 @@ export interface DaytonaReproductionResult {
   detail: string;
   reproducedFailure: boolean;
   candidateValidated?: boolean;
+  reproductionValidated?: boolean;
+  regressionValidated?: boolean;
+  validations?: DaytonaValidationEvidence[];
   baseFileBlobSha?: string;
   proposedPatch?: string;
   logs: string[];
   cleanedUp: boolean;
+}
+
+export interface DaytonaValidationEvidence {
+  kind: "reproduction" | "regression";
+  command: string;
+  baselineExitCode?: number;
+  candidateExitCode: number;
+  passed: boolean;
+}
+
+export function evaluateSourceRepairValidation(
+  baselineExitCode: number,
+  candidateExitCode: number,
+  regressionExitCodes: number[]
+) {
+  const reproductionValidated = baselineExitCode !== 0 && candidateExitCode === 0;
+  const regressionValidated = regressionExitCodes.every((code) => code === 0);
+  return {
+    reproductionValidated,
+    regressionValidated,
+    candidateValidated: reproductionValidated && regressionValidated,
+  };
 }
 
 const ALLOWED_VALIDATION_COMMANDS = [
@@ -422,6 +451,12 @@ export async function reproduceInDaytona(
   const commandError = req.testCommand
     ? validateDaytonaCommand(req.testCommand)
     : null;
+  const regressionCommands = [...new Set((req.regressionCommands || []).map((command) => command.trim()))]
+    .filter((command) => command && command !== req.testCommand)
+    .slice(0, 2);
+  const regressionCommandError = regressionCommands
+    .map((command) => validateDaytonaCommand(command))
+    .find((error) => Boolean(error)) || null;
   const candidatePathError = req.candidate
     ? validateRepairFilePath(req.candidate.filePath)
     : null;
@@ -436,12 +471,12 @@ export async function reproduceInDaytona(
       cleanedUp: true,
     };
   }
-  if (commandError) {
+  if (commandError || regressionCommandError) {
     return {
       id,
       status: "failed",
       provider: "local_sanitized",
-      detail: commandError,
+      detail: commandError || regressionCommandError || "A validation command is invalid.",
       reproducedFailure: false,
       logs,
       cleanedUp: true,
@@ -486,12 +521,14 @@ export async function reproduceInDaytona(
     };
   }
 
-  if (!repository || !req.testCommand) {
+  if (!repository || !req.testCommand || (req.requireReproduction && !req.commitSha)) {
     return {
       id,
       status: "skipped",
       provider: "daytona",
-      detail: "Daytona needs an exact repository and one bounded validation command.",
+      detail: req.requireReproduction && !req.commitSha
+        ? "A Daytona source repair needs the exact deployed commit before reproduction."
+        : "Daytona needs an exact repository and one bounded validation command.",
       reproducedFailure: false,
       logs,
       cleanedUp: true,
@@ -566,7 +603,14 @@ export async function reproduceInDaytona(
       undefined,
       20
     );
-    logs.push(`revision=${clipped(revision.result, 200)}`);
+    const resolvedRevision = revision.result.trim();
+    logs.push(`revision=${clipped(resolvedRevision, 200)}`);
+    if (revision.exitCode !== 0 || !/^[a-f0-9]{40,64}$/i.test(resolvedRevision)) {
+      throw new Error("Daytona could not prove the checked-out repository revision.");
+    }
+    if (req.commitSha && resolvedRevision.toLowerCase() !== req.commitSha.toLowerCase()) {
+      throw new Error(`Daytona checked out ${resolvedRevision}, not the deployed revision ${req.commitSha}.`);
+    }
 
     const install = await sandbox.process.executeCommand(
       [
@@ -581,6 +625,9 @@ export async function reproduceInDaytona(
     );
     logs.push(`dependency_setup_exit=${install.exitCode}`);
     if (install.result.trim()) logs.push(`dependency_setup:\n${clipped(install.result, 3000)}`);
+    if (install.exitCode !== 0) {
+      throw new Error("Dependency setup failed inside Daytona; the repository was not ready for a trustworthy reproduction.");
+    }
 
     const baselineValidation = await sandbox.process.executeCommand(
       req.testCommand,
@@ -597,7 +644,16 @@ export async function reproduceInDaytona(
       logs.push(`baseline_output:\n${clipped(baselineValidation.result)}`);
     }
 
+    if (req.candidate && req.requireReproduction && baselineValidation.exitCode === 0) {
+      throw new Error(
+        "The baseline command passed at the deployed revision, so this candidate has not proved the production failure. Supply a focused reproduction that fails before the change."
+      );
+    }
+
     let candidateValidated: boolean | undefined;
+    let reproductionValidated: boolean | undefined;
+    let regressionValidated: boolean | undefined;
+    const validations: DaytonaValidationEvidence[] = [];
     let baseFileBlobSha: string | undefined;
     let proposedPatch: string | undefined;
     if (req.candidate) {
@@ -648,7 +704,51 @@ export async function reproduceInDaytona(
       if (candidateValidation.result.trim()) {
         logs.push(`candidate_output:\n${clipped(candidateValidation.result)}`);
       }
-      candidateValidated = candidateValidation.exitCode === 0;
+      const regressionExitCodes: number[] = [];
+      for (const [index, command] of regressionCommands.entries()) {
+        const regression = await sandbox.process.executeCommand(
+          command,
+          "workspace/repository",
+          {
+            CI: "1",
+            GC_INCIDENT_REPRODUCTION: "1",
+            GC_SOURCE_REPAIR_CANDIDATE: "1",
+            GC_REGRESSION_CHECK: "1",
+          },
+          Math.max(20, Math.floor(budget * 0.12))
+        );
+        regressionExitCodes.push(regression.exitCode);
+        logs.push(`regression_${index + 1}=${command}`);
+        logs.push(`regression_${index + 1}_exit=${regression.exitCode}`);
+        if (regression.result.trim()) {
+          logs.push(`regression_${index + 1}_output:\n${clipped(regression.result)}`);
+        }
+        validations.push({
+          kind: "regression",
+          command,
+          candidateExitCode: regression.exitCode,
+          passed: regression.exitCode === 0,
+        });
+      }
+      const evaluated = evaluateSourceRepairValidation(
+        baselineValidation.exitCode,
+        candidateValidation.exitCode,
+        regressionExitCodes
+      );
+      reproductionValidated = evaluated.reproductionValidated;
+      regressionValidated = evaluated.regressionValidated;
+      candidateValidated = req.requireReproduction
+        ? evaluated.candidateValidated
+        : candidateValidation.exitCode === 0 && evaluated.regressionValidated;
+      validations.unshift({
+        kind: "reproduction",
+        command: req.testCommand,
+        baselineExitCode: baselineValidation.exitCode,
+        candidateExitCode: candidateValidation.exitCode,
+        passed: req.requireReproduction
+          ? evaluated.reproductionValidated
+          : candidateValidation.exitCode === 0,
+      });
     }
 
     outcome = {
@@ -657,13 +757,18 @@ export async function reproduceInDaytona(
       provider: "daytona",
       detail: req.candidate
         ? candidateValidated
-          ? "The source candidate passed isolated validation at the deployed revision."
-          : "The source candidate failed isolated validation and cannot be promoted."
+          ? `Daytona reproduced the source failure, proved the candidate, and passed ${regressionCommands.length} independent regression check${regressionCommands.length === 1 ? "" : "s"}.`
+          : reproductionValidated === false
+            ? "The candidate did not turn the reproduced failure into a passing result."
+            : "The candidate failed its isolated regression matrix and cannot be promoted."
         : baselineValidation.exitCode === 0
           ? "The exact revision passed the isolated validation."
           : "The failure was reproduced against the exact revision in an isolated sandbox.",
       reproducedFailure: baselineValidation.exitCode !== 0,
       candidateValidated,
+      reproductionValidated,
+      regressionValidated,
+      validations: validations.length > 0 ? validations : undefined,
       baseFileBlobSha,
       proposedPatch,
       logs,

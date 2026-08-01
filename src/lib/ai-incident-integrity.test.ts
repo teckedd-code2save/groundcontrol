@@ -75,6 +75,7 @@ describe("AI incident integrity", () => {
     const repair = schemas.find((tool) => tool.function.name === "prepare_source_fix_in_daytona");
     const parameters = repair?.function.parameters as {
       properties?: {
+        regressionCommands?: { minItems?: number; maxItems?: number };
         edits?: {
           minItems?: number;
           maxItems?: number;
@@ -85,6 +86,8 @@ describe("AI incident integrity", () => {
     expect(parameters.properties?.edits?.minItems).toBe(1);
     expect(parameters.properties?.edits?.maxItems).toBe(8);
     expect(parameters.properties?.edits?.items?.properties?.find?.minLength).toBe(1);
+    expect(parameters.properties?.regressionCommands?.minItems).toBe(1);
+    expect(parameters.properties?.regressionCommands?.maxItems).toBe(2);
   });
 
   it("allows bounded HTTP inspection but still blocks fetched shell execution", () => {

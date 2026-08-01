@@ -320,7 +320,7 @@ Policies are enforced outside Gemini. Model confidence cannot widen permissions.
 
 Daytona is used when a failure can be reproduced through repository code, container topology, configuration or deployment behaviour. It is not an exact production clone and is not required for every recovery.
 
-The Daytona adapter may open the exact deployed commit, use the exact artifact digest, construct a sanitized topology, validate a Compose or proxy candidate, reproduce a journey, fork repair attempts, run tests, prepare a minimal patch, enforce budgets and clean up safely.
+The Daytona adapter opens and proves the exact deployed commit, constructs a sanitized workbench, installs the repository dependencies, reproduces the focused failure, applies the minimal candidate, reruns the reproduction, executes one or two independent regression checks, captures the reviewable diff and destroys the sandbox. A source candidate is not PR-eligible when the baseline already passes, the candidate does not flip the reproduction to passing, any regression fails, the revision differs, setup fails or cleanup cannot be recorded.
 
 Network access is denied by default and allowlisted per dependency. Daytona never receives production secret values.
 

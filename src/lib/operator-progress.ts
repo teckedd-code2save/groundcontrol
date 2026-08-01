@@ -124,7 +124,7 @@ export function incidentRecoveryOutcome(
     return {
       kind: "source-repair",
       title: "Source repair validated",
-      detail: "The candidate fix reproduced and passed validation away from production. It is ready for the source-control approval step.",
+      detail: "Daytona reproduced the failure at the deployed revision, proved the candidate, passed the independent regression matrix and cleaned up the sandbox. The reviewed diff is ready for source-control approval.",
     };
   }
   if (confirmationName) {
