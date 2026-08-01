@@ -11,6 +11,10 @@ import {
 } from "@/lib/template-source-requirements";
 import { getActiveVps, shQuote } from "@/lib/vps";
 import { execOnTarget } from "@/lib/host-exec";
+import {
+  inspectRepositoryCompose,
+  normalizeRepositoryComposePath,
+} from "@/lib/repository-compose";
 
 function parseGithubRepo(raw: string): { owner: string; repo: string } | null {
   const cleaned = raw.trim().replace(/\.git$/, "");
@@ -21,8 +25,9 @@ function parseGithubRepo(raw: string): { owner: string; repo: string } | null {
 
 async function probeGithubRepo(
   repoUrl: string,
-  branch?: string
-): Promise<{ tree: SourceTreeProbe | null; meta?: Record<string, unknown>; error?: string }> {
+  branch?: string,
+  composeFile?: string
+): Promise<{ tree: SourceTreeProbe | null; meta?: Record<string, unknown>; composeContent?: string; error?: string }> {
   const parsed = parseGithubRepo(repoUrl);
   if (!parsed) {
     return { tree: null, error: "Not a GitHub URL — use https://github.com/owner/repo" };
@@ -93,8 +98,25 @@ async function probeGithubRepo(
     if (r.ok) tree.paths.add(extra);
   }
 
+  let composeContent: string | undefined;
+  if (composeFile) {
+    const encodedPath = composeFile.split("/").map(encodeURIComponent).join("/");
+    const composeResponse = await fetch(
+      `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`,
+      { headers, signal: AbortSignal.timeout(8000) }
+    );
+    if (composeResponse.ok) {
+      const file = await composeResponse.json() as { content?: string; encoding?: string };
+      if (file.encoding === "base64" && file.content) {
+        composeContent = Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
+        tree.paths.add(composeFile);
+      }
+    }
+  }
+
   return {
     tree,
+    composeContent,
     meta: {
       name: repoData.full_name,
       private: repoData.private,
@@ -106,7 +128,7 @@ async function probeGithubRepo(
   };
 }
 
-async function probeLocalPath(localPath: string): Promise<{ tree: SourceTreeProbe | null; error?: string }> {
+async function probeLocalPath(localPath: string, composeFile?: string): Promise<{ tree: SourceTreeProbe | null; composeContent?: string; error?: string }> {
   const vps = await getActiveVps();
   if (!vps) {
     return { tree: null, error: "No active VPS — cannot inspect local path" };
@@ -138,7 +160,15 @@ async function probeLocalPath(localPath: string): Promise<{ tree: SourceTreeProb
       rootFiles.add(base.toLowerCase());
     }
   }
-  return { tree: { paths, rootFiles } };
+  let composeContent: string | undefined;
+  if (composeFile) {
+    const compose = await execOnTarget(`cat ${shQuote(`${path}/${composeFile}`)} 2>/dev/null || true`, vps);
+    if (compose.stdout.trim()) {
+      composeContent = compose.stdout;
+      paths.add(composeFile);
+    }
+  }
+  return { tree: { paths, rootFiles }, composeContent };
 }
 
 export async function POST(req: NextRequest) {
@@ -164,9 +194,13 @@ export async function POST(req: NextRequest) {
     }
 
     const plan = getTemplateSourcePlan(template);
+    const composeFile = plan.repositoryCompose
+      ? normalizeRepositoryComposePath(String(body.composeFile || body.compose_file || "docker-compose.yml"))
+      : undefined;
     let tree: SourceTreeProbe | null = null;
     let repoMeta: Record<string, unknown> | undefined;
     let probeError: string | undefined;
+    let composeContent: string | undefined;
 
     if (sourceMode === "github") {
       if (!repoUrl) {
@@ -179,10 +213,11 @@ export async function POST(req: NextRequest) {
           warnings: [],
         });
       }
-      const probed = await probeGithubRepo(repoUrl, branch);
+      const probed = await probeGithubRepo(repoUrl, branch, composeFile);
       tree = probed.tree;
       repoMeta = probed.meta;
       probeError = probed.error;
+      composeContent = probed.composeContent;
       if (probeError && !tree) {
         return NextResponse.json({
           ok: false,
@@ -205,9 +240,10 @@ export async function POST(req: NextRequest) {
           warnings: [],
         });
       }
-      const probed = await probeLocalPath(localPath);
+      const probed = await probeLocalPath(localPath, composeFile);
       tree = probed.tree;
       probeError = probed.error;
+      composeContent = probed.composeContent;
       if (probeError && !tree) {
         return NextResponse.json({
           ok: false,
@@ -240,7 +276,25 @@ export async function POST(req: NextRequest) {
       hasImage: Boolean(ghcrImage),
       outputDir,
       buildCommand,
+      composeFile,
     });
+
+    let composeInspection;
+    if (result.ok && plan.repositoryCompose && composeContent) {
+      try {
+        composeInspection = inspectRepositoryCompose(composeContent);
+      } catch (error) {
+        return NextResponse.json({
+          ok: false,
+          error: error instanceof Error ? error.message : "Compose validation failed",
+          plan,
+          errors: [error instanceof Error ? error.message : "Compose validation failed"],
+          checks: result.checks,
+          warnings: result.warnings,
+          repo: repoMeta,
+        }, { status: 400 });
+      }
+    }
 
     // Suggest the right template when Dockerfile missing but static content present
     let suggestion: string | undefined;
@@ -273,6 +327,15 @@ export async function POST(req: NextRequest) {
       plan,
       suggestion,
       repo: repoMeta,
+      compose: composeInspection ? {
+        file: composeFile,
+        services: composeInspection.services,
+        publishedPorts: composeInspection.publishedPorts,
+        suggestedPublicService: composeInspection.suggestedPublicService,
+        suggestedPublicPort: composeInspection.suggestedPublicPort,
+        suggestedHealthPath: composeInspection.suggestedHealthPath,
+      } : undefined,
+      environment: composeInspection?.environment,
       template: {
         name: template.name,
         category: template.category,

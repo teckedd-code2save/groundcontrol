@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { isStaticTemplate, loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
+import { isRepositoryComposeTemplate, isStaticTemplate, loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
 import { getActiveVps, getSystemConfig, shQuote } from "@/lib/vps";
 import { execOnTarget } from "@/lib/host-exec";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
@@ -14,6 +14,7 @@ import {
   setLocalEnvValues,
   upsertEnvProfileForProject,
   validateEnv,
+  type EnvSchemaEntry,
 } from "@/lib/env-management";
 import {
   evaluateSourceRequirements,
@@ -21,6 +22,13 @@ import {
 } from "@/lib/template-source-requirements";
 import { inferDeploymentName, slugifyDeploymentName } from "@/lib/deployment-identity";
 import { deploymentVerificationStatus, parsePublicEndpointCheck } from "@/lib/deployment-verification";
+import {
+  inspectRepositoryCompose,
+  normalizeRepositoryComposePath,
+  repositoryComposeEnvSchema,
+  type RepositoryComposeInspection,
+} from "@/lib/repository-compose";
+import { getVpsPublicIp } from "@/lib/k8s/utils";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -81,16 +89,70 @@ interface CloudflareZone {
   name?: string;
 }
 
-async function verifyPublicEndpoints(domains: string[], vps: Awaited<ReturnType<typeof getActiveVps>>) {
+async function verifyPublicEndpoints(domains: string[], vps: Awaited<ReturnType<typeof getActiveVps>>, healthPath = "/") {
   const checks = [];
+  const path = healthPath.startsWith("/") ? healthPath : `/${healthPath}`;
   for (const domain of domains) {
     const probe = await execOnTarget(
-      `curl -k -sS -o /dev/null --max-time 15 -w '%{http_code}|%{remote_ip}' ${shQuote(`https://${domain}/`)} 2>&1 || true`,
+      `curl -k -sS -o /dev/null --max-time 15 -w '%{http_code}|%{remote_ip}' ${shQuote(`https://${domain}${path}`)} 2>&1 || true`,
       vps
     );
     checks.push(parsePublicEndpointCheck(domain, probe.stdout.trim() || probe.stderr.trim()));
   }
   return checks;
+}
+
+async function ensurePublishedPortsAvailable(ports: string[], vps: Awaited<ReturnType<typeof getActiveVps>>) {
+  for (const port of Array.from(new Set(ports.filter((value) => /^\d+$/.test(value))))) {
+    const result = await execOnTarget(`(ss -tln 2>/dev/null || netstat -tln 2>/dev/null || true) | grep -E '[:.]${port}[[:space:]]' || true`, vps);
+    if (result.stdout.trim()) {
+      throw new Error(`Host port ${port} is already in use. Change the repository Compose port before deploying.`);
+    }
+  }
+}
+
+async function verifyRepositoryComposeRuntime(args: {
+  runtimePath: string;
+  composeProject: string;
+  composeFile: string;
+  services: string[];
+  vps: NonNullable<Awaited<ReturnType<typeof getActiveVps>>>;
+}) {
+  const composeFileArg = `-f ${shQuote(args.composeFile)}`;
+  const services = args.services.map(shQuote).join(" ");
+  const command = [
+    `cd ${shQuote(args.runtimePath)}`,
+    "compose_cmd=$(if docker compose version >/dev/null 2>&1; then printf 'docker compose'; elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'; fi)",
+    "if [ -z \"$compose_cmd\" ]; then echo '[verify] Docker Compose is unavailable' >&2; exit 127; fi",
+    "deadline=$(($(date +%s) + 120))",
+    "while :; do",
+    "  failures=''",
+    `  for service in ${services}; do`,
+    `    container_id=$($compose_cmd -p ${shQuote(args.composeProject)} ${composeFileArg} ps -a -q \"$service\" 2>/dev/null | head -n 1)`,
+    "    if [ -z \"$container_id\" ]; then failures=\"$failures\\n$service: container was not created\"; continue; fi",
+    "    state=$(docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.ExitCode}}|{{.HostConfig.RestartPolicy.Name}}' \"$container_id\" 2>&1)",
+    "    status=$(printf '%s' \"$state\" | cut -d '|' -f 1)",
+    "    health=$(printf '%s' \"$state\" | cut -d '|' -f 2)",
+    "    exit_code=$(printf '%s' \"$state\" | cut -d '|' -f 3)",
+    "    restart=$(printf '%s' \"$state\" | cut -d '|' -f 4)",
+    "    if [ \"$status\" = running ] && { [ \"$health\" = healthy ] || [ \"$health\" = none ]; }; then continue; fi",
+    "    if [ \"$status\" = exited ] && [ \"$exit_code\" = 0 ] && [ \"$restart\" = no ]; then continue; fi",
+    "    failures=\"$failures\\n$service: status=$status health=$health exit=$exit_code restart=$restart\"",
+    "  done",
+    "  if [ -z \"$failures\" ]; then printf '[verify] Complete Compose service graph is operational\\n'; exit 0; fi",
+    "  if [ $(date +%s) -ge $deadline ]; then printf '[verify] Compose service graph did not become operational:%b\\n' \"$failures\" >&2; exit 1; fi",
+    "  sleep 3",
+    "done",
+  ].join("\n");
+  return execOnTarget(command, args.vps);
+}
+
+async function requireVpsPublicIp(vps: NonNullable<Awaited<ReturnType<typeof getActiveVps>>>) {
+  const publicIp = await getVpsPublicIp(vps);
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(publicIp)) {
+    throw new Error("Could not determine the VPS public IPv4 address required for the Cloudflare A record.");
+  }
+  return publicIp;
 }
 
 function isCloudflareZone(value: unknown): value is CloudflareZone {
@@ -180,6 +242,10 @@ export async function POST(req: NextRequest) {
     }
 
     const staticMode = isStaticTemplate(template);
+    const repositoryComposeMode = isRepositoryComposeTemplate(template);
+    const repositoryComposeFile = repositoryComposeMode
+      ? normalizeRepositoryComposePath(allInputs.compose_file || "docker-compose.yml")
+      : "docker-compose.yml";
     const systemConfig = await getSystemConfig();
     const templateRoot = String(systemConfig.templateDeploymentRoot || "/srv/groundcontrol/deployments").replace(/\/+$/, "");
     const staticRoot = String(systemConfig.staticRoot || "/var/www").replace(/\/+$/, "");
@@ -200,8 +266,8 @@ export async function POST(req: NextRequest) {
       if (!allInputs.output_dir) allInputs.output_dir = ".";
     }
 
-    const resolved = resolveTemplate(template, allInputs);
-    if (!staticMode) {
+    let resolved = resolveTemplate(template, allInputs);
+    if (!staticMode && !repositoryComposeMode) {
       const composeValidation = validateComposeDocument(resolved.dockerCompose);
       if (!composeValidation.ok) {
         return NextResponse.json({ success: false, error: composeValidation.error }, { status: 400 });
@@ -219,13 +285,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Static / source-build need real source early — fail with a clear message.
-    if (staticMode || template.services.some((s) => s.build)) {
+    if (staticMode || repositoryComposeMode || template.services.some((s) => s.build)) {
       if (!repoUrl && !localPath) {
         return NextResponse.json({
           success: false,
           error: staticMode
             ? "Static Site needs a Git repository URL or a local path on the VPS."
-            : "Source Build needs a Git repository URL or a local path with a Dockerfile.",
+            : repositoryComposeMode
+              ? "Existing Compose needs a Git repository URL or a local path containing the Compose file."
+              : "Source Build needs a Git repository URL or a local path with a Dockerfile.",
         }, { status: 400 });
       }
     }
@@ -250,7 +318,7 @@ export async function POST(req: NextRequest) {
         rootFiles.add(line.toLowerCase());
         paths.add(line);
       }
-      for (const f of ["Dockerfile", "dockerfile", "index.html", "package.json", "dist/index.html", "build/index.html", "out/index.html"]) {
+      for (const f of Array.from(new Set(["Dockerfile", "dockerfile", "index.html", "package.json", "dist/index.html", "build/index.html", "out/index.html", repositoryComposeFile]))) {
         const r = await execOnTarget(`test -e ${shQuote(`${source.sourcePath}/${f}`)} && echo yes || echo no`, vps);
         if (r.stdout.trim() === "yes") {
           paths.add(f);
@@ -266,6 +334,7 @@ export async function POST(req: NextRequest) {
         hasImage: Boolean(ghcrImage),
         outputDir: allInputs.output_dir || ".",
         buildCommand: allInputs.build_command || "",
+        composeFile: repositoryComposeFile,
       });
       if (!reqCheck.ok) {
         return NextResponse.json({
@@ -281,12 +350,91 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    let runtimePath = deployPath;
+    let composeContent = resolved.dockerCompose;
+    let composeInspection: RepositoryComposeInspection | null = null;
+    let envSchemaContent = resolved.envSchema;
+    let envSchemaEntries: EnvSchemaEntry[] = parseEnvSchema(envSchemaContent);
+    const envValues = Object.fromEntries(
+      (envVars || [])
+        .filter((entry: { key: string }) => entry.key)
+        .map((entry: { key: string; value: string }) => [String(entry.key), String(entry.value || "")])
+    );
+
+    if (repositoryComposeMode) {
+      runtimePath = source.sourcePath;
+      const composeRead = await execOnTarget(
+        `cat ${shQuote(`${runtimePath}/${repositoryComposeFile}`)} 2>/dev/null || true`,
+        vps
+      );
+      if (!composeRead.stdout.trim()) {
+        return NextResponse.json({
+          success: false,
+          error: `Compose file not found after source checkout: ${repositoryComposeFile}`,
+        }, { status: 400 });
+      }
+
+      composeContent = composeRead.stdout;
+      const composeValidation = validateComposeDocument(composeContent);
+      if (!composeValidation.ok) {
+        return NextResponse.json({ success: false, error: composeValidation.error }, { status: 400 });
+      }
+      composeInspection = inspectRepositoryCompose(composeContent);
+      allInputs.public_service = allInputs.public_service || composeInspection.suggestedPublicService || "";
+      allInputs.public_port = allInputs.public_port || composeInspection.suggestedPublicPort || "";
+      if (!allInputs.public_service || !composeInspection.services.includes(allInputs.public_service)) {
+        return NextResponse.json({
+          success: false,
+          error: `Public service "${allInputs.public_service || "(not selected)"}" was not found. Available services: ${composeInspection.services.join(", ")}.`,
+        }, { status: 400 });
+      }
+      const selectedPort = composeInspection.publishedPorts.find((port) =>
+        port.service === allInputs.public_service && port.hostPort === allInputs.public_port
+      );
+      if (!selectedPort) {
+        const available = composeInspection.publishedPorts
+          .filter((port) => port.service === allInputs.public_service)
+          .map((port) => `${port.hostPort}:${port.containerPort}`)
+          .join(", ");
+        return NextResponse.json({
+          success: false,
+          error: available
+            ? `Published port ${allInputs.public_port || "(not selected)"} does not belong to ${allInputs.public_service}. Available: ${available}.`
+            : `Service ${allInputs.public_service} has no published host port. Publish it in the repository Compose file before attaching a public domain.`,
+        }, { status: 400 });
+      }
+
+      resolved = resolveTemplate(template, allInputs);
+      envSchemaContent = repositoryComposeEnvSchema(composeInspection.environment);
+      envSchemaEntries = composeInspection.environment.map((entry) => ({
+        key: entry.key,
+        required: entry.required,
+        defaultValue: entry.defaultValue,
+      }));
+      const envValidation = validateEnv(envSchemaEntries, envValues);
+      if (!envValidation.ok) {
+        return NextResponse.json({
+          success: false,
+          error: `Required deployment configuration is missing: ${envValidation.missing.join(", ")}.`,
+          missingEnvironment: envValidation.missing,
+        }, { status: 400 });
+      }
+    }
+
     const manifest = JSON.stringify({
       ...JSON.parse(resolved.manifest),
-      deploymentRoot: deployPath,
+      slug,
+      deploymentRoot: runtimePath,
       composeProject: composeProject || null,
       staticDir: staticMode ? staticDir : null,
       source,
+      repositoryCompose: composeInspection ? {
+        file: repositoryComposeFile,
+        services: composeInspection.services,
+        publishedPorts: composeInspection.publishedPorts,
+        publicService: allInputs.public_service,
+        publicPort: allInputs.public_port,
+      } : null,
     }, null, 2);
 
     // ── Static site path: no Docker Compose ──
@@ -355,6 +503,7 @@ export async function POST(req: NextRequest) {
               : []
           );
           const records = [];
+          const publicIp = await requireVpsPublicIp(vps);
           for (const recordName of domains) {
             const requestedZoneId = String(zoneId || "").trim();
             const zone: CloudflareZone | undefined = requestedZoneId
@@ -369,7 +518,7 @@ export async function POST(req: NextRequest) {
             records.push(await provisionCustomDomain({
               subdomain: recordName,
               zoneId: String(zone.id),
-              targetHost: vps.host,
+              targetHost: publicIp,
               recordType: "A",
               proxied: proxied === true,
             }));
@@ -442,9 +591,13 @@ export async function POST(req: NextRequest) {
       }, { status: verification.publicVerified ? 200 : 502 });
     }
 
-    const existingDeployment = await execOnTarget(`test -f ${shQuote(deployPath)}/docker-compose.yml && echo yes || echo no`, vps);
+    const existingDeployment = await execOnTarget(`test -f ${shQuote(`${runtimePath}/.groundcontrol/manifest.json`)} && echo yes || echo no`, vps);
     if (existingDeployment.stdout.trim() !== "yes") {
-      await ensureNoPortCollisions(resolved.dockerCompose, vps);
+      if (composeInspection) {
+        await ensurePublishedPortsAvailable(composeInspection.publishedPorts.map((port) => port.hostPort), vps);
+      } else {
+        await ensureNoPortCollisions(composeContent, vps);
+      }
     }
 
     // Write docker-compose.yml
@@ -456,8 +609,7 @@ export async function POST(req: NextRequest) {
     if (requestedTunnelId && !selectedTunnel) {
       return NextResponse.json({ success: false, error: `Cloudflare tunnel not found: ${requestedTunnelId}` }, { status: 400 });
     }
-    let composeContent = resolved.dockerCompose;
-    const usesTunnelToken = composeContent.includes("{{tunnel_token}}");
+    const usesTunnelToken = !repositoryComposeMode && composeContent.includes("{{tunnel_token}}");
     if (usesTunnelToken) {
       if (!requestedTunnelId) {
         return NextResponse.json({ success: false, error: "Template requires a saved Cloudflare tunnel. Select a tunnel before deploying." }, { status: 400 });
@@ -473,21 +625,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await execOnTarget(`mkdir -p ${shQuote(deployPath)}/.groundcontrol && cat > ${shQuote(deployPath)}/docker-compose.yml << 'GCEOF'\n${composeContent}\nGCEOF\ncat > ${shQuote(deployPath)}/.env.schema << 'GCEOF'\n${resolved.envSchema}\nGCEOF\ncat > ${shQuote(deployPath)}/.groundcontrol/manifest.json << 'GCEOF'\n${manifest}\nGCEOF`, vps);
+    if (repositoryComposeMode) {
+      await execOnTarget(`mkdir -p ${shQuote(`${runtimePath}/.groundcontrol`)} && cat > ${shQuote(`${runtimePath}/.env.schema`)} << 'GCEOF'\n${envSchemaContent}\nGCEOF\ncat > ${shQuote(`${runtimePath}/.groundcontrol/manifest.json`)} << 'GCEOF'\n${manifest}\nGCEOF`, vps);
+    } else {
+      await execOnTarget(`mkdir -p ${shQuote(`${runtimePath}/.groundcontrol`)} && cat > ${shQuote(`${runtimePath}/docker-compose.yml`)} << 'GCEOF'\n${composeContent}\nGCEOF\ncat > ${shQuote(`${runtimePath}/.env.schema`)} << 'GCEOF'\n${envSchemaContent}\nGCEOF\ncat > ${shQuote(`${runtimePath}/.groundcontrol/manifest.json`)} << 'GCEOF'\n${manifest}\nGCEOF`, vps);
+    }
 
     // Write .env. Compose fails if env_file points at a missing file, so create
     // an empty file when the template references .env even without user envs.
-    const envValues = Object.fromEntries(
-      (envVars || [])
-        .filter((e: { key: string }) => e.key)
-        .map((e: { key: string; value: string }) => [String(e.key), String(e.value || "")])
-    );
     const envFile = (envVars || [])
       .filter((e: { key: string }) => e.key)
       .map((e: { key: string; value: string }) => `${e.key}=${e.value || ""}`)
       .join("\n");
     if (envFile || composeContent.includes("env_file:")) {
-      await materializeEnvFile(deployPath, envValues, vps);
+      await materializeEnvFile(runtimePath, envValues, vps);
     }
 
     // Deploy
@@ -497,10 +648,38 @@ export async function POST(req: NextRequest) {
       await stopCloudflaredConnector(selectedTunnel.connectorId).catch(() => undefined);
     }
 
-    const upResult = await execOnTarget(`cd ${shQuote(deployPath)} && compose_cmd=$(${composeCmd}) && if [ -z "$compose_cmd" ]; then echo "docker compose plugin or docker-compose is required" >&2; exit 127; fi && $compose_cmd -p ${shQuote(composeProject)} config >/tmp/${composeProject}.compose.yml && $compose_cmd -p ${shQuote(composeProject)} pull && $compose_cmd -p ${shQuote(composeProject)} up -d --remove-orphans 2>&1`, vps);
+    const composeFileArgs = repositoryComposeMode ? ` -f ${shQuote(repositoryComposeFile)}` : "";
+    const repositoryBuild = repositoryComposeMode
+      ? ` && printf '[build] Building repository services\\n' && $compose_cmd -p ${shQuote(composeProject)}${composeFileArgs} build --pull`
+      : "";
+    const upResult = await execOnTarget(
+      `cd ${shQuote(runtimePath)} && compose_cmd=$(${composeCmd}) && ` +
+      `if [ -z "$compose_cmd" ]; then echo "docker compose plugin or docker-compose is required" >&2; exit 127; fi && ` +
+      `printf '[validate] Rendering effective Compose model\\n' && ` +
+      `$compose_cmd -p ${shQuote(composeProject)}${composeFileArgs} config >/tmp/${composeProject}.compose.yml` +
+      repositoryBuild +
+      ` && printf '[pull] Resolving service images\\n' && $compose_cmd -p ${shQuote(composeProject)}${composeFileArgs} pull` +
+      ` && printf '[deploy] Recreating complete Compose stack\\n' && $compose_cmd -p ${shQuote(composeProject)}${composeFileArgs} up -d --remove-orphans 2>&1`,
+      vps
+    );
     if (upResult.code !== 0) {
-      return NextResponse.json({ success: false, error: upResult.stderr || upResult.stdout || "docker compose up failed", upOutput: upResult }, { status: 500 });
+      const evidence = [upResult.stderr, upResult.stdout].filter(Boolean).join("\n").trim();
+      return NextResponse.json({
+        success: false,
+        error: evidence || "Compose stopped without returning terminal evidence.",
+        upOutput: upResult,
+      }, { status: 500 });
     }
+
+    const runtimeVerification = composeInspection
+      ? await verifyRepositoryComposeRuntime({
+          runtimePath,
+          composeProject,
+          composeFile: repositoryComposeFile,
+          services: composeInspection.services,
+          vps,
+        })
+      : null;
 
     const proxyPath = template.reverse_proxy.type === "caddy"
       ? resolved.proxyConfigPath
@@ -523,6 +702,7 @@ export async function POST(req: NextRequest) {
         );
         const records = [];
         const dnsTunnelId = selectedTunnel?.tunnelId || requestedTunnelId;
+        const publicIp = dnsTunnelId ? "" : await requireVpsPublicIp(vps);
         if (dnsTunnelId) {
           const { updateTunnelConfiguration } = await import("@/lib/cloudflare");
           const tunnelService = String(body.tunnelService || `http://app:${allInputs.app_port || allInputs.port || "80"}`);
@@ -554,7 +734,7 @@ export async function POST(req: NextRequest) {
           records.push(await provisionCustomDomain({
             subdomain: recordName,
             zoneId: String(zone.id),
-            targetHost: dnsTunnelId ? `${dnsTunnelId}.cfargotunnel.com` : vps.host,
+            targetHost: dnsTunnelId ? `${dnsTunnelId}.cfargotunnel.com` : publicIp,
             recordType: dnsTunnelId ? "CNAME" : "A",
             proxied: dnsTunnelId ? proxied !== false : proxied === true,
           }));
@@ -565,42 +745,50 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const healthResults = await verifyPublicEndpoints(domains, vps);
+    const healthResults = await verifyPublicEndpoints(domains, vps, allInputs.health_path || "/");
     const verification = deploymentVerificationStatus(domains, dnsResult, healthResults);
+    const runtimeVerified = !runtimeVerification || runtimeVerification.code === 0;
+    const deployedSuccessfully = runtimeVerified && verification.publicVerified;
+    const deploymentStatus = runtimeVerified ? verification.status : "failed";
+    const runtimeError = runtimeVerified
+      ? null
+      : [runtimeVerification?.stderr, runtimeVerification?.stdout].filter(Boolean).join("\n").trim()
+        || "The Compose service graph did not become operational.";
+    const deploymentError = runtimeError || verification.error;
+    const deploymentOutput = runtimeVerification ? { compose: upResult, runtime: runtimeVerification } : upResult;
 
     const persisted = await persistTemplateDeployment({
       slug,
       templateName,
-      deployPath,
+      deployPath: runtimePath,
       composeProject,
       source,
       domains,
-      composeYml: resolved.dockerCompose,
+      composeYml: composeContent,
       proxyConfig: resolved.proxyConfig,
       proxyConfigPath: proxyPath,
       proxyOutput: proxyResult,
       dnsResult,
       tunnelConfigResult,
       healthResults,
-      upOutput: upResult,
+      upOutput: deploymentOutput,
       manifest,
       tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
       vpsConfigId: vps.id,
       durationMs: Date.now() - startTime,
-      status: verification.status,
+      status: deploymentStatus,
     });
-    const envSchema = parseEnvSchema(resolved.envSchema);
     const envProfile = await upsertEnvProfileForProject({
       projectId: persisted.projectId,
       deploymentId: persisted.deploymentId,
-      schema: envSchema,
+      schema: envSchemaEntries,
       providerType: "local",
       projectRef: await readInfisicalProjectRef(source.sourcePath, vps),
     });
     if (Object.keys(envValues).length > 0) {
-      await setLocalEnvValues(envProfile.id, envValues, envSchema);
+      await setLocalEnvValues(envProfile.id, envValues, envSchemaEntries);
     }
-    const envValidation = validateEnv(envSchema, envValues);
+    const envValidation = validateEnv(envSchemaEntries, envValues);
     await prisma.deploymentEnvProfile.update({
       where: { id: envProfile.id },
       data: {
@@ -624,38 +812,42 @@ export async function POST(req: NextRequest) {
       name: slug,
       slug,
       kind: "compose",
-      sourcePath: deployPath,
-      composePath: `${deployPath}/docker-compose.yml`,
+      sourcePath: runtimePath,
+      composePath: `${runtimePath}/${repositoryComposeMode ? repositoryComposeFile : "docker-compose.yml"}`,
       vpsConfigId: vps.id,
       templateName,
     });
 
     return NextResponse.json({
-      success: verification.publicVerified,
+      success: deployedSuccessfully,
       deployed: true,
-      status: verification.status,
+      status: deploymentStatus,
       publicVerified: verification.publicVerified,
-      error: verification.error,
+      runtimeVerified,
+      error: deploymentError,
       ...persisted,
-      deployPath,
+      deployPath: runtimePath,
       slug,
       composeProject,
-      upOutput: upResult,
+      upOutput: deploymentOutput,
+      runtimeVerification,
       dns: dnsResult,
       tunnelConfig: tunnelConfigResult,
       proxy: proxyResult,
       health: healthResults,
-      composeYml: resolved.dockerCompose,
+      composeYml: composeContent,
       proxyConfig: resolved.proxyConfig,
       proxyConfigPath: proxyPath,
       manifest,
       source,
       tunnelId: selectedTunnel?.tunnelId || requestedTunnelId || null,
       enrolled: true,
-      message: verification.publicVerified
+      message: deployedSuccessfully
         ? `Deployed and publicly verified ${slug}${domains.length ? ` at ${domains.map((d) => `https://${d}`).join(", ")}` : ""}.`
-        : `Deployed ${slug} to the host, but its public endpoint is not reachable yet.`,
-    }, { status: verification.publicVerified ? 200 : 502 });
+        : runtimeError
+          ? `Deployed ${slug}, but the complete Compose service graph is not operational: ${runtimeError}`
+          : `Deployed ${slug} to the host, but its public endpoint is not reachable yet.`,
+    }, { status: deployedSuccessfully ? 200 : 502 });
   } catch (err) {
     return NextResponse.json({
       success: false, error: err instanceof Error ? err.message : "Deploy failed",

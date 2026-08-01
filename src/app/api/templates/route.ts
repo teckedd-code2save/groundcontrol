@@ -1,6 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { listTemplates, loadTemplate, resolveTemplate, generatePreview } from "@/lib/template-engine";
+import { generatePreview, isRepositoryComposeTemplate, listTemplates, loadTemplate, resolveTemplate } from "@/lib/template-engine";
+import { normalizeRepositoryComposePath } from "@/lib/repository-compose";
+
+async function readGithubPreviewFile(repoUrl: string, ref: string, path: string): Promise<string> {
+  const match = repoUrl.trim().replace(/\.git$/, "").match(/github\.com[/:]([^/]+)\/([^/#?]+)/i);
+  if (!match) throw new Error("Existing Compose preview requires a GitHub repository URL.");
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "GroundControl",
+  };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  const response = await fetch(
+    `https://api.github.com/repos/${match[1]}/${match[2]}/contents/${encodedPath}?ref=${encodeURIComponent(ref || "main")}`,
+    { headers, cache: "no-store", signal: AbortSignal.timeout(8000) }
+  );
+  if (!response.ok) throw new Error(`Could not load ${path} from the selected repository and ref.`);
+  const file = await response.json() as { content?: string; encoding?: string };
+  if (file.encoding !== "base64" || !file.content) throw new Error(`${path} is not a readable text file.`);
+  return Buffer.from(file.content.replace(/\n/g, ""), "base64").toString("utf8");
+}
 
 export async function GET(req: NextRequest) {
   await requireAuth(req);
@@ -21,7 +41,7 @@ export async function POST(req: NextRequest) {
   try {
     await requireAuth(req);
     const body = await req.json();
-    const { name, preview, inputs = {}, repoUrl, ghcrImage, localPath } = body;
+    const { name, preview, inputs = {}, repoUrl, branch, ghcrImage, localPath } = body;
 
     if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
 
@@ -53,15 +73,24 @@ export async function POST(req: NextRequest) {
 
       const resolved = resolveTemplate(template, allInputs);
       const previewText = generatePreview(resolved);
+      const dockerCompose = isRepositoryComposeTemplate(template) && repoUrl
+        ? await readGithubPreviewFile(
+            String(repoUrl),
+            String(branch || allInputs.repo_branch || "main"),
+            normalizeRepositoryComposePath(allInputs.compose_file || "docker-compose.yml")
+          )
+        : resolved.dockerCompose;
       return NextResponse.json({
         preview: previewText,
-        dockerCompose: resolved.dockerCompose,
+        dockerCompose,
         proxyConfig: resolved.proxyConfig,
       });
     }
 
     return NextResponse.json(template);
-  } catch (err) {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  } catch (error) {
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "Invalid request",
+    }, { status: 400 });
   }
 }

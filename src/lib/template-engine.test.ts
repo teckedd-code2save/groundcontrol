@@ -12,6 +12,10 @@ function inputsFor(names: string[]): Record<string, string> {
     app_container: "app",
     app_port: "3000",
     app_host_port: "13000",
+    public_port: "8080",
+    public_service: "gateway",
+    compose_file: "docker-compose.yml",
+    health_path: "/healthz",
     frontend_host_port: "13001",
     backend_host_port: "13002",
     web_host_port: "13003",
@@ -68,6 +72,7 @@ describe("template engine", () => {
       "cloudflare-tunnel-private-apps",
       "k3s-caddy-nodeport-platform",
       "vps-caddy-commerce-secure",
+      "vps-caddy-existing-compose",
       "vps-caddy-source-build",
       "vps-caddy-static-site",
       "vps-nginx-polyglot-secure",
@@ -76,7 +81,7 @@ describe("template engine", () => {
     for (const template of templates) {
       expect(template._filename).toBeTruthy();
       expect(template.name).toBeTruthy();
-      if (template.deploy_mode !== "static") {
+      if (template.deploy_mode !== "static" && template.compose_source !== "repository") {
         expect(template.services.length).toBeGreaterThan(0);
       }
       expect(template.inputs.length).toBeGreaterThan(0);
@@ -102,6 +107,11 @@ describe("template engine", () => {
         expect(resolved.proxyConfig).toContain("/var/www/static-site");
         expect(preview).toContain("## Static site");
         expect(preview).toContain("## Layers");
+        expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(false);
+      } else if (template.compose_source === "repository") {
+        expect(resolved.dockerCompose).toContain("Repository-owned Docker Compose");
+        expect(resolved.proxyConfig).toContain("127.0.0.1:8080");
+        expect(preview).toContain("## Repository Compose");
         expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(false);
       } else {
         expect(resolved.dockerCompose).toContain("services:");
