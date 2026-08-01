@@ -11,6 +11,8 @@ export interface DeploymentEvidenceInput {
   metadataJson?: string | null;
   savedDomain?: string | null;
   savedRepoUrl?: string | null;
+  savedReleaseOutput?: string | null;
+  savedProjectEnv?: string | null;
 }
 
 export type DeploymentExecutionIdentity = {
@@ -101,6 +103,40 @@ export function readDeploymentOverrides(metadataJson?: string | null) {
   }
 }
 
+export function readDeploymentSourceIdentity(...serializedRecords: Array<string | null | undefined>) {
+  for (const serialized of serializedRecords) {
+    if (!serialized) continue;
+    let record: Record<string, unknown>;
+    try {
+      record = JSON.parse(serialized) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const nestedManifest = typeof record.manifest === "string"
+      ? (() => {
+          try { return JSON.parse(record.manifest) as Record<string, unknown>; } catch { return null; }
+        })()
+      : record.manifest && typeof record.manifest === "object"
+        ? record.manifest as Record<string, unknown>
+        : null;
+    const candidates = [record.source, nestedManifest?.source, record]
+      .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object"));
+    for (const candidate of candidates) {
+      const repoUrl = [candidate.repoUrl, candidate.repositoryUrl]
+        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+      const commitSha = [candidate.commitSha, candidate.deployedCommit]
+        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (repoUrl || commitSha) {
+        return {
+          repoUrl: repoUrl?.trim() || null,
+          commitSha: commitSha?.trim() || null,
+        };
+      }
+    }
+  }
+  return { repoUrl: null, commitSha: null };
+}
+
 export function resolveDeploymentEvidence(
   deployment: DeploymentEvidenceInput,
   containers: RuntimeContainerRecord[],
@@ -126,7 +162,12 @@ export function resolveDeploymentEvidence(
     composeService: container.service || undefined,
   })));
   const overrides = readDeploymentOverrides(deployment.metadataJson);
+  const recordedSource = readDeploymentSourceIdentity(
+    deployment.savedReleaseOutput,
+    deployment.savedProjectEnv
+  );
   const discoveredUrl = routeMatch?.site.domain ? `https://${routeMatch.site.domain}` : null;
+  const repoUrl = overrides.repoUrl || deployment.savedRepoUrl || recordedSource.repoUrl || null;
   return {
     runtime,
     route: routeMatch ? {
@@ -136,7 +177,16 @@ export function resolveDeploymentEvidence(
       evidence: routeMatch.evidence,
     } : null,
     publicUrl: overrides.publicUrl || (deployment.savedDomain ? `https://${deployment.savedDomain}` : null) || discoveredUrl,
-    repoUrl: overrides.repoUrl || deployment.savedRepoUrl || null,
-    identitySource: overrides.publicUrl || overrides.repoUrl ? "operator" : routeMatch ? "host-evidence" : "saved-record",
+    repoUrl,
+    sourceCommit: recordedSource.commitSha,
+    identitySource: overrides.publicUrl || overrides.repoUrl
+      ? "operator"
+      : deployment.savedRepoUrl
+        ? "saved-record"
+        : recordedSource.repoUrl
+          ? "release-record"
+          : routeMatch
+            ? "host-evidence"
+            : "saved-record",
   };
 }

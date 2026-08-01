@@ -20,6 +20,7 @@ import {
 } from "@/lib/intelligence";
 import { buildLiveHostObservation } from "@/lib/intelligence/live-observation";
 import { getActiveAi } from "@/lib/ai-config";
+import { loadDaytonaRuntimeConfig } from "@/lib/intelligence/daytona";
 
 function errorResponse(err: unknown, status = 500) {
   const message = err instanceof Error ? err.message : "Server error";
@@ -27,10 +28,11 @@ function errorResponse(err: unknown, status = 500) {
   return NextResponse.json({ error: message }, { status: code });
 }
 
-function readiness(state: LoopEngineState) {
+async function readiness(state: LoopEngineState) {
   const activeAi = getActiveAi();
   const hasAssistant = Boolean(activeAi.apiKey);
-  const hasDaytona = Boolean(process.env.DAYTONA_API_KEY || process.env.DAYTONA_TOKEN);
+  const daytona = await loadDaytonaRuntimeConfig();
+  const hasDaytona = Boolean(daytona);
   const hasGraph = state.graph.nodes.length > 0;
   const paths = getGraphSummary(state).paths;
   const linkedPathCount = paths.filter((path) => Boolean(path.containerName)).length;
@@ -62,14 +64,14 @@ function readiness(state: LoopEngineState) {
         ? `${activeAi.provider} · ${activeAi.model} can inspect the live host and prepare confirmed actions`
         : "Configure the assistant in Settings → AI",
     },
-    { id: "daytona", label: "Daytona reproduction", ready: hasDaytona, detail: hasDaytona ? "Sanitized remote reproduction enabled" : "Only local sanitized reproduction is available" },
+    { id: "daytona", label: "Daytona reproduction", ready: hasDaytona, detail: hasDaytona ? `Sanitized remote reproduction enabled · ${daytona?.source}` : "Only local sanitized reproduction is available" },
     { id: "recovery", label: "Approved recovery", ready: shouldUseLiveRecovery(), detail: shouldUseLiveRecovery() ? "Allowlisted live recovery adapter enabled" : "GC_LOOP_LIVE is off; GroundControl will not mutate the host" },
     { id: "browser", label: "Browser journey depth", ready: false, detail: "Current executor proves HTTP status only; browser interactions and authenticated flows are not yet implemented" },
     { id: "persistence", label: "Durable operational memory", ready: false, detail: "Loop state is process-local in this build and resets when the app process restarts" },
   ];
 }
 
-function publicState(state: LoopEngineState) {
+async function publicState(state: LoopEngineState) {
   const summary = getGraphSummary(state);
   const paths = summary.paths.map((path) => {
     const probe = state.pathProbes.get(path.domain.toLowerCase());
@@ -93,7 +95,7 @@ function publicState(state: LoopEngineState) {
     ...summary,
     paths,
     maturity: state.graph.nodes.length > 0 ? "live" : "awaiting_observation",
-    readiness: readiness(state),
+    readiness: await readiness(state),
     journeyCount: state.journeys.length,
     eventCount: state.events.length,
     changeSetCount: state.changeSets.length,
@@ -105,7 +107,7 @@ function publicState(state: LoopEngineState) {
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
-    return NextResponse.json(publicState(getLoopEngine()));
+    return NextResponse.json(await publicState(getLoopEngine()));
   } catch (err) {
     return errorResponse(err);
   }
@@ -215,7 +217,8 @@ export async function POST(req: NextRequest) {
     next = { ...next, pathProbes, pathInspections };
     if (probeEvents.length > 0) next = ingestEvents(next, probeEvents);
     setLoopEngine(next);
-    return NextResponse.json({ ...publicState(next), newEvents: events.length + probeEvents.length });
+    const state = await publicState(next);
+    return NextResponse.json({ ...state, newEvents: events.length + probeEvents.length });
   } catch (err) {
     return errorResponse(err);
   }
