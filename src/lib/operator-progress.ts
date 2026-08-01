@@ -10,6 +10,7 @@ export type DeploymentStageStatus = "complete" | "running" | "failed" | "pending
 export type DeploymentStage = {
   id: DeploymentStageId;
   label: string;
+  detail: string;
   status: DeploymentStageStatus;
 };
 
@@ -34,6 +35,14 @@ const STAGE_LABELS: Record<DeploymentStageId, string> = {
   pull: "Authenticate and pull",
   recreate: "Recreate runtime",
   verify: "Verify runtime images",
+};
+
+const STAGE_DETAILS: Record<DeploymentStageId, string> = {
+  environment: "Resolve the live project and reuse its synchronized configuration.",
+  compose: "Render and validate the exact Compose model that will be executed.",
+  pull: "Authenticate the configured registry and resolve the requested images.",
+  recreate: "Recreate the declared services, dependencies, networks, and one-shot jobs.",
+  verify: "Compare running images with the resolved model and verify the public result.",
 };
 
 export function stripOperatorMarkdown(value: string): string {
@@ -188,13 +197,14 @@ export function deploymentRunProgress(
   }
 
   const stages = order.map((id, index): DeploymentStage => {
-    if (completed[id]) return { id, label: STAGE_LABELS[id], status: "complete" };
-    if (id === failedStage) return { id, label: STAGE_LABELS[id], status: "failed" };
-    if (id === activeStage) return { id, label: STAGE_LABELS[id], status: "running" };
+    if (completed[id]) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "complete" };
+    if (id === failedStage) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "failed" };
+    if (id === activeStage) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "running" };
     const terminalIndex = failedStage ? order.indexOf(failedStage) : -1;
     return {
       id,
       label: STAGE_LABELS[id],
+      detail: STAGE_DETAILS[id],
       status: status === "failed" && index > terminalIndex ? "not-reached" : "pending",
     };
   });
@@ -210,9 +220,9 @@ export function deploymentRunProgress(
     && !/^\[(configuration|compose|registry|pull)\].*\b(ready|valid|resolved|completed)\b/i.test(line.trim())
   );
   const evidence = recordedFailure?.trim()
-    || failure?.trim()
     || diagnosticFailure?.trim()
     || phaseFailure?.trim()
+    || failure?.trim()
     || (status === "failed" ? (() => {
       const lastCompleted = [...stages].reverse().find((stage) => stage.status === "complete");
       return lastCompleted
