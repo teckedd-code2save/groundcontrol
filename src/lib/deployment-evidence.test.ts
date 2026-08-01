@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  readDeploymentSourceIdentity,
   resolveDeploymentEvidence,
   resolveDeploymentExecutionIdentity,
 } from "./deployment-evidence";
@@ -80,5 +81,25 @@ describe("deployment evidence resolver", () => {
       sourcePath: "/opt/current-app",
       source: "saved-project",
     });
+  });
+
+  it("recovers repository identity from the recorded deployment source", () => {
+    const output = JSON.stringify({
+      source: {
+        repoUrl: "https://github.com/example/recorded-app.git",
+        commitSha: "a".repeat(40),
+      },
+    });
+    expect(readDeploymentSourceIdentity(output)).toEqual({
+      repoUrl: "https://github.com/example/recorded-app.git",
+      commitSha: "a".repeat(40),
+    });
+    const evidence = resolveDeploymentEvidence({
+      slug: "recorded-app",
+      savedReleaseOutput: output,
+    }, [], [], [], []);
+    expect(evidence.repoUrl).toBe("https://github.com/example/recorded-app.git");
+    expect(evidence.sourceCommit).toBe("a".repeat(40));
+    expect(evidence.identitySource).toBe("release-record");
   });
 });

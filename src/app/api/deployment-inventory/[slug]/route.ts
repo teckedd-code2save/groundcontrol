@@ -6,6 +6,7 @@ import { getActiveVps, getDockerContainerLabels, getDockerContainers } from "@/l
 import { scanProjects } from "@/lib/vps";
 import { scanProjectsTree } from "@/lib/project-scan";
 import {
+  readDeploymentOverrides,
   resolveDeploymentEvidence,
   resolveDeploymentExecutionIdentity,
 } from "@/lib/deployment-evidence";
@@ -52,6 +53,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
       ...deployment,
       savedDomain: deployment.legacyProject?.domain,
       savedRepoUrl: deployment.legacyProject?.repoUrl,
+      savedReleaseOutput: latestRelease?.output,
+      savedProjectEnv: deployment.legacyProject?.envVars,
     }, containers, labels, tree.projects, hostProjects.caddySites);
     const runtimeNames = new Set(evidence.runtime.containers.map((container) => container.name));
     const execution = resolveDeploymentExecutionIdentity({
@@ -130,24 +133,41 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
     requireAuth(req);
     const { slug } = await ctx.params;
     const body = await req.json();
-    const publicIdentity = parsePublicUrl(body.publicUrl);
-    const repository = parseGithubUrl(body.repoUrl);
-    if (publicIdentity.error || repository.error) {
-      return NextResponse.json({ error: publicIdentity.error || repository.error }, { status: 400 });
+    const hasPublicUrl = Object.prototype.hasOwnProperty.call(body, "publicUrl");
+    const hasRepoUrl = Object.prototype.hasOwnProperty.call(body, "repoUrl");
+    if (!hasPublicUrl && !hasRepoUrl) {
+      return NextResponse.json({ error: "Provide the deployment identity field to update." }, { status: 400 });
+    }
+    const publicIdentity = hasPublicUrl ? parsePublicUrl(body.publicUrl) : null;
+    const repository = hasRepoUrl ? parseGithubUrl(body.repoUrl) : null;
+    if (publicIdentity?.error || repository?.error) {
+      return NextResponse.json({ error: publicIdentity?.error || repository?.error }, { status: 400 });
     }
     const deployment = await prisma.enrolledDeployment.findUnique({ where: { slug }, include: { legacyProject: true } });
     if (!deployment) return NextResponse.json({ error: "Deployment not found" }, { status: 404 });
     let metadata: Record<string, unknown> = {};
     try { metadata = JSON.parse(deployment.metadataJson || "{}"); } catch {}
-    metadata.manualPublicUrl = publicIdentity.url;
-    metadata.manualRepoUrl = repository.url;
+    const previousOverrides = readDeploymentOverrides(deployment.metadataJson);
+    if (hasPublicUrl) metadata.manualPublicUrl = publicIdentity?.url || null;
+    if (hasRepoUrl) metadata.manualRepoUrl = repository?.url || null;
     metadata.identityUpdatedAt = new Date().toISOString();
+
+    const currentPublicUrl = hasPublicUrl
+      ? publicIdentity?.url || null
+      : previousOverrides.publicUrl || (deployment.legacyProject?.domain ? `https://${deployment.legacyProject.domain}` : null);
+    const currentDomain = hasPublicUrl ? publicIdentity?.domain || null : deployment.legacyProject?.domain || null;
+    const currentRepoUrl = hasRepoUrl
+      ? repository?.url || null
+      : previousOverrides.repoUrl || deployment.legacyProject?.repoUrl || null;
 
     let legacyProjectId = deployment.legacyProjectId;
     if (deployment.legacyProject) {
       await prisma.project.update({
         where: { id: deployment.legacyProject.id },
-        data: { domain: publicIdentity.domain, repoUrl: repository.url },
+        data: {
+          ...(hasPublicUrl ? { domain: currentDomain } : {}),
+          ...(hasRepoUrl ? { repoUrl: currentRepoUrl } : {}),
+        },
       });
     } else {
       const project = await prisma.project.create({
@@ -155,8 +175,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
           slug: deployment.slug,
           name: deployment.name,
           path: deployment.sourcePath || "",
-          domain: publicIdentity.domain,
-          repoUrl: repository.url,
+          domain: currentDomain,
+          repoUrl: currentRepoUrl,
           category: deployment.kind === "compose" ? "docker" : deployment.kind,
           status: deployment.status,
         },
@@ -167,7 +187,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
       where: { id: deployment.id },
       data: { metadataJson: JSON.stringify(metadata), legacyProjectId },
     });
-    return NextResponse.json({ success: true, publicUrl: publicIdentity.url, repoUrl: repository.url });
+    return NextResponse.json({ success: true, publicUrl: currentPublicUrl, repoUrl: currentRepoUrl });
   } catch (error) {
     return handleApiError(error);
   }

@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ExternalLink,
+  Link2,
   RefreshCw,
   SearchCheck,
   Wrench,
@@ -432,6 +433,36 @@ export default function IntelligencePage() {
     }
   }
 
+  async function linkRepositoryAndContinue(
+    resolved: IncidentInvestigation,
+    path: ServicePath,
+    repositoryUrl: string
+  ) {
+    const target = resolved.target;
+    if (!target) throw new Error("The locked deployment identity is unavailable.");
+    const response = await fetch(`/api/deployment-inventory/${encodeURIComponent(target.deploymentSlug)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoUrl: repositoryUrl }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error || !data.repoUrl) {
+      throw new Error(data.error || "GroundControl could not link this repository.");
+    }
+    const next: IncidentInvestigation = {
+      ...resolved,
+      target: { ...target, repository: String(data.repoUrl) },
+      uncertainty: (resolved.uncertainty || []).filter((item) => !item.toLowerCase().includes("repository identity")),
+    };
+    setInvestigation(next);
+    await runIncidentAgent(
+      next,
+      path,
+      undefined,
+      "The operator linked the GitHub repository to this locked deployment. Continue the same investigation now. Use the repository from incident context, preserve the evidence already collected, resolve the exact deployed revision before any source repair, and proceed into Daytona only if the live evidence proves a source-owned defect. Do not ask for the repository URL again."
+    );
+  }
+
   function focusIncident(path: ServicePath) {
     agentAbort.current?.abort();
     investigationRun.current += 1;
@@ -570,6 +601,10 @@ export default function IntelligencePage() {
                     undefined,
                     "The previous automatic pass ended without a complete evidence-backed outcome. Continue the same locked investigation now. Do not stop at a refused or failed generic tool; use the dedicated read-only tools, preserve successful evidence, and finish with a typed safe action, a Daytona-validated source repair, or one concrete blocker under Problem, Fix, Verify."
                   )}
+                  onLinkRepository={(repositoryUrl) => {
+                    if (!investigation) return;
+                    return linkRepositoryAndContinue(investigation, selectedPath, repositoryUrl);
+                  }}
                   diagnosisElapsed={diagnosisElapsed}
                 />
               </main>
@@ -595,6 +630,7 @@ function ResolutionSurface({
   onCancelAgent,
   onPrepareAgentAction,
   onContinueAgent,
+  onLinkRepository,
   diagnosisElapsed,
 }: {
   path: ServicePath;
@@ -610,6 +646,7 @@ function ResolutionSurface({
   onCancelAgent: () => void;
   onPrepareAgentAction: () => void;
   onContinueAgent: () => void;
+  onLinkRepository: (repositoryUrl: string) => Promise<void> | void;
   diagnosisElapsed: number;
 }) {
   const inspection = path.inspection;
@@ -686,6 +723,13 @@ function ResolutionSurface({
           {investigation && (
             <>
               <IncidentResult investigation={investigation} />
+              {!investigation.target?.repository && investigation.target && (
+                <RepositoryIdentityPrompt
+                  deploymentName={investigation.target.deploymentName}
+                  running={investigating}
+                  onLink={onLinkRepository}
+                />
+              )}
               <IncidentAgent
                 tools={agentTools}
                 text={agentText}
@@ -758,11 +802,74 @@ function IncidentResult({ investigation }: { investigation: IncidentInvestigatio
             <a href={`/deployments/${target.deploymentSlug}?tab=deploy`} className="gc-button">Open deploy run</a>
           </div>
           <p className="mt-3 break-all font-mono text-[10px] text-muted">{target.composePath || target.sourcePath || "Compose source not discovered"} · {target.composeServices.join(", ") || "No service resolved"} · {target.proxyRoute || "No route resolved"}</p>
+          {target.repository && (
+            <p className="mt-2 break-all font-mono text-[10px] text-muted">
+              {target.repository}{target.deployedCommit ? ` · ${target.deployedCommit.slice(0, 12)}` : " · deployed revision not yet resolved"}
+            </p>
+          )}
           {investigation.action && <Notice className="mt-4" tone="warning" title={`Approval required · ${investigation.action.title}`}>Exact target: {investigation.action.projectSlug}. Risk: {investigation.action.risk}. Rollback: {investigation.action.rollback}.</Notice>}
         </div>
       )}
       {investigation.uncertainty && investigation.uncertainty.length > 0 && <div className="border-t border-border p-3 text-[10px] text-muted">Uncertainty: {investigation.uncertainty.join(" ")}</div>}
     </div>
+  );
+}
+
+function RepositoryIdentityPrompt({
+  deploymentName,
+  running,
+  onLink,
+}: {
+  deploymentName: string;
+  running: boolean;
+  onLink: (repositoryUrl: string) => Promise<void> | void;
+}) {
+  const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!repositoryUrl.trim() || saving) return;
+    setSaving(true);
+    setLinkError(null);
+    try {
+      await onLink(repositoryUrl.trim());
+    } catch (error) {
+      setLinkError(error instanceof Error ? error.message : "GroundControl could not link this repository.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 bg-background/55 px-4 py-4">
+      <div className="flex items-start gap-3">
+        <Link2 size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold">Link the source repository</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">
+            No GitHub repository was recorded for {deploymentName}. Link it once; GroundControl will save it to this deployment and resume the same locked investigation automatically.
+          </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input
+              type="url"
+              inputMode="url"
+              autoComplete="url"
+              value={repositoryUrl}
+              onChange={(event) => setRepositoryUrl(event.target.value)}
+              placeholder="https://github.com/owner/repository"
+              aria-label="GitHub repository URL"
+              className="gc-field min-w-0 flex-1 font-mono"
+            />
+            <Button type="submit" variant="primary" disabled={!repositoryUrl.trim() || saving} leadingIcon={<Link2 size={13} />}>
+              {saving ? "Linking…" : running ? "Link and resume" : "Link and continue"}
+            </Button>
+          </div>
+          {linkError && <p className="mt-2 text-[10px] text-error">{linkError}</p>}
+        </div>
+      </div>
+    </form>
   );
 }
 

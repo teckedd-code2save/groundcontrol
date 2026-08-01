@@ -45,7 +45,13 @@ export async function POST(req: NextRequest) {
     ]);
     const matches = enrolled.flatMap((deployment) => {
       const latestRelease = deployment.legacyProject?.deployments[0] || null;
-      const evidence = resolveDeploymentEvidence({ ...deployment, savedDomain: deployment.legacyProject?.domain, savedRepoUrl: deployment.legacyProject?.repoUrl }, containers, labels, tree.projects, hostProjects.caddySites);
+      const evidence = resolveDeploymentEvidence({
+        ...deployment,
+        savedDomain: deployment.legacyProject?.domain,
+        savedRepoUrl: deployment.legacyProject?.repoUrl,
+        savedReleaseOutput: latestRelease?.output,
+        savedProjectEnv: deployment.legacyProject?.envVars,
+      }, containers, labels, tree.projects, hostProjects.caddySites);
       const identities = [deployment.legacyProject?.domain, evidence.publicUrl, evidence.route?.domain, latestRelease?.publicUrl, latestRelease?.previewUrl].map(hostname).filter(Boolean);
       const deploymentMatches = deploymentSlug
         ? deployment.slug === deploymentSlug || deployment.legacyProject?.slug === deploymentSlug
@@ -81,10 +87,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       status: "resolved", domain: incidentDomain || deployment.slug,
       problem: runtimeMissing ? `The proxy route for ${incidentDomain || deployment.slug} points to ${route?.proxy || "an unavailable upstream"}, but deployment ${deployment.slug} has no running linked runtime.` : `Deployment ${deployment.slug} is linked, but its route-to-runtime path is still failing.`,
-      target: { deploymentSlug: deployment.slug, deploymentName: deployment.name, sourcePath: execution.sourcePath || project?.path || null, composePath: execution.composePath || project?.composePath || null, composeProject: execution.composeProject || runtime.composeProject || null, composeServices: services.length > 0 ? services : project?.services.map((service) => service.name) || [], containers: runtimeNames, runtimeStatus: runtime.status, proxyRoute: route?.proxy || null, repository: evidence.repoUrl, deployedCommit: latestRelease?.commitSha || null },
+      target: { deploymentSlug: deployment.slug, deploymentName: deployment.name, sourcePath: execution.sourcePath || project?.path || null, composePath: execution.composePath || project?.composePath || null, composeProject: execution.composeProject || runtime.composeProject || null, composeServices: services.length > 0 ? services : project?.services.map((service) => service.name) || [], containers: runtimeNames, runtimeStatus: runtime.status, proxyRoute: route?.proxy || null, repository: evidence.repoUrl, deployedCommit: latestRelease?.commitSha || evidence.sourceCommit || null },
       fix: runtimeMissing ? "Restore this deployment from its exact Compose source. No code sandbox is justified for a missing runtime." : "Inspect only this deployment's failing containers and route before proposing a repository change.",
       action: runtimeMissing && project ? { kind: "compose_up", projectSlug: deployment.legacyProject?.slug || project.slug, title: `Start ${deployment.name}`, risk: "medium", approvalRequired: true, rollback: `docker compose down for ${deployment.legacyProject?.slug || project.slug}` } : null,
-      uncertainty: [!project ? "The enrolled deployment has no currently discovered Compose source." : null].filter(Boolean),
+      uncertainty: [
+        !project ? "The enrolled deployment has no currently discovered Compose source." : null,
+        !evidence.repoUrl ? "No GitHub repository identity is recorded. Link it here before a Daytona source inspection." : null,
+      ].filter(Boolean),
       verify: incidentDomain ? `After an approved repair, GroundControl will check https://${incidentDomain}/ externally.` : "After an approved repair, GroundControl will verify the runtime and its linked public endpoint.",
     });
   } catch (error) { return handleApiError(error); }

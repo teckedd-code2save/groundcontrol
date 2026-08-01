@@ -14,6 +14,8 @@ A failed deployment hands its exact deployment identity and recorded stage evide
 
 Repository-owned Compose is a first-class deployment source. GroundControl validates the selected file, discovers its services, published ports, health path and environment contract, executes the repository topology without rewriting it, attaches only the chosen public entrypoint to Caddy and Cloudflare, and records the exact commit and Compose file in the deployment identity. Success requires every declared service to reach its expected running or completed state, every declared container health check to pass, and the external HTTPS verification to succeed.
 
+Intelligence resolves repository identity from the deployment override, linked project or recorded release before asking the operator. When no source identity exists, the focused incident accepts a GitHub URL inline, persists it without changing the public route, and resumes the same evidence chain automatically; source repair still requires the exact deployed revision before Daytona is eligible.
+
 The workspace reports topology linkage and public reachability separately: discovering a proxy route never makes it healthy, and a reachable status-only endpoint is not presented as proof of a customer feature. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Host mutation remains policy and confirmation gated.
 
 ## Product hierarchy
