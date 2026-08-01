@@ -42,6 +42,8 @@ describe("Compose redeploy image verification", () => {
     expect(script).toContain("[deploy] Docker Compose failed to recreate the deployment");
     expect(script).toContain("[evidence] Compose state after failure");
     expect(script).toContain("[failure] container={{.Name}}");
+    expect(script).toContain("[container-log] container=$gc_container_name");
+    expect(script).toContain("Compose created no containers");
     expect(script).toContain("docker logs --tail 60");
     expect(script).toContain("[verify] Runtime image verification failed");
     expect(script).toContain("[verify] api: expected ghcr.io/acme/api:abc123");
@@ -92,6 +94,17 @@ describe("Compose redeploy image verification", () => {
     expect(parsed.error).toBe("[failure] container=/api status=running health=unhealthy exit=0 error=");
   });
 
+  it("prefers the concrete container log error over a generic container state", () => {
+    const parsed = parseDetachedComposeRedeployLog([
+      "[deploy] Docker Compose failed to recreate the deployment (exit 1)",
+      "[failure] container=/api status=exited health=none exit=1 error=",
+      "[container-log] container=api Error: DATABASE_URL is missing",
+      "__GC_REDEPLOY_STATUS__=failed:1",
+    ].join("\n"));
+
+    expect(parsed.error).toBe("[container-log] container=api Error: DATABASE_URL is missing");
+  });
+
   it("never presents a successful phase marker as failure evidence", () => {
     const parsed = parseDetachedComposeRedeployLog([
       "[configuration] Deployment configuration ready",
@@ -101,7 +114,7 @@ describe("Compose redeploy image verification", () => {
     ].join("\n"));
 
     expect(parsed.status).toBe("failed");
-    expect(parsed.error).toBe("Docker Compose failed with exit code 1.");
+    expect(parsed.error).toMatch(/run evidence is incomplete/i);
     expect(parsed.error).not.toContain("Images resolved");
   });
 });
