@@ -90,6 +90,16 @@ describe("operator progress", () => {
     expect(progress.evidence).toBe("[failure] phase=pull error=denied: repository access is unavailable");
   });
 
+  it("prefers recorded Compose diagnostics over a generic persisted error", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[deploy] Docker Compose failed to recreate the deployment (exit 1)",
+      "[container-log] container=api Error: DATABASE_URL is missing",
+    ], "Docker Compose failed with exit code 1.");
+
+    expect(progress.evidence).toBe("[container-log] container=api Error: DATABASE_URL is missing");
+    expect(progress.stages[0].detail).toMatch(/live project/i);
+  });
+
   it("attributes an explicitly recorded Compose phase failure without guessing", () => {
     const progress = deploymentRunProgress("failed", [
       "[configuration] Deployment configuration ready",

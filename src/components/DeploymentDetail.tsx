@@ -807,14 +807,13 @@ function DeploymentProgress({
 }) {
   const progress = deploymentRunProgress(status, lines, failure);
   const intelligenceHref = (() => {
-    if (!domain) return "/intelligence";
     const params = new URLSearchParams({
-      domain,
       deployment: deploymentSlug,
       stage: progress.failedStage || "unknown",
       error: (progress.evidence || failure || "Deployment failed.").slice(0, 600),
       autostart: "1",
     });
+    if (domain) params.set("domain", domain);
     return `/intelligence?${params.toString()}`;
   })();
 
@@ -857,10 +856,10 @@ function DeploymentProgress({
               : stage.status === "running" ? "bg-accent/[0.04]" : ""
           }`}>
             <div className="flex items-center gap-2">
-              <span className={`flex h-5 w-5 items-center justify-center border font-mono text-[9px] ${
-                stage.status === "complete" ? "border-success/50 text-success"
-                  : stage.status === "failed" ? "border-error/50 text-error"
-                    : stage.status === "running" ? "border-border text-accent" : "border-border text-muted"
+              <span className={`flex h-5 w-5 items-center justify-center font-mono text-[10px] font-semibold ${
+                stage.status === "complete" ? "text-success"
+                  : stage.status === "failed" ? "text-error"
+                    : stage.status === "running" ? "text-accent" : "text-muted"
               }`}>
                 {stage.status === "complete" ? "✓" : index + 1}
               </span>
@@ -868,6 +867,7 @@ function DeploymentProgress({
                 {stage.label}
               </span>
             </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-muted">{stage.detail}</p>
             <p className={`mt-2 font-mono text-[9px] ${
               stage.status === "complete" ? "text-success"
                 : stage.status === "failed" ? "text-error"

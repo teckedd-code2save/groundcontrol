@@ -10,6 +10,8 @@ The configured GroundControl assistant is the default interactive investigation 
 
 Every recovery run ends in one explicit operator outcome: customer endpoint verified, source repair validated in Daytona, safe runtime action ready for approval, or an evidence-backed blocker. Routine redeploy resolves the live Compose identity before acting and reuses the synchronized environment bundle; it contacts the configured secret provider only when that local bundle is absent or invalid.
 
+A failed deployment hands its exact deployment identity and recorded stage evidence directly to Intelligence. Intelligence scans automatically, keeps one incident in focus, starts the locked investigation without a second selection step, and leaves other failures available as subdued sticky incident tabs. Deployment stages explain their operation and preserve concrete Compose, container-state, and bounded container-log evidence; a bare exit code is never treated as a sufficient diagnosis.
+
 The workspace reports topology linkage and public reachability separately: discovering a proxy route never makes it healthy, and a reachable status-only endpoint is not presented as proof of a customer feature. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Host mutation remains policy and confirmation gated.
 
 ## Product hierarchy
