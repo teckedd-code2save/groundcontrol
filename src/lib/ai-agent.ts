@@ -793,7 +793,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "prepare_source_fix_in_daytona",
     description:
-      "Prepare a source-of-truth repair for a repository-backed code, Compose, or proxy defect. Daytona clones the exact deployed commit, applies the candidate only inside an ephemeral sandbox, runs bounded validation before and after, captures a reviewable diff, destroys the sandbox, and stores a short-lived repair plan. This does not mutate production. Use this instead of write_system_file for files under /opt, deployment roots, web roots, or home directories.",
+      "Run the full Daytona source-repair workbench for a repository-backed code, Compose, or proxy defect. Daytona clones and proves the exact deployed commit, installs dependencies, requires a focused command to reproduce the failure before the edit and pass after it, runs one or two independent regression commands, captures a reviewable diff and complete validation evidence, destroys the sandbox, and stores a short-lived repair plan. This does not mutate production. Use this instead of write_system_file for files under /opt, deployment roots, web roots, or home directories.",
     parameters: {
       type: "object",
       properties: {
@@ -838,7 +838,14 @@ export const AGENT_TOOLS: AgentTool[] = [
         },
         validationCommand: {
           type: "string",
-          description: "One bounded project validation command such as npm test, npm run build, or docker compose config.",
+          description: "One focused bounded command that fails at the exact deployed revision and passes only after the candidate, proving the repair rather than merely building the repository.",
+        },
+        regressionCommands: {
+          type: "array",
+          minItems: 1,
+          maxItems: 2,
+          items: { type: "string" },
+          description: "One or two independent bounded project checks that must pass after the candidate, such as the relevant test suite, build, lint, typecheck, or docker compose config. Do not repeat validationCommand.",
         },
         incidentSummary: {
           type: "string",
@@ -855,6 +862,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         "filePath",
         "edits",
         "validationCommand",
+        "regressionCommands",
         "incidentSummary",
       ],
       additionalProperties: false,
@@ -873,6 +881,12 @@ export const AGENT_TOOLS: AgentTool[] = [
         if (!edits.length || edits.some((edit) => !edit.find.trim())) {
           return "ERROR: Source repair requires one to eight non-empty exact edits from the repository file. Continue investigating until the exact deployed source text is known.";
         }
+        const regressionCommands = Array.isArray(args?.regressionCommands)
+          ? args.regressionCommands.map(String).map((command) => command.trim()).filter(Boolean)
+          : [];
+        if (regressionCommands.length === 0) {
+          return "ERROR: Daytona source repair requires a focused reproduction plus at least one independent regression command.";
+        }
         const result = await prepareSourceRepairPlan({
           repositoryUrl: String(args?.repositoryUrl || ""),
           baseBranch: args?.baseBranch ? String(args.baseBranch) : undefined,
@@ -880,6 +894,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           filePath: String(args?.filePath || ""),
           edits,
           validationCommand: String(args?.validationCommand || ""),
+          regressionCommands,
           incidentSummary: String(args?.incidentSummary || ""),
           verificationUrl: args?.verificationUrl ? String(args.verificationUrl) : undefined,
         });

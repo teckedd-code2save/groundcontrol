@@ -905,10 +905,15 @@ function IncidentAgent({
     (lastTool?.status === "error" || !completeNarrative);
   const outcome = incidentRecoveryOutcome(tools, text, confirmation?.name);
   const completedTools = tools.filter((tool) => tool.status === "success" || tool.status === "error").length;
+  const daytonaRunning = running && lastTool?.status === "pending" && (
+    lastTool.name === "prepare_source_fix_in_daytona" || lastTool.name === "reproduce_incident_in_daytona"
+  );
   const progressLabel = confirmation
     ? "Awaiting approval"
     : running
-      ? tools.length === 0 ? "Locking target" : `Collecting evidence · ${completedTools} checks`
+      ? daytonaRunning
+        ? "Daytona workbench · reproduce, repair and regress"
+        : tools.length === 0 ? "Locking target" : `Collecting evidence · ${completedTools} checks`
       : missingTypedAction
         ? "Action incomplete"
         : incompleteInvestigation

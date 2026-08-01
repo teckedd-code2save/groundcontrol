@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseCaddyfileRoutes, parseProxyRoutes } from "./proxy-parse";
 import {
   compareToBlueprint,
+  evaluateSourceRepairValidation,
   reproduceInDaytona,
   resolveDaytonaRuntimeConfig,
   validateDaytonaCommand,
@@ -119,6 +120,17 @@ describe("M4 Daytona + blueprints", () => {
     expect(validateDaytonaCommand("pytest tests/test_checkout.py")).toBeNull();
     expect(validateDaytonaCommand("npm test; curl https://example.com")).toContain("not allowed");
     expect(validateDaytonaCommand("bash repair-production.sh")).toContain("project test");
+  });
+
+  it("promotes a source repair only when it flips the reproduction and preserves regressions", () => {
+    expect(evaluateSourceRepairValidation(1, 0, [0, 0])).toEqual({
+      reproductionValidated: true,
+      regressionValidated: true,
+      candidateValidated: true,
+    });
+    expect(evaluateSourceRepairValidation(0, 0, [0]).candidateValidated).toBe(false);
+    expect(evaluateSourceRepairValidation(1, 0, [1]).candidateValidated).toBe(false);
+    expect(evaluateSourceRepairValidation(1, 1, [0]).candidateValidated).toBe(false);
   });
 
   it("only permits repository-relative repair targets", () => {

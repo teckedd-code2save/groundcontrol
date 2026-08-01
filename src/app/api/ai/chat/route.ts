@@ -78,7 +78,10 @@ const SYSTEM_PROMPT =
   `deployed commit SHA, call read_repository_source_at_revision for the target file, then call ` +
   `prepare_source_fix_in_daytona with the smallest exact non-redacted source edit. ` +
   `GroundControl fetches the complete repository file itself; never copy a live-host file into the repair.\n` +
-  `  4) Daytona must validate the candidate away from production. Show the concise diff and validation result.\n` +
+  `  4) Daytona is the required repair workbench, not a badge or dry-run. Give it a focused reproduction ` +
+  `command that fails at the exact deployed revision and passes after the candidate, plus one or two independent ` +
+  `regression commands. A baseline that already passes does not prove the fix and cannot produce a PR. Show the ` +
+  `checked-out revision, reproduced baseline, candidate result, regression matrix, concise diff, and cleanup result.\n` +
   `  5) Then call open_validated_fix_pr. It is confirmation-gated and changes source control only.\n` +
   `  6) After merge, the existing delivery pipeline deploys the change; then verify the public endpoint. ` +
   `Do not manually rewrite the live Compose file or bypass the pipeline.\n` +

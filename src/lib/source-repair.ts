@@ -19,7 +19,10 @@ export interface PrepareSourceRepairInput {
   commitSha: string;
   filePath: string;
   edits: Array<{ find: string; replace: string }>;
+  /** Focused command that must fail at the deployed revision and pass with the candidate. */
   validationCommand: string;
+  /** Independent checks that protect unaffected behaviour after the candidate is applied. */
+  regressionCommands: string[];
   incidentSummary?: string;
   verificationUrl?: string;
 }
@@ -37,6 +40,19 @@ export interface ReadSourceAtRevisionInput {
 
 function clipped(value: string | undefined, max: number) {
   return String(value || "").trim().slice(0, max);
+}
+
+function validationMatrixLines(serialized: string) {
+  try {
+    const parsed = JSON.parse(serialized) as { reproduction?: unknown; regression?: unknown };
+    const regression = Array.isArray(parsed.regression) ? parsed.regression.map(String) : [];
+    return [
+      `- Focused reproduction: \`${String(parsed.reproduction || "unknown")}\``,
+      ...regression.map((command) => `- Regression check: \`${command}\``),
+    ];
+  } catch {
+    return [`- Daytona validation: \`${serialized}\``];
+  }
 }
 
 function encodedRepositoryPath(fullName: string) {
@@ -171,12 +187,20 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
   if (Buffer.byteLength(replacementContent, "utf8") > MAX_REPLACEMENT_BYTES) {
     throw new Error("The repaired file must be smaller than 300 KB.");
   }
+  const regressionCommands = [...new Set(input.regressionCommands.map((command) => command.trim()))]
+    .filter((command) => command && command !== input.validationCommand.trim())
+    .slice(0, 2);
+  if (regressionCommands.length === 0) {
+    throw new Error("Daytona source repair requires at least one independent regression command in addition to the focused reproduction.");
+  }
 
   const result = await reproduceInDaytona({
     repositoryUrl: repository.htmlUrl,
     branch: baseBranch,
     commitSha,
     testCommand: input.validationCommand,
+    regressionCommands,
+    requireReproduction: true,
     journeyUrl: clipped(input.verificationUrl, 500),
     candidate: {
       filePath,
@@ -189,6 +213,9 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
     result.provider !== "daytona" ||
     result.status !== "completed" ||
     result.candidateValidated !== true ||
+    result.reproductionValidated !== true ||
+    result.regressionValidated !== true ||
+    result.cleanedUp !== true ||
     !result.proposedPatch ||
     !result.baseFileBlobSha
   ) {
@@ -199,7 +226,15 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
   const expiresAt = new Date(Date.now() + PLAN_TTL_MS);
   const baseline = result.logs.find((line) => line.startsWith("baseline_exit=")) || "baseline_exit=unknown";
   const candidate = result.logs.find((line) => line.startsWith("candidate_exit=")) || "candidate_exit=unknown";
-  const validationSummary = `${baseline}; ${candidate}; ${result.detail}`;
+  const regression = result.validations
+    ?.filter((validation) => validation.kind === "regression")
+    .map((validation) => `${validation.command}=exit ${validation.candidateExitCode}`)
+    .join("; ") || "regression=unknown";
+  const validationSummary = `${baseline}; ${candidate}; ${regression}; ${result.detail}`;
+  const validationMatrix = JSON.stringify({
+    reproduction: input.validationCommand,
+    regression: regressionCommands,
+  });
 
   await prisma.sourceRepairPlan.deleteMany({
     where: { expiresAt: { lt: new Date() }, status: { not: "pr_opened" } },
@@ -215,7 +250,7 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
       filePath,
       replacementContent,
       patch: result.proposedPatch,
-      validationCommand: input.validationCommand,
+      validationCommand: validationMatrix,
       validationSummary,
       provider: result.provider,
       incidentSummary: clipped(input.incidentSummary, 2_000),
@@ -231,6 +266,14 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
     deployedRevision: commitSha,
     filePath,
     validation: validationSummary,
+    validations: result.validations,
+    daytona: {
+      checkedOutRevision: commitSha,
+      reproducedFailure: result.reproducedFailure,
+      candidateValidated: result.candidateValidated,
+      regressionValidated: result.regressionValidated,
+      cleanupComplete: result.cleanedUp,
+    },
     patch: result.proposedPatch,
     expiresAt: expiresAt.toISOString(),
     nextAction: "Ask for approval to open this as a pull request. Do not write the production file.",
@@ -321,7 +364,7 @@ export async function openSourceRepairPullRequest(input: OpenSourceRepairInput) 
       "## Validated repair",
       `- File: \`${plan.filePath}\``,
       `- Deployed revision: \`${plan.baseSha}\``,
-      `- Daytona validation: \`${plan.validationCommand}\``,
+      ...validationMatrixLines(plan.validationCommand),
       `- Evidence: ${plan.validationSummary}`,
       "",
       "## Delivery",
