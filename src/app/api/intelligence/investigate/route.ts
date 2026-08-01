@@ -28,7 +28,13 @@ export async function POST(req: NextRequest) {
     requireAuth(req);
     const body = await req.json();
     const domain = hostname(String(body.domain || ""));
-    if (!domain) return NextResponse.json({ error: "A valid endpoint domain is required." }, { status: 400 });
+    const deploymentSlug = String(body.deploymentSlug || "").trim();
+    if (deploymentSlug && !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(deploymentSlug)) {
+      return NextResponse.json({ error: "A valid deployment identity is required." }, { status: 400 });
+    }
+    if (!domain && !deploymentSlug) {
+      return NextResponse.json({ error: "A deployment identity or endpoint domain is required." }, { status: 400 });
+    }
     const vps = await getActiveVps();
     if (!vps) return NextResponse.json({ error: "Connect and activate a host before investigating an endpoint." }, { status: 409 });
 
@@ -41,7 +47,10 @@ export async function POST(req: NextRequest) {
       const latestRelease = deployment.legacyProject?.deployments[0] || null;
       const evidence = resolveDeploymentEvidence({ ...deployment, savedDomain: deployment.legacyProject?.domain, savedRepoUrl: deployment.legacyProject?.repoUrl }, containers, labels, tree.projects, hostProjects.caddySites);
       const identities = [deployment.legacyProject?.domain, evidence.publicUrl, evidence.route?.domain, latestRelease?.publicUrl, latestRelease?.previewUrl].map(hostname).filter(Boolean);
-      if (!identities.includes(domain)) return [];
+      const deploymentMatches = deploymentSlug
+        ? deployment.slug === deploymentSlug || deployment.legacyProject?.slug === deploymentSlug
+        : identities.includes(domain);
+      if (!deploymentMatches) return [];
       const execution = resolveDeploymentExecutionIdentity({
         ...deployment,
         legacyProjectPath: deployment.legacyProject?.path,
@@ -55,27 +64,28 @@ export async function POST(req: NextRequest) {
       return [{ deployment, evidence, execution, project, latestRelease }];
     });
     if (matches.length !== 1) return NextResponse.json({
-      status: matches.length > 1 ? "ambiguous" : "unresolved", domain,
-      problem: matches.length > 1 ? `${matches.length} enrolled deployments claim this endpoint. GroundControl will not guess which one to change.` : "No enrolled deployment owns this endpoint, so GroundControl cannot safely prepare a runtime action.",
+      status: matches.length > 1 ? "ambiguous" : "unresolved", domain: domain || deploymentSlug,
+      problem: matches.length > 1 ? `${matches.length} enrolled deployments claim this incident. GroundControl will not guess which one to change.` : "No enrolled deployment owns this incident, so GroundControl cannot safely prepare a runtime action.",
       uncertainty: matches.length > 1 ? matches.map((match) => match.deployment.slug) : ["The proxy route exists, but deployment inventory has no exact domain link."],
       fix: matches.length > 1 ? "Remove the duplicate domain assignment in Deployments." : "Link this endpoint to its deployment in Deployments, then investigate again.",
-      verify: `Re-run the endpoint check for https://${domain}/ after the deployment identity is corrected.`,
+      verify: domain ? `Re-run the endpoint check for https://${domain}/ after the deployment identity is corrected.` : "Re-run the deployment investigation after its public endpoint is linked.",
     });
 
     const [{ deployment, evidence, execution, project, latestRelease }] = matches;
+    const incidentDomain = domain || hostname(deployment.legacyProject?.domain || evidence.publicUrl || evidence.route?.domain || latestRelease?.publicUrl || latestRelease?.previewUrl);
     const runtime = evidence.runtime;
     const runtimeNames = runtime.containers.map((container) => container.name);
     const services = runtime.containers.map((container) => container.service).filter(Boolean);
     const route = evidence.route;
     const runtimeMissing = runtime.status !== "present";
     return NextResponse.json({
-      status: "resolved", domain,
-      problem: runtimeMissing ? `The proxy route for ${domain} points to ${route?.proxy || "an unavailable upstream"}, but deployment ${deployment.slug} has no running linked runtime.` : `Deployment ${deployment.slug} is linked, but its route-to-runtime path is still failing.`,
+      status: "resolved", domain: incidentDomain || deployment.slug,
+      problem: runtimeMissing ? `The proxy route for ${incidentDomain || deployment.slug} points to ${route?.proxy || "an unavailable upstream"}, but deployment ${deployment.slug} has no running linked runtime.` : `Deployment ${deployment.slug} is linked, but its route-to-runtime path is still failing.`,
       target: { deploymentSlug: deployment.slug, deploymentName: deployment.name, sourcePath: execution.sourcePath || project?.path || null, composePath: execution.composePath || project?.composePath || null, composeProject: execution.composeProject || runtime.composeProject || null, composeServices: services.length > 0 ? services : project?.services.map((service) => service.name) || [], containers: runtimeNames, runtimeStatus: runtime.status, proxyRoute: route?.proxy || null, repository: evidence.repoUrl, deployedCommit: latestRelease?.commitSha || null },
       fix: runtimeMissing ? "Restore this deployment from its exact Compose source. No code sandbox is justified for a missing runtime." : "Inspect only this deployment's failing containers and route before proposing a repository change.",
       action: runtimeMissing && project ? { kind: "compose_up", projectSlug: deployment.legacyProject?.slug || project.slug, title: `Start ${deployment.name}`, risk: "medium", approvalRequired: true, rollback: `docker compose down for ${deployment.legacyProject?.slug || project.slug}` } : null,
       uncertainty: [!project ? "The enrolled deployment has no currently discovered Compose source." : null].filter(Boolean),
-      verify: `After an approved repair, GroundControl will check https://${domain}/ externally.`,
+      verify: incidentDomain ? `After an approved repair, GroundControl will check https://${incidentDomain}/ externally.` : "After an approved repair, GroundControl will verify the runtime and its linked public endpoint.",
     });
   } catch (error) { return handleApiError(error); }
 }
