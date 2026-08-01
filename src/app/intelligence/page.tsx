@@ -14,6 +14,7 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { Button, EmptyState, Notice, StatusBadge } from "@/components/ui";
 import {
+  deploymentRunProgress,
   incidentRecoveryOutcome,
   narrativeRequestsAction,
   operatorNarrativeIsComplete,
@@ -51,6 +52,8 @@ type PathInspection = {
 
 type ServicePath = {
   domain: string;
+  deploymentSlug?: string;
+  publicUrl?: string;
   upstream?: string;
   containerName?: string;
   containerState?: string;
@@ -105,6 +108,15 @@ type AgentConfirmation = {
   description: string;
 };
 
+function publicHostname(value?: string | null): string {
+  if (!value) return "";
+  try {
+    return new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`).hostname;
+  } catch {
+    return "";
+  }
+}
+
 export default function IntelligencePage() {
   const [graph, setGraph] = useState<GraphState | null>(null);
   const [selectedDomain, setSelectedDomain] = useState("");
@@ -121,6 +133,8 @@ export default function IntelligencePage() {
   const [diagnosisElapsed, setDiagnosisElapsed] = useState(0);
   const [linkedIncident, setLinkedIncident] = useState<ServicePath | null>(null);
   const booted = useRef(false);
+  const investigationRun = useRef(0);
+  const agentAbort = useRef<AbortController | null>(null);
 
   const paths = useMemo(() => {
     const discovered = graph?.paths || [];
@@ -153,15 +167,9 @@ export default function IntelligencePage() {
           ? new URLSearchParams(window.location.search).get("domain") || ""
           : "";
         if (requested) return requested;
-        return nextPaths.some((path) => path.domain === current) ? current : nextPaths[0]?.domain || "";
+        if (nextPaths.some((path) => path.domain === current)) return current;
+        return nextPaths.find((path) => path.verification.status !== "passed")?.domain || nextPaths[0]?.domain || "";
       });
-      setInvestigation(null);
-      setAgentText("");
-      setAgentTools([]);
-      setAgentConfirm(null);
-      setAgentThreadId(null);
-      setDiagnosisStartedAt(null);
-      setDiagnosisElapsed(0);
       return nextPaths;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "GroundControl could not inspect this host.");
@@ -184,6 +192,8 @@ export default function IntelligencePage() {
   const hostEvidence = graph?.readiness.find((item) => item.id === "host");
 
   async function investigate(path: ServicePath) {
+    const run = ++investigationRun.current;
+    agentAbort.current?.abort();
     setInvestigating(true);
     setDiagnosisStartedAt(Date.now());
     setDiagnosisElapsed(0);
@@ -193,77 +203,110 @@ export default function IntelligencePage() {
       const response = await fetch("/api/intelligence/investigate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: path.domain }),
+        body: JSON.stringify({
+          domain: path.publicUrl || (path.domain.includes(".") ? path.domain : undefined),
+          deploymentSlug: path.deploymentSlug,
+        }),
       });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || "GroundControl could not resolve this incident.");
+      if (run !== investigationRun.current) return;
       const resolved = data as IncidentInvestigation;
       setInvestigation(resolved);
       if (resolved.status === "resolved" && resolved.target) {
         await runIncidentAgent(resolved, path);
       }
     } catch (caught) {
+      if (run !== investigationRun.current) return;
       setError(caught instanceof Error ? caught.message : "GroundControl could not resolve this incident.");
     } finally {
-      setInvestigating(false);
+      if (run === investigationRun.current) setInvestigating(false);
     }
   }
 
   useEffect(() => {
     if (booted.current) return;
     booted.current = true;
-    const params = new URLSearchParams(window.location.search);
-    const domain = params.get("domain")?.trim() || "";
-    if (!domain) {
-      void refresh();
-      return;
-    }
-
-    const deployment = params.get("deployment")?.trim() || domain;
-    const stage = params.get("stage")?.trim() || "deployment";
-    const failure = params.get("error")?.trim() || "The deployment run failed before verification.";
-    const linked: ServicePath = {
-      domain,
-      topologyStatus: "partial",
-      verification: {
-        status: "failed",
-        error: failure,
-        observedAt: new Date().toISOString(),
-        target: domain,
-      },
-      inspection: {
-        outcome: "failed",
-        failureBoundary: "application",
-        summary: `${deployment} failed during ${stage}.`,
-        cause: failure,
-        confidence: 1,
-        evidence: [{
-          id: "deployment-run",
-          label: "Deployment run",
-          value: stage,
-          detail: failure,
-          status: "failed",
-        }],
-        nextAction: {
-          title: "Investigate the failed deployment",
-          detail: "Inspect the locked deployment, its Compose runtime, and recorded failure evidence.",
-          mode: "guided",
-        },
-      },
-    };
-    setLinkedIncident(linked);
-    setSelectedDomain(domain);
-
     void (async () => {
-      const scanned = await refresh(true);
-      const discovered = scanned.find(
-        (path) => path.domain === domain && path.verification.status !== "passed"
-      );
-      const incident = discovered || linked;
-      setLinkedIncident(incident);
-      setSelectedDomain(domain);
-      if (params.get("autostart") === "1") {
+      const params = new URLSearchParams(window.location.search);
+      const deploymentSlug = params.get("deployment")?.trim() || "";
+      let domain = params.get("domain")?.trim() || "";
+      let publicUrl = domain ? `https://${domain}` : "";
+      let stage = params.get("stage")?.trim() || "";
+      let failure = params.get("error")?.trim() || "";
+
+      if (deploymentSlug) {
+        const response = await fetch(`/api/deployment-inventory/${encodeURIComponent(deploymentSlug)}`);
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.deployment) {
+          const record = data.deployment as {
+            domain?: string | null;
+            publicUrl?: string | null;
+            runtimeEvents?: Array<{ status?: string; output?: string | null; error?: string | null }>;
+          };
+          publicUrl = publicUrl || String(record.publicUrl || "");
+          domain = domain || String(record.domain || "") || publicHostname(publicUrl);
+          const latest = record.runtimeEvents?.[0];
+          if (latest) {
+            const progress = deploymentRunProgress(
+              latest.status === "success" ? "success" : latest.status === "running" ? "deploying" : "failed",
+              String(latest.output || "").split("\n").filter(Boolean),
+              latest.error
+            );
+            stage = stage || progress.failedStage || progress.activeStage || "deployment";
+            failure = failure || progress.evidence || latest.error || "The deployment run failed before verification.";
+          }
+        }
+      }
+
+      const incidentIdentity = domain || deploymentSlug;
+      if (incidentIdentity) {
+        stage = stage || "deployment";
+        failure = failure || "The deployment run failed before verification.";
+        const linked: ServicePath = {
+          domain: incidentIdentity,
+          deploymentSlug: deploymentSlug || undefined,
+          publicUrl: publicUrl || undefined,
+          topologyStatus: "partial",
+          verification: {
+            status: "failed",
+            error: failure,
+            observedAt: new Date().toISOString(),
+            target: publicUrl || incidentIdentity,
+          },
+          inspection: {
+            outcome: "failed",
+            failureBoundary: "application",
+            summary: `${deploymentSlug || incidentIdentity} failed during ${stage}.`,
+            cause: failure,
+            confidence: 1,
+            evidence: [{ id: "deployment-run", label: "Deployment run", value: stage, detail: failure, status: "failed" }],
+            nextAction: {
+              title: "Investigate the failed deployment",
+              detail: "Inspect the locked deployment, its Compose runtime, and recorded failure evidence.",
+              mode: "automatic",
+            },
+          },
+        };
+        setLinkedIncident(linked);
+        setSelectedDomain(incidentIdentity);
+
+        const scanned = await refresh(true);
+        const discovered = domain ? scanned.find(
+          (path) => path.domain === domain && path.verification.status !== "passed"
+        ) : undefined;
+        const incident = discovered ? { ...discovered, deploymentSlug: deploymentSlug || undefined } : linked;
+        setLinkedIncident(incident);
+        setSelectedDomain(incident.domain);
         await investigate(incident);
+        return;
+      }
+
+      const scanned = await refresh(true);
+      const firstIncident = scanned.filter((path) => path.verification.status !== "passed").sort(pathPriority)[0];
+      if (firstIncident) {
+        setSelectedDomain(firstIncident.domain);
+        await investigate(firstIncident);
       }
     })();
     // This is an intentional one-shot handoff from the deployment URL.
@@ -276,6 +319,9 @@ export default function IntelligencePage() {
     confirmedTool?: { name: string; args: Record<string, unknown> },
     continuationMessage?: string
   ) {
+    agentAbort.current?.abort();
+    const controller = new AbortController();
+    agentAbort.current = controller;
     setInvestigating(true);
     if (!confirmedTool && !continuationMessage) {
       setAgentText("");
@@ -316,6 +362,7 @@ export default function IntelligencePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -375,26 +422,50 @@ export default function IntelligencePage() {
         }
       }
     } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "Incident agent failed.");
     } finally {
-      setInvestigating(false);
+      if (agentAbort.current === controller) {
+        agentAbort.current = null;
+        setInvestigating(false);
+      }
     }
+  }
+
+  function focusIncident(path: ServicePath) {
+    agentAbort.current?.abort();
+    investigationRun.current += 1;
+    setSelectedDomain(path.domain);
+    setInvestigation(null);
+    setAgentText("");
+    setAgentTools([]);
+    setAgentConfirm(null);
+    setAgentThreadId(null);
+    setDiagnosisStartedAt(null);
+    setDiagnosisElapsed(0);
+    const params = new URLSearchParams();
+    if (path.domain.includes(".")) params.set("domain", path.domain);
+    if (path.deploymentSlug) params.set("deployment", path.deploymentSlug);
+    window.history.replaceState(null, "", `/intelligence?${params.toString()}`);
+    void investigate(path);
   }
 
   return (
     <div className="gc-page gc-page--wide">
       <PageHeader
-        eyebrow="Intelligence"
-        title="Recover a broken deployment"
-        description="Choose a customer-facing failure. GroundControl locks the exact workload, builds an evidence chain, prepares the safest repair, and verifies the result from outside the host."
+        eyebrow={selectedPath ? "Intelligence · Active incident" : "Intelligence"}
+        title={selectedPath ? selectedPath.domain : "Recover a broken deployment"}
+        description={selectedPath
+          ? "GroundControl keeps this deployment in focus while it collects evidence, prepares the safest repair, and verifies the customer-facing result."
+          : "GroundControl scans the host automatically, selects the highest-impact failure, and starts a locked recovery run."}
         actions={(
           <Button
-            variant="primary"
+            variant="secondary"
             onClick={() => refresh(true)}
             disabled={loading}
             leadingIcon={<RefreshCw size={14} className={loading ? "animate-spin" : ""} />}
           >
-            {loading ? "Refreshing…" : "Refresh endpoints"}
+            {loading ? "Scanning…" : "Scan again"}
           </Button>
         )}
       />
@@ -441,29 +512,23 @@ export default function IntelligencePage() {
             </span>
           </div>
 
-          <div className={`mt-5 grid min-w-0 gap-5 ${investigation ? "lg:grid-cols-[210px_minmax(0,1fr)]" : "lg:grid-cols-[300px_minmax(0,1fr)]"}`}>
-            <aside className="min-w-0 border border-border bg-card lg:sticky lg:top-20 lg:self-start">
-              <div className="border-b border-border px-4 py-3">
-                <p className="text-xs font-semibold">{investigation ? "Switch incident" : "Broken deployments"}</p>
+          <div className="mt-5 grid min-w-0 gap-5 lg:grid-cols-[210px_minmax(0,1fr)]">
+            <aside className="sticky top-16 z-20 min-w-0 border-y border-border bg-card/95 backdrop-blur lg:top-20 lg:self-start lg:border">
+              <div className="hidden border-b border-border px-4 py-3 lg:block">
+                <p className="text-xs font-semibold">Incidents</p>
                 <p className="mt-1 text-[10px] text-muted">Customer impact first</p>
               </div>
-              <div className="max-h-[620px] divide-y divide-border overflow-y-auto">
+              <div className="flex gap-1 overflow-x-auto p-2 lg:block lg:max-h-[620px] lg:divide-y lg:divide-border lg:overflow-y-auto lg:p-0">
                 {[...visiblePaths].sort(pathPriority).map((path) => (
                   <button
                     key={path.domain}
                     type="button"
                     onClick={() => {
-                      setSelectedDomain(path.domain);
-                      if (investigation?.domain !== path.domain) {
-                        setInvestigation(null);
-                        setAgentText("");
-                        setAgentTools([]);
-                        setAgentConfirm(null);
-                        setAgentThreadId(null);
-                      }
+                      if (selectedPath?.domain === path.domain && (investigation || investigating)) return;
+                      focusIncident(path);
                     }}
-                    className={`w-full px-4 py-3 text-left transition-colors ${
-                      selectedPath?.domain === path.domain ? "bg-accent/[0.08]" : "hover:bg-white/[0.025]"
+                    className={`min-w-[180px] shrink-0 px-3 py-2.5 text-left transition-colors lg:w-full lg:min-w-0 lg:px-4 lg:py-3 ${
+                      selectedPath?.domain === path.domain ? "bg-background text-foreground" : "opacity-60 hover:bg-white/[0.025] hover:opacity-100"
                     }`}
                   >
                     <div className="flex items-center gap-2">
@@ -484,7 +549,10 @@ export default function IntelligencePage() {
                   onRescan={() => refresh(true)}
                   loading={loading}
                   investigating={investigating}
-                  investigation={investigation?.domain === selectedPath.domain ? investigation : null}
+                  investigation={investigation && (
+                    investigation.domain === selectedPath.domain
+                    || investigation.target?.deploymentSlug === selectedPath.deploymentSlug
+                  ) ? investigation : null}
                   agentText={agentText}
                   agentTools={agentTools}
                   agentConfirm={agentConfirm}
@@ -503,7 +571,6 @@ export default function IntelligencePage() {
                     "The previous automatic pass ended without a complete evidence-backed outcome. Continue the same locked investigation now. Do not stop at a refused or failed generic tool; use the dedicated read-only tools, preserve successful evidence, and finish with a typed safe action, a Daytona-validated source repair, or one concrete blocker under Problem, Fix, Verify."
                   )}
                   diagnosisElapsed={diagnosisElapsed}
-                  onExitFocus={() => setInvestigation(null)}
                 />
               </main>
             )}
@@ -529,7 +596,6 @@ function ResolutionSurface({
   onPrepareAgentAction,
   onContinueAgent,
   diagnosisElapsed,
-  onExitFocus,
 }: {
   path: ServicePath;
   onFix: () => void;
@@ -545,7 +611,6 @@ function ResolutionSurface({
   onPrepareAgentAction: () => void;
   onContinueAgent: () => void;
   diagnosisElapsed: number;
-  onExitFocus: () => void;
 }) {
   const inspection = path.inspection;
   const isHealthy = path.verification.status === "passed";
@@ -567,9 +632,11 @@ function ResolutionSurface({
               {inspection?.summary || "Check this endpoint to isolate the failure."}
             </p>
           </div>
-          <a href={`https://${path.domain}/`} target="_blank" rel="noreferrer" className="gc-button shrink-0">
-            Open site <ExternalLink size={13} />
-          </a>
+          {(path.publicUrl || path.domain.includes(".")) && (
+            <a href={path.publicUrl || `https://${path.domain}/`} target="_blank" rel="noreferrer" className="gc-button shrink-0">
+              Open site <ExternalLink size={13} />
+            </a>
+          )}
         </div>
       </div>
 
@@ -618,7 +685,7 @@ function ResolutionSurface({
 
           {investigation && (
             <>
-              <IncidentResult investigation={investigation} onExitFocus={onExitFocus} />
+              <IncidentResult investigation={investigation} />
               <IncidentAgent
                 tools={agentTools}
                 text={agentText}
@@ -672,7 +739,7 @@ function ResolutionSurface({
   );
 }
 
-function IncidentResult({ investigation, onExitFocus }: { investigation: IncidentInvestigation; onExitFocus: () => void }) {
+function IncidentResult({ investigation }: { investigation: IncidentInvestigation }) {
   const target = investigation.target;
   return (
     <div className="mt-4 border border-border">
@@ -688,10 +755,7 @@ function IncidentResult({ investigation, onExitFocus }: { investigation: Inciden
         <div className="border-t border-border p-4">
           <div className="flex items-center justify-between gap-3">
             <div><p className="text-xs font-semibold">{target.deploymentName}</p><p className="mt-1 font-mono text-[10px] text-muted">{target.deploymentSlug}</p></div>
-            <div className="flex gap-2">
-              <button type="button" onClick={onExitFocus} className="gc-button gc-button-quiet">Back to incidents</button>
-              <a href={`/deployments/${target.deploymentSlug}?tab=deploy`} className="gc-button">Open deploy run</a>
-            </div>
+            <a href={`/deployments/${target.deploymentSlug}?tab=deploy`} className="gc-button">Open deploy run</a>
           </div>
           <p className="mt-3 break-all font-mono text-[10px] text-muted">{target.composePath || target.sourcePath || "Compose source not discovered"} · {target.composeServices.join(", ") || "No service resolved"} · {target.proxyRoute || "No route resolved"}</p>
           {investigation.action && <Notice className="mt-4" tone="warning" title={`Approval required · ${investigation.action.title}`}>Exact target: {investigation.action.projectSlug}. Risk: {investigation.action.risk}. Rollback: {investigation.action.rollback}.</Notice>}
