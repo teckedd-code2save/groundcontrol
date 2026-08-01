@@ -170,6 +170,7 @@ export default function TemplatesPage() {
     setDeployResult(null);
     setSelectedTunnelId("");
     setSelectedZoneId("");
+    setCreateDns(t.compose_source === "repository");
     setDeploymentName("");
     setSourceValidated(false);
     setSourceChecks([]);
@@ -224,6 +225,7 @@ export default function TemplatesPage() {
           ghcrImage: sourceType === "ghcr" ? ghcrImage : undefined,
           outputDir: inputs.output_dir || ".",
           buildCommand: inputs.build_command || "",
+          composeFile: inputs.compose_file || "docker-compose.yml",
         }),
       });
       const d = await res.json();
@@ -232,6 +234,28 @@ export default function TemplatesPage() {
 
       if (d.ok) {
         setSourceValidated(true);
+        if (d.compose) {
+          setInputs((current) => ({
+            ...current,
+            public_service: current.public_service || String(d.compose.suggestedPublicService || ""),
+            public_port: current.public_port || String(d.compose.suggestedPublicPort || ""),
+            health_path: current.health_path || String(d.compose.suggestedHealthPath || ""),
+          }));
+        }
+        if (Array.isArray(d.environment)) {
+          setEnvVars((current) => {
+            const existing = new Map(current.map((entry) => [entry.key, entry]));
+            for (const requirement of d.environment) {
+              const key = String(requirement.key || "").trim();
+              if (!key || existing.has(key)) continue;
+              existing.set(key, {
+                key,
+                value: requirement.required ? "" : String(requirement.defaultValue || ""),
+              });
+            }
+            return [...existing.values()];
+          });
+        }
         const name = d.repo?.name || repoUrl || localPath || "source";
         if (!deploymentName.trim()) {
           const inferred = String(d.repo?.name || repoUrl || localPath || ghcrImage || "")
@@ -251,7 +275,7 @@ export default function TemplatesPage() {
         if (!opts?.silentOk) {
           setResult({
             ok: true,
-            msg: `✓ Source matches this template${d.repo?.name ? `: ${d.repo.name}` : name ? `: ${name}` : ""}${checkSummary ? ` — ${checkSummary}` : ""}`,
+            msg: `✓ Source matches this template${d.repo?.name ? `: ${d.repo.name}` : name ? `: ${name}` : ""}${d.compose?.services?.length ? ` — ${d.compose.services.length} Compose services discovered` : checkSummary ? ` — ${checkSummary}` : ""}`,
           });
         }
         if (Array.isArray(d.warnings) && d.warnings.length > 0) {

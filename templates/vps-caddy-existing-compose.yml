@@ -1,0 +1,63 @@
+name: "VPS Caddy Existing Compose"
+description: "Deploy a repository-owned Docker Compose application unchanged, attach its published service to Caddy and Cloudflare, and enrol the complete stack in GroundControl."
+category: "compose"
+version: "1.0"
+compose_source: repository
+requires:
+  docker: true
+  caddy: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "127.0.0.1:{{public_port}}"
+components:
+  - id: repository
+    label: Repository-owned Compose
+    layer: application
+    kind: repository-compose
+  - id: stack
+    label: Complete Compose service graph
+    layer: application
+    kind: service-graph
+  - id: volumes
+    label: Repository-declared persistence
+    layer: data
+    kind: volumes
+  - id: caddy
+    label: Validated Caddy edge route
+    layer: traffic
+    kind: proxy
+  - id: cloudflare
+    label: Automated Cloudflare DNS
+    layer: edge
+    kind: dns
+  - id: verification
+    label: External HTTPS verification
+    layer: resilience
+    kind: health
+services: []
+volumes: []
+networks: []
+inputs:
+  - name: domain
+    prompt: "Public domain"
+    example: "app.example.com"
+  - name: repo_url
+    prompt: "Git repository URL"
+    example: "https://github.com/example/application.git"
+  - name: repo_branch
+    prompt: "Git branch, tag, or commit"
+    default: "main"
+  - name: compose_file
+    prompt: "Repository Compose file"
+    default: "docker-compose.yml"
+  - name: public_service
+    prompt: "Public Compose service"
+    example: "gateway"
+  - name: public_port
+    prompt: "Published host port"
+    example: "8080"
+  - name: health_path
+    prompt: "Public verification path"
+    example: "/healthz"

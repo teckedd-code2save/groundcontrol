@@ -19,6 +19,14 @@ const staticSite = {
   inputs: [{ name: "domain" }, { name: "output_dir" }],
 };
 
+const repositoryCompose = {
+  category: "compose",
+  deploy_mode: "compose",
+  compose_source: "repository",
+  services: [] as { build?: boolean; name?: string }[],
+  inputs: [{ name: "domain" }, { name: "compose_file" }],
+};
+
 describe("template source requirements", () => {
   it("requires Dockerfile for source-build", () => {
     const plan = getTemplateSourcePlan(sourceBuild);
@@ -76,5 +84,22 @@ describe("template source requirements", () => {
       { sourceMode: "github" }
     );
     expect(bad.ok).toBe(false);
+  });
+
+  it("accepts a repository Compose stack with nested Dockerfiles", () => {
+    const plan = getTemplateSourcePlan(repositoryCompose);
+    expect(plan.repositoryCompose).toBe(true);
+    expect(plan.requiresDockerfile).toBe(false);
+
+    const ok = evaluateSourceRequirements(
+      repositoryCompose,
+      probeFromGithubRootListing([
+        { name: "docker-compose.yml", path: "docker-compose.yml", type: "file" },
+        { name: "apps", path: "apps", type: "dir" },
+        { name: "services", path: "services", type: "dir" },
+      ]),
+      { sourceMode: "github", composeFile: "docker-compose.yml" }
+    );
+    expect(ok.ok).toBe(true);
   });
 });

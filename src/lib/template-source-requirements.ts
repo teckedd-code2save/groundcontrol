@@ -11,6 +11,7 @@
 export interface TemplateLike {
   category?: string;
   deploy_mode?: string;
+  compose_source?: string;
   services: { build?: boolean; name?: string }[];
   inputs: { name: string }[];
   components?: { kind?: string }[];
@@ -37,6 +38,7 @@ export interface TemplateSourcePlan {
   requiresDockerfile: boolean;
   requiresGitOrLocal: boolean;
   requiresImage: boolean;
+  repositoryCompose: boolean;
   /** Hard file checks against the source tree. */
   requirements: TemplateSourceRequirement[];
   summary: string;
@@ -48,6 +50,7 @@ export function isStaticTemplateLike(template: TemplateLike): boolean {
 
 export function getTemplateSourcePlan(template: TemplateLike): TemplateSourcePlan {
   const usesBuild = (template.services || []).some((s) => s.build);
+  const repositoryCompose = template.deploy_mode === "compose" && template.compose_source === "repository";
   const imageInputs = (template.inputs || []).filter(
     (i) => i.name.endsWith("_image") || i.name === "app_image"
   );
@@ -60,6 +63,7 @@ export function getTemplateSourcePlan(template: TemplateLike): TemplateSourcePla
       requiresDockerfile: false,
       requiresGitOrLocal: true,
       requiresImage: false,
+      repositoryCompose: false,
       requirements: [
         {
           id: "index_html",
@@ -80,6 +84,25 @@ export function getTemplateSourcePlan(template: TemplateLike): TemplateSourcePla
     };
   }
 
+  if (repositoryCompose) {
+    return {
+      deployMode: "compose",
+      allowedSources: ["github", "local"],
+      requiresDockerfile: false,
+      requiresGitOrLocal: true,
+      requiresImage: false,
+      repositoryCompose: true,
+      requirements: [
+        {
+          id: "compose_file",
+          label: "Repository Docker Compose file",
+          path: "docker-compose.yml",
+        },
+      ],
+      summary: "Repository Compose: deploy the source-owned service graph without regenerating it.",
+    };
+  }
+
   if (usesBuild) {
     return {
       deployMode: "compose",
@@ -87,6 +110,7 @@ export function getTemplateSourcePlan(template: TemplateLike): TemplateSourcePla
       requiresDockerfile: true,
       requiresGitOrLocal: true,
       requiresImage: false,
+      repositoryCompose: false,
       requirements: [
         {
           id: "dockerfile",
@@ -105,6 +129,7 @@ export function getTemplateSourcePlan(template: TemplateLike): TemplateSourcePla
       requiresDockerfile: false,
       requiresGitOrLocal: false,
       requiresImage: true,
+      repositoryCompose: false,
       requirements: [],
       summary: "Image-based stack: provide a container image (GHCR) or use template defaults.",
     };
@@ -116,6 +141,7 @@ export function getTemplateSourcePlan(template: TemplateLike): TemplateSourcePla
     requiresDockerfile: false,
     requiresGitOrLocal: false,
     requiresImage: false,
+    repositoryCompose: false,
     requirements: [],
     summary: "Uses template defaults / configured images.",
   };
@@ -148,6 +174,7 @@ export function evaluateSourceRequirements(
     hasImage?: boolean;
     outputDir?: string;
     buildCommand?: string;
+    composeFile?: string;
   }
 ): SourceRequirementResult {
   const plan = getTemplateSourcePlan(template);
@@ -195,6 +222,25 @@ export function evaluateSourceRequirements(
       errors.push(
         "No Dockerfile found at the repository root. Pick the Static Site template for plain HTML/CSS/JS repos, or add a Dockerfile."
       );
+    }
+  }
+
+  if (plan.repositoryCompose) {
+    const composeFile = String(opts.composeFile || "docker-compose.yml").replace(/^\.\/+/, "");
+    const hasCompose = Boolean(tree && (
+      tree.paths.has(composeFile)
+      || tree.paths.has(composeFile.toLowerCase())
+      || (composeFile.indexOf("/") === -1 && tree.rootFiles.has(composeFile))
+      || (composeFile.indexOf("/") === -1 && tree.rootFiles.has(composeFile.toLowerCase()))
+    ));
+    checks.push({
+      id: "compose_file",
+      label: `Repository Compose file (${composeFile})`,
+      ok: hasCompose,
+      detail: hasCompose ? "Found" : "Missing — choose the repository's actual Compose file",
+    });
+    if (!hasCompose) {
+      errors.push(`Compose file not found in the selected source: ${composeFile}`);
     }
   }
 
@@ -253,7 +299,7 @@ export function evaluateSourceRequirements(
   }
 
   // If tree could not be probed but we need file checks
-  if (!tree && (plan.requiresDockerfile || isStaticTemplateLike(template)) && (opts.sourceMode === "github" || opts.sourceMode === "local")) {
+  if (!tree && (plan.requiresDockerfile || plan.repositoryCompose || isStaticTemplateLike(template)) && (opts.sourceMode === "github" || opts.sourceMode === "local")) {
     warnings.push("Could not inspect repository files yet — full checks will run on deploy.");
   }
 

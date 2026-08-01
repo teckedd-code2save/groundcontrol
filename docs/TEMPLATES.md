@@ -29,6 +29,22 @@ GroundControl currently has two classes of templates:
 
 ### Implemented
 
+### `vps-caddy-existing-compose` — Existing Compose from Git
+
+```
+Git repository Compose → complete service graph → published gateway
+                                                    ↓
+Cloudflare DNS → host Caddy → loopback host port → external health verification
+```
+
+**Use for:** Multi-service applications that already own a production `docker-compose.yml`, including repositories with nested Dockerfiles, workers, queues and persistent volumes.
+
+GroundControl inspects the repository Compose file, discovers services, published ports, health checks and interpolated environment keys, then executes that file without regenerating it. The selected public service is attached to host Caddy; Cloudflare DNS can be created automatically from a connected zone. Required environment values must be supplied before Compose runs. Success requires the complete declared service graph to become operational and the external HTTPS check to pass.
+
+**Inputs:** repository/ref, Compose file, public domain, public service, published host port, verification path and discovered environment values.
+
+---
+
 ### `caddy-app-postgres` — Caddy + App + PostgreSQL
 ```
 Internet → Cloudflare → Caddy → App Container → PostgreSQL
@@ -291,7 +307,7 @@ Deploy should then produce a full plan: source verification, compose/manifests, 
 2. Browse templates, select one
 3. Fill in your details (domain, ports, etc.)
 4. Preview the generated config
-5. Deploy — GroundControl generates `docker-compose.yml`, proxy config, and `.env.schema`
+5. Deploy — generated-stack templates create `docker-compose.yml`; Existing Compose validates and executes the repository file unchanged. Both paths create managed environment metadata, proxy configuration and deployment evidence.
 
 ### From the AI Co-Pilot
 Ask the AI to help:

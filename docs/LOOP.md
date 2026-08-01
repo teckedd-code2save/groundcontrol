@@ -12,6 +12,8 @@ Every recovery run ends in one explicit operator outcome: customer endpoint veri
 
 A failed deployment hands its exact deployment identity and recorded stage evidence directly to Intelligence. Intelligence scans automatically, keeps one incident in focus, starts the locked investigation without a second selection step, and leaves other failures available as subdued sticky incident tabs. Deployment stages explain their operation and preserve concrete Compose, container-state, and bounded container-log evidence; a bare exit code is never treated as a sufficient diagnosis.
 
+Repository-owned Compose is a first-class deployment source. GroundControl validates the selected file, discovers its services, published ports, health path and environment contract, executes the repository topology without rewriting it, attaches only the chosen public entrypoint to Caddy and Cloudflare, and records the exact commit and Compose file in the deployment identity. Success requires every declared service to reach its expected running or completed state, every declared container health check to pass, and the external HTTPS verification to succeed.
+
 The workspace reports topology linkage and public reachability separately: discovering a proxy route never makes it healthy, and a reachable status-only endpoint is not presented as proof of a customer feature. It does not yet provide durable operational memory across GroundControl process restarts or browser-level/authenticated customer journeys. Host mutation remains policy and confirmation gated.
 
 ## Product hierarchy

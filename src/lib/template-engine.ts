@@ -76,6 +76,8 @@ export interface TemplateDefinition {
   version: string;
   /** How the template is materialised on the host. Default: compose. */
   deploy_mode: TemplateDeployMode;
+  /** generated = GroundControl renders services; repository = execute the source repository's Compose file unchanged. */
+  compose_source: "generated" | "repository";
   requires: {
     docker?: boolean;
     caddy?: boolean;
@@ -97,6 +99,10 @@ export interface TemplateDefinition {
 
 export function isStaticTemplate(template: TemplateDefinition): boolean {
   return template.deploy_mode === "static";
+}
+
+export function isRepositoryComposeTemplate(template: TemplateDefinition): boolean {
+  return template.deploy_mode === "compose" && template.compose_source === "repository";
 }
 
 export interface ResolvedTemplate {
@@ -222,6 +228,7 @@ function parseTemplateYaml(content: string): TemplateDefinition {
     category,
     version: String(doc.version || "1.0"),
     deploy_mode: deployMode,
+    compose_source: String(doc.compose_source || "generated") === "repository" ? "repository" : "generated",
     requires: {
       docker: requiresDocker,
       caddy: proxyType === "caddy" || requires.caddy === true,
@@ -323,6 +330,13 @@ function generateDockerCompose(
   resolved: Record<string, string>,
   userInputs: Record<string, string>
 ): string {
+  if (isRepositoryComposeTemplate(template)) {
+    return [
+      `# Repository-owned Docker Compose`,
+      `# GroundControl will validate and execute ${resolved.compose_file || "docker-compose.yml"} from the selected source.`,
+      `# The repository file is not regenerated or silently rewritten.`,
+    ].join("\n");
+  }
   if (isStaticTemplate(template) || template.services.length === 0) {
     return [
       `# Static site — no Docker Compose`,
@@ -543,8 +557,12 @@ function generateOwnershipManifest(
     deployMode: template.deploy_mode,
     artifacts: isStaticTemplate(template)
       ? [".groundcontrol/manifest.json", "proxy config"]
-      : ["docker-compose.yml", ".env.schema", ".groundcontrol/manifest.json"],
-    composeSha256: isStaticTemplate(template) ? null : createSimpleHash(dockerCompose),
+      : [
+          isRepositoryComposeTemplate(template) ? resolved.compose_file || "docker-compose.yml" : "docker-compose.yml",
+          ".env.schema",
+          ".groundcontrol/manifest.json",
+        ],
+    composeSha256: isStaticTemplate(template) || isRepositoryComposeTemplate(template) ? null : createSimpleHash(dockerCompose),
     createdAt: new Date().toISOString(),
   }, null, 2);
 }
@@ -639,6 +657,11 @@ export function generatePreview(resolved: ResolvedTemplate): string {
     if (resolved.inputs.static_dir) {
       lines.push(`  • Host path: ${resolved.inputs.static_dir}`);
     }
+  } else if (isRepositoryComposeTemplate(t)) {
+    lines.push("## Repository Compose");
+    lines.push(`  • Compose file: ${resolved.inputs.compose_file || "docker-compose.yml"}`);
+    lines.push("  • Services, build contexts, health checks, networks and volumes remain owned by the repository");
+    lines.push(`  • Public route: ${resolved.inputs.domain || "(set domain)"} -> 127.0.0.1:${resolved.inputs.public_port || "(select published port)"}`);
   } else {
     lines.push("## Services");
     for (const svc of t.services) {
@@ -655,7 +678,7 @@ export function generatePreview(resolved: ResolvedTemplate): string {
   lines.push("");
   lines.push("## Configuration files");
   if (!isStaticTemplate(t)) {
-    lines.push(`  • docker-compose.yml`);
+    lines.push(`  • ${isRepositoryComposeTemplate(t) ? resolved.inputs.compose_file || "docker-compose.yml" : "docker-compose.yml"}`);
     lines.push(`  • .env.schema`);
   }
   lines.push(`  • ${resolved.proxyConfigPath}`);
