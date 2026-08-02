@@ -33,12 +33,22 @@ export interface ReconcileManagedEnvironmentResult extends ManagedEnvironmentRed
   profileId?: number;
   providerType?: string;
   mismatchedArtifacts?: string[];
+  missingArtifacts?: string[];
+  changedArtifacts?: string[];
 }
 
-interface ExpectedArtifact {
+export interface ExpectedManagedEnvironmentArtifact {
   scope: string;
   path: string;
   hash: string;
+}
+
+export interface ManagedEnvironmentArtifactInspection {
+  missingArtifacts: string[];
+  changedArtifacts: string[];
+  mismatchedArtifacts: string[];
+  runtimeReady: boolean;
+  bundleMatchesDesired: boolean;
 }
 
 function sha256(content: string): string {
@@ -54,14 +64,14 @@ export function expectedManagedEnvironmentArtifacts(input: {
   environmentSlug: string;
   values: Record<string, string>;
   componentValues: Record<string, Record<string, string>>;
-}): ExpectedArtifact[] {
+}): ExpectedManagedEnvironmentArtifact[] {
   const runtimeDir = managedEnvRuntimeDirectory(input.deployPath, input.environmentSlug);
   const interpolationValues = composeInterpolationValues(input.values, input.componentValues);
   const components = Object.keys(input.componentValues)
     .filter(safeServiceName)
     .filter((component) => Object.keys(input.componentValues[component]).length > 0)
     .sort();
-  const artifacts: ExpectedArtifact[] = [];
+  const artifacts: ExpectedManagedEnvironmentArtifact[] = [];
 
   if (Object.keys(interpolationValues).length > 0) {
     artifacts.push({
@@ -109,16 +119,58 @@ export function expectedManagedEnvironmentArtifacts(input: {
   return artifacts;
 }
 
-export function buildInspectManagedEnvironmentArtifactsCommand(artifacts: ExpectedArtifact[]): string {
+export function buildInspectManagedEnvironmentArtifactsCommand(
+  artifacts: ExpectedManagedEnvironmentArtifact[]
+): string {
   if (artifacts.length === 0) return "true";
   return artifacts.map((artifact) => [
     `if [ ! -f ${shQuote(artifact.path)} ]; then`,
-    `  printf '%s\\n' ${shQuote(artifact.scope)}`,
+    `  printf '%s\\n' ${shQuote(`missing|${artifact.scope}`)}`,
     "else",
     `  actual=$(sha256sum ${shQuote(artifact.path)} 2>/dev/null | awk '{print $1}' || shasum -a 256 ${shQuote(artifact.path)} | awk '{print $1}')`,
-    `  [ \"$actual\" = ${shQuote(artifact.hash)} ] || printf '%s\\n' ${shQuote(artifact.scope)}`,
+    `  [ \"$actual\" = ${shQuote(artifact.hash)} ] || printf '%s\\n' ${shQuote(`changed|${artifact.scope}`)}`,
     "fi",
   ].join("\n")).join("\n");
+}
+
+export function inspectManagedEnvironmentArtifactOutput(
+  output: string,
+  commandSucceeded: boolean,
+  artifacts: ExpectedManagedEnvironmentArtifact[]
+): ManagedEnvironmentArtifactInspection {
+  if (!commandSucceeded) {
+    const missingArtifacts = artifacts.map((artifact) => artifact.scope);
+    return {
+      missingArtifacts,
+      changedArtifacts: [],
+      mismatchedArtifacts: missingArtifacts,
+      runtimeReady: false,
+      bundleMatchesDesired: false,
+    };
+  }
+
+  const missingArtifacts: string[] = [];
+  const changedArtifacts: string[] = [];
+  for (const raw of output.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const separator = line.indexOf("|");
+    if (separator < 1) continue;
+    const kind = line.slice(0, separator);
+    const scope = line.slice(separator + 1);
+    if (!scope) continue;
+    if (kind === "missing") missingArtifacts.push(scope);
+    if (kind === "changed") changedArtifacts.push(scope);
+  }
+
+  const mismatchedArtifacts = [...missingArtifacts, ...changedArtifacts];
+  return {
+    missingArtifacts,
+    changedArtifacts,
+    mismatchedArtifacts,
+    runtimeReady: missingArtifacts.length === 0,
+    bundleMatchesDesired: mismatchedArtifacts.length === 0,
+  };
 }
 
 export function managedEnvironmentRedeployDecision(input: {
@@ -190,26 +242,26 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
     values: resolved.values,
     componentValues: resolved.componentValues,
   });
-  const inspection = await execOnTargetStrict(
+  const inspectionResult = await execOnTargetStrict(
     buildInspectManagedEnvironmentArtifactsCommand(artifacts),
     input.vps
   );
-  const mismatchedArtifacts = inspection.code === 0
-    ? inspection.stdout.split("\n").map((item) => item.trim()).filter(Boolean)
-    : artifacts.map((artifact) => artifact.scope);
-  const runtimeReady = artifacts.length === 0 || mismatchedArtifacts.length < artifacts.length;
-  const bundleMatchesDesired = inspection.code === 0 && mismatchedArtifacts.length === 0;
+  const inspection = inspectManagedEnvironmentArtifactOutput(
+    inspectionResult.stdout,
+    inspectionResult.code === 0,
+    artifacts
+  );
   const decision = managedEnvironmentRedeployDecision({
     hasProfile: true,
-    runtimeReady,
-    bundleMatchesDesired,
+    runtimeReady: inspection.runtimeReady,
+    bundleMatchesDesired: inspection.bundleMatchesDesired,
     desiredHash: resolved.validation.hash,
     materializedHash: resolved.profile.lastHash,
   });
 
   input.log?.(`${decision.evidence}\n`);
-  if (mismatchedArtifacts.length > 0) {
-    input.log?.(`[configuration] Reconcile: ${mismatchedArtifacts.join(", ")}\n`);
+  if (inspection.mismatchedArtifacts.length > 0) {
+    input.log?.(`[configuration] Reconcile: ${inspection.mismatchedArtifacts.join(", ")}\n`);
   }
 
   if (decision.shouldMaterialize) {
@@ -225,13 +277,19 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
       }
     );
 
-    const verification = await execOnTargetStrict(
+    const verificationResult = await execOnTargetStrict(
       buildInspectManagedEnvironmentArtifactsCommand(artifacts),
       input.vps
     );
-    const remaining = verification.stdout.split("\n").map((item) => item.trim()).filter(Boolean);
-    if (verification.code !== 0 || remaining.length > 0) {
-      throw new Error(`Managed environment verification failed: ${remaining.join(", ") || verification.stderr || "artifact checksum mismatch"}`);
+    const verification = inspectManagedEnvironmentArtifactOutput(
+      verificationResult.stdout,
+      verificationResult.code === 0,
+      artifacts
+    );
+    if (!verification.bundleMatchesDesired) {
+      throw new Error(
+        `Managed environment verification failed: ${verification.mismatchedArtifacts.join(", ") || verificationResult.stderr || "artifact checksum mismatch"}`
+      );
     }
   }
 
@@ -239,6 +297,8 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
     ...decision,
     profileId: resolved.profile.id,
     providerType: resolved.profile.providerType,
-    mismatchedArtifacts,
+    mismatchedArtifacts: inspection.mismatchedArtifacts,
+    missingArtifacts: inspection.missingArtifacts,
+    changedArtifacts: inspection.changedArtifacts,
   };
 }
