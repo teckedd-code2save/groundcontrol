@@ -1,32 +1,37 @@
+import type { Project } from "@prisma/client";
+import type { VpsConnection } from "./vps";
+import {
+  applyEnvToDeployment,
+  inspectMaterializedEnvBundle,
+  resolveDeploymentEnv,
+} from "./env-management";
+
 export type ManagedEnvironmentRedeployAction =
   | "none"
-  | "rematerialize-local"
-  | "restore-synchronized"
-  | "reuse-synchronized";
+  | "reuse-current"
+  | "materialize-missing"
+  | "materialize-changed";
 
 export interface ManagedEnvironmentRedeployDecision {
   action: ManagedEnvironmentRedeployAction;
   shouldMaterialize: boolean;
+  desiredHash?: string;
+  materializedHash?: string | null;
   evidence: string;
 }
 
-/**
- * Decide how a redeploy prepares its managed environment.
- *
- * GroundControl Vault is the source of truth for local environments, so every
- * redeploy must regenerate `.env` and component files from the latest saved
- * values. Merely finding yesterday's manifest is not proof that the runtime
- * bundle contains today's configuration.
- *
- * Remote providers are synchronized explicitly. Routine redeploys may reuse a
- * complete synchronized bundle, but must rebuild it when any managed artifact
- * is missing.
- */
-export function managedEnvironmentRedeployDecision(
-  providerType: string | null | undefined,
-  bundleReady: boolean
-): ManagedEnvironmentRedeployDecision {
-  if (!providerType) {
+export interface ReconcileManagedEnvironmentResult extends ManagedEnvironmentRedeployDecision {
+  profileId?: number;
+  providerType?: string;
+}
+
+export function managedEnvironmentRedeployDecision(input: {
+  hasProfile: boolean;
+  runtimeReady: boolean;
+  desiredHash?: string;
+  materializedHash?: string | null;
+}): ManagedEnvironmentRedeployDecision {
+  if (!input.hasProfile) {
     return {
       action: "none",
       shouldMaterialize: false,
@@ -34,25 +39,94 @@ export function managedEnvironmentRedeployDecision(
     };
   }
 
-  if (providerType === "local") {
+  if (!input.runtimeReady) {
     return {
-      action: "rematerialize-local",
+      action: "materialize-missing",
       shouldMaterialize: true,
-      evidence: "[configuration] Materializing the latest GroundControl Vault configuration",
+      desiredHash: input.desiredHash,
+      materializedHash: input.materializedHash,
+      evidence: "[configuration] Restoring missing managed environment artifacts",
     };
   }
 
-  if (!bundleReady) {
+  if (!input.materializedHash || input.materializedHash !== input.desiredHash) {
     return {
-      action: "restore-synchronized",
+      action: "materialize-changed",
       shouldMaterialize: true,
-      evidence: "[configuration] Restoring the synchronized deployment configuration",
+      desiredHash: input.desiredHash,
+      materializedHash: input.materializedHash,
+      evidence: "[configuration] Applying the latest managed environment revision",
     };
   }
 
   return {
-    action: "reuse-synchronized",
+    action: "reuse-current",
     shouldMaterialize: false,
-    evidence: "[configuration] Reusing the synchronized deployment configuration",
+    desiredHash: input.desiredHash,
+    materializedHash: input.materializedHash,
+    evidence: "[configuration] Managed environment revision is current",
+  };
+}
+
+/**
+ * Reconcile encrypted desired state with its ephemeral Docker delivery bundle.
+ * The provider/database remains authoritative; generated env files and the
+ * Compose override are reproducible artifacts.
+ */
+export async function reconcileManagedEnvironmentForRedeploy(input: {
+  project: Project;
+  deployPath: string;
+  deploymentId?: number;
+  components?: string[];
+  environmentSlug?: string;
+  vps?: VpsConnection | null;
+  log?: (chunk: string) => void;
+}): Promise<ReconcileManagedEnvironmentResult> {
+  const project = { ...input.project, path: input.deployPath };
+  const resolved = await resolveDeploymentEnv(project, input.environmentSlug);
+  if (!resolved) {
+    return managedEnvironmentRedeployDecision({
+      hasProfile: false,
+      runtimeReady: false,
+    });
+  }
+
+  const readiness = await inspectMaterializedEnvBundle(
+    input.deployPath,
+    resolved.profile.slug,
+    resolved.values,
+    resolved.componentValues,
+    input.vps
+  );
+  const decision = managedEnvironmentRedeployDecision({
+    hasProfile: true,
+    runtimeReady: readiness.status === "materialized",
+    desiredHash: resolved.validation.hash,
+    materializedHash: resolved.profile.lastHash,
+  });
+
+  input.log?.(`${decision.evidence}\n`);
+  if (readiness.missingScopes.length > 0) {
+    input.log?.(`[configuration] Missing artifacts: ${readiness.missingScopes.join(", ")}\n`);
+  }
+
+  if (decision.shouldMaterialize) {
+    await applyEnvToDeployment(
+      project,
+      input.deploymentId,
+      input.log,
+      {
+        materialize: true,
+        components: input.components,
+        environmentSlug: resolved.profile.slug,
+        vps: input.vps,
+      }
+    );
+  }
+
+  return {
+    ...decision,
+    profileId: resolved.profile.id,
+    providerType: resolved.profile.providerType,
   };
 }
