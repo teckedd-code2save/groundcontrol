@@ -13,11 +13,7 @@ import {
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
 } from "@/lib/compose-redeploy";
-import {
-  MANAGED_ENV_FILES_MANIFEST,
-  MANAGED_ENV_OVERRIDE_FILE,
-  MANAGED_IMAGE_OVERRIDE_FILE,
-} from "@/lib/compose-management";
+import { MANAGED_IMAGE_OVERRIDE_FILE } from "@/lib/compose-management";
 import {
   composeProjectCandidates,
   requestedComposePathForCandidate,
@@ -25,6 +21,7 @@ import {
 } from "@/lib/redeploy-target";
 import { prisma } from "@/lib/prisma";
 import { applyEnvToDeployment, MissingDeploymentEnvError } from "@/lib/env-management";
+import { reconcileManagedEnvironmentForRedeploy } from "@/lib/managed-environment-redeploy";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { validateSafePath } from "@/lib/host-safety";
@@ -145,23 +142,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/**
- * POST /api/projects/compose
- *
- * Body:
- *   projectSlug: string
- *   services?: string[]   // optional subset of services
- *   action?: "start" | "restart" | "redeploy" | "recreate"
- *
- * Actions:
- *   start   — docker compose up -d
- *   restart — docker compose restart
- *   redeploy — docker compose config → pull → up -d --force-recreate
- *              (validates compose, pulls latest image, force recreates,
- *               records image digest, probes post-deploy health)
- *   recreate — docker compose up -d --force-recreate (no pull, old redeploy)
- *   stop    — handled by separate compose-down endpoint
- */
 export async function POST(req: NextRequest) {
   let redeployLogFile: string | null = null;
   let redeployVps: Awaited<ReturnType<typeof getActiveVps>> = null;
@@ -246,12 +226,8 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // --- Start / Restart / Recreate (non-redeploy actions) ---
-
     if (action !== "redeploy") {
       if (["start", "recreate", "restart"].includes(action || "start") && project) {
-        // Resolve and prepare the deployment's default environment as part of
-        // every lifecycle action. Operators never materialize runtime files.
         await applyEnvToDeployment(
           { ...project, path: target.projectPath },
           undefined, undefined,
@@ -290,46 +266,32 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ============================
-    // REDEPLOY: validate → pull → recreate → record → probe
-    // ============================
-
     const startedAt = Date.now();
-    // 1. Reuse the already materialized environment. Provider synchronization
-    //    is explicit; a routine redeploy should not block on a remote vault.
     redeployPhase = "configuration";
-    const environmentProfile = project
-      ? await prisma.deploymentEnvProfile.findFirst({
-          where: { projectId: project.id },
-          orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
-          select: { id: true },
-        })
-      : null;
-    const environmentBundle = environmentProfile
-      ? await execOnTargetStrict(
-          `cd ${shQuote(target.projectPath)} && test -f ${shQuote(MANAGED_ENV_OVERRIDE_FILE)} && test -f ${shQuote(MANAGED_ENV_FILES_MANIFEST)}`,
-          vps
-        )
-      : null;
-    const needsEnvironmentRestore = Boolean(environmentProfile && environmentBundle?.code !== 0);
-    await recordRedeployEvidence(
-      redeployLogFile!,
-      needsEnvironmentRestore
-        ? "[configuration] Restoring the deployment's synchronized configuration"
-        : environmentProfile
-          ? "[configuration] Reusing the synchronized deployment configuration"
-          : "[configuration] Using the Compose defaults",
-      vps
-    );
-    if (project && needsEnvironmentRestore) {
-      await applyEnvToDeployment(
-        { ...project, path: target.projectPath },
-        undefined, undefined,
-        {
-          materialize: true,
-          components: Array.isArray(services) ? services : undefined,
-          vps,
-        }
+    let environmentHash: string | undefined;
+    if (project) {
+      const reconciliation = await reconcileManagedEnvironmentForRedeploy({
+        project,
+        deployPath: target.projectPath,
+        components: Array.isArray(services) ? services.map(String) : undefined,
+        vps,
+        log: (chunk) => {
+          if (redeployLogFile) {
+            void recordRedeployEvidence(redeployLogFile, chunk.trim(), vps);
+          }
+        },
+      });
+      environmentHash = reconciliation.desiredHash;
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        `[configuration] action=${reconciliation.action}${reconciliation.desiredHash ? ` revision=${reconciliation.desiredHash.slice(0, 12)}` : ""}`,
+        vps
+      );
+    } else {
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[configuration] Using the Compose defaults",
+        vps
       );
     }
     await recordRedeployEvidence(
@@ -338,8 +300,6 @@ export async function POST(req: NextRequest) {
       vps
     );
 
-    // 2. Resolve the exact effective model once. Pull, recreation and runtime
-    //    verification below all use this same base file and managed overrides.
     redeployPhase = "compose";
     await recordRedeployEvidence(
       redeployLogFile!,
@@ -356,8 +316,6 @@ export async function POST(req: NextRequest) {
       (configCheck.code !== 0 || !configCheck.stdout.trim()) &&
       isManagedEnvironmentPreparationError(configCheck.stderr || configCheck.stdout)
     ) {
-      // Repair an interrupted or host-restart-cleared runtime bundle inside
-      // the deployment transaction. This is never a separate operator step.
       await applyEnvToDeployment(
         { ...project, path: target.projectPath },
         undefined,
@@ -384,8 +342,6 @@ export async function POST(req: NextRequest) {
     const selectedServices = Array.isArray(services) ? services.map((service) => String(service)) : undefined;
     const expectedImages = expectedComposeImages(configCheck.stdout, selectedServices);
 
-    // 3. Pull from that same effective model. Targeted image changes must pull
-    //    successfully; full redeploys remain tolerant of build-only services.
     redeployPhase = "registry";
     await recordRedeployEvidence(
       redeployLogFile!,
@@ -422,8 +378,6 @@ export async function POST(req: NextRequest) {
       vps
     );
 
-    // 4. A pull is not a deployment. Force recreation so the running container
-    //    cannot retain the previous :local image.
     redeployPhase = "recreate";
     const deployArgs = `up -d --remove-orphans --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`;
     let result: { stdout: string; stderr: string; code: number };
@@ -478,27 +432,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5. Record image digest for rollback tracking
     let imageDigest: string | null = null;
     let previousDigest: string | null = null;
     let changedFields: string[] = [];
 
     try {
       previousDigest = await getPreviousDeploymentDigest(projectSlug);
-
-      // Get digest from the first service container (or project-wide)
       const serviceList = Array.isArray(services) && services.length > 0 ? services : ["web"];
       const firstService = serviceList[0];
       const containerName = `${projectSlug}-${firstService}-1`;
-
-      // Give the container a moment to start if detached
       if (!detached) {
         imageDigest = await getImageDigest(containerName, vps);
       }
-      // For detached mode, we'll record a placeholder — the digest can be
-      // fetched later when the user refreshes
 
-      // Compute what changed
       const prevDeploy = project
         ? await prisma.deployment.findFirst({
             where: { projectId: project.id, status: "success" },
@@ -507,18 +453,18 @@ export async function POST(req: NextRequest) {
           })
         : null;
 
-      changedFields = computeChangedFields(prevDeploy, { imageDigest, envHash: undefined });
+      changedFields = computeChangedFields(prevDeploy, { imageDigest, envHash: environmentHash });
     } catch {
-      // Digest tracking is best-effort — deploy shouldn't fail if it breaks
+      // Digest tracking is best-effort.
     }
 
-    // 6. Record deployment log with digest info
     await prisma.deploymentLog.create({
       data: {
         projectSlug: project?.slug || projectSlug,
         status: detached ? "running" : result.code === 0 ? "success" : "failed",
         output: [
           `[validate] Effective Compose configuration OK (${composeFile})`,
+          environmentHash ? `[configuration] revision=${environmentHash}` : "",
           pullResult.stdout || pullResult.stderr ? `[pull]\n${pullResult.stdout || pullResult.stderr}` : "",
           result.stdout,
         ].filter(Boolean).join("\n") || null,
@@ -527,7 +473,6 @@ export async function POST(req: NextRequest) {
       },
     }).catch(() => undefined);
 
-    // If project exists, create a Deployment record with digest tracking
     if (project) {
       await prisma.deployment.create({
         data: {
@@ -537,8 +482,9 @@ export async function POST(req: NextRequest) {
           }))?.id ?? 1,
           status: detached ? "deploying" : result.code === 0 ? "success" : "failed",
           imageTag: Object.values(expectedImages)[0] || `${projectSlug}:latest`,
-          imageDigest: imageDigest,
+          imageDigest,
           previousImageDigest: previousDigest,
+          envHash: environmentHash,
           changedFields: changedFields.length > 0 ? JSON.stringify(changedFields) : null,
           output: result.stdout || null,
           error: result.stderr || null,
@@ -556,6 +502,7 @@ export async function POST(req: NextRequest) {
       composePath: composeFile,
       detached: detached || undefined,
       imageDigest: imageDigest || undefined,
+      environmentHash,
       changedFields: changedFields.length > 0 ? changedFields : undefined,
     });
   } catch (err: unknown) {
