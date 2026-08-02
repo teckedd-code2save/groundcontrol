@@ -275,11 +275,6 @@ export async function POST(req: NextRequest) {
         deployPath: target.projectPath,
         components: Array.isArray(services) ? services.map(String) : undefined,
         vps,
-        log: (chunk) => {
-          if (redeployLogFile) {
-            void recordRedeployEvidence(redeployLogFile, chunk.trim(), vps);
-          }
-        },
       });
       environmentHash = reconciliation.desiredHash;
       await recordRedeployEvidence(
@@ -287,6 +282,13 @@ export async function POST(req: NextRequest) {
         `[configuration] action=${reconciliation.action}${reconciliation.desiredHash ? ` revision=${reconciliation.desiredHash.slice(0, 12)}` : ""}`,
         vps
       );
+      if (reconciliation.mismatchedArtifacts?.length) {
+        await recordRedeployEvidence(
+          redeployLogFile!,
+          `[configuration] reconciled=${reconciliation.mismatchedArtifacts.join(", ")}`,
+          vps
+        );
+      }
     } else {
       await recordRedeployEvidence(
         redeployLogFile!,
