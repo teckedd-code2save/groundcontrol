@@ -1,31 +1,48 @@
 import { describe, expect, it } from "vitest";
 import { managedEnvironmentRedeployDecision } from "./managed-environment-redeploy";
 
-describe("managed environment redeploy policy", () => {
-  it("rematerializes local GroundControl Vault values on every redeploy", () => {
-    expect(managedEnvironmentRedeployDecision("local", true)).toEqual({
-      action: "rematerialize-local",
-      shouldMaterialize: true,
-      evidence: "[configuration] Materializing the latest GroundControl Vault configuration",
-    });
-  });
-
-  it("restores a remote-provider bundle when its runtime artifacts are missing", () => {
-    expect(managedEnvironmentRedeployDecision("infisical", false)).toMatchObject({
-      action: "restore-synchronized",
+describe("managed environment redeploy reconciliation", () => {
+  it("materializes when runtime artifacts are missing", () => {
+    expect(managedEnvironmentRedeployDecision({
+      hasProfile: true,
+      runtimeReady: false,
+      desiredHash: "desired",
+      materializedHash: "desired",
+    })).toMatchObject({
+      action: "materialize-missing",
       shouldMaterialize: true,
     });
   });
 
-  it("reuses a complete explicitly synchronized remote-provider bundle", () => {
-    expect(managedEnvironmentRedeployDecision("infisical", true)).toMatchObject({
-      action: "reuse-synchronized",
+  it("materializes when saved values differ from the deployed revision", () => {
+    expect(managedEnvironmentRedeployDecision({
+      hasProfile: true,
+      runtimeReady: true,
+      desiredHash: "new-revision",
+      materializedHash: "old-revision",
+    })).toMatchObject({
+      action: "materialize-changed",
+      shouldMaterialize: true,
+    });
+  });
+
+  it("reuses a complete bundle only when its hash matches desired state", () => {
+    expect(managedEnvironmentRedeployDecision({
+      hasProfile: true,
+      runtimeReady: true,
+      desiredHash: "current",
+      materializedHash: "current",
+    })).toMatchObject({
+      action: "reuse-current",
       shouldMaterialize: false,
     });
   });
 
-  it("does nothing when the deployment has no managed environment", () => {
-    expect(managedEnvironmentRedeployDecision(null, false)).toMatchObject({
+  it("uses Compose defaults when no managed environment exists", () => {
+    expect(managedEnvironmentRedeployDecision({
+      hasProfile: false,
+      runtimeReady: false,
+    })).toMatchObject({
       action: "none",
       shouldMaterialize: false,
     });
