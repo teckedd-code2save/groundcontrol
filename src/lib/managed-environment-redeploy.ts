@@ -7,6 +7,7 @@ import {
   applyEnvToDeployment,
   composeInterpolationValues,
   managedEnvRuntimeDirectory,
+  MissingDeploymentEnvError,
   resolveDeploymentEnv,
   serializeDotenv,
 } from "./env-management";
@@ -20,6 +21,16 @@ export type ManagedEnvironmentRedeployAction =
   | "reuse-current"
   | "materialize-missing"
   | "materialize-changed";
+
+export type ManagedEnvironmentFailureCode =
+  | "ENV_RUNTIME_DIRECTORY"
+  | "ENV_PERMISSION_DENIED"
+  | "ENV_STORAGE_FULL"
+  | "ENV_READ_ONLY_FILESYSTEM"
+  | "ENV_DECRYPTION_FAILED"
+  | "ENV_SERIALIZATION_FAILED"
+  | "ENV_MATERIALIZATION_FAILED"
+  | "ENV_VERIFICATION_FAILED";
 
 export interface ManagedEnvironmentRedeployDecision {
   action: ManagedEnvironmentRedeployAction;
@@ -35,6 +46,7 @@ export interface ReconcileManagedEnvironmentResult extends ManagedEnvironmentRed
   mismatchedArtifacts?: string[];
   missingArtifacts?: string[];
   changedArtifacts?: string[];
+  recovered?: boolean;
 }
 
 export interface ExpectedManagedEnvironmentArtifact {
@@ -51,12 +63,95 @@ export interface ManagedEnvironmentArtifactInspection {
   bundleMatchesDesired: boolean;
 }
 
+export interface ManagedEnvironmentFailureDiagnosis {
+  code: ManagedEnvironmentFailureCode;
+  summary: string;
+  remediation: string;
+  automaticallyRecoverable: boolean;
+}
+
+export class ManagedEnvironmentPreparationError extends Error {
+  constructor(
+    public readonly code: ManagedEnvironmentFailureCode,
+    message: string,
+    public readonly remediation: string,
+    public readonly previousDeploymentPreserved = true,
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
+    this.name = "ManagedEnvironmentPreparationError";
+  }
+}
+
 function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
 function safeServiceName(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value);
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || "Managed environment preparation failed");
+}
+
+export function diagnoseManagedEnvironmentFailure(error: unknown): ManagedEnvironmentFailureDiagnosis {
+  const detail = errorText(error).toLowerCase();
+
+  if (/no space left on device|disk quota exceeded|enospc|inode/.test(detail)) {
+    return {
+      code: "ENV_STORAGE_FULL",
+      summary: "The host has insufficient storage to write the deployment environment.",
+      remediation: "Free disk space or inodes on the target host, then redeploy. GroundControl did not replace the active deployment.",
+      automaticallyRecoverable: false,
+    };
+  }
+  if (/read-only file system|erofs/.test(detail)) {
+    return {
+      code: "ENV_READ_ONLY_FILESYSTEM",
+      summary: "The deployment filesystem is read-only.",
+      remediation: "Restore the target mount to read-write mode, then redeploy. GroundControl did not replace the active deployment.",
+      automaticallyRecoverable: false,
+    };
+  }
+  if (/decrypt|decryption|authentication tag|unsupported state/.test(detail)) {
+    return {
+      code: "ENV_DECRYPTION_FAILED",
+      summary: "GroundControl could not decrypt one or more managed values.",
+      remediation: "Check the GroundControl encryption key and key-rotation history. The affected values were not replaced with empty strings.",
+      automaticallyRecoverable: false,
+    };
+  }
+  if (/permission denied|operation not permitted|eacces|eperm/.test(detail)) {
+    return {
+      code: "ENV_PERMISSION_DENIED",
+      summary: "GroundControl could not write to its managed environment directory.",
+      remediation: "GroundControl will repair its owned directory and permissions once, then retry automatically.",
+      automaticallyRecoverable: true,
+    };
+  }
+  if (/no such file or directory|enoent|cannot create directory|not a directory/.test(detail)) {
+    return {
+      code: "ENV_RUNTIME_DIRECTORY",
+      summary: "The managed environment runtime directory is missing or incomplete.",
+      remediation: "GroundControl will recreate its owned runtime directory, remove abandoned temporary files, and retry once.",
+      automaticallyRecoverable: true,
+    };
+  }
+  if (/serialize|invalid dotenv|invalid environment|malformed/.test(detail)) {
+    return {
+      code: "ENV_SERIALIZATION_FAILED",
+      summary: "GroundControl could not serialize the managed environment safely.",
+      remediation: "The candidate deployment was stopped before Docker changes. Review the generated configuration evidence.",
+      automaticallyRecoverable: false,
+    };
+  }
+  return {
+    code: "ENV_MATERIALIZATION_FAILED",
+    summary: "GroundControl could not materialize the managed environment.",
+    remediation: "The candidate deployment was stopped before Docker changes. Review host access and the deployment evidence, then retry.",
+    automaticallyRecoverable: false,
+  };
 }
 
 export function expectedManagedEnvironmentArtifacts(input: {
@@ -131,6 +226,24 @@ export function buildInspectManagedEnvironmentArtifactsCommand(
     `  [ \"$actual\" = ${shQuote(artifact.hash)} ] || printf '%s\\n' ${shQuote(`changed|${artifact.scope}`)}`,
     "fi",
   ].join("\n")).join("\n");
+}
+
+export function buildManagedEnvironmentRecoveryCommand(
+  deployPath: string,
+  environmentSlug: string
+): string {
+  const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
+  return [
+    "set -eu",
+    `mkdir -p ${shQuote(deployPath)} ${shQuote(runtimeDir)}`,
+    `chmod 700 ${shQuote(runtimeDir)}`,
+    `find ${shQuote(runtimeDir)} -maxdepth 1 -type f -name '*.new' -delete 2>/dev/null || true`,
+    `find ${shQuote(deployPath)} -maxdepth 1 -type f -name '*.new' -delete 2>/dev/null || true`,
+    `probe=${shQuote(`${runtimeDir}/.groundcontrol-write-probe`)}`,
+    `: > "$probe"`,
+    `chmod 600 "$probe"`,
+    `rm -f "$probe"`,
+  ].join("\n");
 }
 
 export function inspectManagedEnvironmentArtifactOutput(
@@ -217,6 +330,75 @@ export function managedEnvironmentRedeployDecision(input: {
   };
 }
 
+async function materializeWithBoundedRecovery(input: {
+  project: Project;
+  deploymentId?: number;
+  components?: string[];
+  environmentSlug: string;
+  vps?: VpsConnection | null;
+  log?: (chunk: string) => void;
+}): Promise<boolean> {
+  const materialize = () => applyEnvToDeployment(
+    input.project,
+    input.deploymentId,
+    input.log,
+    {
+      materialize: true,
+      components: input.components,
+      environmentSlug: input.environmentSlug,
+      vps: input.vps,
+    }
+  );
+
+  try {
+    await materialize();
+    return false;
+  } catch (error) {
+    const diagnosis = diagnoseManagedEnvironmentFailure(error);
+    input.log?.(`[configuration] materialization failed code=${diagnosis.code}\n`);
+    if (!diagnosis.automaticallyRecoverable) {
+      throw new ManagedEnvironmentPreparationError(
+        diagnosis.code,
+        diagnosis.summary,
+        diagnosis.remediation,
+        true,
+        { cause: error }
+      );
+    }
+
+    input.log?.(`[configuration] automatic recovery: ${diagnosis.remediation}\n`);
+    const repair = await execOnTargetStrict(
+      buildManagedEnvironmentRecoveryCommand(input.project.path || "", input.environmentSlug),
+      input.vps
+    );
+    if (repair.code !== 0) {
+      const repairDiagnosis = diagnoseManagedEnvironmentFailure(repair.stderr || repair.stdout);
+      throw new ManagedEnvironmentPreparationError(
+        repairDiagnosis.code,
+        repairDiagnosis.summary,
+        repairDiagnosis.remediation,
+        true,
+        { cause: error }
+      );
+    }
+
+    try {
+      await materialize();
+      input.log?.("[configuration] automatic recovery succeeded\n");
+      return true;
+    } catch (retryError) {
+      const retryDiagnosis = diagnoseManagedEnvironmentFailure(retryError);
+      throw new ManagedEnvironmentPreparationError(
+        retryDiagnosis.code,
+        retryDiagnosis.summary,
+        `${retryDiagnosis.remediation} Automatic recovery was attempted once and did not succeed.`,
+        true,
+        { cause: retryError }
+      );
+    }
+  }
+}
+
 export async function reconcileManagedEnvironmentForRedeploy(input: {
   project: Project;
   deployPath: string;
@@ -234,6 +416,10 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
       runtimeReady: false,
       bundleMatchesDesired: false,
     });
+  }
+
+  if (!resolved.validation.ok) {
+    throw new MissingDeploymentEnvError(resolved.validation.missing);
   }
 
   const artifacts = expectedManagedEnvironmentArtifacts({
@@ -264,18 +450,16 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
     input.log?.(`[configuration] Reconcile: ${inspection.mismatchedArtifacts.join(", ")}\n`);
   }
 
+  let recovered = false;
   if (decision.shouldMaterialize) {
-    await applyEnvToDeployment(
+    recovered = await materializeWithBoundedRecovery({
       project,
-      input.deploymentId,
-      input.log,
-      {
-        materialize: true,
-        components: input.components,
-        environmentSlug: resolved.profile.slug,
-        vps: input.vps,
-      }
-    );
+      deploymentId: input.deploymentId,
+      components: input.components,
+      environmentSlug: resolved.profile.slug,
+      vps: input.vps,
+      log: input.log,
+    });
 
     const verificationResult = await execOnTargetStrict(
       buildInspectManagedEnvironmentArtifactsCommand(artifacts),
@@ -287,8 +471,11 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
       artifacts
     );
     if (!verification.bundleMatchesDesired) {
-      throw new Error(
-        `Managed environment verification failed: ${verification.mismatchedArtifacts.join(", ") || verificationResult.stderr || "artifact checksum mismatch"}`
+      throw new ManagedEnvironmentPreparationError(
+        "ENV_VERIFICATION_FAILED",
+        "GroundControl generated the managed environment, but the resulting artifacts did not match the desired revision.",
+        `The candidate deployment was stopped before Docker changes. Mismatched artifacts: ${verification.mismatchedArtifacts.join(", ") || "unknown"}.`,
+        true
       );
     }
   }
@@ -300,5 +487,6 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
     mismatchedArtifacts: inspection.mismatchedArtifacts,
     missingArtifacts: inspection.missingArtifacts,
     changedArtifacts: inspection.changedArtifacts,
+    recovered,
   };
 }
