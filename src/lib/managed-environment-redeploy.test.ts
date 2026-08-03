@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildManagedEnvironmentRecoveryCommand,
+  diagnoseManagedEnvironmentFailure,
   expectedManagedEnvironmentArtifacts,
   inspectManagedEnvironmentArtifactOutput,
   managedEnvironmentRedeployDecision,
@@ -134,5 +136,41 @@ describe("managed environment redeploy reconciliation", () => {
     expect(inspection.runtimeReady).toBe(false);
     expect(inspection.bundleMatchesDesired).toBe(false);
     expect(inspection.missingArtifacts).toEqual(artifacts.map((artifact) => artifact.scope));
+  });
+
+  it("retries directory and permission failures but not storage failures", () => {
+    expect(diagnoseManagedEnvironmentFailure(new Error("ENOENT: no such file or directory"))).toMatchObject({
+      code: "ENV_RUNTIME_DIRECTORY",
+      automaticallyRecoverable: true,
+    });
+    expect(diagnoseManagedEnvironmentFailure(new Error("permission denied"))).toMatchObject({
+      code: "ENV_PERMISSION_DENIED",
+      automaticallyRecoverable: true,
+    });
+    expect(diagnoseManagedEnvironmentFailure(new Error("no space left on device"))).toMatchObject({
+      code: "ENV_STORAGE_FULL",
+      automaticallyRecoverable: false,
+    });
+  });
+
+  it("does not auto-retry decryption or read-only filesystem failures", () => {
+    expect(diagnoseManagedEnvironmentFailure(new Error("Unsupported state or unable to authenticate data"))).toMatchObject({
+      code: "ENV_DECRYPTION_FAILED",
+      automaticallyRecoverable: false,
+    });
+    expect(diagnoseManagedEnvironmentFailure(new Error("Read-only file system"))).toMatchObject({
+      code: "ENV_READ_ONLY_FILESYSTEM",
+      automaticallyRecoverable: false,
+    });
+  });
+
+  it("repairs only GroundControl-owned runtime artifacts", () => {
+    const command = buildManagedEnvironmentRecoveryCommand("/opt/example", "production");
+
+    expect(command).toContain("/run/groundcontrol/environments/");
+    expect(command).toContain("-name '*.new' -delete");
+    expect(command).toContain(".groundcontrol-write-probe");
+    expect(command).not.toContain("docker volume rm");
+    expect(command).not.toContain("docker system prune");
   });
 });
