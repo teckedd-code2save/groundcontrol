@@ -19,6 +19,7 @@ import {
   type VpsConnection,
 } from "@/lib/vps";
 import { getVpsPublicIp, execKubectl } from "@/lib/k8s/utils";
+import { installCloudflared } from "@/lib/bootstrap";
 
 export interface CustomDomainResult {
   recordId: string;
@@ -242,6 +243,57 @@ export async function annotateK3sIngressForTunnel(
 }
 
 /**
+ * Ensure the `cloudflared` binary exists on the target host.
+ *
+ * If it is missing, attempts an automatic install via the bootstrap
+ * installer (PENDINGS 1.1) so the "deploy + preview" flow stays one-click.
+ * Throws a descriptive error with manual install instructions when
+ * auto-install is not possible or fails.
+ */
+export async function ensureCloudflared(
+  vps: VpsConnection
+): Promise<{ binary: string; autoInstalled: boolean }> {
+  const binaryCheck = await execOnVps(
+    `command -v cloudflared 2>/dev/null || echo ""`,
+    vps
+  );
+  const existing = binaryCheck.stdout.trim();
+  if (existing) {
+    return { binary: existing, autoInstalled: false };
+  }
+
+  console.log(
+    "[cloudflare-links] cloudflared not found on target VPS; auto-installing"
+  );
+
+  const install = await installCloudflared(vps);
+  if (!install.success) {
+    const detail = (install.error || install.output || "").trim();
+    throw new Error(
+      "cloudflared is not installed on the target VPS and automatic install failed. " +
+        "Install it manually, e.g.: " +
+        "curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 " +
+        "-o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared" +
+        (detail ? `\nInstall error: ${detail}` : "")
+    );
+  }
+
+  const recheck = await execOnVps(
+    `command -v cloudflared 2>/dev/null || echo ""`,
+    vps
+  );
+  const binary = recheck.stdout.trim();
+  if (!binary) {
+    throw new Error(
+      "cloudflared was installed on the target VPS but is not on PATH; " +
+        "verify with: cloudflared version"
+    );
+  }
+
+  return { binary, autoInstalled: true };
+}
+
+/**
  * Start a cloudflared quick tunnel (`cloudflared tunnel --url`) on the active
  * VPS and return the public trycloudflare.com URL plus process metadata.
  */
@@ -254,16 +306,7 @@ export async function createQuickTunnel(
     throw new Error("No VPS configured; cannot create quick tunnel");
   }
 
-  const binaryCheck = await execOnVps(
-    `command -v cloudflared 2>/dev/null || echo ""`,
-    conn
-  );
-  const binary = binaryCheck.stdout.trim();
-  if (!binary) {
-    throw new Error(
-      "cloudflared binary not found on the target VPS; install cloudflared first"
-    );
-  }
+  const { binary } = await ensureCloudflared(conn);
 
   const logPath = `${QUICK_TUNNEL_LOG_DIR}/cloudflared-quick-${port}-${Date.now()}.log`;
   const targetUrl = `http://localhost:${port}`;
