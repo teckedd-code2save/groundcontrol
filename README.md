@@ -301,6 +301,20 @@ See [docs/PENDINGS.md](./docs/PENDINGS.md) for the full list of known sharp edge
 
 ---
 
+## 🧪 Testing
+
+GroundControl ships a Vitest suite for the server-side core — shell quoting, the VPS exec layer, compose/deploy logic, alert evaluation, and rollback tracking. The tests are deterministic: `child_process` and `node-ssh` are mocked, so no network, Docker, or real VPS is needed.
+
+```bash
+npm test                          # run once
+npm run test:watch                # watch mode
+npx vitest run src/lib/vps.test.ts  # run a single file
+```
+
+The VPS execution layer (`src/lib/vps.ts`) is the most critical coverage: `shQuote()` edge cases (spaces, single quotes, empty strings, unicode, metacharacters) and `execOnVps()` local/SSH paths with mocked exec. CI runs the same suite via `.github/workflows/test.yml` on every push/PR to `main`.
+
+---
+
 ## 🤝 Contributing
 
 Dev setup, project structure map, code conventions, and how to add a page or API route all live in [CONTRIBUTING.md](./CONTRIBUTING.md). Issues and PRs welcome.
