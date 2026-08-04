@@ -7,7 +7,6 @@ import {
   applyEnvToDeployment,
   composeInterpolationValues,
   managedEnvRuntimeDirectory,
-  MissingDeploymentEnvError,
   resolveDeploymentEnv,
   serializeDotenv,
 } from "./env-management";
@@ -46,6 +45,7 @@ export interface ReconcileManagedEnvironmentResult extends ManagedEnvironmentRed
   mismatchedArtifacts?: string[];
   missingArtifacts?: string[];
   changedArtifacts?: string[];
+  missingValueWarnings?: string[];
   recovered?: boolean;
 }
 
@@ -97,7 +97,6 @@ function errorText(error: unknown): string {
 
 export function diagnoseManagedEnvironmentFailure(error: unknown): ManagedEnvironmentFailureDiagnosis {
   const detail = errorText(error).toLowerCase();
-
   if (/no space left on device|disk quota exceeded|enospc|inode/.test(detail)) {
     return {
       code: "ENV_STORAGE_FULL",
@@ -198,16 +197,8 @@ export function expectedManagedEnvironmentArtifacts(input: {
       "",
     ].join("\n");
     artifacts.push(
-      {
-        scope: "runtime manifest",
-        path: `${input.deployPath}/${MANAGED_ENV_FILES_MANIFEST}`,
-        hash: sha256(manifest),
-      },
-      {
-        scope: "Compose environment overlay",
-        path: `${input.deployPath}/${MANAGED_ENV_OVERRIDE_FILE}`,
-        hash: sha256(override),
-      }
+      { scope: "runtime manifest", path: `${input.deployPath}/${MANAGED_ENV_FILES_MANIFEST}`, hash: sha256(manifest) },
+      { scope: "Compose environment overlay", path: `${input.deployPath}/${MANAGED_ENV_OVERRIDE_FILE}`, hash: sha256(override) }
     );
   }
 
@@ -228,10 +219,7 @@ export function buildInspectManagedEnvironmentArtifactsCommand(
   ].join("\n")).join("\n");
 }
 
-export function buildManagedEnvironmentRecoveryCommand(
-  deployPath: string,
-  environmentSlug: string
-): string {
+export function buildManagedEnvironmentRecoveryCommand(deployPath: string, environmentSlug: string): string {
   const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
   return [
     "set -eu",
@@ -294,13 +282,8 @@ export function managedEnvironmentRedeployDecision(input: {
   materializedHash?: string | null;
 }): ManagedEnvironmentRedeployDecision {
   if (!input.hasProfile) {
-    return {
-      action: "none",
-      shouldMaterialize: false,
-      evidence: "[configuration] Using the Compose defaults",
-    };
+    return { action: "none", shouldMaterialize: false, evidence: "[configuration] Using the Compose defaults" };
   }
-
   if (!input.runtimeReady) {
     return {
       action: "materialize-missing",
@@ -310,7 +293,6 @@ export function managedEnvironmentRedeployDecision(input: {
       evidence: "[configuration] Restoring missing managed environment artifacts",
     };
   }
-
   if (!input.bundleMatchesDesired) {
     return {
       action: "materialize-changed",
@@ -320,7 +302,6 @@ export function managedEnvironmentRedeployDecision(input: {
       evidence: "[configuration] Applying the latest managed environment revision",
     };
   }
-
   return {
     action: "reuse-current",
     shouldMaterialize: false,
@@ -338,17 +319,12 @@ async function materializeWithBoundedRecovery(input: {
   vps?: VpsConnection | null;
   log?: (chunk: string) => void;
 }): Promise<boolean> {
-  const materialize = () => applyEnvToDeployment(
-    input.project,
-    input.deploymentId,
-    input.log,
-    {
-      materialize: true,
-      components: input.components,
-      environmentSlug: input.environmentSlug,
-      vps: input.vps,
-    }
-  );
+  const materialize = () => applyEnvToDeployment(input.project, input.deploymentId, input.log, {
+    materialize: true,
+    components: input.components,
+    environmentSlug: input.environmentSlug,
+    vps: input.vps,
+  });
 
   try {
     await materialize();
@@ -418,8 +394,12 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
     });
   }
 
-  if (!resolved.validation.ok) {
-    throw new MissingDeploymentEnvError(resolved.validation.missing);
+  // Legacy and discovered schemas can mark optional integrations as required.
+  // Keep these gaps visible, but do not block deployment until requiredness is
+  // explicitly derived from Compose interpolation semantics or user intent.
+  const missingValueWarnings = resolved.validation.ok ? [] : resolved.validation.missing;
+  if (missingValueWarnings.length > 0) {
+    input.log?.(`[configuration] warning: optional or unconfirmed values are not configured: ${missingValueWarnings.join(", ")}\n`);
   }
 
   const artifacts = expectedManagedEnvironmentArtifacts({
@@ -487,6 +467,7 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
     mismatchedArtifacts: inspection.mismatchedArtifacts,
     missingArtifacts: inspection.missingArtifacts,
     changedArtifacts: inspection.changedArtifacts,
+    missingValueWarnings,
     recovered,
   };
 }
