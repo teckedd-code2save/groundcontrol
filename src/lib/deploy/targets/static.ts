@@ -1,7 +1,13 @@
 /**
- * DeployTarget adapter for static sites served by Caddy.
+ * DeployTarget adapter for static sites served by a reverse proxy.
  *
  * Type: "static"
+ *
+ * The site files are copied into `staticRoot/<slug>` and the active reverse
+ * proxy is detected on the host: Caddy gets a Caddyfile site block (the
+ * default edge), Nginx gets an Nginx server block. Hosts without either
+ * proxy fall back to the Caddy behavior so externally-managed edges keep
+ * receiving a usable Caddyfile.
  */
 
 import type { Project, DeploymentTarget } from "@prisma/client";
@@ -11,13 +17,41 @@ import type {
   DeployBuildResult,
   DeployResult,
 } from "./types";
-import { execOnVps, shQuote, getSystemConfig } from "@/lib/vps";
+import {
+  execOnVps,
+  shQuote,
+  getSystemConfig,
+  type VpsConnection,
+} from "@/lib/vps";
 
 export interface StaticTargetConfig {
   /** Domain to serve the static site on. Falls back to project.domain. */
   domain?: string;
   /** Extra Caddy directives appended inside the site block. */
   extraCaddy?: string;
+  /** Extra Nginx directives appended inside the server block. */
+  extraNginx?: string;
+}
+
+export type ReverseProxy = "caddy" | "nginx" | "none";
+
+/**
+ * Detect the reverse proxy installed on the target host.
+ *
+ * Runs a single read-only POSIX sh command so Caddy-only, Nginx-only, and
+ * dual-proxy layouts all resolve in one round trip. Caddy wins ties because
+ * it is GroundControl's default edge, and "none" keeps the legacy Caddy
+ * behavior for externally-managed hosts.
+ */
+export async function detectReverseProxy(
+  vps: VpsConnection | null
+): Promise<ReverseProxy> {
+  const result = await execOnVps(
+    `if command -v caddy >/dev/null 2>&1; then echo caddy; elif command -v nginx >/dev/null 2>&1; then echo nginx; else echo none; fi`,
+    vps
+  );
+  const proxy = result.stdout.trim();
+  return proxy === "caddy" || proxy === "nginx" ? proxy : "none";
 }
 
 export function createStaticTarget(
@@ -91,20 +125,40 @@ export function createStaticTarget(
         throw new Error(copy.stderr || "failed to copy static output");
       }
 
+      let publicUrl: string | undefined;
       if (domain) {
-        await writeCaddySite(
-          {
-            sitesDir,
-            caddyFile,
-            domain,
-            staticDir,
-            extra: config.extraCaddy || "",
-          },
-          ctx
-        );
+        const proxy = await detectReverseProxy(ctx.vps);
+        ctx.log(`[static] reverse proxy detected: ${proxy}`);
+
+        if (proxy === "nginx") {
+          await writeNginxSite(
+            {
+              sitesDir: systemConfig.nginxSitesDir,
+              domain,
+              staticDir,
+              extra: config.extraNginx || "",
+            },
+            ctx
+          );
+          // The generated server block listens on :80; TLS can be layered on
+          // later with certbot. Report the URL the block actually serves.
+          publicUrl = `http://${domain}`;
+        } else {
+          await writeCaddySite(
+            {
+              sitesDir,
+              caddyFile,
+              domain,
+              staticDir,
+              extra: config.extraCaddy || "",
+            },
+            ctx
+          );
+          publicUrl = `https://${domain}`;
+        }
       }
 
-      return { publicUrl: domain ? `https://${domain}` : undefined };
+      return { publicUrl };
     },
 
     async rollback(_deployment, ctx) {
@@ -133,7 +187,12 @@ export function createStaticTarget(
         ctx.vps
       );
 
-      await reloadCaddy(systemConfig.caddyFile, ctx);
+      const proxy = await detectReverseProxy(ctx.vps);
+      if (proxy === "caddy") {
+        await reloadCaddy(systemConfig.caddyFile, ctx);
+      }
+      // Nginx serves static files from disk per request, so a directory swap
+      // needs no reload. The site config file itself is unchanged by rollback.
     },
 
     async destroy(project, ctx) {
@@ -153,11 +212,41 @@ export function createStaticTarget(
       );
 
       if (domain) {
-        await execOnVps(
-          `rm -f ${shQuote(`${sitesDir}/${siteFileName(domain)}`)}`,
-          ctx.vps
-        );
-        await reloadCaddy(caddyFile, ctx);
+        const proxy = await detectReverseProxy(ctx.vps);
+        if (proxy === "nginx") {
+          const { filePath, sitesEnabledDir } = nginxConfigPaths(
+            systemConfig.nginxSitesDir,
+            domain
+          );
+          const symlinkPath = sitesEnabledDir
+            ? `${sitesEnabledDir}/${nginxFileName(domain)}`
+            : null;
+          await execOnVps(
+            `rm -f ${shQuote(filePath)}${
+              symlinkPath ? ` ${shQuote(symlinkPath)}` : ""
+            }`,
+            ctx.vps
+          );
+
+          // Only reload if the remaining config validates; a pre-existing
+          // broken config elsewhere must not block teardown.
+          const test = await execOnVps(`nginx -t 2>&1`, ctx.vps);
+          if (test.code === 0) {
+            await reloadNginx(ctx);
+          } else {
+            ctx.log(
+              `[static] nginx -t failed after config removal; not reloading: ${
+                test.stderr || test.stdout
+              }`
+            );
+          }
+        } else {
+          await execOnVps(
+            `rm -f ${shQuote(`${sitesDir}/${siteFileName(domain)}`)}`,
+            ctx.vps
+          );
+          await reloadCaddy(caddyFile, ctx);
+        }
       }
     },
   };
@@ -253,4 +342,145 @@ async function reloadCaddy(caddyFile: string, ctx: DeployContext) {
 
 function siteFileName(domain: string): string {
   return domain.replace(/[^a-zA-Z0-9._-]/g, "_") + ".caddy";
+}
+
+interface NginxSiteParams {
+  sitesDir: string;
+  domain: string;
+  staticDir: string;
+  extra: string;
+}
+
+/**
+ * Render an Nginx server block for a static site.
+ *
+ * The block serves the site over HTTP on :80. TLS is intentionally left to
+ * certbot (or an outer edge) so this stays valid on Nginx-only layouts where
+ * certificate provisioning is the operator's choice.
+ */
+export function nginxServerBlock(
+  params: Omit<NginxSiteParams, "sitesDir">
+): string {
+  const { domain, staticDir, extra } = params;
+  const extraLines = extra
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `    ${line}`)
+    .join("\n");
+
+  return [
+    "server {",
+    "    listen 80;",
+    `    server_name ${domain};`,
+    "",
+    `    root ${staticDir};`,
+    "    index index.html;",
+    "",
+    "    location / {",
+    "        try_files $uri $uri/ =404;",
+    "    }",
+    "",
+    "    gzip on;",
+    ...(extraLines ? [extraLines] : []),
+    "}",
+    "",
+  ].join("\n");
+}
+
+function nginxFileName(domain: string): string {
+  return domain.replace(/[^a-zA-Z0-9._-]/g, "_") + ".conf";
+}
+
+interface NginxConfigPaths {
+  /** Absolute path of the site's server-block file. */
+  filePath: string;
+  /**
+   * sites-enabled directory when the host uses the Debian/Ubuntu
+   * sites-available + sites-enabled layout; null for conf.d-style layouts
+   * where the file itself is loaded.
+   */
+  sitesEnabledDir: string | null;
+}
+
+function nginxConfigPaths(sitesDir: string, domain: string): NginxConfigPaths {
+  const filePath = `${sitesDir.replace(/\/$/, "")}/${nginxFileName(domain)}`;
+  const sitesEnabledDir = /sites-available\/?$/.test(sitesDir)
+    ? sitesDir.replace(/sites-available\/?$/, "sites-enabled")
+    : null;
+  return { filePath, sitesEnabledDir };
+}
+
+async function writeNginxSite(params: NginxSiteParams, ctx: DeployContext) {
+  const { sitesDir, domain, staticDir, extra } = params;
+  const { filePath, sitesEnabledDir } = nginxConfigPaths(sitesDir, domain);
+
+  await execOnVps(`mkdir -p ${shQuote(sitesDir)}`, ctx.vps);
+
+  const block = nginxServerBlock({ domain, staticDir, extra });
+
+  // Keep a backup of any existing site file so a failed `nginx -t` can be
+  // rolled back instead of leaving the proxy with a half-written config.
+  await execOnVps(
+    `if [ -f ${shQuote(filePath)} ]; then cp ${shQuote(filePath)} ${shQuote(
+      `${filePath}.bak`
+    )}; fi`,
+    ctx.vps
+  );
+
+  const write = await execOnVps(
+    `cat > ${shQuote(filePath)} <<'EOF'\n${block}EOF`,
+    ctx.vps
+  );
+  if (write.code !== 0) {
+    throw new Error(write.stderr || "failed to write Nginx site block");
+  }
+
+  // Debian/Ubuntu layouts only load sites-enabled/*, so symlink the new site
+  // in. conf.d/ files are loaded directly and need no link.
+  if (sitesEnabledDir) {
+    await execOnVps(
+      `mkdir -p ${shQuote(sitesEnabledDir)} && ln -sf ${shQuote(
+        filePath
+      )} ${shQuote(`${sitesEnabledDir}/${nginxFileName(domain)}`)}`,
+      ctx.vps
+    );
+  }
+
+  // Validate before reloading: a broken Nginx config takes down every site
+  // behind the proxy, not just this one.
+  const test = await execOnVps(`nginx -t 2>&1`, ctx.vps);
+  if (test.code !== 0) {
+    const restore = await execOnVps(
+      `if [ -f ${shQuote(`${filePath}.bak`)} ]; then mv ${shQuote(
+        `${filePath}.bak`
+      )} ${shQuote(filePath)}; else rm -f ${shQuote(filePath)}; fi`,
+      ctx.vps
+    );
+    if (restore.code !== 0) {
+      ctx.log(
+        `[static] failed to restore previous Nginx config: ${
+          restore.stderr || restore.stdout
+        }`
+      );
+    }
+    throw new Error(
+      `nginx -t failed; site config not applied: ${test.stderr || test.stdout}`
+    );
+  }
+
+  await execOnVps(`rm -f ${shQuote(`${filePath}.bak`)}`, ctx.vps);
+  await reloadNginx(ctx);
+}
+
+async function reloadNginx(ctx: DeployContext) {
+  const reload = await execOnVps(
+    `systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true`,
+    ctx.vps
+  );
+  // Reload failures are logged but not fatal; the config passed `nginx -t`
+  // above and a subsequent reload will pick it up.
+  if (reload.code !== 0) {
+    ctx.log(`[static] nginx reload warning: ${reload.stderr || reload.stdout}`);
+  }
 }
