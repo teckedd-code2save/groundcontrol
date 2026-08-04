@@ -30,7 +30,7 @@ The proposed implementation and evaluation contract lives in [`LOOP.md`](./LOOP.
 |---|------|--------|----------|--------|
 | 1.1 | **Preview tunnels require `cloudflared` on the VPS** | Preview URLs fail if `cloudflared` is not installed on the active host. | Small — auto-install in bootstrap or surface a clear warning. | **fixed** `5d0fbe6` |
 | 1.2 | **Custom-domain subdomain expects the full record name** (`api.example.com`) | Users may type `api` and expect the zone name to be appended automatically. | Small — auto-append the zone name, or validate/pre-fill. | **fixed** `ec1c864` |
-| 1.3 | **Static-site deploy assumes Caddy** | Fails on Nginx-only VPS layouts. | Small — detect proxy and emit the right site block. | pending |
+| 1.3 | **Static-site deploy assumes Caddy** | Fails on Nginx-only VPS layouts. | Small — detect proxy and emit the right site block. | **fixed** `ff9a916` |
 | 1.4 | **No background job queue** | Long deploys run as fire-and-forget async IIFEs; refreshing the page loses tracking. | Medium — introduce a job queue (BullMQ, in-memory queue, or SQLite-backed). | **fixed** `ec1c864` |
 | 1.5 | **No real-time log streaming** | Build/deploy output is buffered until each step ends. | Medium — stream logs via SSE/WebSocket instead of polling. | **fixed** `ec1c864` |
 | 1.6 | **Compose rollback is simplistic** | Just restarts the stack; it does not pin or roll back to the previous image. | Small — track image digests and rollback to a pinned image. | pending |
