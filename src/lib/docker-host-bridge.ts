@@ -47,6 +47,24 @@ function withOsPath(command: string): string {
   return `export PATH="${OS_PATH}:$PATH"; ${command}`;
 }
 
+export function buildDetachedBridgeCommand(
+  command: string,
+  outputFile: string,
+  options?: { append?: boolean }
+): string {
+  const redirect = options?.append ? ">>" : ">";
+  const grouped = `{ ${withOsPath(command)}; } ${redirect} ${shQuote(outputFile)} 2>&1`;
+  return [
+    "docker run -d --rm",
+    "--privileged",
+    "--pid=host",
+    BRIDGE_IMAGE,
+    "-t 1 -m -u -i -n -p --",
+    "sh -c",
+    shQuote(grouped),
+  ].join(" ");
+}
+
 /** Detect whether the host Docker socket is mounted into this container. */
 export function isDockerSocketAvailable(deps: BridgeDeps = defaultDeps): boolean {
   try {
@@ -125,9 +143,6 @@ export async function execViaDockerHostBridge(
   const cwdPrefix = opts?.cwd ? `cd ${shQuote(opts.cwd)} && ` : "";
   const wrapped = withOsPath(`${cwdPrefix}${command}`);
 
-  // --pid=host lets nsenter see the host's PID 1. Privileged is required for
-  // nsenter to enter the host mount/network namespaces. The helper container
-  // is ephemeral and is removed automatically.
   const dockerCmd = [
     `docker run --rm${opts?.stdin !== undefined ? " -i" : ""}`,
     "--privileged",
@@ -168,18 +183,7 @@ export async function execDetachedViaDockerHostBridge(
     return { stdout: "", stderr: "Docker host bridge image is not available", code: 1 };
   }
 
-  const wrapped = withOsPath(command);
-  const redirect = options?.append ? ">>" : ">";
-  const redirected = `${wrapped} ${redirect} ${shQuote(outputFile)} 2>&1`;
-  const dockerCmd = [
-    "docker run -d --rm",
-    "--privileged",
-    "--pid=host",
-    BRIDGE_IMAGE,
-    "-t 1 -m -u -i -n -p --",
-    "sh -c",
-    shQuote(redirected),
-  ].join(" ");
+  const dockerCmd = buildDetachedBridgeCommand(command, outputFile, options);
 
   try {
     const { stdout, stderr } = await deps.execAsync(dockerCmd, { timeout: 30000 });
