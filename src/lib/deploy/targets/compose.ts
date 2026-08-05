@@ -18,6 +18,10 @@ import {
   resolveComposeProjectPath,
   buildManagedComposeInvocation,
 } from "@/lib/vps";
+import {
+  MANAGED_IMAGE_OVERRIDE_FILE,
+  updateManagedImageOverride,
+} from "@/lib/compose-management";
 
 export interface ComposeTargetConfig {
   /** Absolute path to the compose project directory. Optional — resolved from labels/config when absent. */
@@ -113,52 +117,106 @@ export function createComposeTarget(
     async rollback(deployment, ctx) {
       const projectPath = await resolveProjectPath(project, config, ctx);
       const composeCmd = await getDockerComposeCommand(ctx.vps);
+      const composeFile = config.composeFile || "docker-compose.yml";
 
       ctx.log(`[compose] rolling back ${project.slug}`);
 
-      // Pin to previous image digest if available for a real rollback.
-      // Otherwise fall back to the old restart-based approach.
       const pinnedDigest = deployment.previousImageDigest;
-      if (pinnedDigest) {
-        ctx.log(`[compose] pinning to previous image: ${pinnedDigest.slice(0, 19)}...`);
+      if (!pinnedDigest) {
+        ctx.log(`[compose] no previous digest available; restarting current image`);
+        await restartCompose(projectPath, composeCmd, composeFile, ctx);
+        return;
+      }
 
-        // Write a temporary compose override that pins the image digest
-        const overridePath = `${projectPath}/.groundcontrol/rollback-pin.override.yml`;
+      ctx.log(`[compose] pinning to previous image: ${pinnedDigest.slice(0, 19)}...`);
+
+      // Resolve the real service names from the live compose config. Docker
+      // Compose rejects wildcard service keys ("*"), so the pin override must
+      // target an actual service. The stored digest is captured from the first
+      // service of the deployment, so that is the one we pin.
+      const servicesResult = await execOnVps(
+        `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
+          composeCmd,
+          "config --services",
+          composeFile,
+          { includeEnvironment: false }
+        )}`,
+        ctx.vps
+      );
+      const services = servicesResult.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (services.length === 0) {
+        ctx.log(
+          `[compose] could not resolve compose services; restarting current image`
+        );
+        await restartCompose(projectPath, composeCmd, composeFile, ctx);
+        return;
+      }
+
+      const pinnedService = services[0];
+      if (services.length > 1) {
+        ctx.log(
+          `[compose] ${services.length} services detected; pinning ${pinnedService} (single stored digest)`
+        );
+      }
+
+      // Ride the managed image override file so the pinned digest is applied
+      // by the same machinery as user-set image pins (isolated DOCKER_CONFIG
+      // credentials, env overlay, etc.). The previous contents are restored
+      // afterwards so the rollback pin does not leak into future deploys.
+      const overridePath = `${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`;
+      const readResult = await execOnVps(
+        `cat ${shQuote(overridePath)} 2>/dev/null || true`,
+        ctx.vps
+      );
+      const previousOverride = readResult.stdout;
+
+      let pinContent: string;
+      try {
+        pinContent = updateManagedImageOverride(
+          previousOverride,
+          pinnedService,
+          pinnedDigest
+        ).content;
+      } catch (err) {
+        ctx.log(
+          `[compose] could not build digest pin (${err instanceof Error ? err.message : String(err)}); restarting current image`
+        );
+        await restartCompose(projectPath, composeCmd, composeFile, ctx);
+        return;
+      }
+
+      try {
         await execOnVps(
-          `mkdir -p ${shQuote(`${projectPath}/.groundcontrol`)} && ` +
-          `echo 'services:' > ${shQuote(overridePath)} && ` +
-          `echo '  \"*\":' >> ${shQuote(overridePath)} && ` +
-          `echo '    image: ${pinnedDigest}' >> ${shQuote(overridePath)}`
-        , ctx.vps);
+          `mkdir -p ${shQuote(`${projectPath}/.groundcontrol`)} && cat > ${shQuote(overridePath)}`,
+          ctx.vps,
+          undefined,
+          pinContent
+        );
 
         const result = await execOnVps(
           `cd ${shQuote(projectPath)} && ` +
-          `${buildManagedComposeInvocation(composeCmd, "down", config.composeFile)} && ` +
-          `${composeCmd} -f ${shQuote(config.composeFile || "docker-compose.yml")} ` +
-          `-f .groundcontrol/rollback-pin.override.yml up -d`,
-          ctx.vps
-        );
-
-        // Clean up the temp override
-        await execOnVps(`rm -f ${shQuote(overridePath)}`, ctx.vps).catch(() => {});
-
-        if (result.code !== 0) {
-          throw new Error(result.stderr || "docker compose rollback failed");
-        }
-      } else {
-        // No digest to pin — fall back to restart
-        ctx.log(`[compose] no previous digest available; restarting current image`);
-        const result = await execOnVps(
-          `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
-            composeCmd,
-            "down",
-            config.composeFile
-          )} && ${buildManagedComposeInvocation(composeCmd, "up -d", config.composeFile)}`,
+            `${buildManagedComposeInvocation(composeCmd, "down", composeFile)} && ` +
+            `${buildManagedComposeInvocation(composeCmd, "up -d", composeFile)}`,
           ctx.vps
         );
         if (result.code !== 0) {
           throw new Error(result.stderr || "docker compose rollback failed");
         }
+      } finally {
+        // Restore the previous override state (or remove the file) so the pin
+        // is temporary — best-effort, never fail the rollback on cleanup.
+        const restore = previousOverride.trim()
+          ? execOnVps(
+              `cat > ${shQuote(overridePath)}`,
+              ctx.vps,
+              undefined,
+              previousOverride
+            )
+          : execOnVps(`rm -f ${shQuote(overridePath)}`, ctx.vps);
+        await restore.catch(() => undefined);
       }
     },
 
@@ -181,6 +239,30 @@ export function createComposeTarget(
       }
     },
   };
+}
+
+/**
+ * Restart-based rollback fallback: bring the stack down and back up with its
+ * current images. Used when no previous digest is stored or the digest cannot
+ * be pinned for any reason.
+ */
+async function restartCompose(
+  projectPath: string,
+  composeCmd: string,
+  composeFile: string,
+  ctx: DeployContext
+): Promise<void> {
+  const result = await execOnVps(
+    `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(
+      composeCmd,
+      "down",
+      composeFile
+    )} && ${buildManagedComposeInvocation(composeCmd, "up -d", composeFile)}`,
+    ctx.vps
+  );
+  if (result.code !== 0) {
+    throw new Error(result.stderr || "docker compose rollback failed");
+  }
 }
 
 function parseComposeConfig(configJson: string): ComposeTargetConfig {
