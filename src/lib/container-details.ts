@@ -1,4 +1,5 @@
 import { execOnVps, getActiveVps, shQuote } from "@/lib/vps";
+import { prisma } from "@/lib/prisma";
 
 export interface ContainerDetail {
   name: string;
@@ -27,6 +28,12 @@ export interface ContainerDetail {
     workingDir: string;
     configFiles: string;
   };
+  deployment: null | {
+    slug: string;
+    name: string;
+    href: string;
+    evidence: string;
+  };
   stats: null | {
     cpu: string;
     memory: string;
@@ -50,6 +57,107 @@ function text(value: unknown) {
 
 function number(value: unknown) {
   return typeof value === "number" ? value : Number(value || 0);
+}
+
+function normalizePath(value?: string | null): string {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function parseComposeProject(metadataJson?: string | null): string {
+  try {
+    const metadata = JSON.parse(metadataJson || "{}") as { composeProject?: unknown };
+    return typeof metadata.composeProject === "string" ? metadata.composeProject : "";
+  } catch {
+    return "";
+  }
+}
+
+async function resolveContainerDeployment(input: {
+  vpsId?: number | null;
+  deploymentSlug: string;
+  deploymentName: string;
+  composeProject: string;
+  workingDir: string;
+  configFiles: string;
+}): Promise<ContainerDetail["deployment"]> {
+  const deploymentSlug = input.deploymentSlug.trim();
+  if (deploymentSlug) {
+    const deployment = await prisma.enrolledDeployment.findUnique({
+      where: { slug: deploymentSlug },
+      select: { slug: true, name: true },
+    });
+    return {
+      slug: deployment?.slug || deploymentSlug,
+      name: deployment?.name || input.deploymentName.trim() || deploymentSlug,
+      href: `/deployments/${encodeURIComponent(deployment?.slug || deploymentSlug)}`,
+      evidence: "Runtime field groundcontrol.deployment.slug",
+    };
+  }
+
+  const workingDir = normalizePath(input.workingDir);
+  const configDirs = input.configFiles
+    .split(",")
+    .map((file) => normalizePath(file).replace(/\/[^/]+$/, ""))
+    .filter(Boolean);
+  const pathCandidates = Array.from(new Set([workingDir, ...configDirs].filter(Boolean)));
+  const vpsScope = input.vpsId && input.vpsId > 0 ? { vpsConfigId: input.vpsId } : {};
+
+  if (pathCandidates.length > 0) {
+    const exact = await prisma.enrolledDeployment.findFirst({
+      where: { ...vpsScope, sourcePath: { in: pathCandidates } },
+      select: { slug: true, name: true, sourcePath: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (exact) {
+      return {
+        slug: exact.slug,
+        name: exact.name,
+        href: `/deployments/${encodeURIComponent(exact.slug)}`,
+        evidence: exact.sourcePath ? `Compose folder ${exact.sourcePath}` : "Compose folder",
+      };
+    }
+
+    const legacyProject = await prisma.project.findFirst({
+      where: { path: { in: pathCandidates } },
+      select: {
+        slug: true,
+        name: true,
+        path: true,
+        inventoryRecord: { select: { slug: true, name: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (legacyProject) {
+      const slug = legacyProject.inventoryRecord?.slug || legacyProject.slug;
+      return {
+        slug,
+        name: legacyProject.inventoryRecord?.name || legacyProject.name,
+        href: `/deployments/${encodeURIComponent(slug)}`,
+        evidence: `Project folder ${legacyProject.path}`,
+      };
+    }
+  }
+
+  const composeProject = input.composeProject.trim();
+  if (composeProject) {
+    const deployments = await prisma.enrolledDeployment.findMany({
+      where: vpsScope,
+      select: { slug: true, name: true, metadataJson: true },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+    });
+    const match = deployments.find((deployment) => parseComposeProject(deployment.metadataJson) === composeProject);
+    if (match) {
+      return {
+        slug: match.slug,
+        name: match.name,
+        href: `/deployments/${encodeURIComponent(match.slug)}`,
+        evidence: `Compose project ${composeProject}`,
+      };
+    }
+  }
+
+  return null;
 }
 
 export async function getContainerDetail(containerName: string): Promise<ContainerDetail> {
@@ -76,6 +184,12 @@ export async function getContainerDetail(containerName: string): Promise<Contain
   const hostConfig = record(item.HostConfig);
   const networkSettings = record(item.NetworkSettings);
   const labels = record(config.Labels);
+  const composeProject = text(labels["com.docker.compose.project"]);
+  const composeService = text(labels["com.docker.compose.service"]);
+  const composeWorkingDir = text(labels["com.docker.compose.project.working_dir"]);
+  const composeConfigFiles = text(labels["com.docker.compose.project.config_files"]);
+  const deploymentSlug = text(labels["groundcontrol.deployment.slug"]);
+  const deploymentName = text(labels["groundcontrol.deployment.name"]);
   const networks = record(networkSettings.Networks);
   const ports = record(networkSettings.Ports);
 
@@ -159,11 +273,19 @@ export async function getContainerDetail(containerName: string): Promise<Contain
     mounts: mountRows,
     environmentKeys,
     compose: {
-      project: text(labels["com.docker.compose.project"]),
-      service: text(labels["com.docker.compose.service"]),
-      workingDir: text(labels["com.docker.compose.project.working_dir"]),
-      configFiles: text(labels["com.docker.compose.project.config_files"]),
+      project: composeProject,
+      service: composeService,
+      workingDir: composeWorkingDir,
+      configFiles: composeConfigFiles,
     },
+    deployment: await resolveContainerDeployment({
+      vpsId: vps?.id,
+      deploymentSlug,
+      deploymentName,
+      composeProject,
+      workingDir: composeWorkingDir,
+      configFiles: composeConfigFiles,
+    }),
     stats: statsParts.length >= 5
       ? {
           cpu: statsParts[0],

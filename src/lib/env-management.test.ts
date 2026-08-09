@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   buildMaterializeEnvBundleCommand,
   buildMaterializeEnvCommand,
+  buildMaterializeDeploymentIdentityCommand,
   composeInterpolationValues,
   environmentDisplayName,
   environmentExportFilename,
@@ -161,6 +162,38 @@ DATABASE_URL=duplicate
     expect(command).toContain("awk -F=");
     expect(command).toContain("cat '.env'.managed.new >> '.env'.preserved.new");
     expect(command).not.toContain("mv '.env'.new '.env'");
+    expect(spawnSync("/bin/sh", ["-n"], { input: command, encoding: "utf8" }).status).toBe(0);
+  });
+
+  it("preserves existing service-specific env files when materializing component env", () => {
+    const command = buildMaterializeEnvBundleCommand(
+      "/srv/app",
+      {},
+      { api: { API_URL: "https://api.example.com" } }
+    );
+
+    expect(command).toContain("/api.env'.managed.new");
+    expect(command).toContain("/api.env'.preserved.new");
+    expect(command).toContain("cat '/run/groundcontrol/environments/");
+    expect(command).toContain("/api.env'.managed.new >> '/run/groundcontrol/environments/");
+    expect(command).toContain("/api.env'.preserved.new '/run/groundcontrol/environments/");
+    expect(command).not.toContain("/api.env'.new '/run/groundcontrol/environments/");
+    expect(spawnSync("/bin/sh", ["-n"], { input: command, encoding: "utf8" }).status).toBe(0);
+  });
+
+  it("generates an explicit deployment identity overlay for Compose services", () => {
+    const command = buildMaterializeDeploymentIdentityCommand({
+      deployPath: "/srv/app",
+      composeCommand: "docker compose",
+      deploymentSlug: "rentaweekend",
+      deploymentName: "RentAWeekend",
+      sourcePath: "/opt/agent-flow/RentAWeekend",
+    });
+
+    expect(command).toContain(".groundcontrol/compose.identity.override.yml");
+    expect(command).toContain("groundcontrol.deployment.slug");
+    expect(command).toContain("rentaweekend");
+    expect(command).toContain("docker compose -f \"$gc_compose_base\" config --services");
     expect(spawnSync("/bin/sh", ["-n"], { input: command, encoding: "utf8" }).status).toBe(0);
   });
 

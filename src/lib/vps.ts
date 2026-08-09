@@ -7,6 +7,7 @@ import {
   COMPOSE_FILE_CANDIDATES,
   MANAGED_ENV_FILES_MANIFEST,
   MANAGED_ENV_OVERRIDE_FILE,
+  MANAGED_IDENTITY_OVERRIDE_FILE,
   MANAGED_IMAGE_OVERRIDE_FILE,
 } from "./compose-management";
 
@@ -729,6 +730,7 @@ export function buildManagedComposeInvocation(
     `(${selectBase};`,
     `if [ -n "$gc_compose_base" ]; then set -- -f "$gc_compose_base"; else set --; fi;`,
     `if [ -f ${shQuote(MANAGED_IMAGE_OVERRIDE_FILE)} ]; then set -- "$@" -f ${shQuote(MANAGED_IMAGE_OVERRIDE_FILE)}; fi;`,
+    `if [ -f ${shQuote(MANAGED_IDENTITY_OVERRIDE_FILE)} ]; then set -- "$@" -f ${shQuote(MANAGED_IDENTITY_OVERRIDE_FILE)}; fi;`,
     ...environmentOverlay,
     `DOCKER_CONFIG="\${HOME}/.groundcontrol/docker" ${composeCommand} "$@" ${args})`,
   ].join(" ");

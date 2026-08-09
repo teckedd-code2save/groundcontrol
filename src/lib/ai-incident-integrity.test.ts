@@ -8,6 +8,9 @@ import { applyExactSourceEdits } from "./source-repair";
 import {
   checkDiagnosticCommand,
   getOpenAIToolSchemas,
+  isSafeBindHost,
+  isSafeComposeService,
+  isSafeRouteEnvPrefix,
   resolveAgentToolCall,
 } from "./ai-agent";
 
@@ -71,6 +74,7 @@ describe("AI incident integrity", () => {
   it("requires evidence-first Compose diagnosis and non-empty source edits", () => {
     const schemas = getOpenAIToolSchemas();
     expect(schemas.some((tool) => tool.function.name === "investigate_compose_failure")).toBe(true);
+    expect(schemas.some((tool) => tool.function.name === "reconcile_compose_route_port")).toBe(true);
     expect(schemas.some((tool) => tool.function.name === "read_repository_source_at_revision")).toBe(true);
     const repair = schemas.find((tool) => tool.function.name === "prepare_source_fix_in_daytona");
     const parameters = repair?.function.parameters as {
@@ -88,6 +92,15 @@ describe("AI incident integrity", () => {
     expect(parameters.properties?.edits?.items?.properties?.find?.minLength).toBe(1);
     expect(parameters.properties?.regressionCommands?.minItems).toBe(1);
     expect(parameters.properties?.regressionCommands?.maxItems).toBe(2);
+  });
+
+  it("keeps route-port reconciliation constrained to safe env prefixes, hosts and services", () => {
+    expect(isSafeRouteEnvPrefix("WEB")).toBe(true);
+    expect(isSafeRouteEnvPrefix("DATABASE")).toBe(false);
+    expect(isSafeBindHost("127.0.0.1")).toBe(true);
+    expect(isSafeBindHost("10.0.0.7")).toBe(false);
+    expect(isSafeComposeService("web")).toBe(true);
+    expect(isSafeComposeService("web; rm -rf /")).toBe(false);
   });
 
   it("allows bounded HTTP inspection but still blocks fetched shell execution", () => {

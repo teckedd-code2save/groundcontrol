@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Box,
   Braces,
+  ExternalLink,
   Network,
   Play,
   RefreshCw,
@@ -117,6 +118,16 @@ export default function ContainerDetailView({ name }: { name: string }) {
             >
               Refresh
             </Button>
+            {detail?.deployment && (
+              <Link
+                href={detail.deployment.href}
+                className="gc-button gc-button-secondary"
+                title={`Open ${detail.deployment.name}`}
+              >
+                <ExternalLink size={14} aria-hidden="true" />
+                Open deployment
+              </Link>
+            )}
             {detail && (
               isRunning ? (
                 <>
@@ -174,6 +185,17 @@ export default function ContainerDetailView({ name }: { name: string }) {
               <Row label="OOM killed" value={detail.oomKilled ? "Yes" : "No"} />
               {detail.compose.project && <Row label="Compose project" value={detail.compose.project} mono />}
               {detail.compose.service && <Row label="Compose service" value={detail.compose.service} mono />}
+              {detail.deployment && (
+                <Row
+                  label="Deployment"
+                  value={(
+                    <Link href={detail.deployment.href} className="text-accent hover:text-accent/80">
+                      {detail.deployment.name}
+                    </Link>
+                  )}
+                />
+              )}
+              {detail.deployment?.evidence && <Row label="Deployment match" value={detail.deployment.evidence} />}
             </DetailSection>
           </div>
 
@@ -301,7 +323,7 @@ function Fact({ label, value, mono = false }: { label: string; value: React.Reac
   );
 }
 
-function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function Row({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="grid gap-1 py-3 sm:grid-cols-[140px_minmax(0,1fr)] sm:gap-4">
       <span className="text-[11px] text-muted">{label}</span>

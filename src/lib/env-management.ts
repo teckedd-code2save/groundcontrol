@@ -3,7 +3,7 @@ import type { DeploymentEnvProfile, EnvProviderAccount, Project } from "@prisma/
 import { prisma } from "./prisma";
 import { decryptMaybe, encryptIfNeeded } from "./crypto";
 import { execOnTargetStrict } from "./host-exec";
-import { getActiveVps, shQuote, type VpsConnection } from "./vps";
+import { getActiveVps, getDockerComposeCommand, shQuote, type VpsConnection } from "./vps";
 import {
   decryptInfisicalCredentials,
   encryptInfisicalCredentials,
@@ -11,8 +11,10 @@ import {
   type InfisicalProviderConfig,
 } from "./infisical";
 import {
+  COMPOSE_FILE_CANDIDATES,
   MANAGED_ENV_FILES_MANIFEST,
   MANAGED_ENV_OVERRIDE_FILE,
+  MANAGED_IDENTITY_OVERRIDE_FILE,
 } from "./compose-management";
 
 export interface EnvSchemaEntry {
@@ -580,7 +582,7 @@ export function buildMaterializeEnvBundleCommand(
     .filter((component) => Object.keys(componentValues[component]).length > 0)
     .sort();
   for (const component of components) {
-    commands.push(...atomicEnvWriteCommands(
+    commands.push(...atomicMergedEnvWriteCommands(
       `${runtimeDir}/${component}.env`,
       serializeDotenv(componentValues[component])
     ));
@@ -608,6 +610,44 @@ export function buildMaterializeEnvBundleCommand(
   }
   commands.push("printf '%s\\n' 'environment materialized'");
   return commands.join("\n");
+}
+
+export function buildMaterializeDeploymentIdentityCommand(input: {
+  deployPath: string;
+  composeCommand: string;
+  deploymentSlug: string;
+  deploymentName: string;
+  sourcePath?: string | null;
+}): string {
+  const labels = {
+    "groundcontrol.deployment.slug": input.deploymentSlug,
+    "groundcontrol.deployment.name": input.deploymentName,
+    "groundcontrol.deployment.source_path": input.sourcePath || input.deployPath,
+  };
+  const labelLines = Object.entries(labels).flatMap(([key, value]) => [
+    `    printf '      %s: %s\\n' ${shQuote(key)} ${shQuote(JSON.stringify(value))} >> "$gc_identity_tmp"`,
+  ]);
+  return [
+    "set -eu",
+    `cd ${shQuote(input.deployPath)}`,
+    `mkdir -p ${shQuote(".groundcontrol")}`,
+    `gc_compose_base=''`,
+    `for gc_file in ${COMPOSE_FILE_CANDIDATES.join(" ")}; do`,
+    `  if [ -f "$gc_file" ]; then gc_compose_base="$gc_file"; break; fi`,
+    `done`,
+    `if [ -z "$gc_compose_base" ]; then exit 0; fi`,
+    `gc_identity_tmp=${shQuote(MANAGED_IDENTITY_OVERRIDE_FILE)}.new`,
+    `printf '%s\\n' 'services:' > "$gc_identity_tmp"`,
+    `${input.composeCommand} -f "$gc_compose_base" config --services | while IFS= read -r gc_service; do`,
+    `  case "$gc_service" in ''|*[!A-Za-z0-9_.-]*|[!A-Za-z0-9]* ) continue ;; esac`,
+    `  printf '  %s:\\n    labels:\\n' "$gc_service" >> "$gc_identity_tmp"`,
+    ...labelLines,
+    `  printf '\\n' >> "$gc_identity_tmp"`,
+    `done`,
+    `chmod 600 "$gc_identity_tmp"`,
+    `mv "$gc_identity_tmp" ${shQuote(MANAGED_IDENTITY_OVERRIDE_FILE)}`,
+    `chmod 600 ${shQuote(MANAGED_IDENTITY_OVERRIDE_FILE)}`,
+  ].join("\n");
 }
 
 function atomicEnvWriteCommands(path: string, content: string): string[] {
@@ -717,6 +757,15 @@ export async function applyEnvToDeployment(
       { environmentSlug: resolved.profile.slug }
     );
     log?.(`[env] materialized ${resolved.profile.providerType} environment (${materialized.files.join(", ")})\n`);
+    const composeCommand = await getDockerComposeCommand(options.vps, execOnTargetStrict);
+    await execOnTargetStrict(buildMaterializeDeploymentIdentityCommand({
+      deployPath: project.path,
+      composeCommand,
+      deploymentSlug: project.slug,
+      deploymentName: project.name,
+      sourcePath: project.path,
+    }), options.vps || (await getActiveVps()));
+    log?.(`[runtime] attached deployment identity to Compose services\n`);
   }
   await prisma.deploymentEnvProfile.update({
     where: { id: resolved.profile.id },

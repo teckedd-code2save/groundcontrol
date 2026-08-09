@@ -120,6 +120,65 @@ async function guard(fn: () => Promise<string>): Promise<string> {
   }
 }
 
+export function isSafeRouteEnvPrefix(value: string): boolean {
+  return /^(WEB|APP|FRONTEND|BACKEND|API|SERVER|HTTP|HTTPS)$/i.test(value.trim());
+}
+
+export function isSafeComposeService(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value.trim());
+}
+
+export function isSafeBindHost(value: string): boolean {
+  return ["127.0.0.1", "0.0.0.0", "localhost"].includes(value.trim());
+}
+
+function buildRoutePortEnvPatchCommand(args: {
+  projectPath: string;
+  keyPrefix: string;
+  bindHost: string;
+  hostPort: number;
+  service: string;
+  composeCommand: string;
+  publicUrl?: string;
+}) {
+  const prefix = args.keyPrefix.trim().toUpperCase();
+  const envHostKey = `${prefix}_BIND_HOST`;
+  const envPortKey = `${prefix}_PORT`;
+  const publicCheck = args.publicUrl
+    ? [
+        `gc_public_url=${shQuote(args.publicUrl)}`,
+        `for gc_i in 1 2 3 4 5 6 7 8 9 10 11 12; do`,
+        `  if curl -k -fsS --max-time 15 "$gc_public_url" >/dev/null; then printf '%s\\n' "[verify] public route healthy: $gc_public_url"; break; fi`,
+        `  if [ "$gc_i" -eq 12 ]; then printf '%s\\n' "[verify] public route failed: $gc_public_url" >&2; exit 43; fi`,
+        `  sleep 5`,
+        `done`,
+      ]
+    : [`printf '%s\\n' '[verify] public route not provided; skipped'`];
+  return [
+    `set -eu`,
+    `cd ${shQuote(args.projectPath)}`,
+    `test -f docker-compose.yml || test -f docker-compose.yaml || test -f compose.yml || test -f compose.yaml`,
+    `cp .env ".env.groundcontrol-backup-$(date +%Y%m%d%H%M%S)" 2>/dev/null || : > .env`,
+    `gc_upsert_env() {`,
+    `  gc_key="$1"; gc_value="$2";`,
+    `  if grep -q "^${"${gc_key}"}=" .env 2>/dev/null; then`,
+    `    awk -v k="$gc_key" -v v="$gc_value" 'BEGIN{done=0} index($0,k"=")==1 {print k"="v; done=1; next} {print} END{if(done==0) print k"="v}' .env > .env.new`,
+    `  else`,
+    `    cp .env .env.new 2>/dev/null || : > .env.new`,
+    `    printf '%s=%s\\n' "$gc_key" "$gc_value" >> .env.new`,
+    `  fi`,
+    `  chmod 600 .env.new && mv .env.new .env && chmod 600 .env`,
+    `}`,
+    `gc_upsert_env ${shQuote(envHostKey)} ${shQuote(args.bindHost)}`,
+    `gc_upsert_env ${shQuote(envPortKey)} ${shQuote(String(args.hostPort))}`,
+    `${args.composeCommand} config >/dev/null`,
+    `${args.composeCommand} up -d --force-recreate ${shQuote(args.service)}`,
+    `printf '%s\\n' ${shQuote(`[repair] ${envHostKey}=${args.bindHost} ${envPortKey}=${args.hostPort}; recreated ${args.service}`)}`,
+    ...publicCheck,
+    `${args.composeCommand} ps ${shQuote(args.service)}`,
+  ].join("\n");
+}
+
 function clipOperationalEvidence(value: string, max = 8_000): string {
   const normalized = String(value || "").trim();
   return normalized.length <= max ? normalized : `${normalized.slice(0, max)}\n… evidence clipped`;
@@ -1200,6 +1259,55 @@ export const AGENT_TOOLS: AgentTool[] = [
         const err = result.stderr || "";
         if (result.code !== 0) return `ERROR: docker compose down failed (exit ${result.code}).\n${err || out}`;
         return out || `Compose services for ${slug} stopped.`;
+      }),
+  },
+  {
+    name: "reconcile_compose_route_port",
+    description:
+      "Repair proxy-to-runtime port drift for a Compose deployment by safely upserting <PREFIX>_BIND_HOST and <PREFIX>_PORT in the deployment .env, validating Compose, recreating one selected service, and optionally verifying the public URL. MUTATING — requires explicit user confirmation. Use when evidence shows Caddy/Nginx targets a loopback port but the related Compose service is published on a different host port.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Compose project/folder slug, such as rentaweekend." },
+        service: { type: "string", description: "Compose service to recreate, such as web." },
+        keyPrefix: { type: "string", description: "Env key prefix to update. WEB writes WEB_BIND_HOST and WEB_PORT.", enum: ["WEB", "APP", "FRONTEND", "BACKEND", "API", "SERVER", "HTTP", "HTTPS"] },
+        bindHost: { type: "string", description: "Host bind address for the published service port.", enum: ["127.0.0.1", "0.0.0.0", "localhost"] },
+        hostPort: { type: "integer", description: "Expected host port used by the reverse proxy, 1-65535." },
+        publicUrl: { type: "string", description: "Optional public URL to verify after recreation." },
+      },
+      required: ["projectSlug", "service", "keyPrefix", "bindHost", "hostPort"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim();
+        const service = String(args?.service || "").trim();
+        const keyPrefix = String(args?.keyPrefix || "").trim().toUpperCase();
+        const bindHost = String(args?.bindHost || "").trim();
+        const hostPort = Number(args?.hostPort);
+        const publicUrl = String(args?.publicUrl || "").trim();
+        if (!slug) return "ERROR: projectSlug is required.";
+        if (!isSafeComposeService(service)) return "ERROR: service must be a safe Compose service name.";
+        if (!isSafeRouteEnvPrefix(keyPrefix)) return "ERROR: keyPrefix is not allowed for route-port repair.";
+        if (!isSafeBindHost(bindHost)) return "ERROR: bindHost must be 127.0.0.1, 0.0.0.0, or localhost.";
+        if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) return "ERROR: hostPort must be between 1 and 65535.";
+        if (publicUrl && !/^https?:\/\/[^@\s]+$/i.test(publicUrl)) return "ERROR: publicUrl must be an http(s) URL without credentials.";
+        const resolved = await resolveComposeProjectPath(slug, service);
+        const composeCommand = await getDockerComposeCommand(undefined, execOnTargetStrict);
+        const command = buildRoutePortEnvPatchCommand({
+          projectPath: resolved.projectPath,
+          keyPrefix,
+          bindHost,
+          hostPort,
+          service,
+          composeCommand,
+          publicUrl,
+        });
+        const result = await execOnTargetStrict(command);
+        const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+        if (result.code !== 0) return `ERROR: route-port reconciliation failed (exit ${result.code}).\n${output}`;
+        return output || `Route port reconciled for ${slug}/${service}.`;
       }),
   },
   {
