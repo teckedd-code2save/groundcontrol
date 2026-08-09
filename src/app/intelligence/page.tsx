@@ -115,21 +115,33 @@ const softPanel = "rounded-xl bg-card shadow-sm shadow-black/5";
 function restartConflictsWithProxyEvidence(path: ServicePath, toolName: string) {
   if (toolName !== "restart_container") return false;
   const inspection = path.inspection;
-  return inspection?.failureBoundary === "proxy_to_upstream"
-    && inspection.evidence.some((item) => item.id === "runtime" && item.status === "verified");
+  if (inspection?.failureBoundary !== "proxy_to_upstream") return false;
+  const runtimeFailed = inspection.evidence.some((item) => item.id === "runtime" && item.status === "failed");
+  return !runtimeFailed;
 }
 
-function proxyContractMessage(path: ServicePath) {
+function proxyContractMessage(path: ServicePath, attemptedTool?: string) {
   return [
     "## Problem",
     `${path.domain} is failing at the reverse-proxy to upstream boundary, not at container lifecycle.`,
+    attemptedTool ? `GroundControl rejected the proposed ${humanize(attemptedTool)} action because the evidence does not prove a container restart is the fix.` : "",
     "",
     "## Fix",
     `Inspect and reconcile the proxy upstream ${path.upstream || "target"} against the actual service port/network. Validate and reload the proxy after the correction.`,
     "",
     "## Verify",
     `Re-run the public check for https://${path.domain}/. Do not restart a running container as the primary fix for this evidence.`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
+}
+
+function confirmationTarget(confirmation: AgentConfirmation) {
+  const candidate = confirmation.args.name
+    || confirmation.args.projectSlug
+    || confirmation.args.slug
+    || confirmation.args.service
+    || confirmation.args.url
+    || confirmation.args.path;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
 }
 
 function publicHostname(value?: string | null): string {
@@ -413,7 +425,7 @@ export default function IntelligencePage() {
           const toolName = String(event.name || "");
           if (restartConflictsWithProxyEvidence(path, toolName)) {
             setAgentConfirm(null);
-            setAgentText(proxyContractMessage(path));
+            setAgentText(proxyContractMessage(path, toolName));
             return;
           }
           setAgentConfirm({
@@ -1076,6 +1088,11 @@ function IncidentAgent({
         <div className="border-t border-warning/40 bg-warning/[0.04] p-4">
           <p className="text-xs font-semibold">Approval required</p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted">{confirmation.description}</p>
+          {confirmationTarget(confirmation) && (
+            <p className="mt-2 rounded bg-background/60 px-2 py-1.5 font-mono text-[10px] text-muted">
+              Target: {confirmationTarget(confirmation)}
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="primary" disabled={running} onClick={onApprove}>
               {running ? "Applying…" : `Approve ${humanize(confirmation.name)}`}
