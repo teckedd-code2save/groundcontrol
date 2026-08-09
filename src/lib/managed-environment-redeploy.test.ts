@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
+  buildInspectManagedEnvironmentArtifactsCommand,
   buildManagedEnvironmentRecoveryCommand,
   diagnoseManagedEnvironmentFailure,
   expectedManagedEnvironmentArtifacts,
@@ -122,6 +127,56 @@ describe("managed environment redeploy reconciliation", () => {
       runtimeReady: true,
       bundleMatchesDesired: false,
     });
+  });
+
+  it("accepts preserved host keys around managed dotenv values", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gc-env-artifacts-"));
+    try {
+      const envPath = join(directory, ".env");
+      writeFileSync(envPath, "WEB_PORT=14080\nAPI_URL=https://api.example.com\n");
+      const artifacts = expectedManagedEnvironmentArtifacts({
+        deployPath: directory,
+        environmentSlug: "production",
+        values: { API_URL: "https://api.example.com" },
+        componentValues: {},
+      });
+      const result = spawnSync("sh", ["-c", buildInspectManagedEnvironmentArtifactsCommand(artifacts)], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+      const inspection = inspectManagedEnvironmentArtifactOutput(result.stdout, result.status === 0, artifacts);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("");
+      expect(inspection.bundleMatchesDesired).toBe(true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects changed managed dotenv values even when host keys are preserved", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gc-env-artifacts-"));
+    try {
+      const envPath = join(directory, ".env");
+      writeFileSync(envPath, "WEB_PORT=14080\nAPI_URL=https://old.example.com\n");
+      const artifacts = expectedManagedEnvironmentArtifacts({
+        deployPath: directory,
+        environmentSlug: "production",
+        values: { API_URL: "https://api.example.com" },
+        componentValues: {},
+      });
+      const result = spawnSync("sh", ["-c", buildInspectManagedEnvironmentArtifactsCommand(artifacts)], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+      const inspection = inspectManagedEnvironmentArtifactOutput(result.stdout, result.status === 0, artifacts);
+
+      expect(result.status).toBe(0);
+      expect(inspection.changedArtifacts).toEqual(["deployment environment"]);
+      expect(inspection.bundleMatchesDesired).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("fails closed when artifact inspection itself fails", () => {

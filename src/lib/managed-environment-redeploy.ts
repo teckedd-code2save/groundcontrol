@@ -53,6 +53,8 @@ export interface ExpectedManagedEnvironmentArtifact {
   scope: string;
   path: string;
   hash: string;
+  mode: "exact" | "dotenv-subset";
+  keys?: string[];
 }
 
 export interface ManagedEnvironmentArtifactInspection {
@@ -172,6 +174,8 @@ export function expectedManagedEnvironmentArtifacts(input: {
       scope: "deployment environment",
       path: `${input.deployPath}/.env`,
       hash: sha256(serializeDotenv(interpolationValues)),
+      mode: "dotenv-subset",
+      keys: Object.keys(interpolationValues).sort(),
     });
   }
 
@@ -180,6 +184,8 @@ export function expectedManagedEnvironmentArtifacts(input: {
       scope: `${component} environment`,
       path: `${runtimeDir}/${component}.env`,
       hash: sha256(serializeDotenv(input.componentValues[component])),
+      mode: "dotenv-subset",
+      keys: Object.keys(input.componentValues[component]).sort(),
     });
   }
 
@@ -197,8 +203,8 @@ export function expectedManagedEnvironmentArtifacts(input: {
       "",
     ].join("\n");
     artifacts.push(
-      { scope: "runtime manifest", path: `${input.deployPath}/${MANAGED_ENV_FILES_MANIFEST}`, hash: sha256(manifest) },
-      { scope: "Compose environment overlay", path: `${input.deployPath}/${MANAGED_ENV_OVERRIDE_FILE}`, hash: sha256(override) }
+      { scope: "runtime manifest", path: `${input.deployPath}/${MANAGED_ENV_FILES_MANIFEST}`, hash: sha256(manifest), mode: "exact" },
+      { scope: "Compose environment overlay", path: `${input.deployPath}/${MANAGED_ENV_OVERRIDE_FILE}`, hash: sha256(override), mode: "exact" }
     );
   }
 
@@ -213,8 +219,18 @@ export function buildInspectManagedEnvironmentArtifactsCommand(
     `if [ ! -f ${shQuote(artifact.path)} ]; then`,
     `  printf '%s\\n' ${shQuote(`missing|${artifact.scope}`)}`,
     "else",
-    `  actual=$(sha256sum ${shQuote(artifact.path)} 2>/dev/null | awk '{print $1}' || shasum -a 256 ${shQuote(artifact.path)} | awk '{print $1}')`,
-    `  [ \"$actual\" = ${shQuote(artifact.hash)} ] || printf '%s\\n' ${shQuote(`changed|${artifact.scope}`)}`,
+    artifact.mode === "dotenv-subset"
+      ? [
+          `  actual=$((printf '%s' ${shQuote(Buffer.from((artifact.keys || []).join("\n") + "\n", "utf8").toString("base64"))} | base64 -d | while IFS= read -r gc_env_key; do`,
+          `    [ -z "$gc_env_key" ] && continue`,
+          `    awk -F= -v gc_env_key="$gc_env_key" '$1 == gc_env_key { print; found=1; exit } END { if (!found) exit 1 }' ${shQuote(artifact.path)} || exit 1`,
+          `  done) 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}' || (printf '%s' ${shQuote(Buffer.from((artifact.keys || []).join("\n") + "\n", "utf8").toString("base64"))} | base64 -d | while IFS= read -r gc_env_key; do`,
+          `    [ -z "$gc_env_key" ] && continue`,
+          `    awk -F= -v gc_env_key="$gc_env_key" '$1 == gc_env_key { print; found=1; exit } END { if (!found) exit 1 }' ${shQuote(artifact.path)} || exit 1`,
+          `  done) 2>/dev/null | shasum -a 256 | awk '{print $1}')`,
+        ].join("\n")
+      : `  actual=$(sha256sum ${shQuote(artifact.path)} 2>/dev/null | awk '{print $1}' || shasum -a 256 ${shQuote(artifact.path)} | awk '{print $1}')`,
+    `  [ "$actual" = ${shQuote(artifact.hash)} ] || printf '%s\\n' ${shQuote(`changed|${artifact.scope}`)}`,
     "fi",
   ].join("\n")).join("\n");
 }
@@ -426,8 +442,13 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
   });
 
   input.log?.(`${decision.evidence}\n`);
+  if (artifacts.length > 0) {
+    input.log?.(`[configuration] Desired environment revision includes ${artifacts.map((artifact) => artifact.mode === "dotenv-subset"
+      ? `${artifact.scope} (${artifact.keys?.length || 0} managed keys)`
+      : `${artifact.scope} (exact file)`).join(", ")}\n`);
+  }
   if (inspection.mismatchedArtifacts.length > 0) {
-    input.log?.(`[configuration] Reconcile: ${inspection.mismatchedArtifacts.join(", ")}\n`);
+    input.log?.(`[configuration] Reconcile required for: ${inspection.mismatchedArtifacts.join(", ")}\n`);
   }
 
   let recovered = false;
@@ -453,8 +474,8 @@ export async function reconcileManagedEnvironmentForRedeploy(input: {
     if (!verification.bundleMatchesDesired) {
       throw new ManagedEnvironmentPreparationError(
         "ENV_VERIFICATION_FAILED",
-        "GroundControl generated the managed environment, but the resulting artifacts did not match the desired revision.",
-        `The candidate deployment was stopped before Docker changes. Mismatched artifacts: ${verification.mismatchedArtifacts.join(", ") || "unknown"}.`,
+        `GroundControl generated the managed environment, but these scopes still did not match: ${verification.mismatchedArtifacts.join(", ") || "unknown"}.`,
+        "The candidate deployment was stopped before Docker changes. Open the deploy logs for the environment stage to see whether a managed key, component env file, manifest, or Compose overlay drifted.",
         true
       );
     }

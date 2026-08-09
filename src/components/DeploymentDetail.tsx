@@ -453,7 +453,7 @@ export default function DeploymentDetail({
         </div>
       </header>
 
-      {message && (
+      {message && !(message.tone === "error" && tab === "deploy") && (
         <Notice className="mt-5" tone={message.tone === "error" ? "danger" : message.tone}>{message.text}</Notice>
       )}
 
@@ -854,13 +854,6 @@ function DeploymentProgress({
           </div>
         )}
       </div>
-
-      {status === "failed" && progress.evidence && (
-        <div className="border-b border-error/30 bg-error/[0.025] px-5 py-4">
-          <p className="font-mono text-[9px] text-error">Failure evidence</p>
-          <p className="mt-2 break-words font-mono text-[10px] leading-relaxed text-foreground">{progress.evidence}</p>
-        </div>
-      )}
 
       <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-6">
         {progress.stages.map((stage, index) => {
