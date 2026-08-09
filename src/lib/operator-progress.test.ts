@@ -140,16 +140,35 @@ describe("operator progress", () => {
       "[compose] Effective Compose configuration valid (/opt/agent-flow/RentAWeekend/docker-compose.yml)",
       "[pull] Images resolved",
       "[deploy] Docker Compose recreation completed",
-      "[verify] Runtime image verification failed (exit 42)",
-      "[failure] phase=verify error=web image does not match resolved compose image",
+      "[verify] Checking each Compose service against the effective image and runtime state",
+      "[failure] phase=verify service=web error=image mismatch expected=ghcr.io/acme/web:1 actual=ghcr.io/acme/web:old state=running exit=0",
+      "[verify] Runtime verification found service image or container-state mismatch",
     ]);
     const verify = progress.stages.find((stage) => stage.id === "verify");
 
     expect(progress.failedStage).toBe("verify");
+    expect(progress.summary).toBe("Verify service runtime failed");
+    expect(verify?.detail).toContain("completed one-shot jobs must exit 0");
     expect(verify?.status).toBe("failed");
     expect(verify?.evidenceLines).toEqual([
-      "[verify] Runtime image verification failed (exit 42)",
-      "[failure] phase=verify error=web image does not match resolved compose image",
+      "[verify] Checking each Compose service against the effective image and runtime state",
+      "[failure] phase=verify service=web error=image mismatch expected=ghcr.io/acme/web:1 actual=ghcr.io/acme/web:old state=running exit=0",
+      "[verify] Runtime verification found service image or container-state mismatch",
     ]);
+  });
+
+  it("explains legacy blank running-image verification failures by service", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[verify] Checking running images against the effective Compose configuration",
+      "[verify] api: expected ghcr.io/acme/api:abc123",
+      "[verify] api: running ghcr.io/acme/api:abc123",
+      "[verify] migrate: expected ghcr.io/acme/api:abc123",
+      "[verify] migrate: running",
+      "[verify] Running image does not match the effective Compose configuration",
+      "[verify] Runtime image verification failed (exit 42)",
+    ]);
+
+    expect(progress.failedStage).toBe("verify");
+    expect(progress.evidence).toBe("[failure] phase=verify service=migrate error=no running image was observed after Compose recreation; migrate: expected ghcr.io/acme/api:abc123");
   });
 });

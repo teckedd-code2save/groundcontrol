@@ -12,6 +12,23 @@ export interface DetachedRedeployLog {
   exitCode: number | null;
 }
 
+function inferLegacyVerifyFailure(lines: string[]) {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    const blankRunning = line.match(/^\[verify\]\s+([A-Za-z0-9_.-]+):\s+running\s*$/i);
+    if (!blankRunning) continue;
+    const service = blankRunning[1];
+    const servicePattern = service.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const expected = [...lines.slice(0, index)].reverse().find((candidate) =>
+      new RegExp(`^\\[verify\\]\\s+${servicePattern}:\\s+expected\\s+`, "i").test(candidate.trim())
+    );
+    return expected
+      ? `[failure] phase=verify service=${service} error=no running image was observed after Compose recreation; ${expected.replace(/^\[verify\]\s+/i, "")}`
+      : `[failure] phase=verify service=${service} error=no running image was observed after Compose recreation`;
+  }
+  return null;
+}
+
 /**
  * Interpret a detached Compose log without leaking GroundControl's control
  * marker into operator-visible output or durable release evidence.
@@ -51,12 +68,14 @@ export function parseDetachedComposeRedeployLog(output: string): DetachedRedeplo
   const containerFailure = [...lines].reverse().find((line) =>
     /^\[failure\]\s+/i.test(line.trim())
   );
+  const legacyVerifyFailure = inferLegacyVerifyFailure(lines);
   const diagnosticFailure = [...lines].reverse().find((line) =>
     !/^\[(prepare|deploy|verify)\]/i.test(line.trim())
     && /\b(error|fatal|exception|failed|unhealthy|refused|denied|timeout)\b/i.test(line)
   );
   const error = containerLogFailure?.trim()
     || containerFailure?.trim()
+    || legacyVerifyFailure
     || diagnosticFailure?.trim()
     || phaseFailure?.trim()
     || "Compose stopped before GroundControl captured a service or container error. The run evidence is incomplete and no automatic repair should be proposed from this result alone.";
@@ -92,22 +111,60 @@ export function buildRuntimeImageVerificationCommand(
   if (entries.length === 0) return `printf '%s\\n' '[verify] No registry-backed service image required verification'`;
 
   const checks = entries.flatMap(([service, expected]) => {
-    const ps = buildManagedComposeInvocation(composeCommand, `ps -q ${shQuote(service)}`, composeFile);
+    const runningPs = buildManagedComposeInvocation(composeCommand, `ps -q ${shQuote(service)}`, composeFile);
+    const allPs = buildManagedComposeInvocation(composeCommand, `ps -q --all ${shQuote(service)}`, composeFile);
     return [
-      `gc_container_id=$( ${ps} | head -n 1)`,
-      `if [ -z "$gc_container_id" ]; then gc_all_ready=0; else`,
+      `gc_service=${shQuote(service)}`,
+      `gc_expected=${shQuote(expected)}`,
+      `gc_container_id=$( ${runningPs} | head -n 1)`,
+      `gc_observed_state=running`,
+      `if [ -z "$gc_container_id" ]; then`,
+      `  gc_container_id=$( ${allPs} | head -n 1)`,
+      `  gc_observed_state=$(docker inspect --format '{{.State.Status}}' "$gc_container_id" 2>/dev/null || true)`,
+      `fi`,
+      `if [ -z "$gc_container_id" ]; then`,
+      `  gc_all_ready=0`,
+      `else`,
       `  gc_actual=$(docker inspect --format '{{.Config.Image}}' "$gc_container_id" 2>/dev/null || true)`,
-      `  gc_expected=${shQuote(expected)}`,
-      `  if [ "$gc_actual" != "$gc_expected" ] && [ "$gc_actual" != "docker.io/library/$gc_expected" ]; then gc_all_ready=0; fi`,
+      `  gc_exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$gc_container_id" 2>/dev/null || true)`,
+      `  gc_image_ok=0`,
+      `  if [ "$gc_actual" = "$gc_expected" ] || [ "$gc_actual" = "docker.io/library/$gc_expected" ]; then gc_image_ok=1; fi`,
+      `  if [ "$gc_image_ok" -ne 1 ]; then gc_all_ready=0; fi`,
+      `  if [ "$gc_observed_state" != "running" ] && { [ "$gc_observed_state" != "exited" ] || [ "$gc_exit_code" != "0" ]; }; then gc_all_ready=0; fi`,
       `fi`,
     ];
   });
   const evidence = entries.flatMap(([service, expected]) => {
-    const ps = buildManagedComposeInvocation(composeCommand, `ps -q ${shQuote(service)}`, composeFile);
+    const runningPs = buildManagedComposeInvocation(composeCommand, `ps -q ${shQuote(service)}`, composeFile);
+    const allPs = buildManagedComposeInvocation(composeCommand, `ps -q --all ${shQuote(service)}`, composeFile);
     return [
-      `gc_container_id=$( ${ps} | head -n 1)`,
+      `gc_service=${shQuote(service)}`,
+      `gc_expected=${shQuote(expected)}`,
+      `gc_container_id=$( ${runningPs} | head -n 1)`,
+      `gc_observed_state=running`,
+      `if [ -z "$gc_container_id" ]; then`,
+      `  gc_container_id=$( ${allPs} | head -n 1)`,
+      `  gc_observed_state=$(docker inspect --format '{{.State.Status}}' "$gc_container_id" 2>/dev/null || true)`,
+      `fi`,
       `gc_actual=$(docker inspect --format '{{.Config.Image}}' "$gc_container_id" 2>/dev/null || true)`,
-      `printf '%s\\n' ${shQuote(`[verify] ${service}: expected ${expected}`)} "[verify] ${service}: running $gc_actual"`,
+      `gc_exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$gc_container_id" 2>/dev/null || true)`,
+      `printf '%s\\n' ${shQuote(`[verify] ${service}: expected ${expected}`)}`,
+      `if [ -z "$gc_container_id" ]; then`,
+      `  printf '%s\\n' ${shQuote(`[verify] ${service}: observed no container`)}`,
+      `  printf '%s\\n' ${shQuote(`[failure] phase=verify service=${service} error=no container exists for service`)}`,
+      `elif [ "$gc_observed_state" = "exited" ] && [ "$gc_exit_code" = "0" ]; then`,
+      `  printf '%s\\n' "[verify] ${service}: completed one-shot $gc_actual (exit 0)"`,
+      `elif [ "$gc_observed_state" = "running" ]; then`,
+      `  printf '%s\\n' "[verify] ${service}: running $gc_actual"`,
+      `else`,
+      `  printf '%s\\n' "[verify] ${service}: state $gc_observed_state image $gc_actual exit $gc_exit_code"`,
+      `fi`,
+      `if [ -n "$gc_container_id" ] && [ "$gc_actual" != "$gc_expected" ] && [ "$gc_actual" != "docker.io/library/$gc_expected" ]; then`,
+      `  printf '%s\\n' "[failure] phase=verify service=${service} error=image mismatch expected=$gc_expected actual=$gc_actual state=$gc_observed_state exit=$gc_exit_code"`,
+      `fi`,
+      `if [ -n "$gc_container_id" ] && [ "$gc_observed_state" != "running" ] && { [ "$gc_observed_state" != "exited" ] || [ "$gc_exit_code" != "0" ]; }; then`,
+      `  printf '%s\\n' "[failure] phase=verify service=${service} error=container not running state=$gc_observed_state exit=$gc_exit_code image=$gc_actual"`,
+      `fi`,
     ];
   });
 
@@ -122,7 +179,7 @@ export function buildRuntimeImageVerificationCommand(
     `  sleep 2`,
     `done`,
     ...evidence,
-    `if [ "$gc_all_ready" -ne 1 ]; then printf '%s\\n' '[verify] Running image does not match the effective Compose configuration' >&2; exit 42; fi`,
+    `if [ "$gc_all_ready" -ne 1 ]; then printf '%s\\n' '[verify] Runtime verification found service image or container-state mismatch' >&2; exit 42; fi`,
   ].join("\n");
 }
 
@@ -150,12 +207,12 @@ export function buildDetachedComposeRedeployCommand({
     `printf '%s\\n' '[deploy] Starting Docker Compose recreation'`,
     `if ${deploy}; then`,
     `  printf '%s\\n' '[deploy] Docker Compose recreation completed'`,
-    `  printf '%s\\n' '[verify] Checking running images against the effective Compose configuration'`,
+    `  printf '%s\\n' '[verify] Checking each Compose service against the effective image and runtime state'`,
     `  if (`,
     ...verify.split("\n").map((line) => `    ${line}`),
     `  ); then`,
     `    gc_status=0`,
-    `    printf '%s\\n' '[verify] Running images match the effective Compose configuration'`,
+    `    printf '%s\\n' '[verify] Service images and runtime states match the effective Compose configuration'`,
     `  else`,
     `    gc_status=$?`,
     `    printf '%s\\n' "[verify] Runtime image verification failed (exit $gc_status)" >&2`,

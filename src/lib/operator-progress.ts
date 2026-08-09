@@ -35,7 +35,7 @@ const STAGE_LABELS: Record<DeploymentStageId, string> = {
   compose: "Validate Compose",
   pull: "Authenticate and pull",
   recreate: "Recreate runtime",
-  verify: "Verify runtime images",
+  verify: "Verify service runtime",
 };
 
 const STAGE_DETAILS: Record<DeploymentStageId, string> = {
@@ -43,7 +43,7 @@ const STAGE_DETAILS: Record<DeploymentStageId, string> = {
   compose: "Render and validate the exact Compose model that will be executed.",
   pull: "Authenticate the configured registry and resolve the requested images.",
   recreate: "Recreate the declared services, dependencies, networks, and one-shot jobs.",
-  verify: "Compare running images with the resolved model and verify the public result.",
+  verify: "For each Compose service, compare the resolved image with the observed container. Running services must be running; completed one-shot jobs must exit 0.",
 };
 
 const STAGE_EVIDENCE_PATTERNS: Record<DeploymentStageId, RegExp[]> = {
@@ -71,6 +71,23 @@ function stageEvidence(id: DeploymentStageId, lines: string[], failure?: string 
     return patterns.some((pattern) => pattern.test(line));
   });
   return [...new Set(matched)].slice(-12);
+}
+
+function inferLegacyVerifyFailure(lines: string[]) {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    const blankRunning = line.match(/^\[verify\]\s+([A-Za-z0-9_.-]+):\s+running\s*$/i);
+    if (!blankRunning) continue;
+    const service = blankRunning[1];
+    const servicePattern = service.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const expected = [...lines.slice(0, index)].reverse().find((candidate) =>
+      new RegExp(`^\\[verify\\]\\s+${servicePattern}:\\s+expected\\s+`, "i").test(candidate.trim())
+    );
+    return expected
+      ? `[failure] phase=verify service=${service} error=no running image was observed after Compose recreation; ${expected.replace(/^\[verify\]\s+/i, "")}`
+      : `[failure] phase=verify service=${service} error=no running image was observed after Compose recreation`;
+  }
+  return null;
 }
 
 export function stripOperatorMarkdown(value: string): string {
@@ -192,7 +209,7 @@ export function deploymentRunProgress(
   const recreateStarted = includes(/\[deploy\]\s+starting/i);
   const recreateComplete = includes(/\[deploy\]\s+docker compose recreation completed/i);
   const verifyStarted = includes(/\[verify\]\s+checking/i);
-  const verifyComplete = status === "success" || includes(/\[verify\]\s+running images match/i);
+  const verifyComplete = status === "success" || includes(/\[verify\]\s+(running images|service images).*match/i);
 
   const completed: Record<DeploymentStageId, boolean> = {
     environment: environmentComplete,
@@ -214,7 +231,7 @@ export function deploymentRunProgress(
 
   let failedStage: DeploymentStageId | null = null;
   if (status === "failed") {
-    failedStage = includes(/\[failure\]\s+phase=(verify)\b|runtime image verification failed|running image does not match/i) ? "verify"
+    failedStage = includes(/\[failure\]\s+phase=(verify)\b|runtime image verification failed|runtime verification found|running image does not match/i) ? "verify"
       : includes(/\[failure\]\s+phase=(recreate|deploy)\b|docker compose failed|compose.*exit|recreate/i) ? "recreate"
         : includes(/\[failure\]\s+phase=(registry|pull)\b|image pull failed|pull access denied|manifest unknown/i) ? "pull"
           : includes(/\[failure\]\s+phase=compose\b|compose configuration|compose config|yaml|validation/i) ? "compose"
@@ -242,14 +259,16 @@ export function deploymentRunProgress(
   const recordedFailure = [...lines].reverse().find((line) =>
     /^\[failure\]\s+/i.test(line.trim())
   );
+  const legacyVerifyFailure = inferLegacyVerifyFailure(lines);
   const phaseFailure = [...lines].reverse().find((line) =>
-    /^\[(deploy|verify)\].*\b(failed|unhealthy|does not match)\b/i.test(line.trim())
+    /^\[(deploy|verify)\].*\b(failed|unhealthy|does not match|mismatch)\b/i.test(line.trim())
   );
   const diagnosticFailure = [...lines].reverse().find((line) =>
     /\b(error|fatal|exception|failed|unhealthy|refused|denied|timeout)\b/i.test(line)
     && !/^\[(configuration|compose|registry|pull)\].*\b(ready|valid|resolved|completed)\b/i.test(line.trim())
   );
   const evidence = recordedFailure?.trim()
+    || legacyVerifyFailure
     || diagnosticFailure?.trim()
     || phaseFailure?.trim()
     || failure?.trim()

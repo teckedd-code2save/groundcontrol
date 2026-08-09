@@ -23,8 +23,26 @@ describe("Compose redeploy image verification", () => {
     expect(script).toContain("/opt/app/compose.yaml");
     expect(script).toContain("compose.image.override.yml");
     expect(script).toContain("ps -q 'api'");
+    expect(script).toContain("ps -q --all 'api'");
     expect(script).toContain("ghcr.io/acme/api:abc123");
     expect(script).toContain("exit 42");
+    expect(script).toContain("completed one-shot");
+    expect(script).toContain("[failure] phase=verify service=api error=image mismatch");
+    expect(script).toContain("[failure] phase=verify service=api error=container not running");
+    expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
+  });
+
+  it("treats completed one-shot services as verified when the image matches and exit code is zero", () => {
+    const script = buildRuntimeImageVerificationCommand(
+      "docker compose",
+      "/opt/app/compose.yaml",
+      { migrate: "ghcr.io/acme/api:abc123" },
+      2
+    );
+
+    expect(script).toContain("[verify] migrate: completed one-shot $gc_actual (exit 0)");
+    expect(script).toContain("[verify] Runtime verification found service image or container-state mismatch");
+    expect(script).toContain("[failure] phase=verify service=migrate error=no container exists for service");
     expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
   });
 
@@ -46,6 +64,7 @@ describe("Compose redeploy image verification", () => {
     expect(script).toContain("Compose created no containers");
     expect(script).toContain("docker logs --tail 60");
     expect(script).toContain("[verify] Runtime image verification failed");
+    expect(script).toContain("[verify] Checking each Compose service against the effective image and runtime state");
     expect(script).toContain("[verify] api: expected ghcr.io/acme/api:abc123");
     expect(script.indexOf("[verify]")).toBeLessThan(script.indexOf("__GC_REDEPLOY_STATUS__=success"));
     expect(script).toContain("docker image prune -f >/dev/null 2>&1 || true");
@@ -116,5 +135,20 @@ describe("Compose redeploy image verification", () => {
     expect(parsed.status).toBe("failed");
     expect(parsed.error).toMatch(/run evidence is incomplete/i);
     expect(parsed.error).not.toContain("Images resolved");
+  });
+
+  it("explains legacy blank running-image verification failures by service", () => {
+    const parsed = parseDetachedComposeRedeployLog([
+      "[verify] Checking running images against the effective Compose configuration",
+      "[verify] api: expected ghcr.io/acme/api:abc123",
+      "[verify] api: running ghcr.io/acme/api:abc123",
+      "[verify] migrate: expected ghcr.io/acme/api:abc123",
+      "[verify] migrate: running",
+      "[verify] Running image does not match the effective Compose configuration",
+      "[verify] Runtime image verification failed (exit 42)",
+      "__GC_REDEPLOY_STATUS__=failed:42",
+    ].join("\n"));
+
+    expect(parsed.error).toBe("[failure] phase=verify service=migrate error=no running image was observed after Compose recreation; migrate: expected ghcr.io/acme/api:abc123");
   });
 });
