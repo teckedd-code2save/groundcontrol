@@ -12,6 +12,7 @@ export type DeploymentStage = {
   label: string;
   detail: string;
   status: DeploymentStageStatus;
+  evidenceLines?: string[];
 };
 
 export type DeploymentRunProgress = {
@@ -44,6 +45,33 @@ const STAGE_DETAILS: Record<DeploymentStageId, string> = {
   recreate: "Recreate the declared services, dependencies, networks, and one-shot jobs.",
   verify: "Compare running images with the resolved model and verify the public result.",
 };
+
+const STAGE_EVIDENCE_PATTERNS: Record<DeploymentStageId, RegExp[]> = {
+  environment: [/\[(prepare|target|configuration|env)\]/i],
+  compose: [/\[(compose|validate)\]/i, /\bcompose\b.*\b(valid|config|yaml|services)\b/i],
+  pull: [/\[(registry|pull|image)\]/i, /\b(access denied|manifest unknown|pull)\b/i],
+  recreate: [/\[(deploy|runtime|container)\]/i, /\b(recreate|created|started|exited|unhealthy)\b/i],
+  verify: [/\[(verify|health|probe)\]/i, /\b(runtime image|public result|health|http|does not match)\b/i],
+};
+
+const STAGE_FAILURE_PHASES: Record<DeploymentStageId, string[]> = {
+  environment: ["environment", "configuration", "env", "prepare", "target"],
+  compose: ["compose", "validate", "validation"],
+  pull: ["pull", "registry", "image"],
+  recreate: ["recreate", "deploy", "runtime"],
+  verify: ["verify", "health", "probe"],
+};
+
+function stageEvidence(id: DeploymentStageId, lines: string[], failure?: string | null) {
+  const all = [...lines, failure || ""].map((line) => line.trim()).filter(Boolean);
+  const patterns = STAGE_EVIDENCE_PATTERNS[id];
+  const matched = all.filter((line) => {
+    const phase = line.match(/^\[failure\]\s+phase=([a-z_-]+)/i)?.[1]?.toLowerCase();
+    if (phase) return STAGE_FAILURE_PHASES[id].includes(phase);
+    return patterns.some((pattern) => pattern.test(line));
+  });
+  return [...new Set(matched)].slice(-12);
+}
 
 export function stripOperatorMarkdown(value: string): string {
   return value
@@ -197,15 +225,17 @@ export function deploymentRunProgress(
   }
 
   const stages = order.map((id, index): DeploymentStage => {
-    if (completed[id]) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "complete" };
-    if (id === failedStage) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "failed" };
-    if (id === activeStage) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "running" };
+    const evidenceForStage = stageEvidence(id, lines, failure);
+    if (completed[id]) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "complete", evidenceLines: evidenceForStage };
+    if (id === failedStage) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "failed", evidenceLines: evidenceForStage };
+    if (id === activeStage) return { id, label: STAGE_LABELS[id], detail: STAGE_DETAILS[id], status: "running", evidenceLines: evidenceForStage };
     const terminalIndex = failedStage ? order.indexOf(failedStage) : -1;
     return {
       id,
       label: STAGE_LABELS[id],
       detail: STAGE_DETAILS[id],
       status: status === "failed" && index > terminalIndex ? "not-reached" : "pending",
+      evidenceLines: evidenceForStage,
     };
   });
   const completedCount = stages.filter((stage) => stage.status === "complete").length;

@@ -234,14 +234,14 @@ export function inspectServicePath({
         ? "The reverse proxy is forwarding to a failing application."
         : path.containerName
           ? `The route and ${path.containerName} do not meet on a reachable port.`
-          : "No running deployment runtime is linked to the configured upstream.",
+          : "No service is linked to, or publishing, the port expected by the proxy target.",
       confidence: upstreamApplicationFailure ? 0.96 : 0.94,
       evidence,
       nextAction: {
         title: upstreamApplicationFailure ? "Inspect the failing service" : "Restore the upstream link",
         detail: upstreamApplicationFailure
           ? "Correlate the service logs, health, environment and latest release before preparing a reversible application fix."
-          : "Identify the intended Compose service and published port, then either restore that runtime or correct the proxy route and verify externally.",
+          : "Compare the intended Compose service, published port, Docker network, and proxy target; then correct the mismatched link and verify externally.",
         mode: "guided",
       },
       deepInvestigation: {

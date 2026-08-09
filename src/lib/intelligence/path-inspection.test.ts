@@ -111,6 +111,24 @@ describe("deterministic public-path inspection", () => {
     expect(result.deepInvestigation?.daytonaEligible).toBe(true);
   });
 
+  it("describes missing proxy links without claiming the whole deployment is stopped", () => {
+    const result = inspectServicePath({
+      path: path(),
+      externalProbe: external(502),
+      internalProbe: {
+        target: "http://127.0.0.1:14080/",
+        ok: false,
+        error: "connection refused",
+      },
+      observation: observation(),
+    });
+
+    expect(result.failureBoundary).toBe("proxy_to_upstream");
+    expect(result.cause).toContain("No service is linked to, or publishing");
+    expect(result.cause).not.toContain("No running deployment runtime");
+    expect(result.nextAction?.detail).toContain("published port");
+  });
+
   it("does not recommend mutation for a healthy public path", () => {
     const result = inspectServicePath({
       path: path({ healthy: true, issues: [] }),

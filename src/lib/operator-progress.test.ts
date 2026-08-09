@@ -133,4 +133,23 @@ describe("operator progress", () => {
     expect(progress.evidence).toMatch(/terminal failure evidence was not recorded/i);
     expect(progress.evidence).not.toContain("[pull] Images resolved");
   });
+
+  it("keeps concrete evidence on the failed verification stage", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[configuration] Deployment configuration ready",
+      "[compose] Effective Compose configuration valid (/opt/agent-flow/RentAWeekend/docker-compose.yml)",
+      "[pull] Images resolved",
+      "[deploy] Docker Compose recreation completed",
+      "[verify] Runtime image verification failed (exit 42)",
+      "[failure] phase=verify error=web image does not match resolved compose image",
+    ]);
+    const verify = progress.stages.find((stage) => stage.id === "verify");
+
+    expect(progress.failedStage).toBe("verify");
+    expect(verify?.status).toBe("failed");
+    expect(verify?.evidenceLines).toEqual([
+      "[verify] Runtime image verification failed (exit 42)",
+      "[failure] phase=verify error=web image does not match resolved compose image",
+    ]);
+  });
 });

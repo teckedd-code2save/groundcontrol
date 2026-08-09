@@ -86,9 +86,11 @@ export async function POST(req: NextRequest) {
     const runtimeMissing = runtime.status !== "present";
     return NextResponse.json({
       status: "resolved", domain: incidentDomain || deployment.slug,
-      problem: runtimeMissing ? `The proxy route for ${incidentDomain || deployment.slug} points to ${route?.proxy || "an unavailable upstream"}, but deployment ${deployment.slug} has no running linked runtime.` : `Deployment ${deployment.slug} is linked, but its route-to-runtime path is still failing.`,
+      problem: runtimeMissing ? `The proxy route for ${incidentDomain || deployment.slug} points to ${route?.proxy || "an unavailable upstream"}, but deployment ${deployment.slug} has no running linked runtime.` : `Deployment ${deployment.slug} has runtime evidence, but the proxy upstream ${route?.proxy || "target"} is not proving a healthy public path.`,
       target: { deploymentSlug: deployment.slug, deploymentName: deployment.name, sourcePath: execution.sourcePath || project?.path || null, composePath: execution.composePath || project?.composePath || null, composeProject: execution.composeProject || runtime.composeProject || null, composeServices: services.length > 0 ? services : project?.services.map((service) => service.name) || [], containers: runtimeNames, runtimeStatus: runtime.status, proxyRoute: route?.proxy || null, repository: evidence.repoUrl, deployedCommit: latestRelease?.commitSha || evidence.sourceCommit || null },
-      fix: runtimeMissing ? "Restore this deployment from its exact Compose source. No code sandbox is justified for a missing runtime." : "Inspect only this deployment's failing containers and route before proposing a repository change.",
+      fix: runtimeMissing
+        ? "Restore this deployment from its exact Compose source. No code sandbox is justified for a missing runtime."
+        : "Compare the reverse-proxy upstream with the actual Compose services, published ports, Docker networks, and health paths before proposing a restart or source change.",
       action: runtimeMissing && project ? { kind: "compose_up", projectSlug: deployment.legacyProject?.slug || project.slug, title: `Start ${deployment.name}`, risk: "medium", approvalRequired: true, rollback: `docker compose down for ${deployment.legacyProject?.slug || project.slug}` } : null,
       uncertainty: [
         !project ? "The enrolled deployment has no currently discovered Compose source." : null,

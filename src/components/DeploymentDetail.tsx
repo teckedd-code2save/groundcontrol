@@ -875,6 +875,16 @@ function DeploymentProgress({
             }`}>
               {stage.status}
             </p>
+            {stage.evidenceLines && stage.evidenceLines.length > 0 && (
+              <details className="mt-3">
+                <summary className="cursor-pointer list-none text-[10px] text-muted transition-colors hover:text-foreground">
+                  Evidence
+                </summary>
+                <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-words rounded bg-background/55 p-2 font-mono text-[9px] leading-relaxed text-muted">
+                  {stage.evidenceLines.join("\n")}
+                </pre>
+              </details>
+            )}
             {stage.status === "running" && <div className="absolute inset-x-0 bottom-0 h-0.5 bg-accent motion-safe:animate-pulse" />}
           </div>
         ))}

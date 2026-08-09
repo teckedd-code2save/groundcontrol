@@ -109,6 +109,29 @@ type AgentConfirmation = {
   description: string;
 };
 
+const metricChip = "rounded-lg bg-card px-3 py-2 text-xs shadow-sm shadow-black/5";
+const softPanel = "rounded-xl bg-card shadow-sm shadow-black/5";
+
+function restartConflictsWithProxyEvidence(path: ServicePath, toolName: string) {
+  if (toolName !== "restart_container") return false;
+  const inspection = path.inspection;
+  return inspection?.failureBoundary === "proxy_to_upstream"
+    && inspection.evidence.some((item) => item.id === "runtime" && item.status === "verified");
+}
+
+function proxyContractMessage(path: ServicePath) {
+  return [
+    "## Problem",
+    `${path.domain} is failing at the reverse-proxy to upstream boundary, not at container lifecycle.`,
+    "",
+    "## Fix",
+    `Inspect and reconcile the proxy upstream ${path.upstream || "target"} against the actual service port/network. Validate and reload the proxy after the correction.`,
+    "",
+    "## Verify",
+    `Re-run the public check for https://${path.domain}/. Do not restart a running container as the primary fix for this evidence.`,
+  ].join("\n");
+}
+
 function publicHostname(value?: string | null): string {
   if (!value) return "";
   try {
@@ -341,6 +364,13 @@ export default function IntelligencePage() {
         composePath: target.composePath,
         repository: target.repository,
         deployedCommit: target.deployedCommit,
+        failureBoundary: path.inspection?.failureBoundary,
+        inspectionSummary: path.inspection?.summary,
+        inspectionCause: path.inspection?.cause,
+        proxyUpstream: path.upstream || target.proxyRoute,
+        runtimeStatus: target.runtimeStatus,
+        containers: target.containers,
+        composeServices: target.composeServices,
       },
     };
     if (confirmedTool) body.confirmedTool = confirmedTool;
@@ -380,8 +410,14 @@ export default function IntelligencePage() {
           setAgentText(answer);
         }
         if (event.type === "confirm") {
+          const toolName = String(event.name || "");
+          if (restartConflictsWithProxyEvidence(path, toolName)) {
+            setAgentConfirm(null);
+            setAgentText(proxyContractMessage(path));
+            return;
+          }
           setAgentConfirm({
-            name: String(event.name || ""),
+            name: toolName,
             args: (event.args || {}) as Record<string, unknown>,
             description: String(event.description || "Approval required"),
           });
@@ -484,11 +520,10 @@ export default function IntelligencePage() {
   return (
     <div className="gc-page gc-page--wide">
       <PageHeader
-        eyebrow={selectedPath ? "Intelligence · Active incident" : "Intelligence"}
-        title={selectedPath ? selectedPath.domain : "Recover a broken deployment"}
+        title={selectedPath ? selectedPath.domain : "Recover deployments"}
         description={selectedPath
-          ? "GroundControl keeps this deployment in focus while it collects evidence, prepares the safest repair, and verifies the customer-facing result."
-          : "GroundControl scans the host automatically, selects the highest-impact failure, and starts a locked recovery run."}
+          ? "A focused recovery workspace for this endpoint, its runtime path, and the next safe action."
+          : "Scan the host, isolate public-route failures, and keep recovery tied to the exact deployment."}
         actions={(
           <Button
             variant="secondary"
@@ -504,7 +539,7 @@ export default function IntelligencePage() {
       {error && <Notice className="mt-5" tone="danger" title="Check failed">{error}</Notice>}
 
       {incidentPaths.length === 0 && loading ? (
-        <section className="mt-6 border border-border bg-card px-5 py-8" aria-live="polite">
+        <section className={`${softPanel} mt-6 px-5 py-8`} aria-live="polite">
           <div className="flex items-start gap-4">
             <RefreshCw size={18} className="mt-0.5 shrink-0 animate-spin text-accent" />
             <div>
@@ -528,28 +563,28 @@ export default function IntelligencePage() {
         />
       ) : incidentPaths.length > 0 ? (
         <>
-          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-border py-3 text-xs">
-            <span><strong className="text-foreground">{incidentPaths.length}</strong> incidents</span>
-            <span className="text-error"><strong>{failed}</strong> failing</span>
-            <span className="text-success"><strong>{healthy}</strong> healthy</span>
-            <button type="button" onClick={() => setShowHealthy((value) => !value)} className="text-muted hover:text-foreground">
+          <div className="mt-5 flex flex-wrap items-center gap-2 text-xs">
+            <span className={metricChip}><strong className="text-foreground">{incidentPaths.length}</strong> incidents</span>
+            <span className={`${metricChip} text-error`}><strong>{failed}</strong> failing</span>
+            <span className={`${metricChip} text-success`}><strong>{healthy}</strong> healthy</span>
+            <button type="button" onClick={() => setShowHealthy((value) => !value)} className={`${metricChip} text-muted transition-colors hover:text-foreground`}>
               {showHealthy ? "Hide healthy" : `View healthy (${healthy})`}
             </button>
-            <span className="text-muted">Checked {formatTime(graph?.reconciledAt)}</span>
-            <span className="ml-auto">
+            <span className={`${metricChip} text-muted`}>Checked {formatTime(graph?.reconciledAt)}</span>
+            <span className="ml-auto flex items-center">
               <StatusBadge tone={hostEvidence?.ready ? "success" : "warning"}>
-                {hostEvidence?.ready ? "Host evidence ready" : "Host evidence unavailable"}
+                {hostEvidence?.ready ? "Evidence ready" : "Evidence unavailable"}
               </StatusBadge>
             </span>
           </div>
 
-          <div className="mt-5 grid min-w-0 gap-5 lg:grid-cols-[210px_minmax(0,1fr)]">
-            <aside className="sticky top-16 z-20 min-w-0 border-y border-border bg-card/95 backdrop-blur lg:top-20 lg:self-start lg:border">
-              <div className="hidden border-b border-border px-4 py-3 lg:block">
+          <div className="mt-5 grid min-w-0 gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+            <aside className={`${softPanel} sticky top-16 z-20 min-w-0 bg-card/95 backdrop-blur lg:top-20 lg:self-start`}>
+              <div className="hidden px-4 py-3 lg:block">
                 <p className="text-xs font-semibold">Incidents</p>
-                <p className="mt-1 text-[10px] text-muted">Customer impact first</p>
+                <p className="mt-1 text-[10px] text-muted">Customer-facing checks first</p>
               </div>
-              <div className="flex gap-1 overflow-x-auto p-2 lg:block lg:max-h-[620px] lg:divide-y lg:divide-border lg:overflow-y-auto lg:p-0">
+              <div className="flex gap-2 overflow-x-auto p-2 lg:block lg:max-h-[620px] lg:space-y-1 lg:overflow-y-auto">
                 {[...visiblePaths].sort(pathPriority).map((path) => (
                   <button
                     key={path.domain}
@@ -558,14 +593,16 @@ export default function IntelligencePage() {
                       if (selectedPath?.domain === path.domain && (investigation || investigating)) return;
                       focusIncident(path);
                     }}
-                    className={`min-w-[180px] shrink-0 px-3 py-2.5 text-left transition-colors lg:w-full lg:min-w-0 lg:px-4 lg:py-3 ${
-                      selectedPath?.domain === path.domain ? "bg-background text-foreground" : "opacity-60 hover:bg-white/[0.025] hover:opacity-100"
+                    className={`min-w-[190px] shrink-0 rounded-lg px-3 py-2.5 text-left transition-colors lg:w-full lg:min-w-0 ${
+                      selectedPath?.domain === path.domain ? "bg-background text-foreground" : "opacity-65 hover:bg-background/55 hover:opacity-100"
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <PathIcon status={path.verification.status} />
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium">{path.domain}</span>
-                      <span className="font-mono text-[9px] text-muted">{shortStatus(path.verification)}</span>
+                    <div className="flex items-start gap-2">
+                      <PathIcon status={path.verification.status} className="mt-0.5" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">{path.domain}</span>
+                        <span className="mt-0.5 block truncate text-[10px] text-muted">{shortStatus(path.verification)}</span>
+                      </span>
                     </div>
                   </button>
                 ))}
@@ -654,13 +691,13 @@ function ResolutionSurface({
   const isFailed = path.verification.status === "failed";
 
   return (
-    <section className="border border-border bg-card">
-      <div className={`border-b px-5 py-5 sm:px-6 ${isFailed ? "border-error/35 bg-error/[0.035]" : "border-border"}`}>
+    <section className={softPanel}>
+      <div className={`px-5 py-5 sm:px-6 ${isFailed ? "bg-error/[0.035]" : ""}`}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge tone={isHealthy ? "success" : isFailed ? "danger" : "warning"}>
-                {isHealthy ? "Healthy" : isFailed ? "Down" : "Needs check"}
+                {isHealthy ? "Healthy" : isFailed ? "Failing" : "Needs check"}
               </StatusBadge>
               <span className="font-mono text-[10px] text-muted">{probeResult(path.verification)}</span>
             </div>
@@ -679,16 +716,16 @@ function ResolutionSurface({
 
       {isFailed ? (
         <div className="p-5 sm:p-6">
-          <div className="grid gap-px border border-border bg-border md:grid-cols-2">
-            <div className="bg-card p-4">
-              <p className="gc-eyebrow">Problem</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-lg bg-background/55 p-4">
+              <p className="text-xs font-medium text-muted">Problem</p>
               <p className="mt-2 text-sm font-semibold">{inspection?.cause || "The public endpoint is failing."}</p>
               <p className="mt-2 font-mono text-[10px] text-muted">
                 {path.upstream || "No upstream"} · {humanize(inspection?.failureBoundary || "unresolved")}
               </p>
             </div>
-            <div className="bg-card p-4">
-              <p className="gc-eyebrow">Fix</p>
+            <div className="rounded-lg bg-background/55 p-4">
+              <p className="text-xs font-medium text-muted">Fix</p>
               <p className="mt-2 text-sm font-semibold">{inspection?.nextAction?.title || "Investigate the live host"}</p>
               <p className="mt-2 text-[11px] leading-relaxed text-muted">
                 {inspection?.nextAction?.detail || "GroundControl will identify the runtime and prepare the smallest safe repair."}
@@ -696,7 +733,7 @@ function ResolutionSurface({
             </div>
           </div>
 
-          <div className="mt-4 flex flex-col gap-3 border border-border bg-background/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-4 flex flex-col gap-3 rounded-lg bg-background/45 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-semibold">Run safe recovery</p>
               <p className="mt-1 text-[11px] text-muted">
@@ -709,7 +746,7 @@ function ResolutionSurface({
           </div>
 
           {investigating && !investigation && (
-            <div className="mt-4 border border-border px-4 py-3" aria-live="polite">
+            <div className="mt-4 rounded-lg bg-background/55 px-4 py-3" aria-live="polite">
               <div className="flex items-center justify-between gap-3 text-[10px]">
                 <span className="font-mono text-accent">Locking deployment and collecting evidence</span>
                 <span className="font-mono text-muted">{formatElapsed(diagnosisElapsed)}</span>
@@ -744,12 +781,12 @@ function ResolutionSurface({
             </>
           )}
 
-          <details className="mt-4 border border-border">
+          <details className="mt-4 rounded-lg bg-background/45">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-medium">
               Evidence
               <ChevronDown size={14} className="text-muted" />
             </summary>
-            <div className="divide-y divide-border border-t border-border">
+            <div className="divide-y divide-border/60">
               {(inspection?.evidence || []).map((item) => (
                 <div key={item.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_160px_minmax(0,1fr)] sm:items-start">
                   <span className={`font-mono text-[9px] ${item.status === "failed" ? "text-error" : item.status === "verified" ? "text-success" : "text-accent"}`}>
@@ -786,22 +823,30 @@ function ResolutionSurface({
 function IncidentResult({ investigation }: { investigation: IncidentInvestigation }) {
   const target = investigation.target;
   return (
-    <div className="mt-4 border border-border">
-      <div className="grid gap-px bg-border md:grid-cols-3">
+    <div className="mt-4 rounded-lg bg-background/45">
+      <div className="grid gap-3 p-3 md:grid-cols-3">
         {(["Problem", "Fix", "Verify"] as const).map((label) => (
-          <div key={label} className="bg-card p-4">
-            <p className="gc-eyebrow">{label}</p>
+          <div key={label} className="rounded-lg bg-card p-4">
+            <p className="text-xs font-medium text-muted">{label}</p>
             <p className="mt-2 text-xs leading-relaxed">{investigation[label.toLowerCase() as "problem" | "fix" | "verify"]}</p>
           </div>
         ))}
       </div>
       {target && (
-        <div className="border-t border-border p-4">
+        <div className="px-4 pb-4">
           <div className="flex items-center justify-between gap-3">
             <div><p className="text-xs font-semibold">{target.deploymentName}</p><p className="mt-1 font-mono text-[10px] text-muted">{target.deploymentSlug}</p></div>
             <a href={`/deployments/${target.deploymentSlug}?tab=deploy`} className="gc-button">Open deploy run</a>
           </div>
-          <p className="mt-3 break-all font-mono text-[10px] text-muted">{target.composePath || target.sourcePath || "Compose source not discovered"} · {target.composeServices.join(", ") || "No service resolved"} · {target.proxyRoute || "No route resolved"}</p>
+          <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-muted">
+            <span className="rounded bg-card px-2 py-1">{target.composeServices.join(", ") || "No service resolved"}</span>
+            <span className="rounded bg-card px-2 py-1">{target.proxyRoute || "No route resolved"}</span>
+            <span className="rounded bg-card px-2 py-1">{target.composeProject || "Compose project unknown"}</span>
+          </div>
+          <details className="mt-3">
+            <summary className="cursor-pointer list-none text-[10px] text-muted hover:text-foreground">Source and runtime details</summary>
+            <p className="mt-2 break-all font-mono text-[10px] text-muted">{target.composePath || target.sourcePath || "Compose source not discovered"}</p>
+          </details>
           {target.repository && (
             <p className="mt-2 break-all font-mono text-[10px] text-muted">
               {target.repository}{target.deployedCommit ? ` · ${target.deployedCommit.slice(0, 12)}` : " · deployed revision not yet resolved"}
@@ -810,7 +855,7 @@ function IncidentResult({ investigation }: { investigation: IncidentInvestigatio
           {investigation.action && <Notice className="mt-4" tone="warning" title={`Approval required · ${investigation.action.title}`}>Exact target: {investigation.action.projectSlug}. Risk: {investigation.action.risk}. Rollback: {investigation.action.rollback}.</Notice>}
         </div>
       )}
-      {investigation.uncertainty && investigation.uncertainty.length > 0 && <div className="border-t border-border p-3 text-[10px] text-muted">Uncertainty: {investigation.uncertainty.join(" ")}</div>}
+      {investigation.uncertainty && investigation.uncertainty.length > 0 && <div className="px-4 pb-4 text-[10px] text-muted">Uncertainty: {investigation.uncertainty.join(" ")}</div>}
     </div>
   );
 }
@@ -927,10 +972,10 @@ function IncidentAgent({
         ? "Action ready"
         : "Decision ready";
   return (
-    <section className="mt-4 border border-border bg-card">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <section className={`${softPanel} mt-4`}>
+      <div className="flex items-center justify-between px-4 py-3">
         <div>
-          <p className="gc-eyebrow">Recovery run</p>
+          <p className="text-xs font-medium text-muted">Recovery run</p>
           <p className="mt-1 text-xs font-medium">{progressLabel}</p>
         </div>
         <StatusBadge tone={running || confirmation || missingTypedAction || incompleteInvestigation ? "warning" : "neutral"}>
@@ -946,7 +991,7 @@ function IncidentAgent({
         </StatusBadge>
       </div>
       {(running || confirmation) && (
-        <div className="border-b border-border px-4 py-3" aria-live="polite">
+        <div className="px-4 py-3" aria-live="polite">
           <div className="flex items-center justify-between gap-3 text-[10px]">
             <span className="font-mono text-accent">{progressLabel}</span>
             <span className="font-mono text-muted">{formatElapsed(elapsed)}</span>
@@ -957,7 +1002,7 @@ function IncidentAgent({
         </div>
       )}
       {outcome && !running && (
-        <div className={`border-b border-border px-4 py-4 ${
+        <div className={`px-4 py-4 ${
           outcome.kind === "verified" ? "bg-success/[0.045]" : "bg-background/40"
         }`}>
           <div className="flex items-start gap-3">
@@ -974,7 +1019,7 @@ function IncidentAgent({
         </div>
       )}
       {tools.length > 0 && (
-        <div className="divide-y divide-border border-b border-border">
+        <div className="divide-y divide-border/60">
           {tools.map((tool, index) => (
             <details key={`${tool.name}-${index}`} className="px-4 py-3">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
@@ -989,9 +1034,9 @@ function IncidentAgent({
         </div>
       )}
       {sections.length > 0 && (
-        <div className="grid gap-px bg-border sm:grid-cols-2">
+        <div className="grid gap-3 p-3 sm:grid-cols-2">
           {sections.map((section, index) => (
-            <article key={`${section.title}-${index}`} className="bg-card px-4 py-4">
+            <article key={`${section.title}-${index}`} className="rounded-lg bg-background/50 px-4 py-4">
               <h3 className="text-xs font-semibold text-foreground">{section.title}</h3>
               <div className="mt-2 space-y-2 text-[11px] leading-relaxed text-muted">
                 {section.paragraphs.map((paragraph, paragraphIndex) => <p key={paragraphIndex}>{paragraph}</p>)}
@@ -1043,10 +1088,11 @@ function IncidentAgent({
   );
 }
 
-function PathIcon({ status }: { status: Verification["status"] }) {
-  if (status === "passed") return <CheckCircle2 size={13} className="shrink-0 text-success" />;
-  if (status === "failed") return <XCircle size={13} className="shrink-0 text-error" />;
-  return <Activity size={13} className="shrink-0 text-warning" />;
+function PathIcon({ status, className = "" }: { status: Verification["status"]; className?: string }) {
+  const iconClass = `shrink-0 ${className}`;
+  if (status === "passed") return <CheckCircle2 size={13} className={`${iconClass} text-success`} />;
+  if (status === "failed") return <XCircle size={13} className={`${iconClass} text-error`} />;
+  return <Activity size={13} className={`${iconClass} text-warning`} />;
 }
 
 function pathPriority(a: ServicePath, b: ServicePath) {
@@ -1056,9 +1102,9 @@ function pathPriority(a: ServicePath, b: ServicePath) {
 
 function shortStatus(verification: Verification) {
   if (verification.statusCode) return String(verification.statusCode);
-  if (verification.status === "passed") return "OK";
-  if (verification.status === "failed") return "DOWN";
-  return "CHECK";
+  if (verification.status === "passed") return "Healthy";
+  if (verification.status === "failed") return "Failing";
+  return "Check needed";
 }
 
 function probeResult(verification: Verification) {
