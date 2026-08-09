@@ -82,6 +82,22 @@ jobs:
               fi
               sleep 2
             done
+            docker compose ps web | grep -q healthy
+            LOCAL_ENDPOINT="$(docker compose port web 3000 | head -n 1)"
+            curl -fsS --max-time 10 "http://${LOCAL_ENDPOINT}/api/vps/stats" >/dev/null
+            PUBLIC_URL="${{ vars.GC_PUBLIC_URL }}"
+            PUBLIC_URL="${PUBLIC_URL:-https://groundcontrol.serendepify.com/login}"
+            for i in $(seq 1 12); do
+              if curl -k -fsS --max-time 15 "$PUBLIC_URL" >/dev/null; then
+                echo "Public smoke passed: $PUBLIC_URL"
+                break
+              fi
+              if [ "$i" -eq 12 ]; then
+                echo "Public smoke failed: $PUBLIC_URL" >&2
+                exit 1
+              fi
+              sleep 5
+            done
             docker compose ps
             docker compose logs --tail=80 web
             docker logout ghcr.io

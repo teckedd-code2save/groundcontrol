@@ -572,7 +572,7 @@ export function buildMaterializeEnvBundleCommand(
     "find .groundcontrol/env-backups -maxdepth 1 -type f -name '*.bak' -delete 2>/dev/null || true",
   ];
   if (Object.keys(interpolationValues).length > 0 || options.pruneManagedFiles) {
-    commands.push(...atomicEnvWriteCommands(".env", serializeDotenv(interpolationValues)));
+    commands.push(...atomicMergedEnvWriteCommands(".env", serializeDotenv(interpolationValues)));
   }
 
   const components = Object.keys(componentValues)
@@ -618,6 +618,28 @@ function atomicEnvWriteCommands(path: string, content: string): string[] {
     `chmod 600 ${target}.new`,
     `mv ${target}.new ${target}`,
     `chmod 600 ${target}`,
+  ];
+}
+
+function atomicMergedEnvWriteCommands(path: string, content: string): string[] {
+  const encoded = Buffer.from(content, "utf8").toString("base64");
+  const target = shQuote(path);
+  const managed = `${target}.managed.new`;
+  const keys = `${target}.keys.new`;
+  const preserved = `${target}.preserved.new`;
+  return [
+    `printf '%s' ${shQuote(encoded)} | base64 -d > ${managed}`,
+    `sed -n 's/^\\([A-Za-z_][A-Za-z0-9_]*\\)=.*/\\1/p' ${managed} > ${keys}`,
+    `if [ -f ${target} ]; then`,
+    `  awk -F= 'FNR==NR { skip[$1]=1; next } /^[A-Za-z_][A-Za-z0-9_]*=/ { if (!($1 in skip)) print; next } { print }' ${keys} ${target} > ${preserved}`,
+    `else`,
+    `  : > ${preserved}`,
+    `fi`,
+    `cat ${managed} >> ${preserved}`,
+    `chmod 600 ${preserved}`,
+    `mv ${preserved} ${target}`,
+    `chmod 600 ${target}`,
+    `rm -f ${managed} ${keys}`,
   ];
 }
 

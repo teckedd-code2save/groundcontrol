@@ -149,6 +149,21 @@ DATABASE_URL=duplicate
     expect(command).not.toContain("postgres://shared");
   });
 
+  it("preserves existing host interpolation keys when materializing managed env", () => {
+    const command = buildMaterializeEnvBundleCommand(
+      "/srv/app",
+      { API_URL: "https://api.example.com" },
+      {}
+    );
+
+    expect(command).toContain("'.env'.managed.new");
+    expect(command).toContain("'.env'.preserved.new");
+    expect(command).toContain("awk -F=");
+    expect(command).toContain("cat '.env'.managed.new >> '.env'.preserved.new");
+    expect(command).not.toContain("mv '.env'.new '.env'");
+    expect(spawnSync("/bin/sh", ["-n"], { input: command, encoding: "utf8" }).status).toBe(0);
+  });
+
   it("allows a component redeploy when unrelated components are incomplete", () => {
     const schema = [
       { key: "PUBLIC_URL", required: true },
@@ -201,7 +216,8 @@ DATABASE_URL=duplicate
     expect(command).toContain("rm -f '.groundcontrol/compose.env.override.yml' '.groundcontrol/compose.env.files'");
     expect(command).not.toContain("find '/run/groundcontrol/environments/");
     expect(command).not.toContain("rm -f .env");
-    expect(command).toContain("> '.env'.new");
+    expect(command).toContain("> '.env'.managed.new");
+    expect(command).toContain("mv '.env'.preserved.new '.env'");
   });
 
   it("normalizes operator environment names independently from provider slugs", () => {

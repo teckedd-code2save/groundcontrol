@@ -129,6 +129,46 @@ describe("deterministic public-path inspection", () => {
     expect(result.nextAction?.detail).toContain("published port");
   });
 
+  it("detects proxy-to-runtime port drift when a related service is published on another port", () => {
+    const result = inspectServicePath({
+      path: path({
+        domain: "rentmyweekend.serendepify.com",
+        upstream: "127.0.0.1:14080",
+      }),
+      externalProbe: external(502),
+      internalProbe: {
+        target: "http://127.0.0.1:14080/",
+        ok: false,
+        error: "connection refused",
+      },
+      observation: observation({
+        proxy: {
+          type: "caddy",
+          configContent: "rentmyweekend.serendepify.com { reverse_proxy 127.0.0.1:14080 }",
+          fingerprint: "proxy-revision",
+          routes: [{ domain: "rentmyweekend.serendepify.com", upstream: "127.0.0.1:14080" }],
+          execution: { plane: "host" },
+        },
+        containers: [{
+          name: "rentaweekend-web-1",
+          image: "ghcr.io/teckedd-code2save/rentaweekend-web:sha",
+          state: "running",
+          status: "Up 10 minutes",
+          composeProject: "rentaweekend",
+          composeService: "web",
+          ports: [{ host: 3000, container: 80, protocol: "tcp" }],
+        }],
+      }),
+    });
+
+    expect(result.failureBoundary).toBe("proxy_to_upstream");
+    expect(result.summary).toContain("14080");
+    expect(result.summary).toContain("3000");
+    expect(result.cause).toContain("route-to-runtime port contract drifted");
+    expect(result.nextAction?.title).toBe("Reconcile the route port");
+    expect(result.deepInvestigation?.daytonaEligible).toBe(false);
+  });
+
   it("does not recommend mutation for a healthy public path", () => {
     const result = inspectServicePath({
       path: path({ healthy: true, issues: [] }),

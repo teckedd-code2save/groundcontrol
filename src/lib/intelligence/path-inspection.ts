@@ -40,6 +40,43 @@ function isLoopback(host?: string) {
   return Boolean(host && ["127.0.0.1", "localhost", "::1", "0.0.0.0"].includes(host));
 }
 
+function compactIdentity(value?: string) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function identityLooksRelated(domain: string, candidate: string) {
+  const left = compactIdentity(domain.replace(/\..*$/, ""));
+  const right = compactIdentity(candidate);
+  if (!left || !right) return false;
+  if (left.includes(right) || right.includes(left)) return true;
+  const sharedPrefix = left.match(new RegExp(`^${right.slice(0, Math.min(5, right.length)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  const sharedSuffix = right.length >= 5 && left.endsWith(right.slice(-5));
+  return Boolean(sharedPrefix) || sharedSuffix;
+}
+
+function publishedHostPorts(container: HostObservation["containers"][number]) {
+  return (container.ports || [])
+    .map((port) => port.host)
+    .filter((port): port is number => typeof port === "number");
+}
+
+function likelyPublishedPortCandidate(path: ServicePath, observation: HostObservation, expectedPort?: number) {
+  const candidates = observation.containers
+    .filter((container) => container.state.toLowerCase() === "running")
+    .filter((container) => publishedHostPorts(container).length > 0)
+    .map((container) => {
+      const identities = [container.name, container.composeProject, container.composeService].filter(Boolean) as string[];
+      let score = identities.some((identity) => identityLooksRelated(path.domain, identity)) ? 80 : 0;
+      if (path.serviceId && identities.some((identity) => compactIdentity(identity) === compactIdentity(path.serviceId))) score += 40;
+      if (path.containerName && compactIdentity(container.name) === compactIdentity(path.containerName)) score += 80;
+      if (expectedPort && publishedHostPorts(container).includes(expectedPort)) score = 0;
+      return { container, score };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return candidates[0]?.container;
+}
+
 function externalDetail(probe?: ProbeResult) {
   if (!probe) return "No external check has run.";
   if (probe.statusCode != null) {
@@ -72,6 +109,12 @@ export function inspectServicePath({
   const listener = upstream.port != null
     ? observation.listeners?.find((candidate) => candidate.port === upstream.port)
     : undefined;
+  const portMismatchCandidate = upstream.port != null && isLoopback(upstream.host) && !listener
+    ? likelyPublishedPortCandidate(path, observation, upstream.port)
+    : undefined;
+  const portMismatchCandidatePorts = portMismatchCandidate
+    ? publishedHostPorts(portMismatchCandidate)
+    : [];
   const proxyExecution = observation.proxy?.execution;
   const containerLoopback =
     proxyExecution?.plane === "container" &&
@@ -134,6 +177,16 @@ export function inspectServicePath({
       value: `Port ${upstream.port} closed`,
       detail: "No listening socket was found for the configured host upstream.",
       status: "failed",
+    });
+  }
+
+  if (portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
+    evidence.push({
+      id: "runtime",
+      label: "Published service port",
+      value: `${portMismatchCandidate.name} → ${portMismatchCandidatePorts.join(", ")}`,
+      detail: `A related running container is published on ${portMismatchCandidatePorts.join(", ")}, not on the proxy target ${upstream.port}.`,
+      status: "observed",
     });
   }
 
@@ -222,6 +275,28 @@ export function inspectServicePath({
 
   if (internalProbe && !internalProbe.ok) {
     const upstreamApplicationFailure = internalProbe.statusCode != null && internalProbe.statusCode >= 500;
+    if (!upstreamApplicationFailure && upstream.port != null && portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
+      return {
+        domain: path.domain,
+        observedAt: at,
+        outcome: "failed",
+        failureBoundary: "proxy_to_upstream",
+        summary: `The proxy targets ${upstream.port}, but the related runtime is published on ${portMismatchCandidatePorts.join(", ")}.`,
+        cause: `${path.upstream} is unreachable. ${portMismatchCandidate.name} is running and published on ${portMismatchCandidatePorts.join(", ")}, so the route-to-runtime port contract drifted.`,
+        confidence: 0.97,
+        evidence,
+        nextAction: {
+          title: "Reconcile the route port",
+          detail: "Restore the deployment env or proxy target so the Caddy/Nginx upstream and Compose published port match, then validate the proxy and verify the public URL.",
+          mode: "guided",
+        },
+        deepInvestigation: {
+          geminiEligible: true,
+          daytonaEligible: false,
+          reason: "Live host evidence proves proxy/runtime port drift; a source-code sandbox is unnecessary.",
+        },
+      };
+    }
     return {
       domain: path.domain,
       observedAt: at,
@@ -255,6 +330,28 @@ export function inspectServicePath({
   }
 
   if (upstream.port != null && isLoopback(upstream.host) && !listener) {
+    if (portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
+      return {
+        domain: path.domain,
+        observedAt: at,
+        outcome: "failed",
+        failureBoundary: "proxy_to_upstream",
+        summary: `The proxy targets port ${upstream.port}, but ${portMismatchCandidate.name} is published on ${portMismatchCandidatePorts.join(", ")}.`,
+        cause: "The runtime is up, but the reverse-proxy target and Compose published port no longer match.",
+        confidence: 0.97,
+        evidence,
+        nextAction: {
+          title: "Reconcile the route port",
+          detail: "Compare the deployment env keys that control host ports with the active proxy upstream. Update the missing or drifted port value, recreate only the affected service, then verify the public route.",
+          mode: "guided",
+        },
+        deepInvestigation: {
+          geminiEligible: true,
+          daytonaEligible: false,
+          reason: "The failure is a live routing contract drift, not a repository defect.",
+        },
+      };
+    }
     return {
       domain: path.domain,
       observedAt: at,
