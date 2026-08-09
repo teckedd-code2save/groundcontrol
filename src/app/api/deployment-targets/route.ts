@@ -2,16 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { handleApiError } from "@/lib/errors";
-
-function isTemplateManagedTarget(target: { name: string; configJson: string | null }): boolean {
-  if (target.name.startsWith("Template: ")) return true;
-  try {
-    const config = JSON.parse(target.configJson || "{}") as { managedBy?: unknown };
-    return config.managedBy === "template-deploy";
-  } catch {
-    return false;
-  }
-}
+import { isTemplateManagedTarget } from "@/lib/deployment-target-label";
 
 export async function GET(req: NextRequest) {
   try {

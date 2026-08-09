@@ -19,6 +19,7 @@ import {
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { ModalSurface } from "@/components/ModalSurface";
 import { Notice, Tabs } from "@/components/ui";
+import { deploymentTargetDisplayName } from "@/lib/deployment-target-label";
 import { deploymentRunProgress, type DeploymentStageId } from "@/lib/operator-progress";
 
 type Group = { id: number; name: string; slug: string; description: string };
@@ -31,7 +32,7 @@ type Release = {
   previewUrl?: string | null;
   durationMs?: number | null;
   createdAt: string;
-  target?: { name: string; type: string } | null;
+  target?: { name: string; type: string; configJson?: string | null } | null;
   imageDigest?: string | null;
   previousImageDigest?: string | null;
   changedFields?: string | null;
@@ -682,7 +683,7 @@ export default function DeploymentDetail({
                     <div key={release.id} className="grid gap-3 px-5 py-4 md:grid-cols-[1fr_auto_auto] md:items-center">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium">{release.target?.name || release.target?.type || "Deployment"}</span>
+                          <span className="text-sm font-medium">{deploymentTargetDisplayName(release.target)}</span>
                           <span className="border border-border px-1.5 py-0.5 font-mono text-[9px] text-muted">{release.status}</span>
                         </div>
                         <p className="mt-1 font-mono text-[10px] text-muted">

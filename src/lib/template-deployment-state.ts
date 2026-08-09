@@ -43,7 +43,7 @@ export interface PersistTemplateDeploymentResult {
 
 export type TemplateDeploymentPrismaClient = Pick<PrismaClient, "project" | "deploymentTarget" | "deployment">;
 
-function isTemplateManagedTargetConfig(value: string | null | undefined): boolean {
+export function isTemplateManagedTargetConfig(value: string | null | undefined): boolean {
   try {
     const parsed = JSON.parse(value || "{}") as { managedBy?: unknown };
     return parsed.managedBy === "template-deploy";
@@ -139,7 +139,7 @@ export async function persistTemplateDeployment(
   };
 }
 
-async function resolveTemplateDeploymentTarget(
+export async function resolveTemplateDeploymentTarget(
   client: TemplateDeploymentPrismaClient,
   vpsConfigId: number | null,
   targetType: "compose" | "static" = "compose"

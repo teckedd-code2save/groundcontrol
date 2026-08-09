@@ -12,7 +12,6 @@ import {
   parseEnvSchema,
   publicProfile,
   removeEnvSchemaEntries,
-  resolveDeploymentEnv,
   setLocalEnvValues,
   upsertEnvProfileForProject,
   type EnvSchemaEntry,
@@ -81,25 +80,11 @@ export async function GET(req: NextRequest) {
       getProfileValuesByComponent(profile.id),
       listDeploymentEnvironments(project.id),
     ]);
-    let values = storedValues;
-    let componentValues = storedComponentValues;
-    let providerError: string | null = null;
-    if (profile.providerType === "infisical") {
-      try {
-        const resolved = await resolveDeploymentEnv(project, profile.slug);
-        if (resolved) {
-          values = resolved.values;
-          componentValues = resolved.componentValues;
-        }
-      } catch (error) {
-        providerError = error instanceof Error ? error.message : "Infisical could not be reached";
-      }
-    }
     return NextResponse.json({
-      profile: profileResponse(profile, values, componentValues),
+      profile: profileResponse(profile, storedValues, storedComponentValues),
       environments: environments.map(publicEnvironment),
-      components: listComponents(project.dockerCompose, componentValues, parseEnvJson(profile.schemaJson)),
-      providerError,
+      components: listComponents(project.dockerCompose, storedComponentValues, parseEnvJson(profile.schemaJson)),
+      providerError: null,
     });
   } catch (err) {
     return handleApiError(err);

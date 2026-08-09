@@ -24,6 +24,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { applyEnvToDeployment, MissingDeploymentEnvError } from "@/lib/env-management";
 import { reconcileManagedEnvironmentForRedeploy } from "@/lib/managed-environment-redeploy";
+import { resolveTemplateDeploymentTarget } from "@/lib/template-deployment-state";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { validateSafePath } from "@/lib/host-safety";
@@ -504,12 +505,15 @@ export async function POST(req: NextRequest) {
     }).catch(() => undefined);
 
     if (project) {
+      const releaseTarget = await resolveTemplateDeploymentTarget(
+        prisma,
+        vps?.id && vps.id > 0 ? vps.id : null,
+        "compose"
+      );
       await prisma.deployment.create({
         data: {
           projectId: project.id,
-          targetId: (await prisma.deploymentTarget.findFirst({
-            where: { type: { in: ["compose", "docker-compose"] } },
-          }))?.id ?? 1,
+          targetId: releaseTarget.id,
           status: detached ? "deploying" : result.code === 0 ? "success" : "failed",
           imageTag: Object.values(expectedImages)[0] || `${projectSlug}:latest`,
           imageDigest,

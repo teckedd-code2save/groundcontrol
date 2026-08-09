@@ -166,15 +166,25 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onR
       return;
     }
     let active = true;
-    fetch(`/api/env/providers/catalog?providerAccountId=${profile.providerAccountId}`, { cache: "no-store" })
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    fetch(`/api/env/providers/catalog?providerAccountId=${profile.providerAccountId}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
       .then(readJson)
       .then((data) => {
         if (active) setInfisicalProjects(Array.isArray(data.projects) ? data.projects : []);
       })
       .catch(() => {
         if (active) setInfisicalProjects([]);
-      });
-    return () => { active = false; };
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
   }, [profile?.providerAccountId, profile?.providerType]);
 
   const selectedSavedValues = useMemo(() => selectedComponent
