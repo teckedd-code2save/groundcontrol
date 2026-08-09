@@ -47,6 +47,15 @@ function normalizeComponent(value: unknown): string {
   return component;
 }
 
+async function resolveReleaseDeploymentId(projectId: number, deploymentId: number): Promise<number | undefined> {
+  if (!deploymentId) return undefined;
+  const release = await prisma.deployment.findFirst({
+    where: { id: deploymentId, projectId },
+    select: { id: true },
+  });
+  return release?.id;
+}
+
 export async function GET(req: NextRequest) {
   try {
     requireAuth(req);
@@ -65,6 +74,7 @@ export async function GET(req: NextRequest) {
     if (!project) {
       return NextResponse.json({ error: "projectId or deploymentId is required" }, { status: 400 });
     }
+    const releaseDeploymentId = await resolveReleaseDeploymentId(project.id, deploymentId);
 
     const profile = environmentSlug
       ? await prisma.deploymentEnvProfile.findFirst({
@@ -72,7 +82,7 @@ export async function GET(req: NextRequest) {
         })
       : await upsertEnvProfileForProject({
           projectId: project.id,
-          deploymentId: deploymentId || undefined,
+          deploymentId: releaseDeploymentId,
         });
     if (!profile) return NextResponse.json({ error: "Deployment environment not found" }, { status: 404 });
     const [storedValues, storedComponentValues, environments] = await Promise.all([
@@ -99,6 +109,7 @@ export async function POST(req: NextRequest) {
     if (!projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) return NextResponse.json({ error: "project not found" }, { status: 404 });
+    const releaseDeploymentId = await resolveReleaseDeploymentId(projectId, Number(body.deploymentId || 0));
 
     if (body.action === "create-environment") {
       const name = String(body.name || "").trim();
@@ -116,7 +127,7 @@ export async function POST(req: NextRequest) {
           });
       const created = await upsertEnvProfileForProject({
         projectId,
-        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        deploymentId: releaseDeploymentId,
         name,
         environmentSlug: slug,
         isDefault: !source,
@@ -154,7 +165,7 @@ export async function POST(req: NextRequest) {
     let profile = await upsertEnvProfileForProject({
       projectId,
       profileId: existingProfile.id,
-      deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+      deploymentId: releaseDeploymentId,
       name: body.name || existingProfile.name,
       environmentSlug: existingProfile.slug,
       isDefault: body.isDefault === true ? true : existingProfile.isDefault,
@@ -174,7 +185,7 @@ export async function POST(req: NextRequest) {
       profile = await upsertEnvProfileForProject({
         projectId,
         profileId: profile.id,
-        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        deploymentId: releaseDeploymentId,
         name: profile.name,
         environmentSlug: profile.slug,
         isDefault: profile.isDefault,
@@ -200,7 +211,7 @@ export async function POST(req: NextRequest) {
       profile = await upsertEnvProfileForProject({
         projectId,
         profileId: profile.id,
-        deploymentId: body.deploymentId ? Number(body.deploymentId) : undefined,
+        deploymentId: releaseDeploymentId,
         name: profile.name,
         environmentSlug: profile.slug,
         isDefault: profile.isDefault,

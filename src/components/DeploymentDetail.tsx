@@ -657,7 +657,6 @@ export default function DeploymentDetail({
             deployment.legacyProjectId ? (
               <DeploymentEnvPanel
                 projectId={deployment.legacyProjectId}
-                deploymentId={deployment.id}
                 onRedeploy={async (component) => {
                   setTab("deploy");
                   return redeploy(component);
