@@ -19,7 +19,7 @@ import {
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { ModalSurface } from "@/components/ModalSurface";
 import { Notice, Tabs } from "@/components/ui";
-import { deploymentRunProgress } from "@/lib/operator-progress";
+import { deploymentRunProgress, type DeploymentStageId } from "@/lib/operator-progress";
 
 type Group = { id: number; name: string; slug: string; description: string };
 type Release = {
@@ -127,6 +127,7 @@ export default function DeploymentDetail({
   const [runFailure, setRunFailure] = useState<string | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [runElapsed, setRunElapsed] = useState(0);
+  const [focusedDeploymentStage, setFocusedDeploymentStage] = useState<DeploymentStageId | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -234,6 +235,7 @@ export default function DeploymentDetail({
     setRunElapsed(0);
     setRedeployLog(["[prepare] Deployment request accepted"]);
     setRedeployStatus("deploying");
+    setFocusedDeploymentStage(null);
     setShowLog(true);
     setMessage({ tone: "info", text: component ? `Redeploying ${component}…` : "Redeploying the deployment…" });
     try {
@@ -498,18 +500,19 @@ export default function DeploymentDetail({
                     onShowLog={() => setShowLog((value) => !value)}
                     domain={deployment.domain}
                     deploymentSlug={deployment.slug}
+                    focusedStageId={focusedDeploymentStage}
+                    onFocusStage={setFocusedDeploymentStage}
                   />
                 : <Notice tone="neutral">No active deployment run. Recorded runs are shown below.</Notice>}
               {(showLog || redeployStatus === "failed") && (redeployLog.length > 0 || runFailure) && (
-                <div className="border border-border bg-card">
-                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                    <span className="font-mono text-[10px] text-muted">Run evidence</span>
-                    {redeployStatus !== "failed" && <button onClick={() => setShowLog(false)} className="font-mono text-[10px] text-muted">Hide</button>}
-                  </div>
-                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-4 font-mono text-[10px] leading-relaxed text-muted">
-                    {[...redeployLog, runFailure || ""].filter(Boolean).join("\n")}
-                  </pre>
-                </div>
+                <DeploymentRunEvidence
+                  status={redeployStatus as "deploying" | "success" | "failed"}
+                  lines={redeployLog}
+                  failure={runFailure}
+                  focusedStageId={focusedDeploymentStage}
+                  onFocusStage={setFocusedDeploymentStage}
+                  onHide={redeployStatus !== "failed" ? () => setShowLog(false) : undefined}
+                />
               )}
               <section className="border border-border bg-card">
                 <div className="border-b border-border px-5 py-4"><p className="gc-eyebrow">Run history</p><h2 className="mt-1 text-base font-medium">Recorded deployment activity</h2></div>
@@ -797,6 +800,8 @@ function DeploymentProgress({
   onShowLog,
   domain,
   deploymentSlug,
+  focusedStageId,
+  onFocusStage,
 }: {
   status: "deploying" | "success" | "failed";
   lines: string[];
@@ -805,8 +810,15 @@ function DeploymentProgress({
   onShowLog: () => void;
   domain?: string | null;
   deploymentSlug: string;
+  focusedStageId: DeploymentStageId | null;
+  onFocusStage: (stage: DeploymentStageId) => void;
 }) {
   const progress = deploymentRunProgress(status, lines, failure);
+  const automaticStage = progress.failedStage || progress.activeStage || [...progress.stages].reverse().find((stage) => stage.evidenceLines?.length)?.id || progress.stages[0]?.id || null;
+  useEffect(() => {
+    if (automaticStage) onFocusStage(automaticStage);
+  }, [automaticStage, onFocusStage]);
+  const focusedStage = progress.stages.find((stage) => stage.id === focusedStageId) || progress.stages.find((stage) => stage.id === automaticStage) || progress.stages[0];
   const intelligenceHref = (() => {
     const params = new URLSearchParams({
       deployment: deploymentSlug,
@@ -850,12 +862,28 @@ function DeploymentProgress({
         </div>
       )}
 
-      <div className="grid divide-y divide-border sm:grid-cols-2 lg:grid-cols-6 lg:divide-x lg:divide-y-0">
-        {progress.stages.map((stage, index) => (
-          <div key={stage.id} className={`relative p-4 ${
-            stage.status === "failed" ? "bg-error/[0.035]"
-              : stage.status === "running" ? "bg-accent/[0.04]" : ""
-          }`}>
+      <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-6">
+        {progress.stages.map((stage, index) => {
+          const isFocused = focusedStage?.id === stage.id;
+          const tone = stage.status === "failed" ? "error"
+            : stage.status === "complete" ? "success"
+              : stage.status === "running" ? "accent"
+                : "muted";
+          return (
+          <button
+            key={stage.id}
+            type="button"
+            onClick={() => onFocusStage(stage.id)}
+            className={`relative min-h-44 bg-card p-4 text-left transition-all duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-accent/50 ${
+              isFocused ? "z-10 -translate-y-1 scale-[1.025] shadow-[0_18px_45px_rgba(0,0,0,0.24)]"
+                : "hover:bg-background/60"
+            } ${
+              tone === "error" && isFocused ? "bg-error/[0.06]"
+                : tone === "accent" && isFocused ? "bg-accent/[0.07]"
+                  : tone === "success" && isFocused ? "bg-success/[0.045]"
+                    : ""
+            }`}
+          >
             <div className="flex items-center gap-2">
               <span className={`flex h-5 w-5 items-center justify-center font-mono text-[10px] font-semibold ${
                 stage.status === "complete" ? "text-success"
@@ -877,20 +905,178 @@ function DeploymentProgress({
               {stage.status}
             </p>
             {stage.evidenceLines && stage.evidenceLines.length > 0 && (
-              <details className="mt-3">
-                <summary className="cursor-pointer list-none text-[10px] text-muted transition-colors hover:text-foreground">
-                  Evidence
-                </summary>
-                <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-words rounded bg-background/55 p-2 font-mono text-[9px] leading-relaxed text-muted">
-                  {stage.evidenceLines.join("\n")}
-                </pre>
-              </details>
+              <span className={`mt-3 inline-flex font-mono text-[9px] ${
+                isFocused ? "text-foreground" : "text-muted"
+              }`}>
+                {stage.evidenceLines.length} log {stage.evidenceLines.length === 1 ? "line" : "lines"}
+              </span>
             )}
-            {stage.status === "running" && <div className="absolute inset-x-0 bottom-0 h-0.5 bg-accent motion-safe:animate-pulse" />}
-          </div>
-        ))}
+            {stage.status === "running" && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-accent motion-safe:animate-pulse" />}
+            {isFocused && <span className={`absolute inset-x-4 top-0 h-0.5 ${
+              tone === "error" ? "bg-error"
+                : tone === "success" ? "bg-success"
+                  : tone === "accent" ? "bg-accent"
+                    : "bg-muted"
+            }`} />}
+          </button>
+        );})}
+      </div>
+
+    </section>
+  );
+}
+
+function DeploymentRunEvidence({
+  status,
+  lines,
+  failure,
+  focusedStageId,
+  onFocusStage,
+  onHide,
+}: {
+  status: "deploying" | "success" | "failed";
+  lines: string[];
+  failure?: string | null;
+  focusedStageId: DeploymentStageId | null;
+  onFocusStage: (stage: DeploymentStageId) => void;
+  onHide?: () => void;
+}) {
+  const progress = deploymentRunProgress(status, lines, failure);
+  const selectedStage = progress.stages.find((stage) => stage.id === focusedStageId)
+    || progress.stages.find((stage) => stage.id === progress.failedStage || stage.id === progress.activeStage)
+    || progress.stages[0];
+  const allLines = [...lines, failure || ""].map((line) => line.trim()).filter(Boolean);
+  const grouped = progress.stages.map((stage) => ({
+    stage,
+    lines: allLines.filter((line) => classifyDeploymentLogLine(line) === stage.id),
+  }));
+  const unmatched = allLines.filter((line) => !classifyDeploymentLogLine(line));
+
+  return (
+    <section className="border border-border bg-card">
+      <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="font-mono text-[10px] text-muted">Deployment logs</p>
+          <p className="mt-1 text-xs text-muted">Select a stage to enlarge its evidence. Other stages stay visible and return to neutral styling.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {progress.stages.map((stage) => (
+            <button
+              key={stage.id}
+              type="button"
+              onClick={() => onFocusStage(stage.id)}
+              className={`rounded px-2 py-1 font-mono text-[10px] transition-colors ${
+                selectedStage?.id === stage.id ? deploymentStageTone(stage.status).chip : "bg-background/60 text-muted hover:text-foreground"
+              }`}
+            >
+              {stage.label}
+            </button>
+          ))}
+          {onHide && <button onClick={onHide} className="font-mono text-[10px] text-muted hover:text-foreground">Hide</button>}
+        </div>
+      </div>
+      <div className="space-y-3 p-4">
+        {grouped.map(({ stage, lines: stageLines }) => {
+          const selected = selectedStage?.id === stage.id;
+          const tone = deploymentStageTone(stage.status);
+          return (
+            <section
+              key={stage.id}
+              className={`transition-all duration-300 ease-out ${
+                selected
+                  ? `scale-[1.012] ${tone.panel} p-4 shadow-[0_14px_40px_rgba(0,0,0,0.22)]`
+                  : "bg-background/30 p-3"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className={`text-sm font-semibold ${selected ? "text-foreground" : "text-muted"}`}>{stage.label}</h3>
+                  <p className="mt-1 font-mono text-[10px] text-muted">{stage.status} · {stageLines.length} log {stageLines.length === 1 ? "line" : "lines"}</p>
+                </div>
+                {selected && <span className={`h-2 w-2 rounded-full ${tone.dot}`} />}
+              </div>
+              {stageLines.length ? (
+                <div className={`mt-3 overflow-auto bg-background/75 p-3 font-mono leading-relaxed ${
+                  selected ? "max-h-96 text-[10px]" : "max-h-32 text-[9px]"
+                }`}>
+                  {stageLines.map((line, index) => (
+                    <StageLogLine key={`${stage.id}-${index}-${line}`} line={line} muted={!selected} />
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 bg-background/55 p-3 text-xs text-muted">No log lines recorded for this stage yet.</p>
+              )}
+            </section>
+          );
+        })}
+        {unmatched.length > 0 && (
+          <section className="bg-background/30 p-3">
+            <h3 className="text-sm font-semibold text-muted">Other evidence</h3>
+            <div className="mt-3 max-h-32 overflow-auto bg-background/75 p-3 font-mono text-[9px] leading-relaxed">
+              {unmatched.map((line, index) => <StageLogLine key={`other-${index}-${line}`} line={line} muted />)}
+            </div>
+          </section>
+        )}
       </div>
     </section>
+  );
+}
+
+function classifyDeploymentLogLine(line: string): DeploymentStageId | null {
+  const failurePhase = line.match(/^\[failure\]\s+phase=([a-z_-]+)/i)?.[1]?.toLowerCase();
+  if (failurePhase) {
+    if (["public", "route", "endpoint"].includes(failurePhase)) return "public";
+    if (["verify", "health", "probe"].includes(failurePhase)) return "verify";
+    if (["recreate", "deploy", "runtime"].includes(failurePhase)) return "recreate";
+    if (["pull", "registry", "image"].includes(failurePhase)) return "pull";
+    if (["compose", "validate", "validation"].includes(failurePhase)) return "compose";
+    return "environment";
+  }
+  if (/^\[(prepare|target|configuration|env)\]/i.test(line)) return "environment";
+  if (/^\[(compose|validate)\]/i.test(line)) return "compose";
+  if (/^\[(registry|pull)\]/i.test(line)) return "pull";
+  if (/^\[(deploy|container-log|container)\]/i.test(line) || /^\s*Container\s+/i.test(line)) return "recreate";
+  if (/^\[(verify|health|probe)\]/i.test(line)) return "verify";
+  if (/^\[public\]/i.test(line)) return "public";
+  return null;
+}
+
+function deploymentStageTone(status: "complete" | "running" | "failed" | "pending" | "not-reached") {
+  if (status === "failed") return {
+    chip: "bg-error/15 text-error",
+    panel: "border border-error/35 bg-error/[0.035]",
+    dot: "bg-error",
+  };
+  if (status === "running") return {
+    chip: "bg-accent/15 text-accent",
+    panel: "border border-accent/35 bg-accent/[0.035]",
+    dot: "bg-accent motion-safe:animate-pulse",
+  };
+  if (status === "complete") return {
+    chip: "bg-success/15 text-success",
+    panel: "border border-success/25 bg-success/[0.025]",
+    dot: "bg-success",
+  };
+  return {
+    chip: "bg-background text-muted",
+    panel: "border border-border bg-background/40",
+    dot: "bg-muted",
+  };
+}
+
+function StageLogLine({ line, muted = false }: { line: string; muted?: boolean }) {
+  const tone = /^\[failure\]|\b(error|failed|unhealthy|denied|timeout|refused)\b/i.test(line) ? "text-error"
+    : /\b(complete|completed|ready|valid|healthy|verified|started|resolved)\b/i.test(line) ? "text-success"
+      : /^\[(public|verify|deploy|compose|pull|registry|configuration|target|prepare)\]/i.test(line) ? "text-accent"
+        : "text-muted";
+  const prefix = line.match(/^(\[[^\]]+\])/);
+  const bodyTone = muted ? "text-muted" : "text-foreground";
+  if (!prefix) return <div className={`whitespace-pre-wrap break-words ${muted ? "text-muted" : tone}`}>{line}</div>;
+  return (
+    <div className="whitespace-pre-wrap break-words">
+      <span className={tone}>{prefix[1]}</span>
+      <span className={bodyTone}>{line.slice(prefix[1].length)}</span>
+    </div>
   );
 }
 
