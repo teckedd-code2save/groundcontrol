@@ -51,6 +51,7 @@ describe("operator progress", () => {
     expect(progress.failedStage).toBe("recreate");
     expect(progress.percent).toBeNull();
     expect(progress.stages.find((stage) => stage.id === "verify")?.status).toBe("not-reached");
+    expect(progress.stages.find((stage) => stage.id === "public")?.status).toBe("not-reached");
   });
 
   it("shows an evidence-driven active deployment stage", () => {
@@ -60,7 +61,7 @@ describe("operator progress", () => {
       "[deploy] Starting Docker Compose recreation",
     ]);
     expect(progress.activeStage).toBe("recreate");
-    expect(progress.percent).toBe(60);
+    expect(progress.percent).toBe(50);
   });
 
   it("does not invent an environment phase before evidence arrives", () => {
@@ -155,6 +156,28 @@ describe("operator progress", () => {
       "[failure] phase=verify service=web error=image mismatch expected=ghcr.io/acme/web:1 actual=ghcr.io/acme/web:old state=running exit=0",
       "[verify] Runtime verification found service image or container-state mismatch",
     ]);
+  });
+
+  it("fails the public route stage after runtime verification succeeds", () => {
+    const progress = deploymentRunProgress("failed", [
+      "[configuration] Deployment configuration ready",
+      "[compose] Effective Compose configuration valid (/opt/app/docker-compose.yml)",
+      "[pull] Images resolved",
+      "[deploy] Docker Compose recreation completed",
+      "[verify] Service images and runtime states match the effective Compose configuration",
+      "[public] Checking https://app.example.com/",
+      "[public] https://app.example.com/ returned HTTP 502",
+      "[failure] phase=public url=https://app.example.com/ status=502 error=public endpoint returned unhealthy status",
+      "[public] Public endpoint verification failed",
+    ]);
+    const publicStage = progress.stages.find((stage) => stage.id === "public");
+
+    expect(progress.failedStage).toBe("public");
+    expect(progress.summary).toBe("Verify public route failed");
+    expect(progress.stages.find((stage) => stage.id === "verify")?.status).toBe("complete");
+    expect(publicStage?.status).toBe("failed");
+    expect(progress.evidence).toBe("[failure] phase=public url=https://app.example.com/ status=502 error=public endpoint returned unhealthy status");
+    expect(publicStage?.evidenceLines).toContain("[public] https://app.example.com/ returned HTTP 502");
   });
 
   it("explains legacy blank running-image verification failures by service", () => {

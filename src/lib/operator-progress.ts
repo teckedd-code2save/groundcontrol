@@ -4,7 +4,7 @@ export type OperatorNarrativeSection = {
   bullets: string[];
 };
 
-export type DeploymentStageId = "environment" | "compose" | "pull" | "recreate" | "verify";
+export type DeploymentStageId = "environment" | "compose" | "pull" | "recreate" | "verify" | "public";
 export type DeploymentStageStatus = "complete" | "running" | "failed" | "pending" | "not-reached";
 
 export type DeploymentStage = {
@@ -36,6 +36,7 @@ const STAGE_LABELS: Record<DeploymentStageId, string> = {
   pull: "Authenticate and pull",
   recreate: "Recreate runtime",
   verify: "Verify service runtime",
+  public: "Verify public route",
 };
 
 const STAGE_DETAILS: Record<DeploymentStageId, string> = {
@@ -44,6 +45,7 @@ const STAGE_DETAILS: Record<DeploymentStageId, string> = {
   pull: "Authenticate the configured registry and resolve the requested images.",
   recreate: "Recreate the declared services, dependencies, networks, and one-shot jobs.",
   verify: "For each Compose service, compare the resolved image with the observed container. Running services must be running; completed one-shot jobs must exit 0.",
+  public: "Check the configured live URL from the deployment host and fail the run if the customer-facing route returns an unhealthy status.",
 };
 
 const STAGE_EVIDENCE_PATTERNS: Record<DeploymentStageId, RegExp[]> = {
@@ -52,6 +54,7 @@ const STAGE_EVIDENCE_PATTERNS: Record<DeploymentStageId, RegExp[]> = {
   pull: [/\[(registry|pull|image)\]/i, /\b(access denied|manifest unknown|pull)\b/i],
   recreate: [/\[(deploy|runtime|container)\]/i, /\b(recreate|created|started|exited|unhealthy)\b/i],
   verify: [/\[(verify|health|probe)\]/i, /\b(runtime image|public result|health|http|does not match)\b/i],
+  public: [/\[public\]/i, /\[failure\]\s+phase=public\b/i],
 };
 
 const STAGE_FAILURE_PHASES: Record<DeploymentStageId, string[]> = {
@@ -60,6 +63,7 @@ const STAGE_FAILURE_PHASES: Record<DeploymentStageId, string[]> = {
   pull: ["pull", "registry", "image"],
   recreate: ["recreate", "deploy", "runtime"],
   verify: ["verify", "health", "probe"],
+  public: ["public", "route", "endpoint"],
 };
 
 function stageEvidence(id: DeploymentStageId, lines: string[], failure?: string | null) {
@@ -210,6 +214,8 @@ export function deploymentRunProgress(
   const recreateComplete = includes(/\[deploy\]\s+docker compose recreation completed/i);
   const verifyStarted = includes(/\[verify\]\s+checking/i);
   const verifyComplete = status === "success" || includes(/\[verify\]\s+(running images|service images).*match/i);
+  const publicStarted = includes(/\[public\]\s+checking/i);
+  const publicComplete = status === "success" || includes(/\[public\]\s+public endpoint verified|no public endpoint configured; skipped/i);
 
   const completed: Record<DeploymentStageId, boolean> = {
     environment: environmentComplete,
@@ -217,11 +223,13 @@ export function deploymentRunProgress(
     pull: pullComplete,
     recreate: recreateComplete,
     verify: verifyComplete,
+    public: publicComplete,
   };
-  const order: DeploymentStageId[] = ["environment", "compose", "pull", "recreate", "verify"];
+  const order: DeploymentStageId[] = ["environment", "compose", "pull", "recreate", "verify", "public"];
   let activeStage: DeploymentStageId | null = null;
   if (status === "deploying") {
-    activeStage = verifyStarted ? "verify"
+    activeStage = publicStarted ? "public"
+      : verifyStarted ? "verify"
       : recreateStarted ? "recreate"
         : pullStarted && !pullComplete ? "pull"
           : composeStarted && !composeComplete ? "compose"
@@ -231,11 +239,12 @@ export function deploymentRunProgress(
 
   let failedStage: DeploymentStageId | null = null;
   if (status === "failed") {
-    failedStage = includes(/\[failure\]\s+phase=(verify)\b|runtime image verification failed|runtime verification found|running image does not match/i) ? "verify"
-      : includes(/\[failure\]\s+phase=(recreate|deploy)\b|docker compose failed|compose.*exit|recreate/i) ? "recreate"
-        : includes(/\[failure\]\s+phase=(registry|pull)\b|image pull failed|pull access denied|manifest unknown/i) ? "pull"
-          : includes(/\[failure\]\s+phase=compose\b|compose configuration|compose config|yaml|validation/i) ? "compose"
-            : "environment";
+    failedStage = includes(/\[failure\]\s+phase=public\b|public endpoint verification failed/i) ? "public"
+      : includes(/\[failure\]\s+phase=(verify)\b|runtime image verification failed|runtime verification found|running image does not match/i) ? "verify"
+        : includes(/\[failure\]\s+phase=(recreate|deploy)\b|docker compose failed|compose.*exit|recreate/i) ? "recreate"
+          : includes(/\[failure\]\s+phase=(registry|pull)\b|image pull failed|pull access denied|manifest unknown/i) ? "pull"
+            : includes(/\[failure\]\s+phase=compose\b|compose configuration|compose config|yaml|validation/i) ? "compose"
+              : "environment";
   }
   if (failedStage && completed[failedStage]) {
     failedStage = order.find((id) => !completed[id]) || failedStage;

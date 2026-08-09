@@ -187,8 +187,8 @@ export default function DeploymentDetail({
           setRunFailure(data.status === "failed" ? data.error || "Deployment failed." : null);
           setMessage({
             tone: data.status === "success" ? "success" : "error",
-            text: data.status === "success"
-              ? "Deployment completed and its running images were verified."
+              text: data.status === "success"
+              ? "Deployment completed and its public endpoint was verified."
               : data.error || "Deployment failed. Review the recorded evidence.",
           });
           await load();
@@ -271,7 +271,7 @@ export default function DeploymentDetail({
 
       setRedeployStatus("success");
       setRunFailure(null);
-      setMessage({ tone: "success", text: component ? `${component} recreated and its running image verified.` : "Deployment recreated and running images verified." });
+      setMessage({ tone: "success", text: component ? `${component} recreated and verified.` : "Deployment recreated and public endpoint verified." });
       await load();
       return { success: true };
     } catch (error) {
@@ -849,7 +849,7 @@ function DeploymentProgress({
         </div>
       )}
 
-      <div className="grid divide-y divide-border sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+      <div className="grid divide-y divide-border sm:grid-cols-2 lg:grid-cols-6 lg:divide-x lg:divide-y-0">
         {progress.stages.map((stage, index) => (
           <div key={stage.id} className={`relative p-4 ${
             stage.status === "failed" ? "bg-error/[0.035]"

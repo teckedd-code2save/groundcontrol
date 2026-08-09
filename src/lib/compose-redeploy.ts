@@ -183,21 +183,50 @@ export function buildRuntimeImageVerificationCommand(
   ].join("\n");
 }
 
+export function buildPublicEndpointVerificationCommand(publicUrl?: string | null): string {
+  const url = String(publicUrl || "").trim();
+  if (!url) return `printf '%s\\n' '[public] No public endpoint configured; skipped'`;
+  return [
+    `gc_public_url=${shQuote(url)}`,
+    `printf '%s\\n' "[public] Checking $gc_public_url"`,
+    `gc_public_status=$(curl -k -sS -o /dev/null --max-time 15 -w '%{http_code}' "$gc_public_url" 2>/tmp/gc-public-probe.err || true)`,
+    `gc_public_error=$(cat /tmp/gc-public-probe.err 2>/dev/null || true)`,
+    `rm -f /tmp/gc-public-probe.err 2>/dev/null || true`,
+    `if [ -n "$gc_public_status" ] && [ "$gc_public_status" -ge 200 ] && [ "$gc_public_status" -lt 400 ]; then`,
+    `  printf '%s\\n' "[public] $gc_public_url returned HTTP $gc_public_status"`,
+    `  printf '%s\\n' '[public] Public endpoint verified'`,
+    `else`,
+    `  if [ -z "$gc_public_status" ] || [ "$gc_public_status" = "000" ]; then`,
+    `    printf '%s\\n' "[public] $gc_public_url did not return an HTTP response"`,
+    `    printf '%s\\n' "[failure] phase=public url=$gc_public_url error=$gc_public_error"`,
+    `  else`,
+    `    printf '%s\\n' "[public] $gc_public_url returned HTTP $gc_public_status"`,
+    `    printf '%s\\n' "[failure] phase=public url=$gc_public_url status=$gc_public_status error=public endpoint returned unhealthy status"`,
+    `  fi`,
+    `  printf '%s\\n' '[public] Public endpoint verification failed' >&2`,
+    `  exit 43`,
+    `fi`,
+  ].join("\n");
+}
+
 export function buildDetachedComposeRedeployCommand({
   projectPath,
   composeCommand,
   composeFile,
   deployArgs,
   expectedImages,
+  publicUrl,
 }: {
   projectPath: string;
   composeCommand: string;
   composeFile: string;
   deployArgs: string;
   expectedImages: Record<string, string>;
+  publicUrl?: string | null;
 }): string {
   const deploy = buildManagedComposeInvocation(composeCommand, deployArgs, composeFile);
   const verify = buildRuntimeImageVerificationCommand(composeCommand, composeFile, expectedImages);
+  const verifyPublic = buildPublicEndpointVerificationCommand(publicUrl);
   const composeState = buildManagedComposeInvocation(composeCommand, "ps --all", composeFile);
   const composeContainers = buildManagedComposeInvocation(composeCommand, "ps -q --all", composeFile);
 
@@ -211,8 +240,14 @@ export function buildDetachedComposeRedeployCommand({
     `  if (`,
     ...verify.split("\n").map((line) => `    ${line}`),
     `  ); then`,
-    `    gc_status=0`,
     `    printf '%s\\n' '[verify] Service images and runtime states match the effective Compose configuration'`,
+    `    if (`,
+    ...verifyPublic.split("\n").map((line) => `      ${line}`),
+    `    ); then`,
+    `      gc_status=0`,
+    `    else`,
+    `      gc_status=$?`,
+    `    fi`,
     `  else`,
     `    gc_status=$?`,
     `    printf '%s\\n' "[verify] Runtime image verification failed (exit $gc_status)" >&2`,

@@ -10,6 +10,7 @@ import { ensureGithubRegistryLogin } from "@/lib/github-registry";
 import { parseComposeServices } from "@/lib/project-scan";
 import {
   buildDetachedComposeRedeployCommand,
+  buildPublicEndpointVerificationCommand,
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
 } from "@/lib/compose-redeploy";
@@ -45,6 +46,13 @@ function validateRequestedComposePath(projectPath: string, composePath: string):
 
 function isManagedEnvironmentPreparationError(output: string): boolean {
   return output.includes("[groundcontrol] managed environment");
+}
+
+function publicUrlFromDomain(domain?: string | null): string | null {
+  const value = String(domain || "").trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value.replace(/\/+$/, "/");
+  return `https://${value.replace(/^\/+|\/+$/g, "")}/`;
 }
 
 function effectiveComposeError(output: string): HttpError {
@@ -385,6 +393,7 @@ export async function POST(req: NextRequest) {
     let result: { stdout: string; stderr: string; code: number };
     let detached = false;
     const verifyImages = buildRuntimeImageVerificationCommand(composeCmd, composeFile, expectedImages);
+    const publicUrl = publicUrlFromDomain(project?.domain);
 
     if (vps?.isLocal) {
       const command = buildDetachedComposeRedeployCommand({
@@ -393,6 +402,7 @@ export async function POST(req: NextRequest) {
         composeFile,
         deployArgs,
         expectedImages,
+        publicUrl,
       });
       const logFile = redeployLogFile!;
       const launch = await execDetachedOnTarget(command, logFile, vps, { append: true });
@@ -417,6 +427,17 @@ export async function POST(req: NextRequest) {
           stdout: [result.stdout, verification.stdout].filter(Boolean).join("\n"),
           stderr: verification.code === 0 ? result.stderr : verification.stderr || verification.stdout,
           code: verification.code,
+        };
+      }
+      if (result.code === 0) {
+        const publicVerification = await execOnTargetStrict(
+          `cd ${shQuote(target.projectPath)} && ${buildPublicEndpointVerificationCommand(publicUrl)}`,
+          vps
+        );
+        result = {
+          stdout: [result.stdout, publicVerification.stdout].filter(Boolean).join("\n"),
+          stderr: publicVerification.code === 0 ? result.stderr : publicVerification.stderr || publicVerification.stdout,
+          code: publicVerification.code,
         };
       }
       if (result.stdout.trim()) {
@@ -488,6 +509,7 @@ export async function POST(req: NextRequest) {
           previousImageDigest: previousDigest,
           envHash: environmentHash,
           changedFields: changedFields.length > 0 ? JSON.stringify(changedFields) : null,
+          publicUrl,
           output: result.stdout || null,
           error: result.stderr || null,
           durationMs: Date.now() - startedAt,
