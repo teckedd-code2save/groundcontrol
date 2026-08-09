@@ -654,7 +654,14 @@ export default function DeploymentDetail({
           {/* ===== ENVIRONMENT TAB ===== */}
           {tab === "environment" && (
             deployment.legacyProjectId ? (
-              <DeploymentEnvPanel projectId={deployment.legacyProjectId} />
+              <DeploymentEnvPanel
+                projectId={deployment.legacyProjectId}
+                deploymentId={deployment.id}
+                onRedeploy={async (component) => {
+                  setTab("deploy");
+                  return redeploy(component);
+                }}
+              />
             ) : (
               <div className="border border-border bg-card p-6 text-sm text-muted">Connect this deployment to a saved source before configuring environments.</div>
             )

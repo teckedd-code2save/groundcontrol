@@ -10,6 +10,7 @@ import {
   Layers3,
   Loader2,
   Plus,
+  Rocket,
   RefreshCw,
   Save,
   Trash2,
@@ -68,10 +69,11 @@ async function readJson(response: Response) {
   }
 }
 
-export function DeploymentEnvPanel({ projectId, deploymentId, componentName }: {
+export function DeploymentEnvPanel({ projectId, deploymentId, componentName, onRedeploy }: {
   projectId: number;
   deploymentId?: number;
   componentName?: string;
+  onRedeploy?: (component?: string) => Promise<{ success: boolean; pending?: boolean; missingEnvKeys?: string[] }>;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [environments, setEnvironments] = useState<DeploymentEnvironment[]>([]);
@@ -94,6 +96,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName }: {
   const [environmentName, setEnvironmentName] = useState("");
   const [providerError, setProviderError] = useState<string | null>(null);
   const [infisicalProjects, setInfisicalProjects] = useState<InfisicalProject[]>([]);
+  const [savedScope, setSavedScope] = useState<{ component: string; profileName: string } | null>(null);
 
   const fixedScope = Boolean(componentName);
   const scopeLabel = selectedComponent || "Deployment-wide";
@@ -118,6 +121,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName }: {
     setDraft({});
     setDirtyKeys(new Set());
     setDeleteTarget(null);
+    setSavedScope(null);
     setProviderError(typeof data.providerError === "string" ? data.providerError : null);
   }, [fixedScope]);
 
@@ -153,6 +157,7 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName }: {
     setDraft({});
     setDirtyKeys(new Set());
     setDeleteTarget(null);
+    setSavedScope(null);
   }, [selectedComponent]);
 
   useEffect(() => {
@@ -222,11 +227,12 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName }: {
       if (!response.ok || data.error) throw new Error(data.error || "Environment save failed");
       hydrate(data);
       if (profile.providerType === "infisical") await load(profile.slug);
+      setSavedScope({ component: selectedComponent, profileName: profile.name });
       setNotice({
         tone: "success",
         text: options.success || (
           profile.isDefault
-            ? `Saved ${scopeLabel} secrets for ${profile.name}. GroundControl will apply them automatically on the next deployment.`
+            ? `Saved ${scopeLabel} secrets for ${profile.name}. Redeploy ${selectedComponent || "the deployment"} to make running services pick them up.`
             : `Saved ${scopeLabel} secrets for ${profile.name}. This environment is not currently used for deployments.`
         ),
       });
@@ -379,6 +385,45 @@ export function DeploymentEnvPanel({ projectId, deploymentId, componentName }: {
 
       {notice && (
         <Notice className="mx-4 mt-4 md:mx-5" tone={notice.tone === "error" ? "danger" : notice.tone}>{notice.text}</Notice>
+      )}
+
+      {savedScope && profile.isDefault && (
+        <div className="mx-4 mt-4 flex flex-col gap-3 border border-accent/35 bg-accent/10 p-4 md:mx-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-medium">Saved. Redeploy to use these values.</div>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              {savedScope.component
+                ? `${savedScope.component} has updated environment values. Save does not restart the service.`
+                : "Deployment-wide values changed. Save does not restart running services."}
+            </p>
+          </div>
+          {onRedeploy && (
+            <ActionButton
+              primary
+              disabled={Boolean(busy)}
+              icon={Rocket}
+              onClick={async () => {
+                setBusy("redeploy");
+                setNotice(null);
+                const result = await onRedeploy(savedScope.component || undefined);
+                setBusy(null);
+                if (result.success) {
+                  setSavedScope(null);
+                  setNotice({
+                    tone: result.pending ? "info" : "success",
+                    text: result.pending
+                      ? "Redeploy started. Follow progress in the deploy tab."
+                      : `${savedScope.component || "Deployment"} redeployed with the saved environment.`,
+                  });
+                } else {
+                  setNotice({ tone: "error", text: "Redeploy did not complete. Open the deploy tab for stage evidence." });
+                }
+              }}
+            >
+              Redeploy {savedScope.component || "deployment"}
+            </ActionButton>
+          )}
+        </div>
       )}
 
       {providerError && (
