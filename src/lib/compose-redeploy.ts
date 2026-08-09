@@ -183,8 +183,23 @@ export function buildRuntimeImageVerificationCommand(
   ].join("\n");
 }
 
+export function normalizePublicEndpointUrl(value?: unknown): string | null {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(text) && !/^https?:\/\//i.test(text)) return null;
+  const candidate = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+  try {
+    const url = new URL(candidate);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (url.username || url.password) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function buildPublicEndpointVerificationCommand(publicUrl?: string | null): string {
-  const url = String(publicUrl || "").trim();
+  const url = normalizePublicEndpointUrl(publicUrl);
   if (!url) return `printf '%s\\n' '[public] No public endpoint configured; skipped'`;
   return [
     `gc_public_url=${shQuote(url)}`,

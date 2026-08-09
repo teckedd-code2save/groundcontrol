@@ -244,6 +244,7 @@ export default function DeploymentDetail({
           projectSlug: deployment.legacyProjectSlug,
           projectPath: deployment.sourcePath || undefined,
           composePath: deployment.composePath || undefined,
+          publicUrl: deployment.publicUrl || (deployment.domain ? `https://${deployment.domain}` : undefined),
           action: "redeploy",
           services: component ? [component] : undefined,
         }),

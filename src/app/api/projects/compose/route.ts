@@ -13,6 +13,7 @@ import {
   buildPublicEndpointVerificationCommand,
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
+  normalizePublicEndpointUrl,
 } from "@/lib/compose-redeploy";
 import { MANAGED_IMAGE_OVERRIDE_FILE } from "@/lib/compose-management";
 import {
@@ -46,13 +47,6 @@ function validateRequestedComposePath(projectPath: string, composePath: string):
 
 function isManagedEnvironmentPreparationError(output: string): boolean {
   return output.includes("[groundcontrol] managed environment");
-}
-
-function publicUrlFromDomain(domain?: string | null): string | null {
-  const value = String(domain || "").trim();
-  if (!value) return null;
-  if (/^https?:\/\//i.test(value)) return value.replace(/\/+$/, "/");
-  return `https://${value.replace(/^\/+|\/+$/g, "")}/`;
 }
 
 function effectiveComposeError(output: string): HttpError {
@@ -160,6 +154,7 @@ export async function POST(req: NextRequest) {
       projectSlug,
       projectPath: requestedPath,
       composePath: requestedComposePathValue,
+      publicUrl: requestedPublicUrl,
       services,
       action,
     } = await req.json();
@@ -233,6 +228,19 @@ export async function POST(req: NextRequest) {
         ],
       },
     });
+    const recentReleaseUrls = project
+      ? await prisma.deployment.findMany({
+          where: { projectId: project.id },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: { publicUrl: true, previewUrl: true },
+        })
+      : [];
+    const publicUrl = [
+      requestedPublicUrl,
+      project?.domain,
+      ...recentReleaseUrls.flatMap((release) => [release.publicUrl, release.previewUrl]),
+    ].map(normalizePublicEndpointUrl).find((url): url is string => Boolean(url)) || null;
 
     if (action !== "redeploy") {
       if (["start", "recreate", "restart"].includes(action || "start") && project) {
@@ -393,7 +401,6 @@ export async function POST(req: NextRequest) {
     let result: { stdout: string; stderr: string; code: number };
     let detached = false;
     const verifyImages = buildRuntimeImageVerificationCommand(composeCmd, composeFile, expectedImages);
-    const publicUrl = publicUrlFromDomain(project?.domain);
 
     if (vps?.isLocal) {
       const command = buildDetachedComposeRedeployCommand({

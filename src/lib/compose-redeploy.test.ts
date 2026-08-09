@@ -5,6 +5,7 @@ import {
   buildPublicEndpointVerificationCommand,
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
+  normalizePublicEndpointUrl,
   parseDetachedComposeRedeployLog,
 } from "./compose-redeploy";
 
@@ -84,6 +85,13 @@ describe("Compose redeploy image verification", () => {
     expect(script).toContain("[public] Public endpoint verified");
     expect(script).toContain("[failure] phase=public");
     expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
+  });
+
+  it("normalizes configured public endpoints for redeploy verification", () => {
+    expect(normalizePublicEndpointUrl("app.example.com")).toBe("https://app.example.com/");
+    expect(normalizePublicEndpointUrl("https://app.example.com/health")).toBe("https://app.example.com/health");
+    expect(normalizePublicEndpointUrl("ftp://app.example.com")).toBe(null);
+    expect(normalizePublicEndpointUrl("https://user:pass@app.example.com")).toBe(null);
   });
 
   it("skips public endpoint verification when no live URL is configured", () => {
