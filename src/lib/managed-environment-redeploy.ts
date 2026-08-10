@@ -220,19 +220,28 @@ export function buildInspectManagedEnvironmentArtifactsCommand(
     `  printf '%s\\n' ${shQuote(`missing|${artifact.scope}`)}`,
     "else",
     artifact.mode === "dotenv-subset"
-      ? [
-          `  actual=$((printf '%s' ${shQuote(Buffer.from((artifact.keys || []).join("\n") + "\n", "utf8").toString("base64"))} | base64 -d | while IFS= read -r gc_env_key; do`,
-          `    [ -z "$gc_env_key" ] && continue`,
-          `    awk -F= -v gc_env_key="$gc_env_key" '$1 == gc_env_key { print; found=1; exit } END { if (!found) exit 1 }' ${shQuote(artifact.path)} || exit 1`,
-          `  done) 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}' || (printf '%s' ${shQuote(Buffer.from((artifact.keys || []).join("\n") + "\n", "utf8").toString("base64"))} | base64 -d | while IFS= read -r gc_env_key; do`,
-          `    [ -z "$gc_env_key" ] && continue`,
-          `    awk -F= -v gc_env_key="$gc_env_key" '$1 == gc_env_key { print; found=1; exit } END { if (!found) exit 1 }' ${shQuote(artifact.path)} || exit 1`,
-          `  done) 2>/dev/null | shasum -a 256 | awk '{print $1}')`,
-        ].join("\n")
+      ? buildDotenvSubsetHashCommand(artifact)
       : `  actual=$(sha256sum ${shQuote(artifact.path)} 2>/dev/null | awk '{print $1}' || shasum -a 256 ${shQuote(artifact.path)} | awk '{print $1}')`,
     `  [ "$actual" = ${shQuote(artifact.hash)} ] || printf '%s\\n' ${shQuote(`changed|${artifact.scope}`)}`,
     "fi",
   ].join("\n")).join("\n");
+}
+
+function buildDotenvSubsetHashCommand(artifact: ExpectedManagedEnvironmentArtifact): string {
+  const keys = Buffer.from((artifact.keys || []).join("\n") + "\n", "utf8").toString("base64");
+  const path = shQuote(artifact.path);
+  return [
+    `  gc_subset=$(mktemp 2>/dev/null || printf '%s\\n' '/tmp/gc-env-subset.$$')`,
+    `  if (printf '%s' ${shQuote(keys)} | base64 -d | while IFS= read -r gc_env_key; do`,
+    `    [ -z "$gc_env_key" ] && continue`,
+    `    awk -F= -v gc_env_key="$gc_env_key" '$1 == gc_env_key { print; found=1; exit } END { if (!found) exit 1 }' ${path} || exit 1`,
+    `  done) > "$gc_subset" 2>/dev/null; then`,
+    `    actual=$(sha256sum "$gc_subset" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$gc_subset" | awk '{print $1}')`,
+    `  else`,
+    `    actual=''`,
+    `  fi`,
+    `  rm -f "$gc_subset"`,
+  ].join("\n");
 }
 
 export function buildManagedEnvironmentRecoveryCommand(deployPath: string, environmentSlug: string): string {
