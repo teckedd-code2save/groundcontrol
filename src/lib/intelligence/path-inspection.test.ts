@@ -169,6 +169,44 @@ describe("deterministic public-path inspection", () => {
     expect(result.deepInvestigation?.daytonaEligible).toBe(false);
   });
 
+  it("does not borrow an unrelated generic web container for port drift", () => {
+    const result = inspectServicePath({
+      path: path({
+        domain: "perfumeemporium.serendepify.com",
+        upstream: "127.0.0.1:13000",
+      }),
+      externalProbe: external(502),
+      internalProbe: {
+        target: "http://127.0.0.1:13000/",
+        ok: false,
+        error: "connection refused",
+      },
+      observation: observation({
+        proxy: {
+          type: "caddy",
+          configContent: "perfumeemporium.serendepify.com { reverse_proxy 127.0.0.1:13000 }",
+          fingerprint: "proxy-revision",
+          routes: [{ domain: "perfumeemporium.serendepify.com", upstream: "127.0.0.1:13000" }],
+          execution: { plane: "host" },
+        },
+        containers: [{
+          name: "groundcontrol-web",
+          image: "ghcr.io/acme/groundcontrol-web:sha",
+          state: "running",
+          status: "Up 10 minutes",
+          composeProject: "groundcontrol",
+          composeService: "web",
+          ports: [{ host: 3003, container: 3000, protocol: "tcp" }],
+        }],
+      }),
+    });
+
+    expect(result.failureBoundary).toBe("proxy_to_upstream");
+    expect(result.summary).toBe("The configured upstream cannot be reached from the deployment host.");
+    expect(result.cause).not.toContain("groundcontrol-web");
+    expect(result.nextAction?.title).toBe("Restore the upstream link");
+  });
+
   it("prefers the public web service over api when both are related to a route", () => {
     const result = inspectServicePath({
       path: path({

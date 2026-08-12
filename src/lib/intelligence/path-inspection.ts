@@ -70,8 +70,8 @@ function likelyPublishedPortCandidate(path: ServicePath, observation: HostObserv
       if (path.serviceId && identities.some((identity) => compactIdentity(identity) === compactIdentity(path.serviceId))) score += 40;
       if (path.containerName && compactIdentity(container.name) === compactIdentity(path.containerName)) score += 80;
       const service = compactIdentity(container.composeService || container.name);
-      if (!path.serviceId && !path.containerName && /^(web|frontend|front|app|site|client)$/.test(service)) score += 30;
-      if (!path.serviceId && !path.containerName && /^(api|backend|worker|migrate|migration|db|postgres|redis)$/.test(service)) score -= 25;
+      if (score > 0 && !path.serviceId && !path.containerName && /^(web|frontend|front|app|site|client)$/.test(service)) score += 30;
+      if (score > 0 && !path.serviceId && !path.containerName && /^(api|backend|worker|migrate|migration|db|postgres|redis)$/.test(service)) score -= 25;
       if (expectedPort && publishedHostPorts(container).includes(expectedPort)) score = 0;
       return { container, score };
     })
