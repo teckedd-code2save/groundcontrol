@@ -112,15 +112,31 @@ type AgentConfirmation = {
 const metricChip = "rounded-lg bg-card px-3 py-2 text-xs shadow-sm shadow-black/5";
 const softPanel = "rounded-xl bg-card shadow-sm shadow-black/5";
 
-function restartConflictsWithProxyEvidence(path: ServicePath, toolName: string) {
-  if (toolName !== "restart_container") return false;
+function toolConflictsWithDeterministicDiagnosis(path: ServicePath, toolName: string) {
   const inspection = path.inspection;
+  if (toolName === "reconcile_compose_route_port" && inspection?.failureBoundary === "application") return true;
+  if (toolName !== "restart_container") return false;
   if (inspection?.failureBoundary !== "proxy_to_upstream") return false;
   const runtimeFailed = inspection.evidence.some((item) => item.id === "runtime" && item.status === "failed");
   return !runtimeFailed;
 }
 
-function proxyContractMessage(path: ServicePath, attemptedTool?: string) {
+function deterministicBlockMessage(path: ServicePath, attemptedTool?: string) {
+  const inspection = path.inspection;
+  if (attemptedTool === "reconcile_compose_route_port" && inspection?.failureBoundary === "application") {
+    return [
+      "## Problem",
+      inspection.summary || "The incident is an application or service-contract failure.",
+      inspection.cause || "",
+      attemptedTool ? `GroundControl blocked ${humanize(attemptedTool)} because it would change proxy/env port wiring while the deterministic evidence points inside the application contract.` : "",
+      "",
+      "## Fix",
+      inspection.nextAction?.detail || "Repair the application, Compose, or environment contract at the deployed revision, then redeploy.",
+      "",
+      "## Verify",
+      `Redeploy the affected service or deployment and re-run https://${path.domain}/ from the public edge.`,
+    ].filter(Boolean).join("\n");
+  }
   return [
     "## Problem",
     `${path.domain} is failing at the reverse-proxy to upstream boundary, not at container lifecycle.`,
@@ -527,9 +543,9 @@ export default function IntelligencePage() {
         }
         if (event.type === "confirm") {
           const toolName = String(event.name || "");
-          if (restartConflictsWithProxyEvidence(path, toolName)) {
+          if (toolConflictsWithDeterministicDiagnosis(path, toolName)) {
             setAgentConfirm(null);
-            setAgentText(proxyContractMessage(path, toolName));
+            setAgentText(deterministicBlockMessage(path, toolName));
             return;
           }
           setAgentConfirm({

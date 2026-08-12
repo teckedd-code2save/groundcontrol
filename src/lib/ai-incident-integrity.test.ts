@@ -13,6 +13,7 @@ import {
   isSafeRouteEnvPrefix,
   resolveAgentToolCall,
 } from "./ai-agent";
+import { shouldBlockIncidentConfirmation } from "@/app/api/ai/chat/route";
 
 describe("AI incident integrity", () => {
   it("does not display failed tools as successful", () => {
@@ -101,6 +102,24 @@ describe("AI incident integrity", () => {
     expect(isSafeBindHost("10.0.0.7")).toBe(false);
     expect(isSafeComposeService("web")).toBe(true);
     expect(isSafeComposeService("web; rm -rf /")).toBe(false);
+  });
+
+  it("blocks route-port approvals when deterministic diagnosis says application contract", () => {
+    const blocked = shouldBlockIncidentConfirmation("reconcile_compose_route_port", {
+      domain: "rentmyweekend.serendepify.com",
+      deploymentSlug: "rentaweekend",
+      failureBoundary: "application",
+      inspectionSummary: "The public web service is blocked because api is not satisfying its declared Compose contract.",
+      inspectionCause: "web depends on api: service_healthy and api listens on the wrong port.",
+    });
+
+    expect(blocked).toContain("Blocked route-port repair");
+    expect(blocked).toContain("application/service-contract failure");
+    expect(shouldBlockIncidentConfirmation("reconcile_compose_route_port", {
+      domain: "app.example.com",
+      deploymentSlug: "app",
+      failureBoundary: "proxy_to_upstream",
+    })).toBeNull();
   });
 
   it("allows bounded HTTP inspection but still blocks fetched shell execution", () => {

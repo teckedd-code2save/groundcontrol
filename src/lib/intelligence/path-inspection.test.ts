@@ -301,8 +301,11 @@ describe("deterministic public-path inspection", () => {
     expect(result.failureBoundary).toBe("application");
     expect(result.summary).toContain("web");
     expect(result.cause).toContain("web depends on api: service_healthy");
+    expect(result.cause).toContain("evidence for the API side, not a replacement target");
     expect(result.cause).toContain("rentaweekend-api-1");
-    expect(result.nextAction?.title).toBe("Repair the service port contract");
+    expect(result.cause).not.toContain("but the only related running port");
+    expect(result.nextAction?.title).toBe("Restore the internal service contract");
+    expect(result.nextAction?.detail).toContain("Do not repoint the public proxy");
     expect(result.nextAction?.title).not.toBe("Reconcile the route port");
     expect(result.deepInvestigation?.daytonaEligible).toBe(true);
   });

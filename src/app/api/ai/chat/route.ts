@@ -193,6 +193,31 @@ function confirmationDescriptionForTool(name: string, args: Record<string, unkno
   return fallback;
 }
 
+export function shouldBlockIncidentConfirmation(
+  name: string,
+  incidentContext?: RequestBody["incidentContext"]
+): string | null {
+  if (!incidentContext) return null;
+  const boundary = String(incidentContext.failureBoundary || "").trim();
+  const summary = String(incidentContext.inspectionSummary || "").trim();
+  const cause = String(incidentContext.inspectionCause || "").trim();
+  if (name === "reconcile_compose_route_port" && boundary === "application") {
+    return [
+      "Blocked route-port repair: deterministic diagnosis classified this as an application/service-contract failure, not proxy port drift.",
+      summary ? `Diagnosis: ${summary}` : "",
+      cause ? `Evidence: ${cause}` : "",
+      "Expected path: inspect the deployed source/config contract, validate the repair, then redeploy and verify the public endpoint.",
+    ].filter(Boolean).join("\n");
+  }
+  if (name === "restart_container" && boundary === "application" && /contract|depends|health|port/i.test(`${summary} ${cause}`)) {
+    return [
+      "Blocked container restart: deterministic diagnosis points to a service contract mismatch.",
+      "A restart will recreate the same bad runtime unless the source/config/env contract is repaired first.",
+    ].join("\n");
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const user = requireAuth(req);
@@ -342,17 +367,20 @@ export async function POST(req: NextRequest) {
               userId: user.id,
               context,
               systemPrompt,
+              incidentContext,
               maxToolIterations: incidentContext ? INCIDENT_MAX_TOOL_ITERATIONS : DEFAULT_MAX_TOOL_ITERATIONS,
             });
           } else {
             if (provider === "anthropic") {
               await runAnthropic({
                 apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn,
+                incidentContext,
                 maxToolIterations: incidentContext ? INCIDENT_MAX_TOOL_ITERATIONS : DEFAULT_MAX_TOOL_ITERATIONS,
               });
             } else {
               await runOpenAI({
                 apiKey, threadId, userId: user.id, context, systemPrompt, emit, turn,
+                incidentContext,
                 maxToolIterations: incidentContext ? INCIDENT_MAX_TOOL_ITERATIONS : DEFAULT_MAX_TOOL_ITERATIONS,
               });
             }
@@ -453,6 +481,7 @@ interface RunCtx {
   maxToolIterations: number;
   emit: Emit;
   contextMessages?: WireMessage[];
+  incidentContext?: RequestBody["incidentContext"];
   turn: {
     content: string;
     toolCalls: (ToolCallRecord & { persistedId?: number })[];
@@ -486,6 +515,19 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
       name: confirmedTool.name,
       args: confirmedTool.args,
       output: "Unknown tool.",
+      status: "error",
+      readOnly: false,
+    });
+    return;
+  }
+
+  const blocked = shouldBlockIncidentConfirmation(resolved.name, ctx.incidentContext);
+  if (blocked) {
+    emit({ type: "tool", name: resolved.name, args: resolved.args, status: "error", output: blocked });
+    turn.toolCalls.push({
+      name: resolved.name,
+      args: resolved.args,
+      output: blocked,
       status: "error",
       readOnly: false,
     });
@@ -610,6 +652,13 @@ async function runOpenAI(ctx: RunCtx) {
       }
 
       if (!isReadOnlyTool(name)) {
+        const blocked = shouldBlockIncidentConfirmation(name, ctx.incidentContext);
+        if (blocked) {
+          emit({ type: "tool", name, args, status: "error", output: blocked });
+          convo.push({ role: "tool", tool_call_id: call.id, content: `ERROR: ${blocked}` });
+          turn.toolCalls.push({ name, args, status: "error", output: blocked, readOnly: false });
+          continue;
+        }
         emit({ type: "confirm", name, args, description: confirmationDescriptionForTool(name, args, tool.description) });
         convo.push({
           role: "tool",
@@ -732,6 +781,18 @@ async function runAnthropic(ctx: RunCtx) {
       }
 
       if (!isReadOnlyTool(name)) {
+        const blocked = shouldBlockIncidentConfirmation(name, ctx.incidentContext);
+        if (blocked) {
+          emit({ type: "tool", name, args, status: "error", output: blocked });
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            content: `ERROR: ${blocked}`,
+            is_error: true,
+          });
+          turn.toolCalls.push({ name, args, status: "error", output: blocked, readOnly: false });
+          continue;
+        }
         emit({ type: "confirm", name, args, description: confirmationDescriptionForTool(name, args, tool.description) });
         toolResults.push({
           type: "tool_result",
