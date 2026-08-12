@@ -153,6 +153,101 @@ function confirmationDetails(confirmation: AgentConfirmation) {
   });
 }
 
+function clipLine(value: string, max = 220) {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+function summarizeDaytonaOutput(output: string): string[] {
+  try {
+    const parsed = JSON.parse(output) as {
+      detail?: unknown;
+      reproducedFailure?: unknown;
+      logs?: unknown;
+      cleanedUp?: unknown;
+    };
+    const logs = Array.isArray(parsed.logs) ? parsed.logs.map(String) : [];
+    const lines = [
+      typeof parsed.detail === "string" ? parsed.detail : null,
+      parsed.reproducedFailure === true ? "Failure reproduced in isolated Daytona workspace." : null,
+      logs.find((line) => /^revision=|^commit=/i.test(line)),
+      logs.find((line) => /^validation=/i.test(line)),
+      logs.find((line) => /^baseline_exit=/i.test(line)),
+      logs.find((line) => /^candidate_exit=|^regression_\d+_exit=/i.test(line)),
+      parsed.cleanedUp === true ? "Sandbox cleaned up." : null,
+    ].filter((line): line is string => Boolean(line));
+    return Array.from(new Set(lines)).map((line) => clipLine(line));
+  } catch {
+    return [];
+  }
+}
+
+function usefulToolLines(tool: AgentToolEvent): string[] {
+  const output = tool.output || "";
+  if (!output.trim()) {
+    if (tool.status === "running" || tool.status === "pending") return ["Running."];
+    return [];
+  }
+  const daytona = summarizeDaytonaOutput(output);
+  if (daytona.length > 0) return daytona;
+  if (/GitHub API request failed \(404\)/i.test(output)) {
+    return ["Source lookup returned 404 for the requested revision/path. This blocks a source repair from that tool; live runtime evidence is still preserved."];
+  }
+  if (/^ERROR:/i.test(output.trim())) {
+    return [clipLine(output.replace(/^ERROR:\s*/i, ""), 260)];
+  }
+  const lines = output
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) =>
+      /\b(problem|cause|fix|verify|unhealthy|healthy|depends|port|listening|proxy|upstream|compose|container|missing|failed|error|reproduced|validated|public|route)\b/i.test(line)
+    )
+    .filter((line) => !/\b(npm warn|npm notice|packages are looking for funding|npm audit|deprecated)\b/i.test(line));
+  return Array.from(new Set(lines)).slice(0, 6).map((line) => clipLine(line));
+}
+
+function toolStatusLabel(tool: AgentToolEvent) {
+  if (tool.status === "success") return "complete";
+  if (tool.status === "error") return "blocked";
+  return tool.status;
+}
+
+function compactToolEvents(tools: AgentToolEvent[]): Array<AgentToolEvent & { repeatCount: number }> {
+  const compacted: Array<AgentToolEvent & { repeatCount: number }> = [];
+  for (const tool of tools) {
+    const previous = compacted.at(-1);
+    const sameRepeatedFailure =
+      previous &&
+      previous.name === tool.name &&
+      previous.status === tool.status &&
+      tool.status === "error" &&
+      usefulToolLines(previous).join("\n") === usefulToolLines(tool).join("\n");
+    if (sameRepeatedFailure) {
+      previous.repeatCount += 1;
+    } else {
+      compacted.push({ ...tool, repeatCount: 1 });
+    }
+  }
+  return compacted;
+}
+
+function displayNarrativeSections(sections: ReturnType<typeof parseOperatorNarrative>) {
+  const wanted = new Set(["problem", "fix", "verify"]);
+  const seen = new Set<string>();
+  return sections.flatMap((section) => {
+    const key = section.title.trim().toLowerCase();
+    if (!wanted.has(key) || seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      ...section,
+      paragraphs: section.paragraphs.slice(0, 2).map((paragraph) => clipLine(paragraph, 260)),
+      bullets: section.bullets.slice(0, 3).map((bullet) => clipLine(bullet, 180)),
+    }];
+  });
+}
+
 function publicHostname(value?: string | null): string {
   if (!value) return "";
   try {
@@ -961,6 +1056,8 @@ function IncidentAgent({
   elapsed: number;
 }) {
   const sections = parseOperatorNarrative(text);
+  const shownSections = displayNarrativeSections(sections);
+  const shownTools = compactToolEvents(tools);
   const missingTypedAction = !running && !confirmation && narrativeRequestsAction(text);
   const completeNarrative = operatorNarrativeIsComplete(text);
   const lastTool = tools.at(-1);
@@ -1039,24 +1136,16 @@ function IncidentAgent({
           </div>
         </div>
       )}
-      {tools.length > 0 && (
+      {shownTools.length > 0 && (
         <div className="divide-y divide-border/60">
-          {tools.map((tool, index) => (
-            <details key={`${tool.name}-${index}`} className="px-4 py-3">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
-                <span className="font-mono">{humanize(tool.name)}</span>
-                <span className={`font-mono text-[9px] ${tool.status === "success" ? "text-success" : tool.status === "error" ? "text-error" : "text-accent"}`}>
-                  {tool.status === "success" ? "complete" : tool.status}
-                </span>
-              </summary>
-              {tool.output && <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap border-l border-border pl-3 font-mono text-[9px] leading-relaxed text-muted">{tool.output}</pre>}
-            </details>
+          {shownTools.map((tool, index) => (
+            <ToolEvidenceRow key={`${tool.name}-${index}`} tool={tool} />
           ))}
         </div>
       )}
-      {sections.length > 0 && (
+      {shownSections.length > 0 && (
         <div className="grid gap-3 p-3 sm:grid-cols-2">
-          {sections.map((section, index) => (
+          {shownSections.map((section, index) => (
             <article key={`${section.title}-${index}`} className="rounded-lg bg-background/50 px-4 py-4">
               <h3 className="text-xs font-semibold text-foreground">{section.title}</h3>
               <div className="mt-2 space-y-2 text-[11px] leading-relaxed text-muted">
@@ -1116,6 +1205,58 @@ function IncidentAgent({
         </div>
       )}
     </section>
+  );
+}
+
+function ToolEvidenceRow({ tool }: { tool: AgentToolEvent & { repeatCount?: number } }) {
+  const [expanded, setExpanded] = useState(false);
+  const signal = usefulToolLines(tool);
+  const hasRaw = Boolean(tool.output?.trim());
+  const tone = tool.status === "success"
+    ? "text-success"
+    : tool.status === "error"
+      ? "text-warning"
+      : "text-accent";
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-mono text-xs">
+            {humanize(tool.name)}{tool.repeatCount && tool.repeatCount > 1 ? ` · ${tool.repeatCount} attempts` : ""}
+          </p>
+          {signal.length > 0 ? (
+            <ul className="mt-2 space-y-1 text-[10px] leading-relaxed text-muted">
+              {signal.map((line, index) => (
+                <li key={`${line}-${index}`} className="flex gap-2">
+                  <span className={tone}>•</span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-[10px] text-muted">No operator-relevant output was captured.</p>
+          )}
+        </div>
+        <span className={`shrink-0 font-mono text-[9px] ${tone}`}>{toolStatusLabel(tool)}</span>
+      </div>
+      {hasRaw && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="text-[10px] text-muted hover:text-foreground"
+          >
+            {expanded ? "Hide raw details" : "Raw details"}
+          </button>
+          {expanded && (
+            <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap border-l border-border pl-3 font-mono text-[9px] leading-relaxed text-muted">
+              {tool.output}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
