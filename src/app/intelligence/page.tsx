@@ -144,6 +144,15 @@ function confirmationTarget(confirmation: AgentConfirmation) {
   return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
 }
 
+function confirmationDetails(confirmation: AgentConfirmation) {
+  const shown = ["projectSlug", "service", "keyPrefix", "bindHost", "hostPort", "publicUrl", "slug", "name", "path"];
+  return shown.flatMap((key) => {
+    const value = confirmation.args[key];
+    if (value == null || value === "") return [];
+    return [`${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`];
+  });
+}
+
 function publicHostname(value?: string | null): string {
   if (!value) return "";
   try {
@@ -1087,11 +1096,16 @@ function IncidentAgent({
       {confirmation && (
         <div className="border-t border-warning/40 bg-warning/[0.04] p-4">
           <p className="text-xs font-semibold">Approval required</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted">{confirmation.description}</p>
+          <p className="mt-1 whitespace-pre-line text-[11px] leading-relaxed text-muted">{confirmation.description}</p>
           {confirmationTarget(confirmation) && (
             <p className="mt-2 rounded bg-background/60 px-2 py-1.5 font-mono text-[10px] text-muted">
               Target: {confirmationTarget(confirmation)}
             </p>
+          )}
+          {confirmationDetails(confirmation).length > 0 && (
+            <div className="mt-2 rounded bg-background/60 px-2 py-1.5 font-mono text-[10px] text-muted">
+              {confirmationDetails(confirmation).map((line) => <div key={line}>{line}</div>)}
+            </div>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="primary" disabled={running} onClick={onApprove}>

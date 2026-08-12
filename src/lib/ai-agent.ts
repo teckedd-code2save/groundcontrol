@@ -1264,7 +1264,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "reconcile_compose_route_port",
     description:
-      "Repair proxy-to-runtime port drift for a Compose deployment by safely upserting <PREFIX>_BIND_HOST and <PREFIX>_PORT in the deployment .env, validating Compose, recreating one selected service, and optionally verifying the public URL. MUTATING — requires explicit user confirmation. Use when evidence shows Caddy/Nginx targets a loopback port but the related Compose service is published on a different host port.",
+      "Repair reverse-proxy-to-selected-service port drift for a Compose deployment by safely upserting <PREFIX>_BIND_HOST and <PREFIX>_PORT in the deployment .env, validating Compose, recreating one selected service, and optionally verifying the public URL. MUTATING — requires explicit user confirmation. Use only when evidence proves Caddy/Nginx should reach the selected service on the requested host port and that selected service's published host port/env drifted. Do not use for app-internal contract mismatches such as web expecting API on 4000 while API starts on 3000; those require source/config repair.",
     parameters: {
       type: "object",
       properties: {

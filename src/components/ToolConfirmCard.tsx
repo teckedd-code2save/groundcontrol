@@ -35,7 +35,7 @@ export function ToolConfirmCard({
 
       <p className="font-medium text-foreground">{name}</p>
       {description ? (
-        <p className="mt-1 text-xs text-muted">{description}</p>
+        <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-muted">{description}</p>
       ) : null}
 
       {argLines.length > 0 && (

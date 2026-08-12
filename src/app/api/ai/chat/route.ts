@@ -170,6 +170,29 @@ function estimateCostUsd(provider: string, model: string, inputTokens: number, o
   return (inputTokens * inRate + outputTokens * outRate) / 1_000_000;
 }
 
+function confirmationDescriptionForTool(name: string, args: Record<string, unknown>, fallback: string): string {
+  if (name === "reconcile_compose_route_port") {
+    const projectSlug = String(args.projectSlug || "unresolved");
+    const service = String(args.service || "unresolved");
+    const keyPrefix = String(args.keyPrefix || "PREFIX").toUpperCase();
+    const bindHost = String(args.bindHost || "unresolved");
+    const hostPort = String(args.hostPort || "unresolved");
+    const publicUrl = String(args.publicUrl || "").trim();
+    return [
+      "Exact change GroundControl will make:",
+      `- Deployment: ${projectSlug}`,
+      `- Env edit: set ${keyPrefix}_BIND_HOST=${bindHost}`,
+      `- Env edit: set ${keyPrefix}_PORT=${hostPort}`,
+      `- Compose action: validate the effective Compose file, then recreate only service "${service}"`,
+      publicUrl ? `- Verification: check ${publicUrl} after the service is recreated` : "- Verification: re-check the service after recreation",
+      "",
+      `Approve only if "${service}" is the service the reverse proxy should reach on host port ${hostPort}.`,
+      "Do not approve this for an application contract mismatch, for example when web expects API on port 4000 but the API process now listens on 3000. That requires a source/config repair, not this route-port env repair.",
+    ].join("\n");
+  }
+  return fallback;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const user = requireAuth(req);
@@ -270,7 +293,9 @@ export async function POST(req: NextRequest) {
               `Investigate this deployment evidence-first. Runtime-only failures use the smallest typed reversible action. ` +
               `If Failure boundary is proxy_to_upstream and runtime containers are present or running, do not call restart_container as the primary recovery action. ` +
               `First prove the proxy contract: read proxy config, read Compose config, inspect published ports, test the configured upstream from the host, and identify whether the fix is route target, Docker network, exposed port, or proxy reload. ` +
-              `For proxy_to_upstream incidents, a typed action must be reconcile_compose_route_port when the proxy target and Compose published host port drift, proxy/route correction, compose_up for missing declared services, or a source repair if the Compose/proxy configuration is wrong at the deployed revision; a restart is only valid after evidence shows a specific unhealthy/stale container is the boundary. ` +
+              `For proxy_to_upstream incidents, a typed action must be reconcile_compose_route_port only when the reverse proxy should target the selected Compose service and the selected service's host-published port/env drifted. ` +
+              `Do not use route-port reconciliation when logs or Compose show an application contract mismatch between services, such as a web/frontend expecting an API on 4000 while the API process starts on 3000; that must become a source/config hypothesis, exact-revision source inspection, Daytona validation, then a confirmation-gated PR. ` +
+              `Other valid actions are proxy/route correction, compose_up for missing declared services, or a source repair if the Compose/proxy/application configuration is wrong at the deployed revision; a restart is only valid after evidence shows a specific unhealthy/stale container is the boundary. ` +
               `Repository, Compose, build, migration, dependency, or repository-managed proxy defects must use exact-revision source reading, Daytona reproduction and validation, then a confirmation-gated PR. ` +
               `A failed evidence tool is not the end of the investigation when other read-only tools can establish the cause. ` +
               `If application startup evidence reports a listening port that differs from the Compose port or healthcheck, treat that mismatch as a source hypothesis, confirm it at the deployed revision, and continue into Daytona instead of restarting the same unhealthy container. ` +
@@ -585,7 +610,7 @@ async function runOpenAI(ctx: RunCtx) {
       }
 
       if (!isReadOnlyTool(name)) {
-        emit({ type: "confirm", name, args, description: tool.description });
+        emit({ type: "confirm", name, args, description: confirmationDescriptionForTool(name, args, tool.description) });
         convo.push({
           role: "tool",
           tool_call_id: call.id,
@@ -707,7 +732,7 @@ async function runAnthropic(ctx: RunCtx) {
       }
 
       if (!isReadOnlyTool(name)) {
-        emit({ type: "confirm", name, args, description: tool.description });
+        emit({ type: "confirm", name, args, description: confirmationDescriptionForTool(name, args, tool.description) });
         toolResults.push({
           type: "tool_result",
           tool_use_id: use.id,

@@ -169,6 +169,54 @@ describe("deterministic public-path inspection", () => {
     expect(result.deepInvestigation?.daytonaEligible).toBe(false);
   });
 
+  it("prefers the public web service over api when both are related to a route", () => {
+    const result = inspectServicePath({
+      path: path({
+        domain: "rentmyweekend.serendepify.com",
+        upstream: "127.0.0.1:14080",
+      }),
+      externalProbe: external(502),
+      internalProbe: {
+        target: "http://127.0.0.1:14080/",
+        ok: false,
+        error: "connection refused",
+      },
+      observation: observation({
+        proxy: {
+          type: "caddy",
+          configContent: "rentmyweekend.serendepify.com { reverse_proxy 127.0.0.1:14080 }",
+          fingerprint: "proxy-revision",
+          routes: [{ domain: "rentmyweekend.serendepify.com", upstream: "127.0.0.1:14080" }],
+          execution: { plane: "host" },
+        },
+        containers: [
+          {
+            name: "rentaweekend-api-1",
+            image: "ghcr.io/teckedd-code2save/rentaweekend-api:sha",
+            state: "running",
+            status: "Up 10 minutes",
+            composeProject: "rentaweekend",
+            composeService: "api",
+            ports: [{ host: 4000, container: 3000, protocol: "tcp" }],
+          },
+          {
+            name: "rentaweekend-web-1",
+            image: "ghcr.io/teckedd-code2save/rentaweekend-web:sha",
+            state: "running",
+            status: "Up 10 minutes",
+            composeProject: "rentaweekend",
+            composeService: "web",
+            ports: [{ host: 3000, container: 80, protocol: "tcp" }],
+          },
+        ],
+      }),
+    });
+
+    expect(result.summary).toContain("3000");
+    expect(result.cause).toContain("rentaweekend-web-1");
+    expect(result.cause).not.toContain("rentaweekend-api-1");
+  });
+
   it("does not recommend mutation for a healthy public path", () => {
     const result = inspectServicePath({
       path: path({ healthy: true, issues: [] }),
