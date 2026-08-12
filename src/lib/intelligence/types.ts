@@ -356,6 +356,10 @@ export interface HostObservation {
     name: string;
     path?: string;
     services: string[];
+    serviceDetails?: Array<{
+      name: string;
+      dependsOn?: string[];
+    }>;
     fingerprint?: string;
   }>;
   proxy?: {

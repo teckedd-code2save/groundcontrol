@@ -80,6 +80,38 @@ function likelyPublishedPortCandidate(path: ServicePath, observation: HostObserv
   return candidates[0]?.container;
 }
 
+function serviceRole(value?: string) {
+  const service = compactIdentity(value || "");
+  if (/^(web|frontend|front|app|site|client)$/.test(service)) return "public";
+  if (/^(api|backend|worker|migrate|migration|db|postgres|redis)$/.test(service)) return "internal";
+  return "unknown";
+}
+
+function declaredPublicServiceForCandidate(
+  candidate: HostObservation["containers"][number] | undefined,
+  observation: HostObservation
+): { name: string; dependsOnCandidate: boolean } | null {
+  if (!candidate || serviceRole(candidate.composeService || candidate.name) !== "internal") return null;
+  const projectName = candidate.composeProject;
+  const project = observation.composeProjects.find((item) => item.name === projectName)
+    || observation.composeProjects.find((item) => item.services.includes(candidate.composeService || ""));
+  const publicService = project?.services.find((service) => serviceRole(service) === "public");
+  if (!publicService) return null;
+  const publicServiceDetails = project?.serviceDetails?.find((service) => service.name === publicService);
+  const runningPublic = observation.containers.some((container) =>
+    container.composeProject === project?.name &&
+    container.composeService === publicService &&
+    container.state.toLowerCase() === "running"
+  );
+  return runningPublic ? null : {
+    name: publicService,
+    dependsOnCandidate: Boolean(
+      candidate.composeService &&
+      publicServiceDetails?.dependsOn?.some((service) => compactIdentity(service) === compactIdentity(candidate.composeService))
+    ),
+  };
+}
+
 function externalDetail(probe?: ProbeResult) {
   if (!probe) return "No external check has run.";
   if (probe.statusCode != null) {
@@ -184,11 +216,14 @@ export function inspectServicePath({
   }
 
   if (portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
+    const missingPublicService = declaredPublicServiceForCandidate(portMismatchCandidate, observation);
     evidence.push({
       id: "runtime",
       label: "Published service port",
       value: `${portMismatchCandidate.name} → ${portMismatchCandidatePorts.join(", ")}`,
-      detail: `A related running container is published on ${portMismatchCandidatePorts.join(", ")}, not on the proxy target ${upstream.port}.`,
+      detail: missingPublicService
+        ? `${portMismatchCandidate.name} is an internal service. The declared public service "${missingPublicService.name}" is not running${missingPublicService.dependsOnCandidate ? ` and depends on ${portMismatchCandidate.composeService}: service_healthy` : ""}, so this is not a safe proxy-port repair.`
+        : `A related running container is published on ${portMismatchCandidatePorts.join(", ")}, not on the proxy target ${upstream.port}.`,
       status: "observed",
     });
   }
@@ -279,6 +314,29 @@ export function inspectServicePath({
   if (internalProbe && !internalProbe.ok) {
     const upstreamApplicationFailure = internalProbe.statusCode != null && internalProbe.statusCode >= 500;
     if (!upstreamApplicationFailure && upstream.port != null && portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
+      const missingPublicService = declaredPublicServiceForCandidate(portMismatchCandidate, observation);
+      if (missingPublicService) {
+        return {
+          domain: path.domain,
+          observedAt: at,
+          outcome: "failed",
+          failureBoundary: "application",
+          summary: `The public service "${missingPublicService.name}" is not running because the internal ${portMismatchCandidate.composeService || "service"} contract is broken.`,
+          cause: `${path.upstream} is unreachable, but the only related running port belongs to ${portMismatchCandidate.name} on ${portMismatchCandidatePorts.join(", ")}. Compose declares "${missingPublicService.name}" as the public service${missingPublicService.dependsOnCandidate ? `, and ${missingPublicService.name} depends on ${portMismatchCandidate.composeService}: service_healthy` : ""}; repair the API/web port contract before changing the proxy target.`,
+          confidence: 0.95,
+          evidence,
+          nextAction: {
+            title: "Repair the service port contract",
+            detail: `Compare the declared ${portMismatchCandidate.composeService || "internal service"} port, healthcheck, and ${missingPublicService.name} upstream configuration at the deployed revision. Restore those values, then recreate the internal service and start ${missingPublicService.name}.`,
+            mode: "guided",
+          },
+          deepInvestigation: {
+            geminiEligible: true,
+            daytonaEligible: true,
+            reason: "The live host proves the public service is blocked by an internal app/Compose contract mismatch, which should be validated against source and configuration before mutation.",
+          },
+        };
+      }
       return {
         domain: path.domain,
         observedAt: at,
@@ -334,6 +392,29 @@ export function inspectServicePath({
 
   if (upstream.port != null && isLoopback(upstream.host) && !listener) {
     if (portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
+      const missingPublicService = declaredPublicServiceForCandidate(portMismatchCandidate, observation);
+      if (missingPublicService) {
+        return {
+          domain: path.domain,
+          observedAt: at,
+          outcome: "failed",
+          failureBoundary: "application",
+          summary: `The public service "${missingPublicService.name}" is not running because the internal ${portMismatchCandidate.composeService || "service"} contract is broken.`,
+          cause: `The runtime is not serving the proxy target ${path.upstream}; the only related published port belongs to ${portMismatchCandidate.name}. Compose declares "${missingPublicService.name}" as the public service${missingPublicService.dependsOnCandidate ? `, and ${missingPublicService.name} depends on ${portMismatchCandidate.composeService}: service_healthy` : ""}, so changing the proxy to ${portMismatchCandidatePorts.join(", ")} would bypass the intended web layer.`,
+          confidence: 0.95,
+          evidence,
+          nextAction: {
+            title: "Repair the service port contract",
+            detail: `Compare the declared ${portMismatchCandidate.composeService || "internal service"} port, healthcheck, and ${missingPublicService.name} upstream configuration at the deployed revision. Restore those values, then recreate the internal service and start ${missingPublicService.name}.`,
+            mode: "guided",
+          },
+          deepInvestigation: {
+            geminiEligible: true,
+            daytonaEligible: true,
+            reason: "The live host proves the public service is blocked by an internal app/Compose contract mismatch, which should be validated against source and configuration before mutation.",
+          },
+        };
+      }
       return {
         domain: path.domain,
         observedAt: at,

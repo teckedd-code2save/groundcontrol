@@ -217,6 +217,58 @@ describe("deterministic public-path inspection", () => {
     expect(result.cause).not.toContain("rentaweekend-api-1");
   });
 
+  it("classifies an absent public web service behind an unhealthy internal api as an app contract failure", () => {
+    const result = inspectServicePath({
+      path: path({
+        domain: "rentmyweekend.serendepify.com",
+        upstream: "127.0.0.1:14080",
+      }),
+      externalProbe: external(502),
+      internalProbe: {
+        target: "http://127.0.0.1:14080/",
+        ok: false,
+        error: "connection refused",
+      },
+      observation: observation({
+        proxy: {
+          type: "caddy",
+          configContent: "rentmyweekend.serendepify.com { reverse_proxy 127.0.0.1:14080 }",
+          fingerprint: "proxy-revision",
+          routes: [{ domain: "rentmyweekend.serendepify.com", upstream: "127.0.0.1:14080" }],
+          execution: { plane: "host" },
+        },
+        containers: [{
+          name: "rentaweekend-api-1",
+          image: "ghcr.io/teckedd-code2save/rentaweekend-api:sha",
+          state: "running",
+          status: "Up 10 minutes (unhealthy)",
+          composeProject: "rentaweekend",
+          composeService: "api",
+          ports: [{ host: 4000, container: 4000, protocol: "tcp" }],
+        }],
+        composeProjects: [{
+          name: "rentaweekend",
+          services: ["web", "api", "migrate", "postgres", "redis"],
+          serviceDetails: [
+            { name: "web", dependsOn: ["api"] },
+            { name: "api" },
+            { name: "migrate", dependsOn: ["postgres"] },
+            { name: "postgres" },
+            { name: "redis" },
+          ],
+        }],
+      }),
+    });
+
+    expect(result.failureBoundary).toBe("application");
+    expect(result.summary).toContain("web");
+    expect(result.cause).toContain("web depends on api: service_healthy");
+    expect(result.cause).toContain("rentaweekend-api-1");
+    expect(result.nextAction?.title).toBe("Repair the service port contract");
+    expect(result.nextAction?.title).not.toBe("Reconcile the route port");
+    expect(result.deepInvestigation?.daytonaEligible).toBe(true);
+  });
+
   it("does not recommend mutation for a healthy public path", () => {
     const result = inspectServicePath({
       path: path({ healthy: true, issues: [] }),

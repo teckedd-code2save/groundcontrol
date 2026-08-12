@@ -135,6 +135,10 @@ export async function buildLiveHostObservation(): Promise<HostObservation> {
       name: project.slug,
       path: project.path,
       services: project.services.map((service) => service.name),
+      serviceDetails: project.services.map((service) => ({
+        name: service.name,
+        dependsOn: service.dependsOn,
+      })),
     })),
     proxy: proxyContent
       ? {
