@@ -158,26 +158,27 @@ describe("operator progress", () => {
     ]);
   });
 
-  it("fails the public route stage after runtime verification succeeds", () => {
+  it("fails the release checks stage after runtime verification succeeds", () => {
     const progress = deploymentRunProgress("failed", [
       "[configuration] Deployment configuration ready",
       "[compose] Effective Compose configuration valid (/opt/app/docker-compose.yml)",
       "[pull] Images resolved",
       "[deploy] Docker Compose recreation completed",
       "[verify] Service images and runtime states match the effective Compose configuration",
-      "[public] Checking https://app.example.com/",
-      "[public] https://app.example.com/ returned HTTP 502",
-      "[failure] phase=public url=https://app.example.com/ status=502 error=public endpoint returned unhealthy status",
-      "[public] Public endpoint verification failed",
+      "[check] Running 1 release verification check",
+      "[check] Public endpoint: checking https://app.example.com/",
+      "[check] Public endpoint: HTTP 502",
+      "[failure] phase=public check=public_endpoint name=Public endpoint url=https://app.example.com/ status=502 expected=2xx-3xx error=release verification check failed",
+      "[public] Release verification failed",
     ]);
     const publicStage = progress.stages.find((stage) => stage.id === "public");
 
     expect(progress.failedStage).toBe("public");
-    expect(progress.summary).toBe("Verify public route failed");
+    expect(progress.summary).toBe("Verify release checks failed");
     expect(progress.stages.find((stage) => stage.id === "verify")?.status).toBe("complete");
     expect(publicStage?.status).toBe("failed");
-    expect(progress.evidence).toBe("[failure] phase=public url=https://app.example.com/ status=502 error=public endpoint returned unhealthy status");
-    expect(publicStage?.evidenceLines).toContain("[public] https://app.example.com/ returned HTTP 502");
+    expect(progress.evidence).toBe("[failure] phase=public check=public_endpoint name=Public endpoint url=https://app.example.com/ status=502 expected=2xx-3xx error=release verification check failed");
+    expect(publicStage?.evidenceLines).toContain("[check] Public endpoint: HTTP 502");
   });
 
   it("explains legacy blank running-image verification failures by service", () => {

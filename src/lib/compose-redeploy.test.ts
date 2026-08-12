@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "child_process";
 import {
   buildDetachedComposeRedeployCommand,
+  buildDeploymentVerificationCommand,
   buildPublicEndpointVerificationCommand,
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
+  normalizeDeploymentVerificationChecks,
   normalizePublicEndpointUrl,
   parseDetachedComposeRedeployLog,
 } from "./compose-redeploy";
@@ -69,21 +71,36 @@ describe("Compose redeploy image verification", () => {
     expect(script).toContain("[verify] Runtime image verification failed");
     expect(script).toContain("[verify] Checking each Compose service against the effective image and runtime state");
     expect(script).toContain("[verify] api: expected ghcr.io/acme/api:abc123");
-    expect(script).toContain("[public] Checking $gc_public_url");
-    expect(script).toContain("[failure] phase=public url=$gc_public_url status=$gc_public_status error=public endpoint returned unhealthy status");
+    expect(script).toContain("[check] $gc_check_name: checking $gc_check_url");
+    expect(script).toContain("[failure] phase=public check=$gc_check_id name=$gc_check_name url=$gc_check_url status=$gc_public_status");
     expect(script.indexOf("[verify]")).toBeLessThan(script.indexOf("__GC_REDEPLOY_STATUS__=success"));
-    expect(script.indexOf("[public]")).toBeLessThan(script.indexOf("__GC_REDEPLOY_STATUS__=success"));
+    expect(script.indexOf("[check]")).toBeLessThan(script.indexOf("__GC_REDEPLOY_STATUS__=success"));
     expect(script).toContain("docker image prune -f >/dev/null 2>&1 || true");
     expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
   });
 
   it("builds public endpoint verification that fails on unhealthy HTTP status", () => {
     const script = buildPublicEndpointVerificationCommand("https://app.example.com/");
-    expect(script).toContain("[public] Checking $gc_public_url");
+    expect(script).toContain("[check] $gc_check_name: checking $gc_check_url");
     expect(script).toContain("curl -k -sS -o /dev/null");
     expect(script).toContain("exit 43");
     expect(script).toContain("[public] Public endpoint verified");
     expect(script).toContain("[failure] phase=public");
+    expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
+  });
+
+  it("builds named release verification checks with exact expected statuses", () => {
+    const checks = normalizeDeploymentVerificationChecks("https://app.example.com/", [
+      { id: "home", name: "Homepage", url: "https://app.example.com/", expectStatus: 200 },
+      { id: "login", name: "Login screen", url: "https://app.example.com/login", expectStatus: 200 },
+    ]);
+    const script = buildDeploymentVerificationCommand(checks);
+
+    expect(checks.map((check) => check.name)).toEqual(["Homepage", "Login screen"]);
+    expect(script).toContain("gc_check_id='home'");
+    expect(script).toContain("gc_check_name='Login screen'");
+    expect(script).toContain("expected=$gc_check_expected");
+    expect(script).toContain("[check] Release verification passed");
     expect(spawnSync("sh", ["-n"], { input: script }).status).toBe(0);
   });
 
@@ -95,7 +112,7 @@ describe("Compose redeploy image verification", () => {
   });
 
   it("skips public endpoint verification when no live URL is configured", () => {
-    expect(buildPublicEndpointVerificationCommand()).toBe("printf '%s\\n' '[public] No public endpoint configured; skipped'");
+    expect(buildPublicEndpointVerificationCommand()).toBe("printf '%s\\n' '[public] No release verification checks configured; skipped'");
   });
 
   it("removes private control markers and exposes the real Compose failure", () => {

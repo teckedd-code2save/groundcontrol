@@ -36,7 +36,7 @@ const STAGE_LABELS: Record<DeploymentStageId, string> = {
   pull: "Authenticate and pull",
   recreate: "Recreate runtime",
   verify: "Verify service runtime",
-  public: "Verify public route",
+  public: "Verify release checks",
 };
 
 const STAGE_DETAILS: Record<DeploymentStageId, string> = {
@@ -45,7 +45,7 @@ const STAGE_DETAILS: Record<DeploymentStageId, string> = {
   pull: "Authenticate the configured registry and resolve the requested images.",
   recreate: "Recreate the declared services, dependencies, networks, and one-shot jobs.",
   verify: "For each Compose service, compare the resolved image with the observed container. Running services must be running; completed one-shot jobs must exit 0.",
-  public: "Check the configured live URL from the deployment host and fail the run if the customer-facing route returns an unhealthy status.",
+  public: "Run configured public and feature checks from the deployment host, then fail the run before users find a broken route.",
 };
 
 const STAGE_EVIDENCE_PATTERNS: Record<DeploymentStageId, RegExp[]> = {
@@ -54,7 +54,7 @@ const STAGE_EVIDENCE_PATTERNS: Record<DeploymentStageId, RegExp[]> = {
   pull: [/\[(registry|pull|image)\]/i, /\b(access denied|manifest unknown|pull)\b/i],
   recreate: [/\[(deploy|runtime|container)\]/i, /\b(recreate|created|started|exited|unhealthy)\b/i],
   verify: [/\[(verify|health|probe)\]/i, /\b(runtime image|public result|health|http|does not match)\b/i],
-  public: [/\[public\]/i, /\[failure\]\s+phase=public\b/i],
+  public: [/\[(public|check)\]/i, /\[failure\]\s+phase=public\b/i],
 };
 
 const STAGE_FAILURE_PHASES: Record<DeploymentStageId, string[]> = {
@@ -214,8 +214,8 @@ export function deploymentRunProgress(
   const recreateComplete = includes(/\[deploy\]\s+docker compose recreation completed/i);
   const verifyStarted = includes(/\[verify\]\s+checking/i);
   const verifyComplete = status === "success" || includes(/\[verify\]\s+(running images|service images).*match/i);
-  const publicStarted = includes(/\[public\]\s+checking/i);
-  const publicComplete = status === "success" || includes(/\[public\]\s+public endpoint verified|no public endpoint configured; skipped/i);
+  const publicStarted = includes(/\[(public|check)\]\s+.*checking|\[check\]\s+running/i);
+  const publicComplete = status === "success" || includes(/\[public\]\s+public endpoint verified|\[check\]\s+release verification passed|no (public endpoint|release verification checks) configured; skipped/i);
 
   const completed: Record<DeploymentStageId, boolean> = {
     environment: environmentComplete,

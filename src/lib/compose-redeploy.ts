@@ -12,6 +12,13 @@ export interface DetachedRedeployLog {
   exitCode: number | null;
 }
 
+export interface DeploymentVerificationCheck {
+  id: string;
+  name: string;
+  url: string;
+  expectStatus?: number;
+}
+
 function inferLegacyVerifyFailure(lines: string[]) {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index].trim();
@@ -59,7 +66,7 @@ export function parseDetachedComposeRedeployLog(output: string): DetachedRedeplo
   }
 
   const phaseFailure = [...lines].reverse().find((line) =>
-    /^\[(deploy|verify)\]\s+(Docker Compose|Runtime image verification) failed\b/i.test(line.trim())
+    /^\[(deploy|verify|public)\]\s+(Docker Compose|Runtime image verification|Release verification|Public endpoint verification) failed\b/i.test(line.trim())
   );
   const containerLogFailure = [...lines].reverse().find((line) =>
     /^\[container-log\]\s+/i.test(line.trim())
@@ -198,30 +205,86 @@ export function normalizePublicEndpointUrl(value?: unknown): string | null {
   }
 }
 
-export function buildPublicEndpointVerificationCommand(publicUrl?: string | null): string {
+function normalizeVerificationId(value: unknown, fallback: string) {
+  const slug = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return slug || fallback;
+}
+
+export function normalizeDeploymentVerificationChecks(
+  publicUrl?: unknown,
+  checks?: unknown
+): DeploymentVerificationCheck[] {
+  const normalizedChecks = Array.isArray(checks)
+    ? checks.flatMap((entry, index): DeploymentVerificationCheck[] => {
+        if (!entry || typeof entry !== "object") return [];
+        const record = entry as Record<string, unknown>;
+        const url = normalizePublicEndpointUrl(record.url);
+        if (!url) return [];
+        const expected = Number(record.expectStatus);
+        return [{
+          id: normalizeVerificationId(record.id, `check_${index + 1}`),
+          name: String(record.name || record.id || `Check ${index + 1}`).trim().slice(0, 80),
+          url,
+          expectStatus: Number.isInteger(expected) && expected >= 100 && expected <= 599 ? expected : undefined,
+        }];
+      })
+    : [];
+  if (normalizedChecks.length > 0) return normalizedChecks;
   const url = normalizePublicEndpointUrl(publicUrl);
-  if (!url) return `printf '%s\\n' '[public] No public endpoint configured; skipped'`;
-  return [
-    `gc_public_url=${shQuote(url)}`,
-    `printf '%s\\n' "[public] Checking $gc_public_url"`,
-    `gc_public_status=$(curl -k -sS -o /dev/null --max-time 15 -w '%{http_code}' "$gc_public_url" 2>/tmp/gc-public-probe.err || true)`,
-    `gc_public_error=$(cat /tmp/gc-public-probe.err 2>/dev/null || true)`,
-    `rm -f /tmp/gc-public-probe.err 2>/dev/null || true`,
-    `if [ -n "$gc_public_status" ] && [ "$gc_public_status" -ge 200 ] && [ "$gc_public_status" -lt 400 ]; then`,
-    `  printf '%s\\n' "[public] $gc_public_url returned HTTP $gc_public_status"`,
-    `  printf '%s\\n' '[public] Public endpoint verified'`,
-    `else`,
-    `  if [ -z "$gc_public_status" ] || [ "$gc_public_status" = "000" ]; then`,
-    `    printf '%s\\n' "[public] $gc_public_url did not return an HTTP response"`,
-    `    printf '%s\\n' "[failure] phase=public url=$gc_public_url error=$gc_public_error"`,
-    `  else`,
-    `    printf '%s\\n' "[public] $gc_public_url returned HTTP $gc_public_status"`,
-    `    printf '%s\\n' "[failure] phase=public url=$gc_public_url status=$gc_public_status error=public endpoint returned unhealthy status"`,
-    `  fi`,
-    `  printf '%s\\n' '[public] Public endpoint verification failed' >&2`,
-    `  exit 43`,
-    `fi`,
-  ].join("\n");
+  return url
+    ? [{ id: "public_endpoint", name: "Public endpoint", url }]
+    : [];
+}
+
+export function buildDeploymentVerificationCommand(checks: DeploymentVerificationCheck[]): string {
+  if (checks.length === 0) return `printf '%s\\n' '[public] No release verification checks configured; skipped'`;
+  const commands: string[] = [`printf '%s\\n' ${shQuote(`[check] Running ${checks.length} release verification check${checks.length === 1 ? "" : "s"}`)}`];
+  checks.forEach((check) => {
+    const id = normalizeVerificationId(check.id, "check");
+    const name = check.name.trim() || id;
+    const expected = Number.isInteger(check.expectStatus) ? check.expectStatus : 0;
+    commands.push(
+      `gc_check_id=${shQuote(id)}`,
+      `gc_check_name=${shQuote(name)}`,
+      `gc_check_url=${shQuote(check.url)}`,
+      `gc_check_expected=${expected}`,
+      `printf '%s\\n' "[check] $gc_check_name: checking $gc_check_url"`,
+      `gc_public_status=$(curl -k -sS -o /dev/null --max-time 15 -w '%{http_code}' "$gc_check_url" 2>/tmp/gc-public-probe.err || true)`,
+      `gc_public_error=$(cat /tmp/gc-public-probe.err 2>/dev/null || true)`,
+      `rm -f /tmp/gc-public-probe.err 2>/dev/null || true`,
+      `gc_check_ok=0`,
+      `if [ "$gc_check_expected" -ge 100 ]; then`,
+      `  if [ "$gc_public_status" = "$gc_check_expected" ]; then gc_check_ok=1; fi`,
+      `else`,
+      `  if [ -n "$gc_public_status" ] && [ "$gc_public_status" -ge 200 ] && [ "$gc_public_status" -lt 400 ]; then gc_check_ok=1; fi`,
+      `fi`,
+      `if [ "$gc_check_ok" -eq 1 ]; then`,
+      `  printf '%s\\n' "[check] $gc_check_name: HTTP $gc_public_status passed"`,
+      `else`,
+      `  if [ -z "$gc_public_status" ] || [ "$gc_public_status" = "000" ]; then`,
+      `    printf '%s\\n' "[check] $gc_check_name: no HTTP response"`,
+      `    printf '%s\\n' "[failure] phase=public check=$gc_check_id name=$gc_check_name url=$gc_check_url error=$gc_public_error"`,
+      `  elif [ "$gc_check_expected" -ge 100 ]; then`,
+      `    printf '%s\\n' "[check] $gc_check_name: HTTP $gc_public_status, expected $gc_check_expected"`,
+      `    printf '%s\\n' "[failure] phase=public check=$gc_check_id name=$gc_check_name url=$gc_check_url status=$gc_public_status expected=$gc_check_expected error=release verification check failed"`,
+      `  else`,
+      `    printf '%s\\n' "[check] $gc_check_name: HTTP $gc_public_status"`,
+      `    printf '%s\\n' "[failure] phase=public check=$gc_check_id name=$gc_check_name url=$gc_check_url status=$gc_public_status expected=2xx-3xx error=release verification check failed"`,
+      `  fi`,
+      `  printf '%s\\n' '[public] Release verification failed' >&2`,
+      `  exit 43`,
+      `fi`
+    );
+  });
+  commands.push(
+    `printf '%s\\n' '[public] Public endpoint verified'`,
+    `printf '%s\\n' '[check] Release verification passed'`
+  );
+  return commands.join("\n");
+}
+
+export function buildPublicEndpointVerificationCommand(publicUrl?: string | null): string {
+  return buildDeploymentVerificationCommand(normalizeDeploymentVerificationChecks(publicUrl));
 }
 
 export function buildDetachedComposeRedeployCommand({
@@ -231,6 +294,7 @@ export function buildDetachedComposeRedeployCommand({
   deployArgs,
   expectedImages,
   publicUrl,
+  verificationChecks,
 }: {
   projectPath: string;
   composeCommand: string;
@@ -238,10 +302,13 @@ export function buildDetachedComposeRedeployCommand({
   deployArgs: string;
   expectedImages: Record<string, string>;
   publicUrl?: string | null;
+  verificationChecks?: DeploymentVerificationCheck[];
 }): string {
   const deploy = buildManagedComposeInvocation(composeCommand, deployArgs, composeFile);
   const verify = buildRuntimeImageVerificationCommand(composeCommand, composeFile, expectedImages);
-  const verifyPublic = buildPublicEndpointVerificationCommand(publicUrl);
+  const verifyPublic = buildDeploymentVerificationCommand(
+    verificationChecks || normalizeDeploymentVerificationChecks(publicUrl)
+  );
   const composeState = buildManagedComposeInvocation(composeCommand, "ps --all", composeFile);
   const composeContainers = buildManagedComposeInvocation(composeCommand, "ps -q --all", composeFile);
 

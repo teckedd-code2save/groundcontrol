@@ -123,16 +123,14 @@ async function resolveContainerDeployment(input: {
         slug: true,
         name: true,
         path: true,
-        inventoryRecord: { select: { slug: true, name: true } },
       },
       orderBy: { updatedAt: "desc" },
     });
     if (legacyProject) {
-      const slug = legacyProject.inventoryRecord?.slug || legacyProject.slug;
       return {
-        slug,
-        name: legacyProject.inventoryRecord?.name || legacyProject.name,
-        href: `/deployments/${encodeURIComponent(slug)}`,
+        slug: legacyProject.slug,
+        name: legacyProject.name,
+        href: `/deployments/${encodeURIComponent(legacyProject.slug)}`,
         evidence: `Project folder ${legacyProject.path}`,
       };
     }

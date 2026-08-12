@@ -10,9 +10,10 @@ import { ensureGithubRegistryLogin } from "@/lib/github-registry";
 import { parseComposeServices } from "@/lib/project-scan";
 import {
   buildDetachedComposeRedeployCommand,
-  buildPublicEndpointVerificationCommand,
+  buildDeploymentVerificationCommand,
   buildRuntimeImageVerificationCommand,
   expectedComposeImages,
+  normalizeDeploymentVerificationChecks,
   normalizePublicEndpointUrl,
 } from "@/lib/compose-redeploy";
 import { MANAGED_IMAGE_OVERRIDE_FILE } from "@/lib/compose-management";
@@ -156,6 +157,7 @@ export async function POST(req: NextRequest) {
       projectPath: requestedPath,
       composePath: requestedComposePathValue,
       publicUrl: requestedPublicUrl,
+      verificationChecks: requestedVerificationChecks,
       services,
       action,
     } = await req.json();
@@ -242,6 +244,7 @@ export async function POST(req: NextRequest) {
       project?.domain,
       ...recentReleaseUrls.flatMap((release) => [release.publicUrl, release.previewUrl]),
     ].map(normalizePublicEndpointUrl).find((url): url is string => Boolean(url)) || null;
+    const verificationChecks = normalizeDeploymentVerificationChecks(publicUrl, requestedVerificationChecks);
 
     if (action !== "redeploy") {
       if (["start", "recreate", "restart"].includes(action || "start") && project) {
@@ -411,6 +414,7 @@ export async function POST(req: NextRequest) {
         deployArgs,
         expectedImages,
         publicUrl,
+        verificationChecks,
       });
       const logFile = redeployLogFile!;
       const launch = await execDetachedOnTarget(command, logFile, vps, { append: true });
@@ -439,7 +443,7 @@ export async function POST(req: NextRequest) {
       }
       if (result.code === 0) {
         const publicVerification = await execOnTargetStrict(
-          `cd ${shQuote(target.projectPath)} && ${buildPublicEndpointVerificationCommand(publicUrl)}`,
+          `cd ${shQuote(target.projectPath)} && ${buildDeploymentVerificationCommand(verificationChecks)}`,
           vps
         );
         result = {
