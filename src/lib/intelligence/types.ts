@@ -351,6 +351,7 @@ export interface HostObservation {
     composeService?: string;
     ports?: Array<{ host?: number; container?: number; protocol?: string }>;
     networks?: string[];
+    runtimePortHints?: number[];
   }>;
   composeProjects: Array<{
     name: string;
@@ -359,6 +360,7 @@ export interface HostObservation {
     serviceDetails?: Array<{
       name: string;
       dependsOn?: string[];
+      ports?: string[];
     }>;
     fingerprint?: string;
   }>;

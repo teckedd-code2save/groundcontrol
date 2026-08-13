@@ -60,6 +60,12 @@ function publishedHostPorts(container: HostObservation["containers"][number]) {
     .filter((port): port is number => typeof port === "number");
 }
 
+function expectedContainerPorts(container: HostObservation["containers"][number]) {
+  return Array.from(new Set((container.ports || [])
+    .map((port) => port.container)
+    .filter((port): port is number => typeof port === "number")));
+}
+
 function likelyPublishedPortCandidate(path: ServicePath, observation: HostObservation, expectedPort?: number) {
   const candidates = observation.containers
     .filter((container) => container.state.toLowerCase() === "running")
@@ -112,8 +118,18 @@ function declaredPublicServiceForCandidate(
   };
 }
 
-function serviceContractSummary(publicService: string, internalService: string) {
-  return `The public ${publicService} service is blocked because ${internalService} is not satisfying its declared Compose contract.`;
+function serviceContractSummary(args: {
+  publicService: string;
+  internalService: string;
+  actualPorts: number[];
+  expectedPorts: number[];
+}) {
+  const [actual] = args.actualPorts;
+  const [expected] = args.expectedPorts;
+  if (actual && expected && actual !== expected) {
+    return `The ${args.internalService} runtime is listening on port ${actual}, but Compose expects ${args.internalService} on port ${expected}.`;
+  }
+  return `The public ${args.publicService} service is blocked because ${args.internalService} is not satisfying its declared Compose contract.`;
 }
 
 function serviceContractCause(args: {
@@ -122,11 +138,22 @@ function serviceContractCause(args: {
   internalService: string;
   internalContainer: string;
   internalPorts: number[];
+  actualPorts: number[];
+  expectedPorts: number[];
   dependsOnCandidate: boolean;
 }) {
+  const [actual] = args.actualPorts;
+  const [expected] = args.expectedPorts;
   const dependency = args.dependsOnCandidate
-    ? ` Compose declares ${args.publicService} depends on ${args.internalService}: service_healthy.`
+    ? ` Compose declares ${args.publicService} depends on ${args.internalService}: service_healthy, so ${args.publicService} will not serve the public route while ${args.internalService} is unhealthy.`
     : "";
+  if (actual && expected && actual !== expected) {
+    return [
+      `${args.internalContainer} reports it is listening on port ${actual}, while Compose publishes and healthchecks ${args.internalService} on container port ${expected}.`,
+      dependency,
+      `${args.upstream || "The proxy upstream"} belongs to the ${args.publicService} entrypoint; changing it to the internal ${args.internalService} port would bypass the intended service chain.`,
+    ].join(" ").replace(/\s+/g, " ").trim();
+  }
   return [
     `${args.upstream || "The proxy upstream"} is the public entrypoint, but the ${args.publicService} service is not serving it.`,
     `${dependency}`,
@@ -135,7 +162,7 @@ function serviceContractCause(args: {
 }
 
 function serviceContractFix(publicService: string, internalService: string) {
-  return `Restore the ${internalService} service to the port, healthcheck, and upstream contract declared in Compose, then recreate ${internalService} and start ${publicService}. Do not repoint the public proxy to the internal service port.`;
+  return `Change the ${internalService} runtime configuration so it listens on the Compose-declared port, then recreate ${internalService} and start ${publicService}. Do not repoint the public proxy to the internal service port.`;
 }
 
 function externalDetail(probe?: ProbeResult) {
@@ -342,18 +369,27 @@ export function inspectServicePath({
     if (!upstreamApplicationFailure && upstream.port != null && portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
       const missingPublicService = declaredPublicServiceForCandidate(portMismatchCandidate, observation);
       if (missingPublicService) {
+        const actualPorts = portMismatchCandidate.runtimePortHints || [];
+        const expectedPorts = expectedContainerPorts(portMismatchCandidate);
         return {
           domain: path.domain,
           observedAt: at,
           outcome: "failed",
           failureBoundary: "application",
-          summary: serviceContractSummary(missingPublicService.name, portMismatchCandidate.composeService || "internal service"),
+          summary: serviceContractSummary({
+            publicService: missingPublicService.name,
+            internalService: portMismatchCandidate.composeService || "internal service",
+            actualPorts,
+            expectedPorts,
+          }),
           cause: serviceContractCause({
             upstream: path.upstream,
             publicService: missingPublicService.name,
             internalService: portMismatchCandidate.composeService || "internal service",
             internalContainer: portMismatchCandidate.name,
             internalPorts: portMismatchCandidatePorts,
+            actualPorts,
+            expectedPorts,
             dependsOnCandidate: missingPublicService.dependsOnCandidate,
           }),
           confidence: 0.95,
@@ -427,18 +463,27 @@ export function inspectServicePath({
     if (portMismatchCandidate && portMismatchCandidatePorts.length > 0) {
       const missingPublicService = declaredPublicServiceForCandidate(portMismatchCandidate, observation);
       if (missingPublicService) {
+        const actualPorts = portMismatchCandidate.runtimePortHints || [];
+        const expectedPorts = expectedContainerPorts(portMismatchCandidate);
         return {
           domain: path.domain,
           observedAt: at,
           outcome: "failed",
           failureBoundary: "application",
-          summary: serviceContractSummary(missingPublicService.name, portMismatchCandidate.composeService || "internal service"),
+          summary: serviceContractSummary({
+            publicService: missingPublicService.name,
+            internalService: portMismatchCandidate.composeService || "internal service",
+            actualPorts,
+            expectedPorts,
+          }),
           cause: serviceContractCause({
             upstream: path.upstream,
             publicService: missingPublicService.name,
             internalService: portMismatchCandidate.composeService || "internal service",
             internalContainer: portMismatchCandidate.name,
             internalPorts: portMismatchCandidatePorts,
+            actualPorts,
+            expectedPorts,
             dependsOnCandidate: missingPublicService.dependsOnCandidate,
           }),
           confidence: 0.95,

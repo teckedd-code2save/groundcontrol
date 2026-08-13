@@ -70,6 +70,36 @@ function parseListeners(value: string) {
   return listeners;
 }
 
+function extractRuntimePortHints(value: string) {
+  const seen = new Set<number>();
+  const patterns = [
+    /\bport["']?\s*[:=]\s*["']?(\d{2,5})\b/gi,
+    /\blisten(?:ing)?(?:\s+on)?(?:\s+port)?\s+(\d{2,5})\b/gi,
+    /\bserver\b.*\b:(\d{2,5})\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const port = Number(match[1]);
+      if (port > 0 && port <= 65535) seen.add(port);
+    }
+  }
+  return Array.from(seen).slice(0, 4);
+}
+
+async function readRuntimePortHints(vps: VpsConnection, containers: Array<{ name: string; status: string; state: string }>) {
+  const candidates = containers
+    .filter((container) => /unhealthy|restarting|exited|dead/i.test(`${container.status} ${container.state}`))
+    .slice(0, 12);
+  const rows = await Promise.all(candidates.map(async (container) => {
+    const result = await execOnTargetStrict(
+      `docker logs --tail 80 ${shQuote(container.name)} 2>&1`,
+      vps
+    );
+    return [container.name, result.code === 0 ? extractRuntimePortHints(result.stdout) : []] as const;
+  }));
+  return new Map(rows.filter(([, ports]) => ports.length > 0));
+}
+
 /** Read-only host adapter used by the Intelligence workspace. */
 export async function buildLiveHostObservation(): Promise<HostObservation> {
   const vps = await getActiveVps();
@@ -93,6 +123,7 @@ export async function buildLiveHostObservation(): Promise<HostObservation> {
     ),
   ]);
   const labels = await readHostComposeLabels(vps, containers.map((container) => container.name));
+  const runtimePortHints = await readRuntimePortHints(vps, containers);
 
   const labelsByName = new Map(labels.map((entry) => [entry.name, entry]));
   const observedContainers = containers.map((container) => {
@@ -105,6 +136,7 @@ export async function buildLiveHostObservation(): Promise<HostObservation> {
       composeProject: label?.project || undefined,
       composeService: label?.service || undefined,
       ports: parsePublishedPorts(container.ports || ""),
+      runtimePortHints: runtimePortHints.get(container.name),
     };
   });
 
@@ -138,6 +170,7 @@ export async function buildLiveHostObservation(): Promise<HostObservation> {
       serviceDetails: project.services.map((service) => ({
         name: service.name,
         dependsOn: service.dependsOn,
+        ports: service.ports,
       })),
     })),
     proxy: proxyContent

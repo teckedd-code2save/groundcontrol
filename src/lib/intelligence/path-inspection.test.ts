@@ -283,6 +283,7 @@ describe("deterministic public-path inspection", () => {
           composeProject: "rentaweekend",
           composeService: "api",
           ports: [{ host: 4000, container: 4000, protocol: "tcp" }],
+          runtimePortHints: [3000],
         }],
         composeProjects: [{
           name: "rentaweekend",
@@ -299,12 +300,14 @@ describe("deterministic public-path inspection", () => {
     });
 
     expect(result.failureBoundary).toBe("application");
-    expect(result.summary).toContain("web");
+    expect(result.summary).toBe("The api runtime is listening on port 3000, but Compose expects api on port 4000.");
+    expect(result.cause).toContain("rentaweekend-api-1 reports it is listening on port 3000");
+    expect(result.cause).toContain("Compose publishes and healthchecks api on container port 4000");
     expect(result.cause).toContain("web depends on api: service_healthy");
-    expect(result.cause).toContain("evidence for the API side, not a replacement target");
-    expect(result.cause).toContain("rentaweekend-api-1");
+    expect(result.cause).toContain("web will not serve the public route while api is unhealthy");
     expect(result.cause).not.toContain("but the only related running port");
     expect(result.nextAction?.title).toBe("Restore the internal service contract");
+    expect(result.nextAction?.detail).toContain("listens on the Compose-declared port");
     expect(result.nextAction?.detail).toContain("Do not repoint the public proxy");
     expect(result.nextAction?.title).not.toBe("Reconcile the route port");
     expect(result.deepInvestigation?.daytonaEligible).toBe(true);
