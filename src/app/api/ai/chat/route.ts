@@ -235,12 +235,19 @@ function sourceIdentityBlockerText(
   const deployment = incidentContext?.deploymentSlug || "this deployment";
   const repo = incidentContext?.repository || "unlinked";
   const revision = incidentContext?.deployedCommit || "unresolved";
+  const repoLinked = repo !== "unlinked";
+  const revisionLinked = /^[a-f0-9]{40,64}$/i.test(revision);
+  const fix = !repoLinked
+    ? `Link the deployment's GitHub repository in the deployment Configure tab. Current source identity: repository ${repo}, deployed revision ${revision}.`
+    : !revisionLinked
+      ? `The repository is already linked: ${repo}. Set the exact deployed commit in the deployment Configure tab, or redeploy through GroundControl so the release records it. Current deployed revision: ${revision}.`
+      : `The repository and deployed commit are recorded, but GroundControl could not read the requested source. Check the repository-relative path, file path, GitHub App installation access, and that commit ${revision} exists in ${repo}.`;
   return [
     "### Problem",
     `Source repair is blocked because GroundControl cannot read the exact repository revision for ${deployment}.`,
     "",
     "### Fix",
-    `Link or correct the deployment's GitHub repository field, then make sure the latest release records the deployed commit. Current source identity: repository ${repo}, deployed revision ${revision}. ${reason}`,
+    `${fix} ${reason}`,
     "",
     "### Verify",
     "After the source identity is corrected, continue this investigation. GroundControl should read the target file from the recorded revision, validate the repair in Daytona, then prepare a confirmation-gated PR.",
