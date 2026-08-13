@@ -127,6 +127,21 @@ export function readDeploymentOverrides(metadataJson?: string | null) {
 export function readDeploymentSourceIdentity(...serializedRecords: Array<string | null | undefined>) {
   for (const serialized of serializedRecords) {
     if (!serialized) continue;
+    for (const line of String(serialized).replace(/\r\n?/g, "\n").split("\n")) {
+      if (!line.startsWith("__GC_SOURCE_FINGERPRINT__=")) continue;
+      try {
+        const fingerprint = JSON.parse(line.slice("__GC_SOURCE_FINGERPRINT__=".length)) as Record<string, unknown>;
+        const repoUrl = typeof fingerprint.repoUrl === "string" && fingerprint.repoUrl.trim()
+          ? fingerprint.repoUrl.trim()
+          : null;
+        const commitSha = typeof fingerprint.commitSha === "string" && fingerprint.commitSha.trim()
+          ? fingerprint.commitSha.trim()
+          : null;
+        if (repoUrl || commitSha) return { repoUrl, commitSha };
+      } catch {
+        continue;
+      }
+    }
     let record: Record<string, unknown>;
     try {
       record = JSON.parse(serialized) as Record<string, unknown>;

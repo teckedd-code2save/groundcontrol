@@ -102,4 +102,34 @@ describe("deployment evidence resolver", () => {
     expect(evidence.sourceCommit).toBe("a".repeat(40));
     expect(evidence.identitySource).toBe("release-record");
   });
+
+  it("recovers source identity from a deploy fingerprint marker in release output", () => {
+    const output = [
+      "__GC_SOURCE_FINGERPRINT__={\"repoUrl\":\"https://github.com/example/app\",\"commitSha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"composePath\":\"/srv/app/docker-compose.yml\"}",
+      "deployment logs continue here",
+    ].join("\n");
+    expect(readDeploymentSourceIdentity(output)).toEqual({
+      repoUrl: "https://github.com/example/app",
+      commitSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    });
+  });
+
+  it("uses configured deployed commit ahead of older release output", () => {
+    const evidence = resolveDeploymentEvidence({
+      slug: "app",
+      metadataJson: JSON.stringify({
+        sourceRepair: {
+          deployedCommit: "c".repeat(40),
+        },
+      }),
+      savedReleaseOutput: JSON.stringify({
+        source: {
+          repoUrl: "https://github.com/example/app",
+          commitSha: "d".repeat(40),
+        },
+      }),
+    }, [], [], [], []);
+    expect(evidence.repoUrl).toBe("https://github.com/example/app");
+    expect(evidence.sourceCommit).toBe("c".repeat(40));
+  });
 });

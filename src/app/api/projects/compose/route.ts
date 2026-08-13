@@ -66,6 +66,130 @@ function effectiveComposeError(output: string): HttpError {
   );
 }
 
+function normalizeGitRemoteUrl(value: string | null | undefined): string | null {
+  const text = String(value || "").trim().replace(/\.git$/i, "");
+  if (!text) return null;
+  const ssh = text.match(/^git@github\.com:([^/]+\/[^/]+)$/i);
+  if (ssh) return `https://github.com/${ssh[1]}`;
+  try {
+    const url = new URL(text);
+    if (url.protocol !== "https:" || !url.hostname) return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (url.hostname.toLowerCase() === "github.com" && parts.length >= 2) {
+      return `${url.origin}/${parts.slice(0, 2).join("/")}`;
+    }
+    return `${url.origin}${url.pathname}`.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function exactCommit(value: string | null | undefined): string | null {
+  const text = String(value || "").trim();
+  return /^[a-f0-9]{40,64}$/i.test(text) ? text : null;
+}
+
+function parseKeyValueLines(output: string) {
+  const values: Record<string, string> = {};
+  for (const line of output.replace(/\r\n?/g, "\n").split("\n")) {
+    const index = line.indexOf("=");
+    if (index <= 0) continue;
+    values[line.slice(0, index)] = line.slice(index + 1).trim();
+  }
+  return values;
+}
+
+async function resolveComposeSourceFingerprint(input: {
+  project: { repoUrl?: string | null } | null;
+  projectPath: string;
+  composePath: string;
+  expectedImages: Record<string, string>;
+  imageDigest: string | null;
+  vps: Awaited<ReturnType<typeof getActiveVps>>;
+}) {
+  const git = await execOnTargetStrict(
+    [
+      `cd ${shQuote(input.projectPath)}`,
+      `printf 'remote=%s\\n' "$(git config --get remote.origin.url 2>/dev/null || true)"`,
+      `printf 'commit=%s\\n' "$(git rev-parse HEAD 2>/dev/null || true)"`,
+      `printf 'branch=%s\\n' "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"`,
+    ].join(" && "),
+    input.vps
+  ).catch(() => ({ stdout: "", stderr: "", code: 1 }));
+  const gitValues = parseKeyValueLines(git.stdout);
+  let repoUrl = normalizeGitRemoteUrl(gitValues.remote) || normalizeGitRemoteUrl(input.project?.repoUrl);
+  let commitSha = exactCommit(gitValues.commit);
+  const branch = gitValues.branch && gitValues.branch !== "HEAD" ? gitValues.branch : "main";
+
+  const firstImage = Object.values(input.expectedImages).find(Boolean);
+  if ((!repoUrl || !commitSha) && firstImage) {
+    const labels = await execOnTargetStrict(
+      `docker image inspect --format 'revision={{ index .Config.Labels "org.opencontainers.image.revision" }}\nsource={{ index .Config.Labels "org.opencontainers.image.source" }}' ${shQuote(firstImage)} 2>/dev/null || true`,
+      input.vps
+    ).catch(() => ({ stdout: "", stderr: "", code: 1 }));
+    const labelValues = parseKeyValueLines(labels.stdout.replaceAll("<no value>", ""));
+    repoUrl = repoUrl || normalizeGitRemoteUrl(labelValues.source);
+    commitSha = commitSha || exactCommit(labelValues.revision);
+  }
+
+  const composeRelativePath = input.composePath.startsWith(`${input.projectPath}/`)
+    ? input.composePath.slice(input.projectPath.length + 1)
+    : input.composePath;
+
+  return {
+    repoUrl,
+    commitSha,
+    branch,
+    sourceRoot: "",
+    sourcePath: input.projectPath,
+    composePath: input.composePath,
+    composeRelativePath,
+    imageDigest: input.imageDigest,
+    resolvedAt: new Date().toISOString(),
+  };
+}
+
+async function persistDeploymentSourceFingerprint(input: {
+  projectId: number;
+  projectPath: string;
+  composePath: string;
+  fingerprint: Awaited<ReturnType<typeof resolveComposeSourceFingerprint>>;
+}) {
+  const enrolled = await prisma.enrolledDeployment.findFirst({
+    where: {
+      OR: [
+        { legacyProjectId: input.projectId },
+        { sourcePath: input.projectPath },
+      ],
+    },
+  });
+  if (!enrolled) return;
+  let metadata: Record<string, unknown> = {};
+  try { metadata = JSON.parse(enrolled.metadataJson || "{}") as Record<string, unknown>; } catch {}
+  const existingSourceRepair = metadata.sourceRepair && typeof metadata.sourceRepair === "object"
+    ? metadata.sourceRepair as Record<string, unknown>
+    : {};
+  metadata.sourceRepair = {
+    ...existingSourceRepair,
+    defaultBranch: input.fingerprint.branch || existingSourceRepair.defaultBranch || "main",
+    deployedCommit: input.fingerprint.commitSha || existingSourceRepair.deployedCommit || "",
+    sourceRoot: existingSourceRepair.sourceRoot || input.fingerprint.sourceRoot || "",
+    daytonaEnabled: existingSourceRepair.daytonaEnabled !== false,
+    daytonaConnectorId: existingSourceRepair.daytonaConnectorId || "daytona",
+  };
+  if (input.fingerprint.repoUrl && !metadata.manualRepoUrl) metadata.manualRepoUrl = input.fingerprint.repoUrl;
+  metadata.sourceFingerprint = input.fingerprint;
+  metadata.sourceFingerprintUpdatedAt = new Date().toISOString();
+  await prisma.enrolledDeployment.update({
+    where: { id: enrolled.id },
+    data: {
+      sourcePath: input.projectPath,
+      composePath: input.composePath,
+      metadataJson: JSON.stringify(metadata),
+    },
+  });
+}
+
 async function recordRedeployEvidence(
   logFile: string,
   line: string,
@@ -492,6 +616,29 @@ export async function POST(req: NextRequest) {
     } catch {
       // Digest tracking is best-effort.
     }
+    const sourceFingerprint = await resolveComposeSourceFingerprint({
+      project,
+      projectPath: target.projectPath,
+      composePath: composeFile,
+      expectedImages,
+      imageDigest,
+      vps,
+    });
+    if (project) {
+      if (sourceFingerprint.repoUrl && !project.repoUrl) {
+        await prisma.project.update({
+          where: { id: project.id },
+          data: { repoUrl: sourceFingerprint.repoUrl },
+        }).catch(() => undefined);
+      }
+      await persistDeploymentSourceFingerprint({
+        projectId: project.id,
+        projectPath: target.projectPath,
+        composePath: composeFile,
+        fingerprint: sourceFingerprint,
+      }).catch(() => undefined);
+    }
+    const sourceFingerprintLine = `__GC_SOURCE_FINGERPRINT__=${JSON.stringify(sourceFingerprint)}`;
 
     await prisma.deploymentLog.create({
       data: {
@@ -500,6 +647,7 @@ export async function POST(req: NextRequest) {
         output: [
           `[validate] Effective Compose configuration OK (${composeFile})`,
           environmentHash ? `[configuration] revision=${environmentHash}` : "",
+          sourceFingerprint.commitSha ? `[source] revision=${sourceFingerprint.commitSha.slice(0, 12)} repo=${sourceFingerprint.repoUrl || "unresolved"}` : "[source] revision unresolved",
           pullResult.stdout || pullResult.stderr ? `[pull]\n${pullResult.stdout || pullResult.stderr}` : "",
           result.stdout,
         ].filter(Boolean).join("\n") || null,
@@ -525,10 +673,11 @@ export async function POST(req: NextRequest) {
           envHash: environmentHash,
           changedFields: changedFields.length > 0 ? JSON.stringify(changedFields) : null,
           publicUrl,
-          output: result.stdout || null,
+          output: [sourceFingerprintLine, result.stdout].filter(Boolean).join("\n") || null,
           error: result.stderr || null,
           durationMs: Date.now() - startedAt,
-          branch: "main",
+          branch: sourceFingerprint.branch || "main",
+          commitSha: sourceFingerprint.commitSha,
         },
       }).catch(() => undefined);
     }
@@ -541,6 +690,7 @@ export async function POST(req: NextRequest) {
       composePath: composeFile,
       detached: detached || undefined,
       imageDigest: imageDigest || undefined,
+      sourceFingerprint,
       environmentHash,
       changedFields: changedFields.length > 0 ? changedFields : undefined,
     });
