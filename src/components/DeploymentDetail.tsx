@@ -10,11 +10,13 @@ import {
   Code2,
   ExternalLink,
   FolderGit2,
+  GitBranch,
   Layers3,
   Pencil,
   RefreshCw,
   ServerCog,
   Settings2,
+  ShieldCheck,
 } from "lucide-react";
 import { DeploymentEnvPanel } from "@/components/DeploymentEnvPanel";
 import { ModalSurface } from "@/components/ModalSurface";
@@ -60,8 +62,18 @@ type DeploymentDetailRecord = {
   legacyProjectId?: number | null;
   legacyProjectSlug?: string | null;
   repoUrl?: string | null;
+  deployedCommit?: string | null;
   domain?: string | null;
   publicUrl?: string | null;
+  sourceRepair?: {
+    defaultBranch?: string;
+    deployedCommit?: string;
+    sourceRoot?: string;
+    daytonaEnabled?: boolean;
+    daytonaConnectorId?: string;
+    validationCommand?: string;
+    regressionCommand?: string;
+  } | null;
   releases: Release[];
   envProfile?: {
     id: number;
@@ -88,7 +100,7 @@ type DeploymentDetailRecord = {
   identitySource?: string;
 };
 
-type Tab = "manage" | "environment" | "releases" | "deploy";
+type Tab = "manage" | "source" | "environment" | "releases" | "deploy";
 
 async function readJson(response: Response) {
   try { return await response.json(); } catch { return {}; }
@@ -109,11 +121,17 @@ export default function DeploymentDetail({
   const [message, setMessage] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [tab, setTab] = useState<Tab>("manage");
   const [projectOpen, setProjectOpen] = useState(false);
-  const [identityOpen, setIdentityOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [imageEditorOpen, setImageEditorOpen] = useState(false);
   const [publicUrlInput, setPublicUrlInput] = useState("");
   const [repoUrlInput, setRepoUrlInput] = useState("");
+  const [sourceDefaultBranch, setSourceDefaultBranch] = useState("main");
+  const [sourceCommitInput, setSourceCommitInput] = useState("");
+  const [sourceRootInput, setSourceRootInput] = useState("");
+  const [daytonaEnabled, setDaytonaEnabled] = useState(true);
+  const [daytonaConnectorId, setDaytonaConnectorId] = useState("daytona");
+  const [validationCommand, setValidationCommand] = useState("");
+  const [regressionCommand, setRegressionCommand] = useState("");
   const [composeContent, setComposeContent] = useState("");
   const [composeLoading, setComposeLoading] = useState(false);
   const [imageSourceInput, setImageSourceInput] = useState("");
@@ -129,6 +147,7 @@ export default function DeploymentDetail({
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [runElapsed, setRunElapsed] = useState(0);
   const [focusedDeploymentStage, setFocusedDeploymentStage] = useState<DeploymentStageId | null>(null);
+  const liveUrl = deployment?.publicUrl || (deployment?.domain ? `https://${deployment.domain}` : null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,9 +171,23 @@ export default function DeploymentDetail({
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    const resolved = ["environment", "releases", "deploy"].includes(initialTab || "") ? initialTab as Tab : "manage";
+    const resolved = ["source", "environment", "releases", "deploy"].includes(initialTab || "") ? initialTab as Tab : "manage";
     setTab(resolved);
   }, [initialTab]);
+
+  useEffect(() => {
+    if (!deployment) return;
+    const source = deployment.sourceRepair || {};
+    setPublicUrlInput(liveUrl || "");
+    setRepoUrlInput(deployment.repoUrl || "");
+    setSourceDefaultBranch(source.defaultBranch || "main");
+    setSourceCommitInput(source.deployedCommit || deployment.deployedCommit || "");
+    setSourceRootInput(source.sourceRoot || "");
+    setDaytonaEnabled(source.daytonaEnabled !== false);
+    setDaytonaConnectorId(source.daytonaConnectorId || "daytona");
+    setValidationCommand(source.validationCommand || "");
+    setRegressionCommand(source.regressionCommand || "");
+  }, [deployment, liveUrl]);
 
   useEffect(() => {
     const latest = deployment?.runtimeEvents?.[0];
@@ -288,26 +321,31 @@ export default function DeploymentDetail({
     }
   }
 
-  function openIdentityEditor() {
-    setPublicUrlInput(liveUrl || "");
-    setRepoUrlInput(deployment?.repoUrl || "");
-    setIdentityOpen(true);
-  }
-
-  async function saveIdentity() {
+  async function saveSourceSettings() {
     if (!deployment) return;
     setBusy(true);
     try {
       const response = await fetch(`/api/deployment-inventory/${encodeURIComponent(deployment.slug)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publicUrl: publicUrlInput, repoUrl: repoUrlInput }),
+        body: JSON.stringify({
+          publicUrl: publicUrlInput,
+          repoUrl: repoUrlInput,
+          sourceRepair: {
+            defaultBranch: sourceDefaultBranch,
+            deployedCommit: sourceCommitInput,
+            sourceRoot: sourceRootInput,
+            daytonaEnabled,
+            daytonaConnectorId,
+            validationCommand,
+            regressionCommand,
+          },
+        }),
       });
       const data = await readJson(response);
-      if (!response.ok || data.error) throw new Error(data.error || "Could not save deployment identity");
+      if (!response.ok || data.error) throw new Error(data.error || "Could not save source settings");
       await load();
-      setIdentityOpen(false);
-      setMessage({ tone: "success", text: "Deployment identity saved." });
+      setMessage({ tone: "success", text: "Source and repair settings saved." });
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -392,7 +430,6 @@ export default function DeploymentDetail({
     }
   }
 
-  const liveUrl = deployment?.publicUrl || (deployment?.domain ? `https://${deployment.domain}` : null);
   const changedFields = deployment?.releases[0]?.changedFields
     ? (() => { try { return JSON.parse(deployment.releases[0].changedFields) as string[]; } catch { return []; } })()
     : [];
@@ -412,6 +449,7 @@ export default function DeploymentDetail({
 
   const tabs: { id: Tab; label: string; detail: string }[] = [
     { id: "manage", label: "Manage", detail: "Containers, sources, configuration" },
+    { id: "source", label: "Configure", detail: deployment.repoUrl ? "Linked" : "Needs repo" },
     { id: "environment", label: "Environment", detail: deployment.envProfile?.name || "Configure" },
     { id: "releases", label: "Releases", detail: `${deployment.releases.length} recent` },
     { id: "deploy", label: "Deploy", detail: redeployStatus === "deploying" ? "Run active" : deployment.runtimeEvents?.[0]?.status || "Ready" },
@@ -440,9 +478,9 @@ export default function DeploymentDetail({
                 Repository
               </a>
             )}
-            <button type="button" onClick={openIdentityEditor} className="gc-button gc-button-secondary">
+            <button type="button" onClick={() => setTab("source")} className="gc-button gc-button-secondary">
               <Pencil size={14} aria-hidden="true" />
-              Edit identity
+              Configure
             </button>
             {liveUrl && (
               <a href={liveUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-primary">
@@ -553,6 +591,7 @@ export default function DeploymentDetail({
                   <div className="mt-5 flex flex-wrap gap-2">
                     {liveUrl ? <a href={liveUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-secondary">Open live</a> : <span className="text-xs text-muted">No public endpoint recorded.</span>}
                     {deployment.repoUrl && <a href={deployment.repoUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-quiet">Repository</a>}
+                    <button type="button" onClick={() => setTab("source")} className="gc-button gc-button-quiet">Configure</button>
                   </div>
                 </div>
               </section>
@@ -652,6 +691,176 @@ export default function DeploymentDetail({
             </div>
           )}
 
+          {tab === "source" && (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveSourceSettings();
+              }}
+              className="space-y-5"
+            >
+              <section className="border border-border bg-card">
+                <div className="border-b border-border px-5 py-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold tracking-tight">Source identity</h2>
+                      <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
+                        GroundControl uses this exact source record for deploy history, Intelligence, and validated repairs. Folder names and container labels stay as fallback evidence only.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {repoUrlInput.trim() && (
+                        <a href={repoUrlInput.trim()} target="_blank" rel="noreferrer" className="gc-button gc-button-secondary">
+                          <FolderGit2 size={14} aria-hidden="true" />
+                          Repository
+                        </a>
+                      )}
+                      <button type="submit" disabled={busy} className="gc-button gc-button-primary">
+                        {busy ? "Saving…" : "Save source"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mx-5 mt-5 rounded-lg bg-background/55 p-4 text-xs leading-relaxed text-muted">
+                  This deployment stores the repository, deployed revision, monorepo path, and repair policy. Global credentials for GitHub and Daytona live in{" "}
+                  <Link href="/settings?tab=connections" className="text-accent hover:underline">Settings → Connectors</Link>.
+                </div>
+
+                <div className="grid gap-5 p-5 lg:grid-cols-2">
+                  <label className="block">
+                    <span className="text-xs font-medium text-muted">Public URL</span>
+                    <input
+                      value={publicUrlInput}
+                      onChange={(event) => setPublicUrlInput(event.target.value)}
+                      placeholder="https://app.example.com"
+                      className="gc-field mt-2 w-full font-mono"
+                    />
+                    <span className="mt-1 block text-[10px] text-muted">Used for public verification after deploy and repair.</span>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-muted">GitHub repository</span>
+                    <input
+                      value={repoUrlInput}
+                      onChange={(event) => setRepoUrlInput(event.target.value)}
+                      placeholder="https://github.com/owner/repository"
+                      className="gc-field mt-2 w-full font-mono"
+                    />
+                    <span className="mt-1 block text-[10px] text-muted">Dedicated source field; Intelligence will not guess this from runtime names.</span>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-muted">Default branch</span>
+                    <input
+                      value={sourceDefaultBranch}
+                      onChange={(event) => setSourceDefaultBranch(event.target.value)}
+                      placeholder="main"
+                      className="gc-field mt-2 w-full font-mono"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-muted">Deployed commit</span>
+                    <input
+                      value={sourceCommitInput}
+                      onChange={(event) => setSourceCommitInput(event.target.value)}
+                      placeholder={deployment.deployedCommit || "Exact commit SHA"}
+                      className="gc-field mt-2 w-full font-mono"
+                    />
+                    <span className="mt-1 block text-[10px] text-muted">
+                      Latest recorded release: {deployment.deployedCommit ? deployment.deployedCommit.slice(0, 12) : "not recorded"}
+                    </span>
+                  </label>
+                  <label className="block lg:col-span-2">
+                    <span className="text-xs font-medium text-muted">Repository path</span>
+                    <input
+                      value={sourceRootInput}
+                      onChange={(event) => setSourceRootInput(event.target.value)}
+                      placeholder="apps/api or leave blank for repository root"
+                      className="gc-field mt-2 w-full font-mono"
+                    />
+                    <span className="mt-1 block text-[10px] text-muted">Repository-relative path used when a deployment lives inside a monorepo.</span>
+                  </label>
+                </div>
+              </section>
+
+              <section className="border border-border bg-card">
+                <div className="border-b border-border px-5 py-4">
+                  <div className="flex items-start gap-3">
+                    <ShieldCheck size={18} className="mt-0.5 text-muted" aria-hidden="true" />
+                    <div>
+                      <h2 className="text-lg font-semibold tracking-tight">Repair workbench</h2>
+                      <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
+                        Daytona is the isolated workbench for source fixes. It should clone the stored repository and exact deployed revision before GroundControl proposes a PR.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-5 p-5">
+                  <label className="flex items-start justify-between gap-4 rounded-lg bg-background/55 p-4">
+                    <span>
+                      <span className="block text-sm font-medium">Use Daytona for source repairs</span>
+                      <span className="mt-1 block text-[11px] leading-relaxed text-muted">When enabled, application/config fixes must be reproduced and validated in Daytona before a PR is offered.</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={daytonaEnabled}
+                      onChange={(event) => setDaytonaEnabled(event.target.checked)}
+                      className="mt-1 h-4 w-4 accent-[var(--accent)]"
+                    />
+                  </label>
+
+                  <div className="grid gap-5 lg:grid-cols-2">
+                    <label className="block">
+                      <span className="text-xs font-medium text-muted">Daytona connector</span>
+                      <input
+                        value={daytonaConnectorId}
+                        onChange={(event) => setDaytonaConnectorId(event.target.value)}
+                        placeholder="daytona"
+                        className="gc-field mt-2 w-full font-mono"
+                        disabled={!daytonaEnabled}
+                      />
+                      <span className="mt-1 block text-[10px] text-muted">
+                        Connector credentials are managed once in <Link href="/settings?tab=connections" className="text-accent hover:underline">Settings → Connectors</Link>; this deployment chooses whether to use that workbench for source repairs.
+                      </span>
+                    </label>
+                    <div className="rounded-lg bg-background/55 p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <GitBranch size={14} aria-hidden="true" />
+                        Repair readiness
+                      </div>
+                      <div className="mt-3 space-y-1 text-[11px] text-muted">
+                        <p>{repoUrlInput.trim() ? "Repository linked" : "Repository missing"}</p>
+                        <p>{sourceCommitInput.trim() ? "Exact deployed revision set" : "Exact deployed revision missing"}</p>
+                        <p>{daytonaEnabled ? "Daytona required for source fixes" : "Daytona disabled for this deployment"}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="block">
+                    <span className="text-xs font-medium text-muted">Focused validation command</span>
+                    <input
+                      value={validationCommand}
+                      onChange={(event) => setValidationCommand(event.target.value)}
+                      placeholder="npm test -- --runInBand"
+                      className="gc-field mt-2 w-full font-mono"
+                      disabled={!daytonaEnabled}
+                    />
+                    <span className="mt-1 block text-[10px] text-muted">This should fail before the repair and pass after it.</span>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-muted">Regression command</span>
+                    <input
+                      value={regressionCommand}
+                      onChange={(event) => setRegressionCommand(event.target.value)}
+                      placeholder="npm run build"
+                      className="gc-field mt-2 w-full font-mono"
+                      disabled={!daytonaEnabled}
+                    />
+                  </label>
+                </div>
+              </section>
+            </form>
+          )}
+
           {/* ===== ENVIRONMENT TAB ===== */}
           {tab === "environment" && (
             deployment.legacyProjectId ? (
@@ -732,23 +941,6 @@ export default function DeploymentDetail({
             </button>
           ))}
         </div>
-      </ModalSurface>
-
-      <ModalSurface open={identityOpen} onClose={() => setIdentityOpen(false)} title="Deployment identity" description="Confirm values GroundControl cannot safely infer.">
-        <form onSubmit={(event) => { event.preventDefault(); void saveIdentity(); }} className="space-y-4">
-          <label className="block">
-            <span className="gc-label">Deployed URL</span>
-            <input autoFocus value={publicUrlInput} onChange={(event) => setPublicUrlInput(event.target.value)} placeholder="https://app.example.com" className="gc-field mt-2 w-full font-mono" />
-          </label>
-          <label className="block">
-            <span className="gc-label">GitHub repository</span>
-            <input value={repoUrlInput} onChange={(event) => setRepoUrlInput(event.target.value)} placeholder="https://github.com/owner/repository" className="gc-field mt-2 w-full font-mono" />
-          </label>
-          <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <button type="button" onClick={() => setIdentityOpen(false)} className="gc-button gc-button-quiet">Cancel</button>
-            <button type="submit" disabled={busy} className="gc-button gc-button-primary">{busy ? "Saving…" : "Save identity"}</button>
-          </div>
-        </form>
       </ModalSurface>
 
       <ModalSurface open={composeOpen} onClose={() => { setComposeOpen(false); setComposeContent(""); }} title="Compose file" description={deployment.sourcePath || deployment.composePath || deployment.slug}>

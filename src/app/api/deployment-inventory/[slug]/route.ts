@@ -84,6 +84,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         projectId: deployment.projectGroupId,
         legacyProjectSlug: deployment.legacyProject?.slug || null,
         repoUrl: evidence.repoUrl,
+        sourceRepair: evidence.sourceRepair,
+        deployedCommit: latestRelease?.commitSha || evidence.sourceCommit || null,
         domain: deployment.legacyProject?.domain || null,
         publicUrl: evidence.publicUrl || latestRelease?.publicUrl || latestRelease?.previewUrl || null,
         runtime: evidence.runtime,
@@ -128,6 +130,34 @@ function parseGithubUrl(value: unknown): { url: string | null; error?: string } 
   }
 }
 
+function cleanOptionalText(value: unknown, max = 500) {
+  return String(value || "").trim().slice(0, max);
+}
+
+function parseSourceRepair(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const deployedCommit = cleanOptionalText(input.deployedCommit, 80);
+  if (deployedCommit && !/^[a-f0-9]{40,64}$/i.test(deployedCommit)) {
+    return { error: "Enter an exact deployed commit SHA, or leave it blank." };
+  }
+  const sourceRoot = cleanOptionalText(input.sourceRoot, 240);
+  if (sourceRoot && (sourceRoot.startsWith("/") || sourceRoot.includes(".."))) {
+    return { error: "Source path must be repository-relative." };
+  }
+  return {
+    value: {
+      defaultBranch: cleanOptionalText(input.defaultBranch, 120) || "main",
+      deployedCommit,
+      sourceRoot,
+      daytonaEnabled: input.daytonaEnabled === true,
+      daytonaConnectorId: cleanOptionalText(input.daytonaConnectorId, 80) || "daytona",
+      validationCommand: cleanOptionalText(input.validationCommand, 500),
+      regressionCommand: cleanOptionalText(input.regressionCommand, 500),
+    },
+  };
+}
+
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: string }> }) {
   try {
     requireAuth(req);
@@ -135,13 +165,15 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
     const body = await req.json();
     const hasPublicUrl = Object.prototype.hasOwnProperty.call(body, "publicUrl");
     const hasRepoUrl = Object.prototype.hasOwnProperty.call(body, "repoUrl");
-    if (!hasPublicUrl && !hasRepoUrl) {
+    const hasSourceRepair = Object.prototype.hasOwnProperty.call(body, "sourceRepair");
+    if (!hasPublicUrl && !hasRepoUrl && !hasSourceRepair) {
       return NextResponse.json({ error: "Provide the deployment identity field to update." }, { status: 400 });
     }
     const publicIdentity = hasPublicUrl ? parsePublicUrl(body.publicUrl) : null;
     const repository = hasRepoUrl ? parseGithubUrl(body.repoUrl) : null;
-    if (publicIdentity?.error || repository?.error) {
-      return NextResponse.json({ error: publicIdentity?.error || repository?.error }, { status: 400 });
+    const sourceRepair = hasSourceRepair ? parseSourceRepair(body.sourceRepair) : null;
+    if (publicIdentity?.error || repository?.error || sourceRepair?.error) {
+      return NextResponse.json({ error: publicIdentity?.error || repository?.error || sourceRepair?.error }, { status: 400 });
     }
     const deployment = await prisma.enrolledDeployment.findUnique({ where: { slug }, include: { legacyProject: true } });
     if (!deployment) return NextResponse.json({ error: "Deployment not found" }, { status: 404 });
@@ -150,6 +182,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
     const previousOverrides = readDeploymentOverrides(deployment.metadataJson);
     if (hasPublicUrl) metadata.manualPublicUrl = publicIdentity?.url || null;
     if (hasRepoUrl) metadata.manualRepoUrl = repository?.url || null;
+    if (hasSourceRepair) metadata.sourceRepair = sourceRepair?.value || null;
     metadata.identityUpdatedAt = new Date().toISOString();
 
     const currentPublicUrl = hasPublicUrl
@@ -187,7 +220,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
       where: { id: deployment.id },
       data: { metadataJson: JSON.stringify(metadata), legacyProjectId },
     });
-    return NextResponse.json({ success: true, publicUrl: currentPublicUrl, repoUrl: currentRepoUrl });
+    return NextResponse.json({ success: true, publicUrl: currentPublicUrl, repoUrl: currentRepoUrl, sourceRepair: metadata.sourceRepair || null });
   } catch (error) {
     return handleApiError(error);
   }

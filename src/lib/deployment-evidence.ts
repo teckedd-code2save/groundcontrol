@@ -93,13 +93,34 @@ export function resolveDeploymentExecutionIdentity(
 
 export function readDeploymentOverrides(metadataJson?: string | null) {
   try {
-    const parsed = JSON.parse(metadataJson || "{}") as { manualPublicUrl?: string; manualRepoUrl?: string };
+    const parsed = JSON.parse(metadataJson || "{}") as {
+      manualPublicUrl?: string;
+      manualRepoUrl?: string;
+      sourceRepair?: {
+        defaultBranch?: string;
+        deployedCommit?: string;
+        sourceRoot?: string;
+        daytonaEnabled?: boolean;
+        daytonaConnectorId?: string;
+        validationCommand?: string;
+        regressionCommand?: string;
+      };
+    };
     return {
       publicUrl: typeof parsed.manualPublicUrl === "string" ? parsed.manualPublicUrl : null,
       repoUrl: typeof parsed.manualRepoUrl === "string" ? parsed.manualRepoUrl : null,
+      sourceRepair: parsed.sourceRepair && typeof parsed.sourceRepair === "object" ? {
+        defaultBranch: typeof parsed.sourceRepair.defaultBranch === "string" ? parsed.sourceRepair.defaultBranch : "",
+        deployedCommit: typeof parsed.sourceRepair.deployedCommit === "string" ? parsed.sourceRepair.deployedCommit : "",
+        sourceRoot: typeof parsed.sourceRepair.sourceRoot === "string" ? parsed.sourceRepair.sourceRoot : "",
+        daytonaEnabled: parsed.sourceRepair.daytonaEnabled === true,
+        daytonaConnectorId: typeof parsed.sourceRepair.daytonaConnectorId === "string" ? parsed.sourceRepair.daytonaConnectorId : "daytona",
+        validationCommand: typeof parsed.sourceRepair.validationCommand === "string" ? parsed.sourceRepair.validationCommand : "",
+        regressionCommand: typeof parsed.sourceRepair.regressionCommand === "string" ? parsed.sourceRepair.regressionCommand : "",
+      } : null,
     };
   } catch {
-    return { publicUrl: null, repoUrl: null };
+    return { publicUrl: null, repoUrl: null, sourceRepair: null };
   }
 }
 
@@ -168,6 +189,7 @@ export function resolveDeploymentEvidence(
   );
   const discoveredUrl = routeMatch?.site.domain ? `https://${routeMatch.site.domain}` : null;
   const repoUrl = overrides.repoUrl || deployment.savedRepoUrl || recordedSource.repoUrl || null;
+  const sourceCommit = overrides.sourceRepair?.deployedCommit || recordedSource.commitSha;
   return {
     runtime,
     route: routeMatch ? {
@@ -178,7 +200,8 @@ export function resolveDeploymentEvidence(
     } : null,
     publicUrl: overrides.publicUrl || (deployment.savedDomain ? `https://${deployment.savedDomain}` : null) || discoveredUrl,
     repoUrl,
-    sourceCommit: recordedSource.commitSha,
+    sourceCommit,
+    sourceRepair: overrides.sourceRepair,
     identitySource: overrides.publicUrl || overrides.repoUrl
       ? "operator"
       : deployment.savedRepoUrl
