@@ -13,7 +13,10 @@ import {
   isSafeRouteEnvPrefix,
   resolveAgentToolCall,
 } from "./ai-agent";
-import { shouldBlockIncidentConfirmation } from "@/app/api/ai/chat/route";
+import {
+  shouldBlockIncidentConfirmation,
+  shouldBlockIncidentSourceTool,
+} from "@/app/api/ai/chat/route";
 
 describe("AI incident integrity", () => {
   it("does not display failed tools as successful", () => {
@@ -120,6 +123,30 @@ describe("AI incident integrity", () => {
       deploymentSlug: "app",
       failureBoundary: "proxy_to_upstream",
     })).toBeNull();
+  });
+
+  it("blocks source repair tools until deployment source identity is exact and readable", () => {
+    const incident = {
+      domain: "rentmyweekend.serendepify.com",
+      deploymentSlug: "rentaweekend",
+      failureBoundary: "application",
+    };
+    expect(shouldBlockIncidentSourceTool("read_repository_source_at_revision", {
+      filePath: "apps/api/src/server.ts",
+    }, incident)).toContain("No repository URL is stored");
+    expect(shouldBlockIncidentSourceTool("read_repository_source_at_revision", {
+      repositoryUrl: "https://github.com/teckedd-code2save/RentAWeekend",
+      filePath: "apps/api/src/server.ts",
+    }, { ...incident, repository: "https://github.com/teckedd-code2save/RentAWeekend" })).toContain("deployed commit is missing");
+    expect(shouldBlockIncidentSourceTool("read_repository_source_at_revision", {
+      repositoryUrl: "https://github.com/teckedd-code2save/RentAWeekend",
+      commitSha: "0ab5ffb56e61a9e5fd7697c8ba8626fe72564816",
+      filePath: "apps/api/src/server.ts",
+    }, {
+      ...incident,
+      repository: "https://github.com/teckedd-code2save/RentAWeekend",
+      deployedCommit: "0ab5ffb56e61a9e5fd7697c8ba8626fe72564816",
+    }, "ERROR: GitHub API request failed (404): Not Found")).toContain("not readable through the connected GitHub App");
   });
 
   it("allows bounded HTTP inspection but still blocks fetched shell execution", () => {

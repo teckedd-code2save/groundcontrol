@@ -218,6 +218,73 @@ export function shouldBlockIncidentConfirmation(
   return null;
 }
 
+const SOURCE_REPAIR_TOOLS = new Set([
+  "read_repository_source_at_revision",
+  "prepare_source_fix_in_daytona",
+  "reproduce_incident_in_daytona",
+]);
+
+function isSourceRepairTool(name: string) {
+  return SOURCE_REPAIR_TOOLS.has(name);
+}
+
+function sourceIdentityBlockerText(
+  incidentContext: RequestBody["incidentContext"],
+  reason: string
+) {
+  const deployment = incidentContext?.deploymentSlug || "this deployment";
+  const repo = incidentContext?.repository || "unlinked";
+  const revision = incidentContext?.deployedCommit || "unresolved";
+  return [
+    "### Problem",
+    `Source repair is blocked because GroundControl cannot read the exact repository revision for ${deployment}.`,
+    "",
+    "### Fix",
+    `Link or correct the deployment's GitHub repository field, then make sure the latest release records the deployed commit. Current source identity: repository ${repo}, deployed revision ${revision}. ${reason}`,
+    "",
+    "### Verify",
+    "After the source identity is corrected, continue this investigation. GroundControl should read the target file from the recorded revision, validate the repair in Daytona, then prepare a confirmation-gated PR.",
+  ].join("\n");
+}
+
+function hasSourceIdentityBlocker(toolCalls: Pick<ToolCallRecord, "name" | "output">[], content: string) {
+  const combined = [
+    content,
+    ...toolCalls.filter((call) => isSourceRepairTool(call.name)).map((call) => call.output || ""),
+  ].join("\n");
+  return /Source repair is blocked because GroundControl cannot read the exact repository revision/i.test(combined);
+}
+
+export function shouldBlockIncidentSourceTool(
+  name: string,
+  args: Record<string, unknown>,
+  incidentContext?: RequestBody["incidentContext"],
+  output?: string
+): string | null {
+  if (!incidentContext || !isSourceRepairTool(name)) return null;
+  const repository = String(args.repositoryUrl || incidentContext.repository || "").trim();
+  const commit = String(args.commitSha || incidentContext.deployedCommit || "").trim();
+  if (!repository) {
+    return sourceIdentityBlockerText(
+      incidentContext,
+      "No repository URL is stored on the deployment, so GroundControl will not guess from folder names or container labels."
+    );
+  }
+  if (name !== "reproduce_incident_in_daytona" && !/^[a-f0-9]{40,64}$/i.test(commit)) {
+    return sourceIdentityBlockerText(
+      incidentContext,
+      "The deployed commit is missing or is not an exact SHA, so GroundControl cannot prove a source change against the running revision."
+    );
+  }
+  if (output && /GitHub API request failed\s*\(404\)|\b404\b.*\bgithub\b|not\s+found/i.test(output)) {
+    return sourceIdentityBlockerText(
+      incidentContext,
+      "The stored repository, file path, or deployed revision was not readable through the connected GitHub App."
+    );
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const user = requireAuth(req);
@@ -388,6 +455,7 @@ export async function POST(req: NextRequest) {
 
           if (
             incidentContext &&
+            !hasSourceIdentityBlocker(turn.toolCalls, turn.content) &&
             incidentTurnNeedsContinuation(turn.toolCalls, turn.content)
           ) {
             const recentEvidence = turn.toolCalls.slice(-8).map((call) => {
@@ -651,6 +719,16 @@ async function runOpenAI(ctx: RunCtx) {
         continue;
       }
 
+      const sourceBlocked = shouldBlockIncidentSourceTool(name, args, ctx.incidentContext);
+      if (sourceBlocked) {
+        emit({ type: "tool", name, args, status: "error", output: sourceBlocked });
+        convo.push({ role: "tool", tool_call_id: call.id, content: `ERROR: ${sourceBlocked}` });
+        turn.toolCalls.push({ name, args, status: "error", output: sourceBlocked, readOnly: true });
+        turn.content += sourceBlocked;
+        emit({ type: "text", delta: sourceBlocked });
+        return;
+      }
+
       if (!isReadOnlyTool(name)) {
         const blocked = shouldBlockIncidentConfirmation(name, ctx.incidentContext);
         if (blocked) {
@@ -686,6 +764,17 @@ async function runOpenAI(ctx: RunCtx) {
         confirmed: false,
         context: ctx.context,
       });
+
+      const sourceOutputBlocked = shouldBlockIncidentSourceTool(name, args, ctx.incidentContext, output);
+      if (sourceOutputBlocked) {
+        if (turn.content && !turn.content.endsWith("\n")) {
+          turn.content += "\n\n";
+          emit({ type: "text", delta: "\n\n" });
+        }
+        turn.content += sourceOutputBlocked;
+        emit({ type: "text", delta: sourceOutputBlocked });
+        return;
+      }
     }
 
     if (awaitingConfirmation) {
@@ -780,6 +869,21 @@ async function runAnthropic(ctx: RunCtx) {
         continue;
       }
 
+      const sourceBlocked = shouldBlockIncidentSourceTool(name, args, ctx.incidentContext);
+      if (sourceBlocked) {
+        emit({ type: "tool", name, args, status: "error", output: sourceBlocked });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: `ERROR: ${sourceBlocked}`,
+          is_error: true,
+        });
+        turn.toolCalls.push({ name, args, status: "error", output: sourceBlocked, readOnly: true });
+        turn.content += sourceBlocked;
+        emit({ type: "text", delta: sourceBlocked });
+        return;
+      }
+
       if (!isReadOnlyTool(name)) {
         const blocked = shouldBlockIncidentConfirmation(name, ctx.incidentContext);
         if (blocked) {
@@ -826,6 +930,17 @@ async function runAnthropic(ctx: RunCtx) {
         confirmed: false,
         context: ctx.context,
       });
+
+      const sourceOutputBlocked = shouldBlockIncidentSourceTool(name, args, ctx.incidentContext, output);
+      if (sourceOutputBlocked) {
+        if (turn.content && !turn.content.endsWith("\n")) {
+          turn.content += "\n\n";
+          emit({ type: "text", delta: "\n\n" });
+        }
+        turn.content += sourceOutputBlocked;
+        emit({ type: "text", delta: sourceOutputBlocked });
+        return;
+      }
     }
 
     convo.push({ role: "user", content: toolResults });

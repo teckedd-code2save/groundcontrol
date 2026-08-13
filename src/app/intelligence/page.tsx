@@ -224,6 +224,14 @@ function usefulToolLines(tool: AgentToolEvent): string[] {
   return Array.from(new Set(lines)).slice(0, 6).map((line) => clipLine(line));
 }
 
+function sourceIdentityBlocked(tools: AgentToolEvent[], text: string) {
+  const combined = [
+    text,
+    ...tools.map((tool) => tool.output || ""),
+  ].join("\n");
+  return /Source repair is blocked because GroundControl cannot read the exact repository revision|GitHub API request failed\s*\(404\)|repository, file path, or deployed revision was not readable/i.test(combined);
+}
+
 function toolStatusLabel(tool: AgentToolEvent) {
   if (tool.status === "success") return "complete";
   if (tool.status === "error") return "blocked";
@@ -821,6 +829,7 @@ function ResolutionSurface({
   const inspection = path.inspection;
   const isHealthy = path.verification.status === "passed";
   const isFailed = path.verification.status === "failed";
+  const needsSourceIdentity = Boolean(investigation?.target && (!investigation.target.repository || sourceIdentityBlocked(agentTools, agentText)));
 
   return (
     <section className={softPanel}>
@@ -892,9 +901,11 @@ function ResolutionSurface({
           {investigation && (
             <>
               <IncidentResult investigation={investigation} />
-              {!investigation.target?.repository && investigation.target && (
+              {needsSourceIdentity && investigation.target && (
                 <RepositoryIdentityPrompt
                   deploymentName={investigation.target.deploymentName}
+                  currentRepository={investigation.target.repository || ""}
+                  blocked={Boolean(investigation.target.repository)}
                   running={investigating}
                   onLink={onLinkRepository}
                 />
@@ -994,16 +1005,24 @@ function IncidentResult({ investigation }: { investigation: IncidentInvestigatio
 
 function RepositoryIdentityPrompt({
   deploymentName,
+  currentRepository,
+  blocked,
   running,
   onLink,
 }: {
   deploymentName: string;
+  currentRepository?: string;
+  blocked?: boolean;
   running: boolean;
   onLink: (repositoryUrl: string) => Promise<void> | void;
 }) {
-  const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [repositoryUrl, setRepositoryUrl] = useState(currentRepository || "");
   const [saving, setSaving] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRepositoryUrl(currentRepository || "");
+  }, [currentRepository]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1024,9 +1043,11 @@ function RepositoryIdentityPrompt({
       <div className="flex items-start gap-3">
         <Link2 size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold">Link the source repository</p>
+          <p className="text-xs font-semibold">{blocked ? "Correct the source repository" : "Link the source repository"}</p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted">
-            No GitHub repository was recorded for {deploymentName}. Link it once; GroundControl will save it to this deployment and resume the same locked investigation automatically.
+            {blocked
+              ? `GroundControl could not read the stored repository or deployed revision for ${deploymentName}. Correct the dedicated repository field, then resume the same locked investigation.`
+              : `No GitHub repository was recorded for ${deploymentName}. Link it once; GroundControl will save it to this deployment and resume the same locked investigation automatically.`}
           </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
