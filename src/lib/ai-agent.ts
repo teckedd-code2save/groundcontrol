@@ -840,7 +840,11 @@ export const AGENT_TOOLS: AgentTool[] = [
         },
         filePath: {
           type: "string",
-          description: "Repository-relative source file path.",
+          description: "Source file path. If sourceRoot is provided, this may be relative to that root.",
+        },
+        sourceRoot: {
+          type: "string",
+          description: "Optional repository-relative deployment source root, for example rentweekend-backend. Leave blank for repository root.",
         },
       },
       required: ["repositoryUrl", "commitSha", "filePath"],
@@ -852,6 +856,7 @@ export const AGENT_TOOLS: AgentTool[] = [
         repositoryUrl: String(args?.repositoryUrl || ""),
         commitSha: String(args?.commitSha || ""),
         filePath: String(args?.filePath || ""),
+        sourceRoot: args?.sourceRoot ? String(args.sourceRoot) : undefined,
       }), null, 2)),
   },
   {

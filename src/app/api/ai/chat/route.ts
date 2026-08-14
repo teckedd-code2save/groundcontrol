@@ -161,18 +161,21 @@ function applyIncidentSourceDefaults(
 ) {
   if (!incidentContext) return args;
   const next = { ...args };
+  const configuredCommand = String(incidentContext.validationCommand || "").trim();
+  const configuredCommandIsSafe = configuredCommand && !validateDaytonaCommand(configuredCommand);
   if (name === "reproduce_incident_in_daytona") {
     const requestedCommand = String(next.testCommand || "").trim();
-    const configuredCommand = String(incidentContext.validationCommand || "").trim();
-    if (configuredCommand && (!requestedCommand || validateDaytonaCommand(requestedCommand))) {
+    if (configuredCommandIsSafe && (!requestedCommand || validateDaytonaCommand(requestedCommand))) {
       next.testCommand = configuredCommand;
     }
     if (incidentContext.sourceRoot && !next.sourceRoot) next.sourceRoot = incidentContext.sourceRoot;
   }
+  if (name === "read_repository_source_at_revision") {
+    if (incidentContext.sourceRoot && !next.sourceRoot) next.sourceRoot = incidentContext.sourceRoot;
+  }
   if (name === "prepare_source_fix_in_daytona") {
     const requestedCommand = String(next.validationCommand || "").trim();
-    const configuredCommand = String(incidentContext.validationCommand || "").trim();
-    if (configuredCommand && (!requestedCommand || validateDaytonaCommand(requestedCommand))) {
+    if (configuredCommandIsSafe && (!requestedCommand || validateDaytonaCommand(requestedCommand))) {
       next.validationCommand = configuredCommand;
     }
     if (incidentContext.sourceRoot && !next.sourceRoot) next.sourceRoot = incidentContext.sourceRoot;
@@ -316,6 +319,18 @@ export function shouldBlockIncidentSourceTool(
     return sourceIdentityBlockerText(
       incidentContext,
       "The deployed commit is missing or is not an exact SHA, so GroundControl cannot prove a source change against the running revision."
+    );
+  }
+  if (output && /deployed revision [a-f0-9]{12}.*not reachable|Record the exact Git commit/i.test(output)) {
+    return sourceIdentityBlockerText(
+      incidentContext,
+      "The recorded deployed revision is not reachable in the linked GitHub repository. Record the exact Git commit that produced the running image, or redeploy through GroundControl so it captures the source fingerprint."
+    );
+  }
+  if (output && /source file .* was not found|Check the deployment source path|Set the deployment source path/i.test(output)) {
+    return sourceIdentityBlockerText(
+      incidentContext,
+      "The requested source file was not found at the deployed revision. Check the deployment source path and file path before attempting a Daytona repair."
     );
   }
   if (output && /GitHub API request failed\s*\(404\)|\b404\b.*\bgithub\b|not\s+found/i.test(output)) {

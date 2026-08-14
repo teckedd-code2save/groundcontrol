@@ -4,7 +4,7 @@ import {
   hasStructuredIncidentConclusion,
   incidentTurnNeedsContinuation,
 } from "./ai-memory";
-import { applyExactSourceEdits } from "./source-repair";
+import { applyExactSourceEdits, resolveSourceFilePath } from "./source-repair";
 import {
   checkDiagnosticCommand,
   getOpenAIToolSchemas,
@@ -73,6 +73,12 @@ describe("AI incident integrity", () => {
       find: "API_UPSTREAM=http://api:3000",
       replace: "API_UPSTREAM=http://api:4000",
     }])).toThrow(/already present.*runtime investigation/i);
+  });
+
+  it("resolves component source files relative to a deployment source root", () => {
+    expect(resolveSourceFilePath("src/server.ts", "rentweekend-backend")).toBe("rentweekend-backend/src/server.ts");
+    expect(resolveSourceFilePath("rentweekend-backend/src/server.ts", "rentweekend-backend")).toBe("rentweekend-backend/src/server.ts");
+    expect(() => resolveSourceFilePath("src/server.ts", "apps/../api")).toThrow(/inside the repository/);
   });
 
   it("requires evidence-first Compose diagnosis and non-empty source edits", () => {

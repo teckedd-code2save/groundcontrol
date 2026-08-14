@@ -85,7 +85,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         legacyProjectSlug: deployment.legacyProject?.slug || null,
         repoUrl: evidence.repoUrl,
         sourceRepair: evidence.sourceRepair,
-        deployedCommit: latestRelease?.commitSha || evidence.sourceCommit || null,
+        deployedCommit: evidence.sourceRepair?.deployedCommit || latestRelease?.commitSha || evidence.sourceCommit || null,
         domain: deployment.legacyProject?.domain || null,
         publicUrl: evidence.publicUrl || latestRelease?.publicUrl || latestRelease?.previewUrl || null,
         runtime: evidence.runtime,

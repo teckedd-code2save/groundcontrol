@@ -12,6 +12,12 @@ const PLAN_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_REPLACEMENT_BYTES = 300_000;
 
 type LinkedRepository = Awaited<ReturnType<typeof linkedRepository>>;
+type GithubContentFile = {
+  sha: string;
+  content: string;
+  encoding: string;
+  type: string;
+};
 
 export interface PrepareSourceRepairInput {
   repositoryUrl: string;
@@ -38,6 +44,7 @@ export interface ReadSourceAtRevisionInput {
   repositoryUrl: string;
   commitSha: string;
   filePath: string;
+  sourceRoot?: string;
 }
 
 function clipped(value: string | undefined, max: number) {
@@ -63,6 +70,17 @@ function encodedRepositoryPath(fullName: string) {
 
 function encodedFilePath(filePath: string) {
   return filePath.split("/").map(encodeURIComponent).join("/");
+}
+
+export function resolveSourceFilePath(filePath: string, sourceRoot?: string | null) {
+  const file = filePath.trim();
+  const root = String(sourceRoot || "").trim().replace(/^\/+|\/+$/g, "");
+  const rootError = root ? validateRepairFilePath(root) : null;
+  if (rootError) throw new Error(rootError);
+  const pathError = validateRepairFilePath(file);
+  if (pathError) throw new Error(pathError);
+  if (!root) return file;
+  return file === root || file.startsWith(`${root}/`) ? file : `${root}/${file}`;
 }
 
 async function linkedRepository(repositoryUrl: string) {
@@ -108,23 +126,43 @@ function redactRepositorySource(source: string): string {
 
 async function repositoryFileAtRevision(input: ReadSourceAtRevisionInput) {
   const repository = await linkedRepository(input.repositoryUrl);
-  const filePath = input.filePath.trim();
-  const pathError = validateRepairFilePath(filePath);
-  if (pathError) throw new Error(pathError);
+  const filePath = resolveSourceFilePath(input.filePath, input.sourceRoot);
   const commitSha = input.commitSha.trim();
   if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
     throw new Error("An exact deployed commit SHA is required before reading repository source.");
   }
   const access = await installationAccess(repository);
-  const sourceFile = await githubInstallationFetch<{
-    sha: string;
-    content: string;
-    encoding: string;
-    type: string;
-  }>(
-    access.token,
-    `/repos/${encodedRepositoryPath(repository.fullName)}/contents/${encodedFilePath(filePath)}?ref=${encodeURIComponent(commitSha)}`
-  );
+  try {
+    await githubInstallationFetch<unknown>(
+      access.token,
+      `/repos/${encodedRepositoryPath(repository.fullName)}/commits/${encodeURIComponent(commitSha)}`
+    );
+  } catch (error) {
+    if (error instanceof Error && /GitHub API request failed\s*\(404\)/i.test(error.message)) {
+      throw new Error(
+        `The deployed revision ${commitSha.slice(0, 12)} is not reachable in ${repository.fullName}. ` +
+        "Record the exact Git commit that produced the running image, or redeploy through GroundControl so it can capture the source fingerprint."
+      );
+    }
+    throw error;
+  }
+  let sourceFile: GithubContentFile;
+  try {
+    sourceFile = await githubInstallationFetch<GithubContentFile>(
+      access.token,
+      `/repos/${encodedRepositoryPath(repository.fullName)}/contents/${encodedFilePath(filePath)}?ref=${encodeURIComponent(commitSha)}`
+    );
+  } catch (error) {
+    if (error instanceof Error && /GitHub API request failed\s*\(404\)/i.test(error.message)) {
+      throw new Error(
+        `The source file ${filePath} was not found at ${commitSha.slice(0, 12)} in ${repository.fullName}. ` +
+        (input.sourceRoot
+          ? `Check the deployment source path "${input.sourceRoot}" and the file path requested by Intelligence.`
+          : "Set the deployment source path if this is a monorepo, then retry the investigation.")
+      );
+    }
+    throw error;
+  }
   if (sourceFile.type !== "file" || sourceFile.encoding !== "base64") {
     throw new Error("The source target must be a regular repository file.");
   }
@@ -180,7 +218,7 @@ export function applyExactSourceEdits(
 }
 
 export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
-  const file = await repositoryFileAtRevision(input);
+  const file = await repositoryFileAtRevision({ ...input, sourceRoot: input.sourceRoot });
   const repository = file.repository;
   const filePath = file.filePath;
   const commitSha = file.commitSha;
