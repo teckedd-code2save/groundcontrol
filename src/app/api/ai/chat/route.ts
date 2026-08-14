@@ -27,6 +27,7 @@ import { getHostCapabilities, formatCapabilitiesForPrompt } from "@/lib/host-cap
 import { formatGuideContextForPrompt } from "@/lib/guides/ai-context";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import { validateDaytonaCommand } from "@/lib/intelligence/daytona";
 
 export const dynamic = "force-dynamic";
 
@@ -139,6 +140,10 @@ interface RequestBody {
     composePath?: string | null;
     repository?: string | null;
     deployedCommit?: string | null;
+    sourceRoot?: string | null;
+    validationCommand?: string | null;
+    regressionCommand?: string | null;
+    daytonaEnabled?: boolean;
     failureBoundary?: string | null;
     inspectionSummary?: string | null;
     inspectionCause?: string | null;
@@ -147,6 +152,36 @@ interface RequestBody {
     containers?: string[];
     composeServices?: string[];
   };
+}
+
+function applyIncidentSourceDefaults(
+  name: string,
+  args: Record<string, unknown>,
+  incidentContext?: RequestBody["incidentContext"]
+) {
+  if (!incidentContext) return args;
+  const next = { ...args };
+  if (name === "reproduce_incident_in_daytona") {
+    const requestedCommand = String(next.testCommand || "").trim();
+    const configuredCommand = String(incidentContext.validationCommand || "").trim();
+    if (configuredCommand && (!requestedCommand || validateDaytonaCommand(requestedCommand))) {
+      next.testCommand = configuredCommand;
+    }
+    if (incidentContext.sourceRoot && !next.sourceRoot) next.sourceRoot = incidentContext.sourceRoot;
+  }
+  if (name === "prepare_source_fix_in_daytona") {
+    const requestedCommand = String(next.validationCommand || "").trim();
+    const configuredCommand = String(incidentContext.validationCommand || "").trim();
+    if (configuredCommand && (!requestedCommand || validateDaytonaCommand(requestedCommand))) {
+      next.validationCommand = configuredCommand;
+    }
+    if (incidentContext.sourceRoot && !next.sourceRoot) next.sourceRoot = incidentContext.sourceRoot;
+    const configuredRegression = String(incidentContext.regressionCommand || "").trim();
+    if (configuredRegression && !Array.isArray(next.regressionCommands)) {
+      next.regressionCommands = [configuredRegression];
+    }
+  }
+  return next;
 }
 
 const encoder = new TextEncoder();
@@ -380,6 +415,10 @@ export async function POST(req: NextRequest) {
               `Compose path: ${lockedDeployment.composePath || incidentContext.composePath || "unresolved"}\n` +
               `Repository: ${incidentContext.repository || "unresolved"}\n` +
               `Deployed commit: ${incidentContext.deployedCommit || "unresolved"}\n` +
+              `Repository path: ${incidentContext.sourceRoot || "repository root"}\n` +
+              `Daytona enabled: ${incidentContext.daytonaEnabled === false ? "no" : "yes"}\n` +
+              `Daytona validation command: ${incidentContext.validationCommand || "unconfigured"}\n` +
+              `Daytona regression command: ${incidentContext.regressionCommand || "unconfigured"}\n` +
               `Failure boundary: ${incidentContext.failureBoundary || "unresolved"}\n` +
               `Inspection summary: ${incidentContext.inspectionSummary || "unresolved"}\n` +
               `Inspection cause: ${incidentContext.inspectionCause || "unresolved"}\n` +
@@ -396,6 +435,7 @@ export async function POST(req: NextRequest) {
               `Do not use route-port reconciliation when logs or Compose show an application contract mismatch between services, such as a web/frontend expecting an API on 4000 while the API process starts on 3000; that must become a source/config hypothesis, exact-revision source inspection, Daytona validation, then a confirmation-gated PR. ` +
               `Other valid actions are proxy/route correction, compose_up for missing declared services, or a source repair if the Compose/proxy/application configuration is wrong at the deployed revision; a restart is only valid after evidence shows a specific unhealthy/stale container is the boundary. ` +
               `Repository, Compose, build, migration, dependency, or repository-managed proxy defects must use exact-revision source reading, Daytona reproduction and validation, then a confirmation-gated PR. ` +
+              `When Daytona validation or regression commands are configured on the deployment, use those exact commands; do not invent placeholder validation commands. ` +
               `A failed evidence tool is not the end of the investigation when other read-only tools can establish the cause. ` +
               `If application startup evidence reports a listening port that differs from the Compose port or healthcheck, treat that mismatch as a source hypothesis, confirm it at the deployed revision, and continue into Daytona instead of restarting the same unhealthy container. ` +
               `Never claim recovery until verify_public_endpoint passes for https://${domain}/.`
@@ -583,6 +623,7 @@ interface ConfirmedToolCtx extends RunCtx {
 async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
   const { confirmedTool, provider, threadId, emit, turn, userId, context } = ctx;
   const resolved = resolveAgentToolCall(confirmedTool.name, confirmedTool.args);
+  const args = applyIncidentSourceDefaults(resolved.name, resolved.args, ctx.incidentContext);
   const tool = getTool(resolved.name);
   if (!tool) {
     emit({ type: "tool", name: confirmedTool.name, status: "error", output: "Unknown tool." });
@@ -598,10 +639,10 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
 
   const blocked = shouldBlockIncidentConfirmation(resolved.name, ctx.incidentContext);
   if (blocked) {
-    emit({ type: "tool", name: resolved.name, args: resolved.args, status: "error", output: blocked });
+    emit({ type: "tool", name: resolved.name, args, status: "error", output: blocked });
     turn.toolCalls.push({
       name: resolved.name,
-      args: resolved.args,
+      args,
       output: blocked,
       status: "error",
       readOnly: false,
@@ -609,14 +650,14 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
     return;
   }
 
-  emit({ type: "tool", name: tool.name, args: resolved.args, status: "running" });
-  const output = await tool.execute(resolved.args);
+  emit({ type: "tool", name: tool.name, args, status: "running" });
+  const output = await tool.execute(args);
   const status = classifyToolOutput(output);
-  emit({ type: "tool", name: tool.name, args: resolved.args, status, output });
+  emit({ type: "tool", name: tool.name, args, status, output });
 
   turn.toolCalls.push({
     name: tool.name,
-    args: resolved.args,
+    args,
     output,
     status,
     readOnly: tool.readOnly,
@@ -626,7 +667,7 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
   await auditAiToolExecution(userId, {
     threadId,
     name: tool.name,
-    args: resolved.args,
+    args,
     output,
     readOnly: tool.readOnly,
     confirmed: true,
@@ -719,7 +760,7 @@ async function runOpenAI(ctx: RunCtx) {
 
       const resolved = resolveAgentToolCall(requestedName, args);
       const name = resolved.name;
-      args = resolved.args;
+      args = applyIncidentSourceDefaults(name, resolved.args, ctx.incidentContext);
       const tool = getTool(name);
       if (!tool) {
         convo.push({ role: "tool", tool_call_id: call.id, content: `ERROR: unknown tool "${requestedName}".` });
@@ -863,7 +904,7 @@ async function runAnthropic(ctx: RunCtx) {
       const requestedArgs = (use.input as Record<string, unknown>) || {};
       const resolved = resolveAgentToolCall(requestedName, requestedArgs);
       const name = resolved.name;
-      const args = resolved.args;
+      const args = applyIncidentSourceDefaults(name, resolved.args, ctx.incidentContext);
       const tool = getTool(name);
 
       if (!tool) {

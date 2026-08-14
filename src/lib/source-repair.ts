@@ -21,6 +21,8 @@ export interface PrepareSourceRepairInput {
   edits: Array<{ find: string; replace: string }>;
   /** Focused command that must fail at the deployed revision and pass with the candidate. */
   validationCommand: string;
+  /** Optional repository-relative working directory for validation and regression commands. */
+  sourceRoot?: string;
   /** Independent checks that protect unaffected behaviour after the candidate is applied. */
   regressionCommands: string[];
   incidentSummary?: string;
@@ -199,6 +201,7 @@ export async function prepareSourceRepairPlan(input: PrepareSourceRepairInput) {
     branch: baseBranch,
     commitSha,
     testCommand: input.validationCommand,
+    sourceRoot: input.sourceRoot,
     regressionCommands,
     requireReproduction: true,
     journeyUrl: clipped(input.verificationUrl, 500),

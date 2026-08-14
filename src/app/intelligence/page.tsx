@@ -91,6 +91,10 @@ type IncidentInvestigation = {
     proxyRoute?: string | null;
     repository?: string | null;
     deployedCommit?: string | null;
+    sourceRoot?: string | null;
+    validationCommand?: string | null;
+    regressionCommand?: string | null;
+    daytonaEnabled?: boolean;
   };
   action?: { projectSlug: string; title: string; risk: string; rollback: string } | null;
   uncertainty?: string[];
@@ -504,6 +508,10 @@ export default function IntelligencePage() {
         composePath: target.composePath,
         repository: target.repository,
         deployedCommit: target.deployedCommit,
+        sourceRoot: target.sourceRoot,
+        validationCommand: target.validationCommand,
+        regressionCommand: target.regressionCommand,
+        daytonaEnabled: target.daytonaEnabled,
         failureBoundary: path.inspection?.failureBoundary,
         inspectionSummary: path.inspection?.summary,
         inspectionCause: path.inspection?.cause,
@@ -521,9 +529,12 @@ export default function IntelligencePage() {
         `Observed boundary: ${path.inspection?.failureBoundary || "unresolved"}.`,
         `Observed cause: ${path.inspection?.cause || path.inspection?.summary || resolved.problem}.`,
         `Configured upstream: ${path.upstream || target.proxyRoute || "unresolved"}.`,
+        `Source root: ${target.sourceRoot || "repository root"}.`,
+        `Saved Daytona validation command: ${target.validationCommand || "unconfigured"}.`,
+        `Saved Daytona regression command: ${target.regressionCommand || "unconfigured"}.`,
         "Act as the dedicated incident SRE. Investigate the exact locked deployment only.",
         "For Compose failures, inspect the declared dependency chain, all containers including exited one-shots, bounded failure logs, environment schema, route and recent release.",
-        "If source-related, reproduce and validate the smallest repair in Daytona and prepare the confirmation-gated PR.",
+        "If source-related, use the saved Daytona validation command and repository path from the locked context. Reproduce and validate the smallest repair in Daytona, then prepare the confirmation-gated PR.",
         "If runtime-only, prepare the smallest typed reversible action.",
         `Verify https://${resolved.domain}/ externally before reporting recovery.`,
       ].join("\n");

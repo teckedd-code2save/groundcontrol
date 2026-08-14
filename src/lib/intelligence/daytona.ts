@@ -112,6 +112,8 @@ export interface DaytonaReproductionRequest {
   journeyUrl?: string;
   /** A single bounded validation command; shell composition is rejected. */
   testCommand?: string;
+  /** Optional repository-relative working directory for monorepo deployments. */
+  sourceRoot?: string;
   /** Independent bounded checks that must still pass after a repair candidate. */
   regressionCommands?: string[];
   /** A source repair must prove that the baseline fails and the candidate passes. */
@@ -460,6 +462,7 @@ export async function reproduceInDaytona(
   const candidatePathError = req.candidate
     ? validateRepairFilePath(req.candidate.filePath)
     : null;
+  const sourceRootError = req.sourceRoot ? validateRepairFilePath(req.sourceRoot) : null;
   if (req.repositoryUrl && !repository) {
     return {
       id,
@@ -471,12 +474,12 @@ export async function reproduceInDaytona(
       cleanedUp: true,
     };
   }
-  if (commandError || regressionCommandError) {
+  if (commandError || regressionCommandError || sourceRootError) {
     return {
       id,
       status: "failed",
       provider: "local_sanitized",
-      detail: commandError || regressionCommandError || "A validation command is invalid.",
+      detail: commandError || regressionCommandError || sourceRootError || "A validation command is invalid.",
       reproducedFailure: false,
       logs,
       cleanedUp: true,
@@ -612,6 +615,9 @@ export async function reproduceInDaytona(
       throw new Error(`Daytona checked out ${resolvedRevision}, not the deployed revision ${req.commitSha}.`);
     }
 
+    const workdir = req.sourceRoot ? `workspace/repository/${req.sourceRoot}` : "workspace/repository";
+    if (req.sourceRoot) logs.push(`source_root=${req.sourceRoot}`);
+
     const install = await sandbox.process.executeCommand(
       [
         "if [ -f package-lock.json ]; then npm ci;",
@@ -619,7 +625,7 @@ export async function reproduceInDaytona(
         "elif [ -f yarn.lock ]; then corepack enable && yarn install --immutable;",
         "else true; fi",
       ].join(" "),
-      "workspace/repository",
+      workdir,
       undefined,
       Math.max(20, Math.floor(budget * 0.55))
     );
@@ -631,7 +637,7 @@ export async function reproduceInDaytona(
 
     const baselineValidation = await sandbox.process.executeCommand(
       req.testCommand,
-      "workspace/repository",
+      workdir,
       {
         CI: "1",
         GC_INCIDENT_REPRODUCTION: "1",
@@ -692,7 +698,7 @@ export async function reproduceInDaytona(
       }
       const candidateValidation = await sandbox.process.executeCommand(
         req.testCommand,
-        "workspace/repository",
+        workdir,
         {
           CI: "1",
           GC_INCIDENT_REPRODUCTION: "1",
@@ -708,7 +714,7 @@ export async function reproduceInDaytona(
       for (const [index, command] of regressionCommands.entries()) {
         const regression = await sandbox.process.executeCommand(
           command,
-          "workspace/repository",
+          workdir,
           {
             CI: "1",
             GC_INCIDENT_REPRODUCTION: "1",

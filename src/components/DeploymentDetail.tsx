@@ -106,6 +106,14 @@ async function readJson(response: Response) {
   try { return await response.json(); } catch { return {}; }
 }
 
+function safeHostname(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return "";
+  }
+}
+
 export default function DeploymentDetail({
   slug,
   initialTab,
@@ -148,6 +156,12 @@ export default function DeploymentDetail({
   const [runElapsed, setRunElapsed] = useState(0);
   const [focusedDeploymentStage, setFocusedDeploymentStage] = useState<DeploymentStageId | null>(null);
   const liveUrl = deployment?.publicUrl || (deployment?.domain ? `https://${deployment.domain}` : null);
+  const intelligenceHref = deployment ? (() => {
+    const params = new URLSearchParams({ deployment: deployment.slug });
+    const domain = deployment.domain || (liveUrl ? safeHostname(liveUrl) : "");
+    if (domain) params.set("domain", domain);
+    return `/intelligence?${params.toString()}`;
+  })() : "/intelligence";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -604,7 +618,7 @@ export default function DeploymentDetail({
                   <ManagementLink icon={<Box size={16} />} onClick={() => {}} title="Containers" detail="Running services below" />
                   <ManagementLink icon={<Settings2 size={16} />} onClick={() => setTab("environment")} title="Environment" detail="Configuration and secrets" />
                   <ManagementLink icon={<Activity size={16} />} onClick={() => setTab("releases")} title="Releases" detail="Changes and outcomes" />
-                  <ManagementLink icon={<ServerCog size={16} />} href="/intelligence" title="Intelligence" detail="Evidence and investigation" />
+                  <ManagementLink icon={<ServerCog size={16} />} href={intelligenceHref} title="Intelligence" detail="Evidence and investigation" />
                 </div>
               </section>
 

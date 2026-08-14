@@ -777,6 +777,10 @@ export const AGENT_TOOLS: AgentTool[] = [
           type: "string",
           description: "One bounded project validation command, such as npm test, npm run build, pytest, go test ./..., or docker compose config.",
         },
+        sourceRoot: {
+          type: "string",
+          description: "Repository-relative working directory for the validation command, for example apps/api. Leave blank for the repository root.",
+        },
         composeSnippet: {
           type: "string",
           description: "Optional sanitized relevant Compose excerpt. Never include secret values.",
@@ -809,6 +813,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           branch: args?.branch ? String(args.branch) : undefined,
           commitSha: args?.commitSha ? String(args.commitSha) : undefined,
           testCommand: String(args?.testCommand || ""),
+          sourceRoot: args?.sourceRoot ? String(args.sourceRoot) : undefined,
           composeSnippet: args?.composeSnippet ? String(args.composeSnippet) : undefined,
           proxySnippet: args?.proxySnippet ? String(args.proxySnippet) : undefined,
           envKeys,
@@ -899,6 +904,10 @@ export const AGENT_TOOLS: AgentTool[] = [
           type: "string",
           description: "One focused bounded command that fails at the exact deployed revision and passes only after the candidate, proving the repair rather than merely building the repository.",
         },
+        sourceRoot: {
+          type: "string",
+          description: "Repository-relative working directory for validation and regression commands, for example apps/api. Leave blank for the repository root.",
+        },
         regressionCommands: {
           type: "array",
           minItems: 1,
@@ -953,6 +962,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           filePath: String(args?.filePath || ""),
           edits,
           validationCommand: String(args?.validationCommand || ""),
+          sourceRoot: args?.sourceRoot ? String(args.sourceRoot) : undefined,
           regressionCommands,
           incidentSummary: String(args?.incidentSummary || ""),
           verificationUrl: args?.verificationUrl ? String(args.verificationUrl) : undefined,
