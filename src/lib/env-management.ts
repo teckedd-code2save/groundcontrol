@@ -548,6 +548,35 @@ export async function materializeEnvFile(
   return { hash: hashEnv(values), output: result.stdout.trim() };
 }
 
+export function managedEnvironmentContents(
+  deployPath: string,
+  environmentSlug: string | null | undefined,
+  componentValues: Record<string, Record<string, string>>
+) {
+  const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
+  const components = Object.keys(componentValues)
+    .filter(isSafeComposeServiceName)
+    .filter((component) => Object.keys(componentValues[component]).length > 0)
+    .sort();
+  const runtimeFiles = components.map((component) => `${runtimeDir}/${component}.env`);
+  const override = `# Managed by GroundControl. Source values remain encrypted in GroundControl.\n${stringifyYaml({
+    services: Object.fromEntries(components.map((component) => [
+      component,
+      {
+        env_file: [`${runtimeDir}/${component}.env`],
+        environment: componentValues[component],
+      },
+    ])),
+  }, { lineWidth: 0 })}\n`;
+  return {
+    runtimeDir,
+    components,
+    runtimeFiles,
+    manifest: runtimeFiles.join("\n") + "\n",
+    override,
+  };
+}
+
 export function buildMaterializeEnvBundleCommand(
   deployPath: string,
   values: Record<string, string>,
@@ -556,12 +585,10 @@ export function buildMaterializeEnvBundleCommand(
 ): string {
   const quotedPath = shQuote(deployPath);
   const environmentSlug = normalizeEnvironmentSlug(options.environmentSlug);
-  const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
+  const contents = managedEnvironmentContents(deployPath, environmentSlug, componentValues);
+  const runtimeDir = contents.runtimeDir;
   const quotedRuntimeDir = shQuote(runtimeDir);
-  const components = Object.keys(componentValues)
-    .filter(isSafeComposeServiceName)
-    .filter((component) => Object.keys(componentValues[component]).length > 0)
-    .sort();
+  const components = contents.components;
   const componentKeys = Array.from(new Set(
     components.flatMap((component) => Object.keys(componentValues[component]))
   )).sort();
@@ -592,25 +619,13 @@ export function buildMaterializeEnvBundleCommand(
     ));
   }
   if (components.length > 0) {
-    const runtimeFiles = components.map((component) => `${runtimeDir}/${component}.env`);
-    const override = `# Managed by GroundControl. Source values remain encrypted in GroundControl.\n${stringifyYaml({
-      services: Object.fromEntries(components.map((component) => [
-        component,
-        {
-          env_file: [`${runtimeDir}/${component}.env`],
-          environment: Object.keys(componentValues[component]).length > 0
-            ? componentValues[component]
-            : undefined,
-        },
-      ])),
-    }, { lineWidth: 0 })}\n`;
     commands.push(...atomicEnvWriteCommands(
       MANAGED_ENV_FILES_MANIFEST,
-      runtimeFiles.join("\n") + "\n"
+      contents.manifest
     ));
     commands.push(...atomicEnvWriteCommands(
       MANAGED_ENV_OVERRIDE_FILE,
-      override
+      contents.override
     ));
   }
   commands.push("printf '%s\\n' 'environment materialized'");

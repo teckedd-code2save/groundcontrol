@@ -5,7 +5,7 @@ import { shQuote } from "./vps";
 import { execOnTargetStrict } from "./host-exec";
 import {
   applyEnvToDeployment,
-  composeInterpolationValues,
+  managedEnvironmentContents,
   managedEnvRuntimeDirectory,
   resolveDeploymentEnv,
   serializeDotenv,
@@ -161,28 +161,28 @@ export function expectedManagedEnvironmentArtifacts(input: {
   values: Record<string, string>;
   componentValues: Record<string, Record<string, string>>;
 }): ExpectedManagedEnvironmentArtifact[] {
-  const runtimeDir = managedEnvRuntimeDirectory(input.deployPath, input.environmentSlug);
-  const interpolationValues = composeInterpolationValues(input.values, input.componentValues);
-  const components = Object.keys(input.componentValues)
-    .filter(safeServiceName)
-    .filter((component) => Object.keys(input.componentValues[component]).length > 0)
-    .sort();
+  const contents = managedEnvironmentContents(
+    input.deployPath,
+    input.environmentSlug,
+    input.componentValues
+  );
+  const components = contents.components;
   const artifacts: ExpectedManagedEnvironmentArtifact[] = [];
 
-  if (Object.keys(interpolationValues).length > 0) {
+  if (Object.keys(input.values).length > 0 || components.length > 0) {
     artifacts.push({
       scope: "deployment environment",
       path: `${input.deployPath}/.env`,
-      hash: sha256(serializeDotenv(interpolationValues)),
+      hash: sha256(serializeDotenv(input.values)),
       mode: "dotenv-subset",
-      keys: Object.keys(interpolationValues).sort(),
+      keys: Object.keys(input.values).sort(),
     });
   }
 
   for (const component of components) {
     artifacts.push({
       scope: `${component} environment`,
-      path: `${runtimeDir}/${component}.env`,
+      path: `${contents.runtimeDir}/${component}.env`,
       hash: sha256(serializeDotenv(input.componentValues[component])),
       mode: "dotenv-subset",
       keys: Object.keys(input.componentValues[component]).sort(),
@@ -190,21 +190,9 @@ export function expectedManagedEnvironmentArtifacts(input: {
   }
 
   if (components.length > 0) {
-    const runtimeFiles = components.map((component) => `${runtimeDir}/${component}.env`);
-    const manifest = runtimeFiles.join("\n") + "\n";
-    const override = [
-      "# Managed by GroundControl. Source values remain encrypted in GroundControl.",
-      "services:",
-      ...components.flatMap((component) => [
-        `  ${component}:`,
-        "    env_file:",
-        `      - ${runtimeDir}/${component}.env`,
-      ]),
-      "",
-    ].join("\n");
     artifacts.push(
-      { scope: "runtime manifest", path: `${input.deployPath}/${MANAGED_ENV_FILES_MANIFEST}`, hash: sha256(manifest), mode: "exact" },
-      { scope: "Compose environment overlay", path: `${input.deployPath}/${MANAGED_ENV_OVERRIDE_FILE}`, hash: sha256(override), mode: "exact" }
+      { scope: "runtime manifest", path: `${input.deployPath}/${MANAGED_ENV_FILES_MANIFEST}`, hash: sha256(contents.manifest), mode: "exact" },
+      { scope: "Compose environment overlay", path: `${input.deployPath}/${MANAGED_ENV_OVERRIDE_FILE}`, hash: sha256(contents.override), mode: "exact" }
     );
   }
 
