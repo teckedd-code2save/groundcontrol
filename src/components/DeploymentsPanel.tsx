@@ -117,14 +117,14 @@ function formatDate(iso: string): string {
 function statusColor(status: string): string {
   switch (status) {
     case "success":
-      return "bg-success/10 text-success border-success/30";
+      return "bg-success/10 text-success border-border";
     case "failed":
     case "rolled_back":
       return "bg-error/10 text-error border-error/30";
     case "running":
     case "building":
     case "deploying":
-      return "bg-accent/10 text-accent border-accent/30";
+      return "bg-accent/10 text-accent border-border";
     default:
       return "bg-warning/10 text-warning border-warning/30";
   }
@@ -344,7 +344,7 @@ export function DeploymentsPanel() {
                           href={d.publicUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-success/10 text-success border-success/30 hover:bg-success/20 transition-colors"
+                          className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-success/10 text-success border-border hover:bg-success/20 transition-colors"
                         >
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
@@ -357,7 +357,7 @@ export function DeploymentsPanel() {
                           href={d.previewUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-accent/10 text-accent border-accent/30 hover:bg-accent/20 transition-colors"
+                          className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border bg-accent/10 text-accent border-border hover:bg-accent/20 transition-colors"
                         >
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -372,7 +372,7 @@ export function DeploymentsPanel() {
 
                 <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:w-auto md:shrink-0 md:items-center">
                   {d.target.type === "k3s" && (
-                    <span className="px-3 py-2 text-center text-xs font-mono bg-accent/10 border border-accent/30 text-accent rounded-lg">
+                    <span className="px-3 py-2 text-center text-xs font-mono bg-accent/10 border border-border text-accent rounded-lg">
                       k8s: {getK3sNamespace(d.target, d.project.slug)}
                     </span>
                   )}
