@@ -14,6 +14,7 @@ import {
   Square,
 } from "lucide-react";
 import { ActionConfirm, type ActionType } from "@/components/ActionConfirm";
+import ComponentQAPanel from "@/components/ComponentQAPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { Button, EmptyState, Notice, StatusBadge } from "@/components/ui";
 import type { ContainerDetail } from "@/lib/container-details";
@@ -156,6 +157,9 @@ export default function ContainerDetailView({ name }: { name: string }) {
         />
       ) : detail ? (
         <div className="space-y-5">
+          {detail.deployment && detail.compose.service && (
+            <ComponentQAPanel deploymentSlug={detail.deployment.slug} component={detail.compose.service} />
+          )}
           <section className="grid gap-px border border-border bg-border sm:grid-cols-2 xl:grid-cols-4">
             <Fact label="State" value={(
               <StatusBadge tone={isRunning ? (detail.health === "unhealthy" ? "warning" : "success") : "danger"}>

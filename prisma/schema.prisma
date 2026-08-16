@@ -123,11 +123,47 @@ model EnrolledDeployment {
   vpsConfig          VpsConfig?                   @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
   legacyProject      Project?                     @relation(fields: [legacyProjectId], references: [id], onDelete: SetNull)
   githubRepositories GithubRepositoryDeployment[]
+  qaChecks           ComponentQACheck[]
+  qaRuns             ComponentQARun[]
 
   @@unique([vpsConfigId, sourcePath])
   @@unique([vpsConfigId, containerName])
   @@index([projectGroupId, updatedAt])
   @@index([vpsConfigId, status])
+}
+
+model ComponentQACheck {
+  id                  Int      @id @default(autoincrement())
+  deploymentId        Int
+  component           String
+  name                String
+  method              String   @default("GET")
+  path                String
+  headers             String   @default("{}")
+  body                String?
+  expectedStatus      Int?
+  expectedBodyContains String?
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  deployment EnrolledDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@index([deploymentId, component])
+}
+
+model ComponentQARun {
+  id           Int      @id @default(autoincrement())
+  deploymentId Int
+  component    String
+  status       String   @default("running") // running | passed | failed
+  output       String?
+  error        String?
+  createdAt    DateTime @default(now())
+
+  deployment EnrolledDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@index([deploymentId, createdAt])
 }
 
 model DeploymentTarget {
