@@ -23,7 +23,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       resolved.values,
       resolved.componentValues,
       undefined,
-      { environmentSlug: profile.slug }
+      {
+        environmentSlug: profile.slug,
+        rootPruneKeys: resolved.removedValues,
+        componentPruneKeys: resolved.removedComponentValues,
+      }
     );
     const updated = await prisma.deploymentEnvProfile.update({
       where: { id: profile.id },

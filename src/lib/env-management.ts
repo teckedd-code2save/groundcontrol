@@ -36,6 +36,8 @@ export interface ResolvedDeploymentEnv {
   provider?: EnvProviderAccount | null;
   values: Record<string, string>;
   componentValues: Record<string, Record<string, string>>;
+  removedValues: string[];
+  removedComponentValues: Record<string, string[]>;
   validation: EnvValidationResult;
 }
 
@@ -366,6 +368,35 @@ export async function getProfileValuesByComponent(
   return result;
 }
 
+export async function getRemovedProfileKeysByScope(
+  profileId: number
+): Promise<{ values: string[]; components: Record<string, string[]> }> {
+  const rows = await prisma.deploymentEnvValueVersion.findMany({
+    where: { profileId },
+    select: { component: true, key: true, state: true, version: true },
+    orderBy: { version: "asc" },
+  });
+  const latest = new Map<string, string>();
+  for (const row of rows) {
+    latest.set(`${row.component}\u0000${row.key}`, row.state);
+  }
+  const values: string[] = [];
+  const components: Record<string, string[]> = {};
+  for (const [scope, state] of latest) {
+    if (state !== "deleted") continue;
+    const separator = scope.indexOf("\u0000");
+    const component = scope.slice(0, separator);
+    const key = scope.slice(separator + 1);
+    if (!component) values.push(key);
+    else {
+      const keys = components[component] || [];
+      keys.push(key);
+      components[component] = keys;
+    }
+  }
+  return { values, components };
+}
+
 function parseConfig<T>(value?: string | null): T {
   try {
     return JSON.parse(value || "{}") as T;
@@ -392,6 +423,7 @@ export async function resolveDeploymentEnv(
   const schema = parseEnvJson(profile.schemaJson);
   let values: Record<string, string> = {};
   let componentValues = await getProfileValuesByComponent(profile.id);
+  const removed = await getRemovedProfileKeysByScope(profile.id);
   if (profile.providerType === "infisical") {
     if (!provider) throw new Error("Infisical env profile has no provider account");
     const config = {
@@ -421,7 +453,15 @@ export async function resolveDeploymentEnv(
     values = await getProfileValues(profile.id);
   }
   const validation = validateEnvBundle(schema, values, componentValues);
-  return { profile, provider, values, componentValues, validation };
+  return {
+    profile,
+    provider,
+    values,
+    componentValues,
+    removedValues: removed.values,
+    removedComponentValues: removed.components,
+    validation,
+  };
 }
 
 export function validateEnvBundle(
@@ -581,7 +621,8 @@ export function buildMaterializeEnvBundleCommand(
   deployPath: string,
   values: Record<string, string>,
   componentValues: Record<string, Record<string, string>>,
-  options: { pruneManagedFiles?: boolean; environmentSlug?: string } = {}
+  options: { pruneManagedFiles?: boolean; environmentSlug?: string } = {},
+  extraPrune: { root?: string[]; components?: Record<string, string[]> } = {}
 ): string {
   const quotedPath = shQuote(deployPath);
   const environmentSlug = normalizeEnvironmentSlug(options.environmentSlug);
@@ -592,7 +633,10 @@ export function buildMaterializeEnvBundleCommand(
   const componentKeys = Array.from(new Set(
     components.flatMap((component) => Object.keys(componentValues[component]))
   )).sort();
-  const rootPruneKeys = componentKeys.filter((key) => !(key in values));
+  const rootPruneKeys = Array.from(new Set([
+    ...componentKeys.filter((key) => !(key in values)),
+    ...(extraPrune.root || []),
+  ])).sort();
   const commands = [
     "set -eu",
     `mkdir -p ${quotedPath}/.groundcontrol ${quotedRuntimeDir}`,
@@ -613,9 +657,10 @@ export function buildMaterializeEnvBundleCommand(
   }
 
   for (const component of components) {
-    commands.push(...atomicMergedEnvWriteCommands(
+    commands.push(...atomicEnvMergeAndPruneCommands(
       `${runtimeDir}/${component}.env`,
-      serializeDotenv(componentValues[component])
+      serializeDotenv(componentValues[component]),
+      (extraPrune.components || {})[component] || []
     ));
   }
   if (components.length > 0) {
@@ -742,11 +787,22 @@ export async function materializeEnvBundle(
   values: Record<string, string>,
   componentValues: Record<string, Record<string, string>>,
   vps?: VpsConnection | null,
-  options: { pruneManagedFiles?: boolean; environmentSlug?: string } = {}
+  options: {
+    pruneManagedFiles?: boolean;
+    environmentSlug?: string;
+    rootPruneKeys?: string[];
+    componentPruneKeys?: Record<string, string[]>;
+  } = {}
 ) {
   const conn = vps || (await getActiveVps());
   const result = await execOnTargetStrict(
-    buildMaterializeEnvBundleCommand(deployPath, values, componentValues, options),
+    buildMaterializeEnvBundleCommand(
+      deployPath,
+      values,
+      componentValues,
+      options,
+      { root: options.rootPruneKeys, components: options.componentPruneKeys }
+    ),
     conn
   );
   if (result.code !== 0) {
@@ -804,7 +860,11 @@ export async function reconcileComposeServiceEnvValue(input: {
     resolved.values,
     componentValues,
     undefined,
-    { environmentSlug: resolved.profile.slug }
+    {
+      environmentSlug: resolved.profile.slug,
+      rootPruneKeys: resolved.removedValues,
+      componentPruneKeys: resolved.removedComponentValues,
+    }
   );
   return {
     projectPath: project.path,
@@ -850,7 +910,11 @@ export async function applyEnvToDeployment(
       resolved.values,
       resolved.componentValues,
       options.vps,
-      { environmentSlug: resolved.profile.slug }
+      {
+        environmentSlug: resolved.profile.slug,
+        rootPruneKeys: resolved.removedValues,
+        componentPruneKeys: resolved.removedComponentValues,
+      }
     );
     log?.(`[env] materialized ${resolved.profile.providerType} environment (${materialized.files.join(", ")})\n`);
     const composeCommand = await getDockerComposeCommand(options.vps, execOnTargetStrict);
