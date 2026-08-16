@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   Box,
   Braces,
-  ExternalLink,
   Network,
   Play,
   RefreshCw,
@@ -100,9 +99,12 @@ export default function ContainerDetailView({ name }: { name: string }) {
 
   return (
     <div className="gc-page gc-page--wide">
-      <Link href="/containers" className="mb-5 inline-flex items-center gap-2 text-xs text-muted hover:text-foreground">
+      <Link
+        href={detail?.deployment?.href || "/containers"}
+        className="mb-5 inline-flex items-center gap-2 text-xs text-muted hover:text-foreground"
+      >
         <ArrowLeft size={14} aria-hidden="true" />
-        Runtime
+        {detail?.deployment ? "Open deployment" : "Runtime"}
       </Link>
 
       <PageHeader
@@ -120,12 +122,12 @@ export default function ContainerDetailView({ name }: { name: string }) {
             </Button>
             {detail?.deployment && (
               <Link
-                href={detail.deployment.href}
+                href="/containers"
                 className="gc-button gc-button-secondary"
-                title={`Open ${detail.deployment.name}`}
+                title="Runtime"
               >
-                <ExternalLink size={14} aria-hidden="true" />
-                Open deployment
+                <Activity size={14} aria-hidden="true" />
+                Runtime
               </Link>
             )}
             {detail && (
