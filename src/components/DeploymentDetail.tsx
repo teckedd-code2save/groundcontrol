@@ -1286,7 +1286,7 @@ function classifyDeploymentLogLine(line: string): DeploymentStageId | null {
 function deploymentStageTone(status: "complete" | "running" | "failed" | "pending" | "not-reached") {
   if (status === "failed") return {
     chip: "bg-error/15 text-error",
-    panel: "border border-error/35 bg-error/[0.035]",
+    panel: "border border-border bg-error/[0.035]",
     dot: "bg-error",
   };
   if (status === "running") return {
