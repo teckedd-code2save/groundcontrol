@@ -65,6 +65,10 @@ const SYSTEM_PROMPT =
   `NEVER use start_container/stop_container/restart_container for services that have not been created ` +
   `yet; those only work on existing containers. If the user says "up the containers from the images" ` +
   `for a compose project, call compose_up.\n` +
+  `- For an internal Compose port mismatch caused by a deployment .env override (for example api logs ` +
+  `Port 3000 while Compose healthcheck/upstream expects 4000), call reconcile_compose_service_port with ` +
+  `the exact env key and declared port. That is runtime configuration, not a repository source repair; ` +
+  `do not send it through Daytona unless the repository source itself is wrong.\n` +
   `- Before starting compose services, read_compose_config if you have not already, so you know the ` +
   `service names, images, ports, and dependencies.\n` +
   `- For a failed Compose deployment, call investigate_compose_failure before proposing any fix. It reports ` +
@@ -76,7 +80,8 @@ const SYSTEM_PROMPT =
   `  2) Never use write_system_file to repair application source, Compose, Dockerfiles, manifests, or ` +
   `configuration under /opt, managed deployment roots, web roots, or home directories.\n` +
   `  3) For a repository-backed code, Compose, or proxy defect, identify the linked repository and exact ` +
-  `deployed commit SHA, call read_repository_source_at_revision for the target file, then call ` +
+  `deployed commit SHA. If the target file is not yet known, call list_repository_files_at_revision first. ` +
+  `Then call read_repository_source_at_revision for the target file, then call ` +
   `prepare_source_fix_in_daytona with the smallest exact non-redacted source edit. ` +
   `GroundControl fetches the complete repository file itself; never copy a live-host file into the repair.\n` +
   `  4) Daytona is the required repair workbench, not a badge or dry-run. Give it a focused reproduction ` +
@@ -115,7 +120,10 @@ const SYSTEM_PROMPT =
   `If the desired value is already present, reject that hypothesis and continue investigating runtime state, ` +
   `environment materialization, migrations, health checks, registry access, and service logs.\n` +
   `- A successful restart, Compose command, or PR creation proves only that action completed. It does not prove ` +
-  `customer recovery. Inspect the target, then call verify_public_endpoint before saying fixed or recovered.\n` +
+  `customer recovery. Inspect the changed target AND every Compose service that depends on it (for example web ` +
+  `depending on api) using compose_ps, list_project_containers, container_stats, container_logs, or ` +
+  `investigate_compose_failure. Then call verify_public_endpoint before saying fixed or recovered. Do not ` +
+  `report recovery just because the single restart succeeded.\n` +
   `- Never invent a manual source edit after Daytona or repository resolution fails. State the single missing ` +
   `prerequisite and keep the incident unresolved.\n` +
   `- For live incidents, keep the operator response short under Problem, Fix, Verify. Give one concrete next action.\n` +
@@ -447,7 +455,8 @@ export async function POST(req: NextRequest) {
               `If Failure boundary is proxy_to_upstream and runtime containers are present or running, do not call restart_container as the primary recovery action. ` +
               `First prove the proxy contract: read proxy config, read Compose config, inspect published ports, test the configured upstream from the host, and identify whether the fix is route target, Docker network, exposed port, or proxy reload. ` +
               `For proxy_to_upstream incidents, a typed action must be reconcile_compose_route_port only when the reverse proxy should target the selected Compose service and the selected service's host-published port/env drifted. ` +
-              `Do not use route-port reconciliation when logs or Compose show an application contract mismatch between services, such as a web/frontend expecting an API on 4000 while the API process starts on 3000; that must become a source/config hypothesis, exact-revision source inspection, Daytona validation, then a confirmation-gated PR. ` +
+              `When logs show a service listening on a port that differs from its own Compose healthcheck or declared port because a deployment .env key overrides it, use reconcile_compose_service_port. Do not use route-port reconciliation for that internal service-contract mismatch. ` +
+              `Only when the mismatch is in repository source/config rather than deployment environment use exact-revision source inspection, Daytona validation, then a confirmation-gated PR. ` +
               `Other valid actions are proxy/route correction, compose_up for missing declared services, or a source repair if the Compose/proxy/application configuration is wrong at the deployed revision; a restart is only valid after evidence shows a specific unhealthy/stale container is the boundary. ` +
               `Repository, Compose, build, migration, dependency, or repository-managed proxy defects must use exact-revision source reading, Daytona reproduction and validation, then a confirmation-gated PR. ` +
               `When Daytona validation or regression commands are configured on the deployment, use those exact commands; do not invent placeholder validation commands. ` +
@@ -711,9 +720,11 @@ async function handleConfirmedTool(ctx: ConfirmedToolCtx) {
     content: tool.readOnly
       ? `The read-only diagnostic \`${tool.name}\` completed:\n\n${output}\n\nContinue the locked investigation automatically.`
       : `The operator approved \`${tool.name}\` and it completed with this result:\n\n${output}\n\n` +
-        `This proves only that the action completed. Inspect the exact changed target and call ` +
-        `verify_public_endpoint for the incident URL before reporting recovery. If verification fails, ` +
-        `keep the incident open and state the next evidence-backed action.`,
+        `This proves only that the action completed. Inspect the exact changed target and every Compose service ` +
+        `that depends on it (use compose_ps, list_project_containers, container_stats, container_logs, or ` +
+        `investigate_compose_failure). Then call verify_public_endpoint for the incident URL before reporting ` +
+        `recovery. If verification or any dependent service fails, keep the incident open and state the next ` +
+        `evidence-backed action.`,
   }];
   if (provider === "anthropic") {
     await runAnthropic({ ...ctx, contextMessages });

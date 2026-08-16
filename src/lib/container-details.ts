@@ -81,19 +81,7 @@ async function resolveContainerDeployment(input: {
   configFiles: string;
 }): Promise<ContainerDetail["deployment"]> {
   const deploymentSlug = input.deploymentSlug.trim();
-  if (deploymentSlug) {
-    const deployment = await prisma.enrolledDeployment.findUnique({
-      where: { slug: deploymentSlug },
-      select: { slug: true, name: true },
-    });
-    return {
-      slug: deployment?.slug || deploymentSlug,
-      name: deployment?.name || input.deploymentName.trim() || deploymentSlug,
-      href: `/deployments/${encodeURIComponent(deployment?.slug || deploymentSlug)}`,
-      evidence: "Runtime field groundcontrol.deployment.slug",
-    };
-  }
-
+  const deploymentName = input.deploymentName.trim();
   const workingDir = normalizePath(input.workingDir);
   const configDirs = input.configFiles
     .split(",")
@@ -103,6 +91,29 @@ async function resolveContainerDeployment(input: {
   const vpsScope = input.vpsId && input.vpsId > 0 ? { vpsConfigId: input.vpsId } : {};
 
   if (pathCandidates.length > 0) {
+    const legacyProject = await prisma.project.findFirst({
+      where: { path: { in: pathCandidates } },
+      select: {
+        slug: true,
+        name: true,
+        path: true,
+        inventoryRecord: {
+          select: { slug: true, name: true },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (legacyProject) {
+      const slug = legacyProject.inventoryRecord?.slug || legacyProject.slug;
+      const name = legacyProject.inventoryRecord?.name || legacyProject.name;
+      return {
+        slug,
+        name,
+        href: `/deployments/${encodeURIComponent(slug)}`,
+        evidence: `Project folder ${legacyProject.path}`,
+      };
+    }
+
     const exact = await prisma.enrolledDeployment.findFirst({
       where: { ...vpsScope, sourcePath: { in: pathCandidates } },
       select: { slug: true, name: true, sourcePath: true },
@@ -114,24 +125,6 @@ async function resolveContainerDeployment(input: {
         name: exact.name,
         href: `/deployments/${encodeURIComponent(exact.slug)}`,
         evidence: exact.sourcePath ? `Compose folder ${exact.sourcePath}` : "Compose folder",
-      };
-    }
-
-    const legacyProject = await prisma.project.findFirst({
-      where: { path: { in: pathCandidates } },
-      select: {
-        slug: true,
-        name: true,
-        path: true,
-      },
-      orderBy: { updatedAt: "desc" },
-    });
-    if (legacyProject) {
-      return {
-        slug: legacyProject.slug,
-        name: legacyProject.name,
-        href: `/deployments/${encodeURIComponent(legacyProject.slug)}`,
-        evidence: `Project folder ${legacyProject.path}`,
       };
     }
   }
@@ -153,6 +146,27 @@ async function resolveContainerDeployment(input: {
         evidence: `Compose project ${composeProject}`,
       };
     }
+  }
+
+  if (deploymentSlug) {
+    const deployment = await prisma.enrolledDeployment.findUnique({
+      where: { slug: deploymentSlug },
+      select: { slug: true, name: true },
+    });
+    if (deployment) {
+      return {
+        slug: deployment.slug,
+        name: deployment.name,
+        href: `/deployments/${encodeURIComponent(deployment.slug)}`,
+        evidence: "Runtime field groundcontrol.deployment.slug",
+      };
+    }
+    return {
+      slug: deploymentSlug,
+      name: deploymentName || deploymentSlug,
+      href: `/deployments/${encodeURIComponent(deploymentSlug)}`,
+      evidence: "Runtime field groundcontrol.deployment.slug",
+    };
   }
 
   return null;

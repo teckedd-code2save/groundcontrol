@@ -409,7 +409,10 @@ export async function runBuild(options: RunBuildOptions): Promise<number> {
 /**
  * Roll back a previous deployment using its target adapter.
  */
-export async function runRollback(deploymentId: number): Promise<void> {
+export async function runRollback(
+  deploymentId: number,
+  options: { rollbackTo?: "previous" | "self" } = {}
+): Promise<void> {
   const deployment = await prisma.deployment.findUnique({
     where: { id: deploymentId },
     include: { project: true, target: true },
@@ -422,6 +425,9 @@ export async function runRollback(deploymentId: number): Promise<void> {
   await destroyQuickTunnelByInfo(deployment.previewProcessInfo).catch(() => {});
 
   const { project, target } = deployment;
+  const rollbackImageDigest = options.rollbackTo === "self"
+    ? deployment.imageDigest || deployment.imageTag || null
+    : deployment.previousImageDigest || null;
   const job = await createJob("rollback", { deploymentId });
 
   await runJob(job.id, async (jobLog) => {
@@ -432,6 +438,7 @@ export async function runRollback(deploymentId: number): Promise<void> {
       vps,
       env: parseEnv(project.envVars),
       secrets: {},
+      rollbackImageDigest,
       log(chunk: string) {
         logBuffer.push(chunk);
         jobLog(chunk);

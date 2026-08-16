@@ -7,6 +7,8 @@ export interface DeployContext {
   env: Record<string, string>;
   secrets: Record<string, string>;
   branch?: string;
+  /** Optional image tag/digest to pin during a rollback operation. */
+  rollbackImageDigest?: string | null;
   log(chunk: string): void;
   abortSignal?: AbortSignal;
 }

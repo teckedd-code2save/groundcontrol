@@ -138,6 +138,8 @@ export async function GET(req: NextRequest) {
           ...item,
           savedDomain: item.legacyProject?.domain,
           savedRepoUrl: item.legacyProject?.repoUrl,
+          legacyProjectPath: item.legacyProject?.path,
+          legacyProjectSlug: item.legacyProject?.slug,
         }, containers, labels, tree.projects, hostProjects.caddySites);
         const runtime = evidence.runtime;
         const scanned = tree.projects.find((candidate) => candidate.path === item.sourcePath);

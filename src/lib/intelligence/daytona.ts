@@ -172,7 +172,7 @@ const ALLOWED_VALIDATION_COMMANDS = [
   /^go\s+test(?:\s+[\w./:=@-]+)*$/,
   /^cargo\s+test(?:\s+[\w./:=@-]+)*$/,
   /^dotnet\s+test(?:\s+[\w./:=@-]+)*$/,
-  /^docker\s+compose(?:\s+-f\s+[\w./-]+)*\s+config$/,
+  /^(?:docker\s+compose|docker-compose)(?:\s+-f\s+[\w./-]+)*\s+config(?:\s+--(?:quiet|services|volumes|images|profiles|hash))?$/,
 ];
 
 export function validateDaytonaCommand(command: string): string | null {

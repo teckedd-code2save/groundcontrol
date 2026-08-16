@@ -55,6 +55,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
       savedRepoUrl: deployment.legacyProject?.repoUrl,
       savedReleaseOutput: latestRelease?.output,
       savedProjectEnv: deployment.legacyProject?.envVars,
+      legacyProjectPath: deployment.legacyProject?.path,
+      legacyProjectSlug: deployment.legacyProject?.slug,
     }, containers, labels, tree.projects, hostProjects.caddySites);
     const runtimeNames = new Set(evidence.runtime.containers.map((container) => container.name));
     const execution = resolveDeploymentExecutionIdentity({

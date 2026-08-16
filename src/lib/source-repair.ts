@@ -47,6 +47,12 @@ export interface ReadSourceAtRevisionInput {
   sourceRoot?: string;
 }
 
+export interface ListRepositoryFilesInput {
+  repositoryUrl: string;
+  commitSha: string;
+  sourceRoot?: string;
+}
+
 function clipped(value: string | undefined, max: number) {
   return String(value || "").trim().slice(0, max);
 }
@@ -186,6 +192,40 @@ export async function readSourceAtDeployedRevision(input: ReadSourceAtRevisionIn
     content: content.length <= 80_000 ? content : `${content.slice(0, 80_000)}\n… source clipped`,
     instruction:
       "Use an exact unique non-redacted excerpt from this revision as the find text. Never edit a [REDACTED] value.",
+  };
+}
+
+export async function listRepositoryFilesAtRevision(input: ListRepositoryFilesInput) {
+  const repository = await linkedRepository(input.repositoryUrl);
+  const commitSha = input.commitSha.trim();
+  if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
+    throw new Error("An exact deployed commit SHA is required before listing repository source.");
+  }
+  const access = await installationAccess(repository);
+  const tree = await githubInstallationFetch<{
+    truncated: boolean;
+    tree: Array<{ path: string; type: string; size?: number }>;
+  }>(
+    access.token,
+    `/repos/${encodedRepositoryPath(repository.fullName)}/git/trees/${encodeURIComponent(commitSha)}?recursive=1`
+  );
+  const root = String(input.sourceRoot || "").trim().replace(/^\/+|\/+$/g, "");
+  const ignored = /(^|\/)(\.git|node_modules|dist|build|\.next|coverage|vendor|\.turbo|\.cache)\//;
+  const files = tree.tree
+    .filter((item) => item.type === "blob")
+    .filter((item) => !ignored.test(item.path))
+    .filter((item) => !root || item.path === root || item.path.startsWith(`${root}/`))
+    .map((item) => ({ path: item.path, bytes: item.size || 0 }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .slice(0, 400);
+
+  return {
+    repository: repository.fullName,
+    deployedRevision: commitSha,
+    sourceRoot: root || null,
+    truncated: tree.truncated || files.length >= 400,
+    count: files.length,
+    files,
   };
 }
 

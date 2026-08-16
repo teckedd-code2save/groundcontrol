@@ -40,11 +40,13 @@ import { listPublishedGuides, getGuideBySlug, parseGuideSteps } from "@/lib/guid
 import { componentAction, getComponentStatus, type ComponentAction } from "@/lib/bootstrap";
 import { reproduceInDaytona } from "@/lib/intelligence/daytona";
 import {
+  listRepositoryFilesAtRevision,
   openSourceRepairPullRequest,
   prepareSourceRepairPlan,
   readSourceAtDeployedRevision,
 } from "@/lib/source-repair";
 import { redactComposeSecrets } from "@/lib/managed-deployments";
+import { reconcileComposeServiceEnvValue } from "@/lib/env-management";
 import { createHttpProbeExecutor } from "@/lib/intelligence/probes";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
@@ -130,6 +132,22 @@ export function isSafeComposeService(value: string): boolean {
 
 export function isSafeBindHost(value: string): boolean {
   return ["127.0.0.1", "0.0.0.0", "localhost"].includes(value.trim());
+}
+
+const SAFE_SERVICE_PORT_KEYS = new Set([
+  "PORT",
+  "API_PORT",
+  "WEB_PORT",
+  "APP_PORT",
+  "FRONTEND_PORT",
+  "BACKEND_PORT",
+  "SERVER_PORT",
+  "HTTP_PORT",
+  "HTTPS_PORT",
+]);
+
+export function isSafeServicePortKey(value: string): boolean {
+  return SAFE_SERVICE_PORT_KEYS.has(value.trim().toUpperCase());
 }
 
 function buildRoutePortEnvPatchCommand(args: {
@@ -824,6 +842,37 @@ export const AGENT_TOOLS: AgentTool[] = [
       }),
   },
   {
+    name: "list_repository_files_at_revision",
+    description:
+      "List repository files at the exact deployed commit through the connected GitHub App. Use this when the relevant source file is not yet known so you can inspect candidate application, Compose, Dockerfile, or proxy files instead of guessing paths.",
+    parameters: {
+      type: "object",
+      properties: {
+        repositoryUrl: {
+          type: "string",
+          description: "Credential-free HTTPS GitHub repository URL linked to the deployment.",
+        },
+        commitSha: {
+          type: "string",
+          description: "Exact full deployed commit SHA. Never guess this value.",
+        },
+        sourceRoot: {
+          type: "string",
+          description: "Optional repository-relative deployment source root, for example apps/api. Leave blank for repository root.",
+        },
+      },
+      required: ["repositoryUrl", "commitSha"],
+      additionalProperties: false,
+    },
+    readOnly: true,
+    execute: async (args) =>
+      guard(async () => JSON.stringify(await listRepositoryFilesAtRevision({
+        repositoryUrl: String(args?.repositoryUrl || ""),
+        commitSha: String(args?.commitSha || ""),
+        sourceRoot: args?.sourceRoot ? String(args.sourceRoot) : undefined,
+      }), null, 2)),
+  },
+  {
     name: "read_repository_source_at_revision",
     description:
       "Read one repository file from the exact deployed commit through the connected GitHub App, with likely credential values redacted. Use this before prepare_source_fix_in_daytona so every find string comes from the actual repository revision rather than a live-host copy or guess.",
@@ -1326,6 +1375,68 @@ export const AGENT_TOOLS: AgentTool[] = [
       }),
   },
   {
+    name: "reconcile_compose_service_port",
+    description:
+      "Correct an internal Compose service port environment override so the selected runtime listens on the Compose-declared port. MUTATING — requires explicit user confirmation. Use this when evidence proves a service such as api logs Port 3000 while Compose healthcheck/upstream expects 4000 because the component-scoped runtime env overrides PORT or *_PORT. It updates only the selected service's component env file (for example api.env), never the deployment root .env, then validates Compose, recreates the selected service, starts the full Compose service graph (including dependent services), verifies the public URL, and returns compose ps evidence.",
+    parameters: {
+      type: "object",
+      properties: {
+        projectSlug: { type: "string", description: "Compose project/folder slug, such as rentaweekend." },
+        service: { type: "string", description: "Compose service to recreate, such as api." },
+        envKey: { type: "string", enum: ["PORT", "API_PORT", "WEB_PORT", "APP_PORT", "FRONTEND_PORT", "BACKEND_PORT", "SERVER_PORT", "HTTP_PORT", "HTTPS_PORT"], description: "The .env key that is overriding the runtime port." },
+        port: { type: "integer", description: "Correct internal/declared port, 1-65535." },
+        publicUrl: { type: "string", description: "Optional public URL to verify after the service graph starts." },
+      },
+      required: ["projectSlug", "service", "envKey", "port"],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    execute: async (args) =>
+      guard(async () => {
+        const slug = String(args?.projectSlug || "").trim();
+        const service = String(args?.service || "").trim();
+        const envKey = String(args?.envKey || "").trim().toUpperCase();
+        const port = Number(args?.port);
+        const publicUrl = String(args?.publicUrl || "").trim();
+        if (!slug) return "ERROR: projectSlug is required.";
+        if (!isSafeComposeService(service)) return "ERROR: service must be a safe Compose service name.";
+        if (!isSafeServicePortKey(envKey)) return "ERROR: envKey must be a supported port environment key.";
+        if (!Number.isInteger(port) || port < 1 || port > 65535) return "ERROR: port must be between 1 and 65535.";
+        if (publicUrl && !/^https?:\/\/[^@\s]+$/i.test(publicUrl)) return "ERROR: publicUrl must be an http(s) URL without credentials.";
+        const reconciled = await reconcileComposeServiceEnvValue({
+          projectSlug: slug,
+          service,
+          key: envKey,
+          value: String(port),
+        });
+        const composeCommand = await getDockerComposeCommand(undefined, execOnTargetStrict);
+        const verify = publicUrl
+          ? [
+              `gc_public_url=${shQuote(publicUrl)}`,
+              `for gc_i in 1 2 3 4 5 6 7 8 9 10 11 12; do`,
+              `  if curl -k -fsS --max-time 15 "$gc_public_url" >/dev/null; then printf '%s\\n' "[verify] public route healthy: $gc_public_url"; break; fi`,
+              `  if [ "$gc_i" -eq 12 ]; then printf '%s\\n' "[verify] public route failed: $gc_public_url" >&2; exit 43; fi`,
+              `  sleep 5`,
+              `done`,
+            ].join("\n")
+          : `printf '%s\\n' '[verify] public route not provided; skipped'`;
+        const command = [
+          `set -eu`,
+          `cd ${shQuote(reconciled.projectPath)}`,
+          `${composeCommand} config >/dev/null`,
+          `${composeCommand} up -d --force-recreate ${shQuote(service)}`,
+          `${composeCommand} up -d`,
+          `printf '%s\\n' ${shQuote(`[repair] ${envKey}=${port}; recreated ${service} and started its dependents`)}`,
+          verify,
+          `${composeCommand} ps`,
+        ].join("\n");
+        const result = await execOnTargetStrict(command);
+        const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+        if (result.code !== 0) return `ERROR: service port reconciliation failed (exit ${result.code}).\n${output}`;
+        return output || `Service port reconciled for ${slug}/${service} (${reconciled.environmentSlug} ${service}.env).`;
+      }),
+  },
+  {
     name: "restart_container",
     description:
       "Restart a Docker container. MUTATING — requires explicit user confirmation before it runs.",
@@ -1340,7 +1451,31 @@ export const AGENT_TOOLS: AgentTool[] = [
       guard(async () => {
         const name = String(args?.name || "").trim();
         if (!name) return "ERROR: container name is required.";
-        return safeExec(`docker restart ${shQuote(name)}`);
+        const restart = await safeExec(`docker restart ${shQuote(name)}`);
+        if (restart.startsWith("ERROR") || restart.startsWith("[exit")) return restart;
+        try {
+          const [containers, labels] = await Promise.all([
+            getDockerContainers(),
+            getDockerContainerLabels(),
+          ]);
+          const label = labels.find((item) => item.name === name);
+          const composeProject = label?.project?.trim();
+          if (!composeProject) {
+            return `${restart}\nContainer restarted. No Compose project label was present; explicitly inspect the container and any dependents before reporting recovery.`;
+          }
+          const labelMap = new Map(labels.map((item) => [item.name, item]));
+          const siblings = containers
+            .filter((container) => labelMap.get(container.name)?.project === composeProject)
+            .map((container) => ({
+              name: container.name,
+              state: container.state,
+              status: container.status,
+              service: labelMap.get(container.name)?.service || null,
+            }));
+          return `${restart}\nCompose project "${composeProject}" state after restart:\n${JSON.stringify(siblings, null, 2)}`;
+        } catch {
+          return `${restart}\nContainer restarted. GroundControl could not read the Compose project dependency state; run compose_ps or investigate_compose_failure before reporting recovery.`;
+        }
       }),
   },
   {

@@ -976,8 +976,25 @@ function ResolutionSurface({
 
 function IncidentResult({ investigation }: { investigation: IncidentInvestigation }) {
   const target = investigation.target;
+  const statusTone = investigation.status === "resolved"
+    ? "success"
+    : investigation.status === "ambiguous"
+      ? "warning"
+      : "danger";
   return (
     <div className="mt-4 rounded-lg bg-background/45">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
+        <StatusBadge tone={statusTone}>{investigation.status}</StatusBadge>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">Incident report</p>
+          <p className="truncate font-mono text-[10px] text-muted">{investigation.domain}</p>
+        </div>
+        {target && (
+          <a href={`/deployments/${target.deploymentSlug}`} className="ml-auto text-[10px] text-accent hover:text-accent/80">
+            Open deployment
+          </a>
+        )}
+      </div>
       <div className="grid gap-3 p-3 md:grid-cols-3">
         {(["Problem", "Fix", "Verify"] as const).map((label) => (
           <div key={label} className="rounded-lg bg-card p-4">
@@ -1106,6 +1123,9 @@ function IncidentAgent({
   const sections = parseOperatorNarrative(text);
   const shownSections = displayNarrativeSections(sections);
   const shownTools = compactToolEvents(tools);
+  const daytonaTool = [...tools].reverse().find((tool) => (
+    tool.name === "prepare_source_fix_in_daytona" || tool.name === "reproduce_incident_in_daytona"
+  ));
   const missingTypedAction = !running && !confirmation && narrativeRequestsAction(text);
   const completeNarrative = operatorNarrativeIsComplete(text);
   const lastTool = tools.at(-1);
@@ -1184,6 +1204,13 @@ function IncidentAgent({
           </div>
         </div>
       )}
+      {daytonaTool && (
+        <DaytonaTerminal
+          tool={daytonaTool}
+          running={daytonaRunning}
+          elapsed={elapsed}
+        />
+      )}
       {shownTools.length > 0 && (
         <div className="divide-y divide-border/60">
           {shownTools.map((tool, index) => (
@@ -1253,6 +1280,46 @@ function IncidentAgent({
         </div>
       )}
     </section>
+  );
+}
+
+function DaytonaTerminal({
+  tool,
+  running,
+  elapsed,
+}: {
+  tool: AgentToolEvent & { repeatCount?: number };
+  running: boolean;
+  elapsed: number;
+}) {
+  const lines = usefulToolLines(tool);
+  const raw = tool.output?.trim() || "";
+  return (
+    <div className="mx-4 my-3 overflow-hidden rounded-lg border border-black/60 bg-[#0b0e14] text-[10px] font-mono text-slate-200 shadow-inner">
+      <div className="flex items-center gap-2 border-b border-white/10 bg-white/5 px-3 py-2">
+        <span className="flex gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+        </span>
+        <span className="text-[10px] text-slate-300">{humanize(tool.name)} · daytona</span>
+        <span className="ml-auto text-slate-500">{running ? formatElapsed(elapsed) : "complete"}</span>
+      </div>
+      <div className="max-h-72 overflow-auto px-3 py-3 leading-relaxed">
+        {running && !raw ? (
+          <div className="flex items-center gap-2 text-emerald-300">
+            <span className="inline-block h-3 w-2 animate-pulse bg-emerald-300/70">▌</span>
+            <span>{tool.status === "running" ? "Executing Daytona workbench…" : "Waiting for approval…"}</span>
+          </div>
+        ) : lines.length > 0 ? (
+          <pre className="whitespace-pre-wrap text-slate-300">{lines.join("\n")}</pre>
+        ) : raw ? (
+          <pre className="whitespace-pre-wrap text-slate-300">{raw}</pre>
+        ) : (
+          <span className="text-slate-500">No Daytona output captured.</span>
+        )}
+      </div>
+    </div>
   );
 }
 

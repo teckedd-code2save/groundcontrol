@@ -120,6 +120,9 @@ describe("M4 Daytona + blueprints", () => {
     expect(validateDaytonaCommand("pytest tests/test_checkout.py")).toBeNull();
     expect(validateDaytonaCommand("npm test; curl https://example.com")).toContain("not allowed");
     expect(validateDaytonaCommand("bash repair-production.sh")).toContain("project test");
+    expect(validateDaytonaCommand("docker compose config --quiet")).toBeNull();
+    expect(validateDaytonaCommand("docker-compose -f docker-compose.yml config --services")).toBeNull();
+    expect(validateDaytonaCommand("docker compose config --profiles")).toBeNull();
   });
 
   it("promotes a source repair only when it flips the reproduction and preserves regressions", () => {

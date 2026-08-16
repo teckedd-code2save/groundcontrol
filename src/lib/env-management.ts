@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { stringify as stringifyYaml } from "yaml";
 import type { DeploymentEnvProfile, EnvProviderAccount, Project } from "@prisma/client";
 import { prisma } from "./prisma";
 import { decryptMaybe, encryptIfNeeded } from "./crypto";
@@ -55,8 +56,8 @@ export function normalizeEnvironmentSlug(value?: string | null): string {
 }
 
 export function managedEnvRuntimeDirectory(deployPath: string, environmentSlug?: string | null): string {
-  const namespace = createHash("sha256").update(deployPath).digest("hex").slice(0, 16);
-  return `/run/groundcontrol/environments/${namespace}/${normalizeEnvironmentSlug(environmentSlug)}`;
+  const root = String(deployPath || "").trim().replace(/\/+$/, "");
+  return `${root}/.groundcontrol/env/${normalizeEnvironmentSlug(environmentSlug)}`;
 }
 
 export async function inspectMaterializedEnvBundle(
@@ -557,7 +558,14 @@ export function buildMaterializeEnvBundleCommand(
   const environmentSlug = normalizeEnvironmentSlug(options.environmentSlug);
   const runtimeDir = managedEnvRuntimeDirectory(deployPath, environmentSlug);
   const quotedRuntimeDir = shQuote(runtimeDir);
-  const interpolationValues = composeInterpolationValues(values, componentValues);
+  const components = Object.keys(componentValues)
+    .filter(isSafeComposeServiceName)
+    .filter((component) => Object.keys(componentValues[component]).length > 0)
+    .sort();
+  const componentKeys = Array.from(new Set(
+    components.flatMap((component) => Object.keys(componentValues[component]))
+  )).sort();
+  const rootPruneKeys = componentKeys.filter((key) => !(key in values));
   const commands = [
     "set -eu",
     `mkdir -p ${quotedPath}/.groundcontrol ${quotedRuntimeDir}`,
@@ -570,17 +578,13 @@ export function buildMaterializeEnvBundleCommand(
     // has been atomically renamed and the new manifest/override is committed.
     // Deleting first created a race where a detached Compose run could pass
     // validation and then lose api.env before `up` opened it.
-    "find .groundcontrol/env -maxdepth 1 -type f -name '*.env' -delete 2>/dev/null || true",
+    "find .groundcontrol/env -type f -name '*.env' -delete 2>/dev/null || true",
     "find .groundcontrol/env-backups -maxdepth 1 -type f -name '*.bak' -delete 2>/dev/null || true",
   ];
-  if (Object.keys(interpolationValues).length > 0 || options.pruneManagedFiles) {
-    commands.push(...atomicMergedEnvWriteCommands(".env", serializeDotenv(interpolationValues)));
+  if (Object.keys(values).length > 0 || rootPruneKeys.length > 0 || options.pruneManagedFiles) {
+    commands.push(...atomicEnvMergeAndPruneCommands(".env", serializeDotenv(values), rootPruneKeys));
   }
 
-  const components = Object.keys(componentValues)
-    .filter(isSafeComposeServiceName)
-    .filter((component) => Object.keys(componentValues[component]).length > 0)
-    .sort();
   for (const component of components) {
     commands.push(...atomicMergedEnvWriteCommands(
       `${runtimeDir}/${component}.env`,
@@ -589,16 +593,17 @@ export function buildMaterializeEnvBundleCommand(
   }
   if (components.length > 0) {
     const runtimeFiles = components.map((component) => `${runtimeDir}/${component}.env`);
-    const override = [
-      "# Managed by GroundControl. Source values remain encrypted in GroundControl.",
-      "services:",
-      ...components.flatMap((component) => [
-        `  ${component}:`,
-        "    env_file:",
-        `      - ${runtimeDir}/${component}.env`,
-      ]),
-      "",
-    ].join("\n");
+    const override = `# Managed by GroundControl. Source values remain encrypted in GroundControl.\n${stringifyYaml({
+      services: Object.fromEntries(components.map((component) => [
+        component,
+        {
+          env_file: [`${runtimeDir}/${component}.env`],
+          environment: Object.keys(componentValues[component]).length > 0
+            ? componentValues[component]
+            : undefined,
+        },
+      ])),
+    }, { lineWidth: 0 })}\n`;
     commands.push(...atomicEnvWriteCommands(
       MANAGED_ENV_FILES_MANIFEST,
       runtimeFiles.join("\n") + "\n"
@@ -683,6 +688,36 @@ function atomicMergedEnvWriteCommands(path: string, content: string): string[] {
   ];
 }
 
+function atomicEnvMergeAndPruneCommands(
+  path: string,
+  content: string,
+  pruneKeys: string[]
+): string[] {
+  const encoded = Buffer.from(content, "utf8").toString("base64");
+  const target = shQuote(path);
+  const managed = `${target}.managed.new`;
+  const keys = `${target}.keys.new`;
+  const preserved = `${target}.preserved.new`;
+  const skipKeys = Array.from(new Set([
+    ...Object.keys(parseDotenv(content)),
+    ...pruneKeys,
+  ])).sort();
+  return [
+    `printf '%s' ${shQuote(encoded)} | base64 -d > ${managed}`,
+    `printf '%s\\n' ${shQuote(skipKeys.join("\n"))} > ${keys}`,
+    `if [ -f ${target} ]; then`,
+    `  awk -F= 'FNR==NR { skip[$1]=1; next } /^[A-Za-z_][A-Za-z0-9_]*=/ { if (!($1 in skip)) print; next } { print }' ${keys} ${target} > ${preserved}`,
+    `else`,
+    `  : > ${preserved}`,
+    `fi`,
+    `cat ${managed} >> ${preserved}`,
+    `chmod 600 ${preserved}`,
+    `mv ${preserved} ${target}`,
+    `chmod 600 ${target}`,
+    `rm -f ${managed} ${keys}`,
+  ];
+}
+
 function isSafeComposeServiceName(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value);
 }
@@ -702,18 +737,64 @@ export async function materializeEnvBundle(
   if (result.code !== 0) {
     throw new Error(result.stderr || result.stdout || "Failed to materialize environment");
   }
+  const materializedComponents = Object.keys(componentValues)
+    .filter(isSafeComposeServiceName)
+    .filter((component) => Object.keys(componentValues[component]).length > 0);
+  const hasComponentKeys = materializedComponents.some(
+    (component) => Object.keys(componentValues[component]).length > 0
+  );
   return {
     hash: hashEnvBundle(values, componentValues),
     files: [
-      ...(Object.keys(composeInterpolationValues(values, componentValues)).length > 0 || options.pruneManagedFiles ? [".env"] : []),
-      ...Object.keys(componentValues)
-        .filter(isSafeComposeServiceName)
-        .filter((component) => Object.keys(componentValues[component]).length > 0)
-        .map((component) => `${managedEnvRuntimeDirectory(deployPath, options.environmentSlug)}/${component}.env`),
-      ...(Object.keys(componentValues).some((component) => Object.keys(componentValues[component]).length > 0)
+      ...(Object.keys(values).length > 0 || hasComponentKeys || options.pruneManagedFiles ? [".env"] : []),
+      ...materializedComponents.map((component) => `${managedEnvRuntimeDirectory(deployPath, options.environmentSlug)}/${component}.env`),
+      ...(hasComponentKeys
         ? [MANAGED_ENV_FILES_MANIFEST, MANAGED_ENV_OVERRIDE_FILE]
         : []),
     ],
+  };
+}
+
+export async function reconcileComposeServiceEnvValue(input: {
+  projectSlug: string;
+  service: string;
+  key: string;
+  value: string;
+  environmentSlug?: string;
+}) {
+  const project = await prisma.project.findFirst({ where: { slug: input.projectSlug } });
+  if (!project) throw new Error(`Project "${input.projectSlug}" was not found.`);
+  if (!isSafeComposeServiceName(input.service)) {
+    throw new Error("Invalid Compose service name.");
+  }
+  const environmentSlug = normalizeEnvironmentSlug(input.environmentSlug || "production");
+  const resolved = await resolveDeploymentEnv(project, environmentSlug);
+  if (!resolved) throw new Error(`No environment profile is configured for ${project.name}.`);
+  const schema = parseEnvJson(resolved.profile.schemaJson);
+  await setLocalEnvValues(
+    resolved.profile.id,
+    { [input.key]: input.value },
+    schema,
+    input.service
+  );
+  const componentValues = {
+    ...resolved.componentValues,
+    [input.service]: {
+      ...(resolved.componentValues[input.service] || {}),
+      [input.key]: input.value,
+    },
+  };
+  const materialized = await materializeEnvBundle(
+    project.path,
+    resolved.values,
+    componentValues,
+    undefined,
+    { environmentSlug: resolved.profile.slug }
+  );
+  return {
+    projectPath: project.path,
+    environmentSlug: resolved.profile.slug,
+    materialized,
   };
 }
 

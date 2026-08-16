@@ -121,7 +121,7 @@ export function createComposeTarget(
 
       ctx.log(`[compose] rolling back ${project.slug}`);
 
-      const pinnedDigest = deployment.previousImageDigest;
+      const pinnedDigest = ctx.rollbackImageDigest || deployment.previousImageDigest;
       if (!pinnedDigest) {
         ctx.log(`[compose] no previous digest available; restarting current image`);
         await restartCompose(projectPath, composeCmd, composeFile, ctx);

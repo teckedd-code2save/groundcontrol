@@ -151,6 +151,7 @@ export default function DeploymentDetail({
   const [redeployLog, setRedeployLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [redeployStatus, setRedeployStatus] = useState<"idle" | "deploying" | "success" | "failed">("idle");
+  const [rollingBackReleaseId, setRollingBackReleaseId] = useState<number | null>(null);
   const [runFailure, setRunFailure] = useState<string | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [runElapsed, setRunElapsed] = useState(0);
@@ -332,6 +333,33 @@ export default function DeploymentDetail({
       return { success: false };
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function rollbackRelease(release: Release) {
+    setBusy(true);
+    setRollingBackReleaseId(release.id);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/deployments/${release.id}/rollback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rollbackTo: "self" }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error || data.success === false) {
+        throw new Error(data.error || "Rollback failed");
+      }
+      setMessage({
+        tone: "success",
+        text: `Rolled back to release ${release.commitSha?.slice(0, 10) || release.branch || release.id}.`,
+      });
+      await load();
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(false);
+      setRollingBackReleaseId(null);
     }
   }
 
@@ -902,7 +930,7 @@ export default function DeploymentDetail({
               ) : (
                 <div className="divide-y divide-border">
                   {deployment.releases.map((release) => (
-                    <div key={release.id} className="grid gap-3 px-5 py-4 md:grid-cols-[1fr_auto_auto] md:items-center">
+                    <div key={release.id} className="grid gap-3 px-5 py-4 md:grid-cols-[1fr_auto_auto_auto] md:items-center">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-medium">{deploymentTargetDisplayName(release.target)}</span>
@@ -928,6 +956,14 @@ export default function DeploymentDetail({
                         })()}
                       </div>
                       <span className="font-mono text-[10px] text-muted">{new Date(release.createdAt).toLocaleString()}</span>
+                      <button
+                        type="button"
+                        onClick={() => void rollbackRelease(release)}
+                        disabled={busy || rollingBackReleaseId === release.id}
+                        className="gc-button gc-button-secondary text-[10px] disabled:opacity-50"
+                      >
+                        {rollingBackReleaseId === release.id ? "Rolling back..." : "Rollback to this release"}
+                      </button>
                       {(release.publicUrl || release.previewUrl) && (
                         <a href={release.publicUrl || release.previewUrl || "#"} target="_blank" rel="noreferrer" className="gc-icon-button" aria-label="Open release URL">
                           <ExternalLink size={14} />

@@ -13,6 +13,8 @@ export interface DeploymentEvidenceInput {
   savedRepoUrl?: string | null;
   savedReleaseOutput?: string | null;
   savedProjectEnv?: string | null;
+  legacyProjectPath?: string | null;
+  legacyProjectSlug?: string | null;
 }
 
 export type DeploymentExecutionIdentity = {
@@ -180,7 +182,13 @@ export function resolveDeploymentEvidence(
   scannedProjects: ScannedProject[],
   sites: RouteSite[]
 ) {
-  const runtime = linkDeploymentRuntime(deployment, containers, labels);
+  const runtime = linkDeploymentRuntime({
+    sourcePath: deployment.sourcePath,
+    containerName: deployment.containerName,
+    metadataJson: deployment.metadataJson,
+    legacyProjectPath: deployment.legacyProjectPath,
+    legacyProjectSlug: deployment.legacyProjectSlug,
+  }, containers, labels);
   const scanned = scannedProjects.find((project) => project.path === deployment.sourcePath)
     || scannedProjects.find((project) => project.slug === deployment.slug);
   const routeMatch = findProjectSiteMatch({

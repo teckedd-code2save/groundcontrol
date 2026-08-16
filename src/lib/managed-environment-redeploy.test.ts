@@ -222,7 +222,7 @@ describe("managed environment redeploy reconciliation", () => {
   it("repairs only GroundControl-owned runtime artifacts", () => {
     const command = buildManagedEnvironmentRecoveryCommand("/opt/example", "production");
 
-    expect(command).toContain("/run/groundcontrol/environments/");
+    expect(command).toContain("/opt/example/.groundcontrol/env/production");
     expect(command).toContain("-name '*.new' -delete");
     expect(command).toContain(".groundcontrol-write-probe");
     expect(command).not.toContain("docker volume rm");

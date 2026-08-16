@@ -16,8 +16,18 @@ export interface DeploymentRuntimeLink {
   evidence: string[];
 }
 
+function normalizeIdentityToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 export function linkDeploymentRuntime(
-  deployment: { sourcePath?: string | null; containerName?: string | null; metadataJson?: string | null },
+  deployment: {
+    sourcePath?: string | null;
+    containerName?: string | null;
+    metadataJson?: string | null;
+    legacyProjectPath?: string | null;
+    legacyProjectSlug?: string | null;
+  },
   containers: RuntimeContainerRecord[],
   labels: DockerContainerLabelInfo[]
 ): DeploymentRuntimeLink {
@@ -34,7 +44,25 @@ export function linkDeploymentRuntime(
     const configUnderSource = Boolean(deployment.sourcePath && label?.configFiles
       ?.split(",").some((file) => file === deployment.sourcePath || file.startsWith(`${deployment.sourcePath}/`)));
     const exactProject = Boolean(composeProject && label?.project === composeProject);
-    if (!exactContainer && !exactWorkingDir && !configUnderSource && !exactProject) return [];
+    const exactLegacyWorkingDir = Boolean(deployment.legacyProjectPath && label?.workingDir === deployment.legacyProjectPath);
+    const configUnderLegacy = Boolean(deployment.legacyProjectPath && label?.configFiles
+      ?.split(",").some((file) => file === deployment.legacyProjectPath || file.startsWith(`${deployment.legacyProjectPath}/`)));
+    const exactLegacyProject = Boolean(
+      deployment.legacyProjectSlug &&
+      (
+        (label?.project && normalizeIdentityToken(label.project) === normalizeIdentityToken(deployment.legacyProjectSlug)) ||
+        (label?.projectSlug && normalizeIdentityToken(label.projectSlug) === normalizeIdentityToken(deployment.legacyProjectSlug))
+      )
+    );
+    if (
+      !exactContainer &&
+      !exactWorkingDir &&
+      !configUnderSource &&
+      !exactProject &&
+      !exactLegacyWorkingDir &&
+      !configUnderLegacy &&
+      !exactLegacyProject
+    ) return [];
     return [{
       ...container,
       service: label?.service || null,
@@ -45,19 +73,37 @@ export function linkDeploymentRuntime(
       exactContainer,
       exactWorkingDir,
       exactProject,
+      exactLegacyWorkingDir,
+      exactLegacyProject,
     }];
   });
 
   const matchedProject = matches.find((item) => item.label?.project)?.label?.project || composeProject || null;
-  const exact = matches.some((item) => item.exactContainer || item.exactWorkingDir || item.exactProject);
+  const exact = matches.some((item) =>
+    item.exactContainer ||
+    item.exactWorkingDir ||
+    item.exactProject ||
+    item.exactLegacyWorkingDir ||
+    item.exactLegacyProject
+  );
   return {
     status: matches.length ? "present" : "missing",
     confidence: matches.length ? (exact ? "exact" : "strong") : "none",
     composeProject: matchedProject,
-    containers: matches.map(({ label: _label, exactContainer: _a, exactWorkingDir: _b, exactProject: _c, ...item }) => item),
+    containers: matches.map(({
+      label: _label,
+      exactContainer: _a,
+      exactWorkingDir: _b,
+      exactProject: _c,
+      exactLegacyWorkingDir: _d,
+      exactLegacyProject: _e,
+      ...item
+    }) => item),
     evidence: [
       deployment.containerName && matches.some((item) => item.exactContainer) ? `Container ${deployment.containerName}` : null,
       deployment.sourcePath && matches.some((item) => item.exactWorkingDir) ? `Compose working directory ${deployment.sourcePath}` : null,
+      deployment.legacyProjectPath && matches.some((item) => item.exactLegacyWorkingDir) ? `Project working directory ${deployment.legacyProjectPath}` : null,
+      deployment.legacyProjectSlug && matches.some((item) => item.exactLegacyProject) ? `Project identity ${deployment.legacyProjectSlug}` : null,
       matchedProject ? `Compose project ${matchedProject}` : null,
       matches.length ? `${matches.length} runtime container${matches.length === 1 ? "" : "s"}` : null,
     ].filter((item): item is string => Boolean(item)),

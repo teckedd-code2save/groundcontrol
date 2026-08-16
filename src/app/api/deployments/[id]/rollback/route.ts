@@ -16,7 +16,9 @@ export async function POST(
       return NextResponse.json({ error: "Invalid deployment id" }, { status: 400 });
     }
 
-    await runRollback(deploymentId);
+    const body = await req.json().catch(() => ({})) as { rollbackTo?: string };
+    const rollbackTo = body.rollbackTo === "self" ? "self" : "previous";
+    await runRollback(deploymentId, { rollbackTo });
     return NextResponse.json({ ok: true, status: "rolled_back" });
   } catch (err: unknown) {
     return handleApiError(err);

@@ -20,4 +20,30 @@ describe("deployment runtime reconciliation", () => {
     expect(result.composeProject).toBe("shop");
     expect(result.containers.map((item) => item.service)).toEqual(["api", "db"]);
   });
+
+  it("links a running Compose project through the stable legacy project path", () => {
+    const containers = [
+      { name: "rentaweekend-api-1", image: "rentaweekend-api", status: "Up", ports: "3000/tcp", state: "running" },
+    ];
+    const labels = [{
+      name: "rentaweekend-api-1",
+      project: "rentaweekend",
+      service: "api",
+      workingDir: "/opt/agent-flow/RentAWeekend",
+      configFiles: "/opt/agent-flow/RentAWeekend/docker-compose.yml",
+      projectSlug: "RentAWeekend",
+    }];
+    const result = linkDeploymentRuntime(
+      {
+        sourcePath: "/opt/stale-enrollment-path",
+        legacyProjectPath: "/opt/agent-flow/RentAWeekend",
+        legacyProjectSlug: "rentaweekend",
+      },
+      containers,
+      labels
+    );
+    expect(result.status).toBe("present");
+    expect(result.confidence).toBe("exact");
+    expect(result.containers.map((item) => item.service)).toEqual(["api"]);
+  });
 });

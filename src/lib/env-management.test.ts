@@ -115,14 +115,13 @@ DATABASE_URL=duplicate
     );
 
     expect(command).toContain("/api.env");
-    expect(command).not.toContain(".groundcontrol/env/api.env");
-    expect(command).toContain("/run/groundcontrol/environments/");
+    expect(command).toContain("/srv/app/.groundcontrol/env/production/api.env");
     expect(command).toContain("/worker.env");
     expect(command).toContain(".groundcontrol/compose.env.override.yml");
     expect(command).toContain(".groundcontrol/compose.env.files");
     expect(command).toContain("base64 -d");
     expect(command).not.toContain("postgres://db");
-    expect(command).not.toContain(`find '/run/groundcontrol/environments/`);
+    expect(command).toContain("find .groundcontrol/env -type f -name '*.env' -delete");
     expect(command.indexOf("rm -f '.groundcontrol/compose.env.override.yml'")).toBeLessThan(
       command.lastIndexOf("'.groundcontrol/compose.env.override.yml'.new")
     );
@@ -174,10 +173,10 @@ DATABASE_URL=duplicate
 
     expect(command).toContain("/api.env'.managed.new");
     expect(command).toContain("/api.env'.preserved.new");
-    expect(command).toContain("cat '/run/groundcontrol/environments/");
-    expect(command).toContain("/api.env'.managed.new >> '/run/groundcontrol/environments/");
-    expect(command).toContain("/api.env'.preserved.new '/run/groundcontrol/environments/");
-    expect(command).not.toContain("/api.env'.new '/run/groundcontrol/environments/");
+    expect(command).toContain("cat '/srv/app/.groundcontrol/env/production/");
+    expect(command).toContain("/api.env'.managed.new >> '/srv/app/.groundcontrol/env/production/");
+    expect(command).toContain("/api.env'.preserved.new '/srv/app/.groundcontrol/env/production/");
+    expect(command).not.toContain("/api.env'.new '/srv/app/.groundcontrol/env/production/");
     expect(spawnSync("/bin/sh", ["-n"], { input: command, encoding: "utf8" }).status).toBe(0);
   });
 

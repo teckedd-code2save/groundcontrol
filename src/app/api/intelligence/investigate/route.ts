@@ -51,6 +51,8 @@ export async function POST(req: NextRequest) {
         savedRepoUrl: deployment.legacyProject?.repoUrl,
         savedReleaseOutput: latestRelease?.output,
         savedProjectEnv: deployment.legacyProject?.envVars,
+        legacyProjectPath: deployment.legacyProject?.path,
+        legacyProjectSlug: deployment.legacyProject?.slug,
       }, containers, labels, tree.projects, hostProjects.caddySites);
       const identities = [deployment.legacyProject?.domain, evidence.publicUrl, evidence.route?.domain, latestRelease?.publicUrl, latestRelease?.previewUrl].map(hostname).filter(Boolean);
       const deploymentMatches = deploymentSlug
