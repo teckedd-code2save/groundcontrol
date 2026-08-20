@@ -132,6 +132,8 @@ export default function DeploymentDetail({
   const [composeOpen, setComposeOpen] = useState(false);
   const [imageEditorOpen, setImageEditorOpen] = useState(false);
   const [publicUrlInput, setPublicUrlInput] = useState("");
+  const [newDomainInput, setNewDomainInput] = useState("");
+  const [domainBusy, setDomainBusy] = useState(false);
   const [repoUrlInput, setRepoUrlInput] = useState("");
   const [sourceDefaultBranch, setSourceDefaultBranch] = useState("main");
   const [sourceCommitInput, setSourceCommitInput] = useState("");
@@ -395,6 +397,33 @@ export default function DeploymentDetail({
     }
   }
 
+  async function switchDomain() {
+    if (!deployment || !newDomainInput.trim()) return;
+    setDomainBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/deployments/${encodeURIComponent(deployment.slug)}/domain`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: newDomainInput.trim() }),
+      });
+      const data = await readJson(response);
+      if (!response.ok || data.error || data.success === false) {
+        throw new Error(data.error || "Could not switch domain");
+      }
+      setMessage({
+        tone: "success",
+        text: `Domain switched to ${data.domain}. DNS and proxy updated.`,
+      });
+      setNewDomainInput("");
+      await load();
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setDomainBusy(false);
+    }
+  }
+
   async function openComposeViewer() {
     if (!deployment?.legacyProjectSlug) return;
     setComposeLoading(true);
@@ -635,6 +664,37 @@ export default function DeploymentDetail({
                     {deployment.repoUrl && <a href={deployment.repoUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-quiet">Repository</a>}
                     <button type="button" onClick={() => setTab("source")} className="gc-button gc-button-quiet">Configure</button>
                   </div>
+                </div>
+              </section>
+
+              {/* Domain switch */}
+              <section className="border border-border bg-card p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="gc-eyebrow">Domain</p>
+                    <h2 className="mt-2 text-base font-medium">
+                      {deployment.domain || "No public domain"}
+                    </h2>
+                    <p className="mt-1 text-xs leading-relaxed text-muted">
+                      Point a Cloudflare domain at this deployment. GroundControl updates the DNS record and the reverse proxy.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <input
+                    value={newDomainInput}
+                    onChange={(event) => setNewDomainInput(event.target.value)}
+                    placeholder="app.example.com"
+                    className="gc-field min-w-0 flex-1 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void switchDomain()}
+                    disabled={domainBusy || !newDomainInput.trim()}
+                    className="gc-button gc-button-primary"
+                  >
+                    {domainBusy ? "Applying…" : "Apply domain"}
+                  </button>
                 </div>
               </section>
 
