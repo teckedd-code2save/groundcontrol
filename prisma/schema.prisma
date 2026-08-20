@@ -144,12 +144,16 @@ model ComponentQACheck {
   expectedStatus      Int?
   expectedBodyContains String?
   enabled             Boolean  @default(true)
+  source              String   @default("manual") // manual | openapi | har | curl | source | snapshot
+  status              String   @default("active") // draft | active
+  evidenceRef         String?
+  revisionSha         String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   deployment EnrolledDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 
-  @@index([deploymentId, component])
+  @@index([deploymentId, component, status])
 }
 
 model ComponentQARun {

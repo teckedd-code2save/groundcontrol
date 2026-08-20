@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     }
 
     const checks = await prisma.componentQACheck.findMany({
-      where: { deploymentId: deployment.id, enabled: true, ...(component ? { component } : {}) },
+      where: { deploymentId: deployment.id, enabled: true, status: "active", ...(component ? { component } : {}) },
       orderBy: [{ component: "asc" }, { name: "asc" }],
     });
 
