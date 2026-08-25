@@ -73,6 +73,7 @@ describe("template engine", () => {
       "k3s-caddy-nodeport-platform",
       "vps-caddy-commerce-secure",
       "vps-caddy-existing-compose",
+      "vps-caddy-odoo-community",
       "vps-caddy-source-build",
       "vps-caddy-static-site",
       "vps-nginx-polyglot-secure",
@@ -138,6 +139,23 @@ describe("template engine", () => {
     const caddyResolved = resolveTemplate(caddy!, inputsFor(caddy!.inputs.map((input) => input.name)));
     expect(caddyResolved.dockerCompose).toContain("redis-server --appendonly yes");
     expect(caddyResolved.dockerCompose).toContain('test: ["CMD-SHELL"');
+  });
+
+  it("renders a persistent Odoo stack with recovery archives", () => {
+    const odoo = listTemplates().find((template) => template._filename === "vps-caddy-odoo-community");
+    expect(odoo).toBeTruthy();
+
+    const resolved = resolveTemplate(odoo!, inputsFor(odoo!.inputs.map((input) => input.name)));
+
+    expect(resolved.dockerCompose).toContain("image: odoo_image-value");
+    expect(resolved.dockerCompose).toContain("127.0.0.1:odoo_host_port-value:8069");
+    expect(resolved.dockerCompose).toContain("odoo_data:/var/lib/odoo");
+    expect(resolved.dockerCompose).toContain("postgres_data:/var/lib/postgresql/data/pgdata");
+    expect(resolved.dockerCompose).toContain("pg_dumpall -h postgres");
+    expect(resolved.dockerCompose).toContain("odoo_backups:/backups");
+    expect(resolved.proxyConfig).toContain("app.example.com");
+    expect(resolved.proxyConfig).toContain("127.0.0.1:odoo_host_port-value");
+    expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(true);
   });
 
   it("renders source-build env file and runtime env defaults", () => {
