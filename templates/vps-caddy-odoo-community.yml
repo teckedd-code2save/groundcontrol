@@ -1,0 +1,130 @@
+name: "Odoo Community on Caddy"
+description: "Self-host Odoo Community with PostgreSQL, persistent business data, HTTPS through host Caddy, health checks, generated credentials, and rotating local recovery archives."
+category: "business-platform"
+version: "1.0"
+requires:
+  docker: true
+  caddy: true
+reverse_proxy:
+  type: caddy
+  sites:
+    - domain: "{{domain}}"
+      proxy_to: "127.0.0.1:{{odoo_host_port}}"
+components:
+  - id: caddy
+    label: Caddy HTTPS edge
+    layer: traffic
+    kind: proxy
+  - id: odoo
+    label: Odoo Community business platform
+    layer: application
+    kind: service
+    service: odoo
+  - id: postgres
+    label: PostgreSQL business database
+    layer: data
+    kind: database
+    service: postgres
+  - id: persistence
+    label: Database and Odoo filestore volumes
+    layer: data
+    kind: volumes
+  - id: recovery_archives
+    label: Rotating local database and filestore archives
+    layer: resilience
+    kind: backup-hook
+    service: backup
+  - id: verification
+    label: Container and public-path verification
+    layer: resilience
+    kind: health
+services:
+  - name: odoo
+    image: "{{odoo_image}}"
+    command: "--proxy-mode --admin-passwd={{odoo_master_password}} --db-filter=^{{db_name}}$"
+    ports:
+      - "127.0.0.1:{{odoo_host_port}}:8069"
+    env:
+      - HOST=postgres
+      - PORT=5432
+      - USER={{db_user}}
+      - PASSWORD={{db_password}}
+    volumes:
+      - odoo_data:/var/lib/odoo
+      - odoo_addons:/mnt/extra-addons
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    healthcheck:
+      test: "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8069/web/login', timeout=5)\""
+      interval: "30s"
+      timeout: "10s"
+      retries: 10
+  - name: postgres
+    image: "{{postgres_image}}"
+    env:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER={{db_user}}
+      - POSTGRES_PASSWORD={{db_password}}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/pgdata
+    restart: unless-stopped
+    healthcheck:
+      test: "pg_isready -U {{db_user}} -d postgres"
+      interval: "10s"
+      timeout: "5s"
+      retries: 10
+  - name: backup
+    image: "{{postgres_image}}"
+    command: >-
+      sh -c 'while true; do stamp=$$(date -u +%Y%m%dT%H%M%SZ); pg_dumpall -h postgres -U {{db_user}} > /backups/odoo-$$stamp.sql && tar -czf /backups/odoo-$$stamp-filestore.tgz -C /odoo-data . && find /backups -type f -mtime +{{backup_retention_days}} -delete; sleep {{backup_interval_seconds}}; done'
+    env:
+      - PGPASSWORD={{db_password}}
+    volumes:
+      - odoo_data:/odoo-data:ro
+      - odoo_backups:/backups
+    depends_on:
+      - postgres
+    restart: unless-stopped
+volumes:
+  - odoo_data
+  - odoo_addons
+  - postgres_data
+  - odoo_backups
+networks:
+  - odoo_network
+inputs:
+  - name: app_slug
+    prompt: "Deployment slug"
+    default: "odoo"
+  - name: domain
+    prompt: "Odoo domain"
+    example: "erp.example.com"
+  - name: odoo_image
+    prompt: "Odoo image"
+    default: "odoo:19.0"
+  - name: postgres_image
+    prompt: "PostgreSQL image"
+    default: "postgres:15"
+  - name: odoo_host_port
+    prompt: "Odoo host loopback port"
+    default: "13069"
+  - name: db_user
+    prompt: "PostgreSQL user"
+    default: "odoo"
+  - name: db_password
+    prompt: "PostgreSQL password"
+    generate: true
+  - name: db_name
+    prompt: "Odoo database name"
+    default: "odoo"
+  - name: odoo_master_password
+    prompt: "Odoo database manager password"
+    generate: true
+  - name: backup_interval_seconds
+    prompt: "Seconds between local recovery archives"
+    default: "86400"
+  - name: backup_retention_days
+    prompt: "Local archive retention in days"
+    default: "7"
