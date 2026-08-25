@@ -59,6 +59,8 @@ The included backup service produces paired PostgreSQL and filestore archives on
 
 **Inputs:** domain, Odoo/PostgreSQL image versions, loopback host port, database identity, generated credentials, archive interval and local retention.
 
+GroundControl represents an agent- or operator-authored request with `OdooDeploymentIntent` in `src/lib/odoo-deployment.ts`. The planner accepts only supported business modules, validates the public hostname, tagged images, host port and archive policy, then produces deterministic template inputs plus approval, verification and rollback requirements. It does not execute commands or widen the active host policy.
+
 ---
 
 ### `caddy-app-postgres` — Caddy + App + PostgreSQL
