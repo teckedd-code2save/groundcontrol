@@ -45,6 +45,24 @@ GroundControl inspects the repository Compose file, discovers services, publishe
 
 ---
 
+### `vps-caddy-odoo-community` — Odoo Community + PostgreSQL
+
+```
+Cloudflare DNS → host Caddy → Odoo Community → PostgreSQL
+                                  ├── persistent filestore/addons
+                                  └── rotating local recovery archives
+```
+
+**Use for:** A self-hosted Odoo Community business system on an operator-owned VPS. The generated stack binds Odoo to a loopback host port, keeps the database and Odoo filestore in named volumes, generates database and database-manager credentials, and records container/public-path health evidence.
+
+The included backup service produces paired PostgreSQL and filestore archives on a configurable interval and expires old local archives. This is the first recovery primitive, not a verified disaster-recovery claim: off-host replication and automated restore testing remain required before GroundControl can mark the deployment recoverable.
+
+**Inputs:** domain, Odoo/PostgreSQL image versions, loopback host port, database identity, generated credentials, archive interval and local retention.
+
+GroundControl represents an agent- or operator-authored request with `OdooDeploymentIntent` in `src/lib/odoo-deployment.ts`. The planner accepts only supported business modules, validates the public hostname, tagged images, host port and archive policy, then produces deterministic template inputs plus approval, verification and rollback requirements. It does not execute commands or widen the active host policy.
+
+---
+
 ### `caddy-app-postgres` — Caddy + App + PostgreSQL
 ```
 Internet → Cloudflare → Caddy → App Container → PostgreSQL
