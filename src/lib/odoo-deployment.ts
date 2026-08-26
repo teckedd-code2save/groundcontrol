@@ -51,6 +51,7 @@ export function validateOdooIntent(intent: OdooDeploymentIntent): string[] {
   const name = intent.name.trim();
   const domain = intent.domain.trim().toLowerCase();
   const modules = [...new Set(intent.modules)];
+  const unsupportedModules = modules.filter((module) => !ODOO_BUSINESS_MODULES.includes(module));
   const hostPort = intent.hostPort ?? 13069;
   const backupIntervalHours = intent.backupIntervalHours ?? 24;
   const backupRetentionDays = intent.backupRetentionDays ?? 7;
@@ -60,6 +61,9 @@ export function validateOdooIntent(intent: OdooDeploymentIntent): string[] {
   if (!name || name.length > 80) errors.push("Business name must contain between 1 and 80 characters.");
   if (!DOMAIN_PATTERN.test(domain)) errors.push("Domain must be a valid public hostname.");
   if (modules.length === 0) errors.push("Select at least one supported Odoo business module.");
+  if (unsupportedModules.length > 0) {
+    errors.push(`Unsupported Odoo module(s): ${unsupportedModules.join(", ")}.`);
+  }
   if (intent.country !== "GH") errors.push("The first Odoo deployment path currently supports Ghana only.");
   if (!Number.isInteger(hostPort) || hostPort < 1024 || hostPort > 65535) {
     errors.push("Host port must be an integer between 1024 and 65535.");

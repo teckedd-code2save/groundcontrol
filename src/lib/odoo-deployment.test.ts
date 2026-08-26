@@ -31,7 +31,7 @@ describe("Odoo deployment planning", () => {
     const errors = validateOdooIntent({
       name: "",
       domain: "localhost",
-      modules: [],
+      modules: ["accounting"] as never,
       country: "GH",
       hostPort: 80,
       backupRetentionDays: 0,
@@ -41,10 +41,21 @@ describe("Odoo deployment planning", () => {
 
     expect(errors).toContain("Business name must contain between 1 and 80 characters.");
     expect(errors).toContain("Domain must be a valid public hostname.");
-    expect(errors).toContain("Select at least one supported Odoo business module.");
+    expect(errors).toContain("Unsupported Odoo module(s): accounting.");
     expect(errors).toContain("Host port must be an integer between 1024 and 65535.");
     expect(errors).toContain("Backup retention must be between 1 and 90 days.");
     expect(errors).toContain("Odoo image must include an explicit tag.");
     expect(errors).toContain("PostgreSQL image must include an explicit tag.");
+  });
+
+  it("requires at least one module", () => {
+    const errors = validateOdooIntent({
+      name: "Retail ERP",
+      domain: "erp.example.com",
+      modules: [],
+      country: "GH",
+    });
+
+    expect(errors).toContain("Select at least one supported Odoo business module.");
   });
 });
