@@ -18,6 +18,23 @@ interface Container {
   stats?: { cpu: string; mem: string };
 }
 
+interface CleanupPlan {
+  images: {
+    kept: { fullName: string; size?: string; reason: string }[];
+    protected: { fullName: string; size?: string; reason: string; containers?: { name: string }[] }[];
+    removable: { fullName: string; size?: string; reason: string }[];
+  };
+  containers: {
+    protected: { name: string; reason: string }[];
+    removable: { name: string; reason: string }[];
+  };
+  buildCache: {
+    enabled: boolean;
+    reclaimable?: string;
+    reason: string;
+  };
+}
+
 interface MemoryPanelProps {
   open: boolean;
   onClose: () => void;
@@ -30,6 +47,7 @@ export default function MemoryPanel({ open, onClose }: MemoryPanelProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<{ action: ActionType; name: string } | null>(null);
   const [result, setResult] = useState<string>("");
+  const [cleanupPlan, setCleanupPlan] = useState<CleanupPlan | null>(null);
 
   useEffect(() => {
     if (open) loadData();
@@ -88,6 +106,52 @@ export default function MemoryPanel({ open, onClose }: MemoryPanelProps) {
     }
   }
 
+  async function openCleanupPlan() {
+    setActionLoading("cleanup-preview");
+    setResult("");
+    try {
+      const res = await fetch("/api/containers/prune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preview: true }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setResult(`Cleanup preview failed: ${data.error || "Unknown error"}`);
+      } else {
+        setCleanupPlan(data.plan);
+      }
+    } catch (err: any) {
+      setResult(`Cleanup preview failed: ${err.message}`);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function runCleanup() {
+    setActionLoading("cleanup");
+    setResult("");
+    try {
+      const res = await fetch("/api/containers/prune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pruneBuildCache: true }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setResult(`Cleanup failed: ${data.error || "Unknown error"}`);
+      } else {
+        setResult(data.output || "Cleanup complete");
+        await loadData();
+      }
+    } catch (err: any) {
+      setResult(`Cleanup failed: ${err.message}`);
+    } finally {
+      setActionLoading(null);
+      setCleanupPlan(null);
+    }
+  }
+
   // Sort processes by memory usage descending
   const topProcesses = [...processes]
     .filter((p) => parseFloat(p.mem) > 0)
@@ -120,7 +184,7 @@ export default function MemoryPanel({ open, onClose }: MemoryPanelProps) {
               </svg>
             </div>
             <div>
-              <h3 className="font-medium text-sm">Memory Breakdown</h3>
+              <h3 className="font-medium text-sm">Memory breakdown</h3>
               <p className="text-[10px] text-muted font-mono">Top consumers and cleanup actions</p>
             </div>
           </div>
@@ -139,11 +203,11 @@ export default function MemoryPanel({ open, onClose }: MemoryPanelProps) {
               {/* Actions */}
               <div className="flex flex-wrap gap-2">
                 <button
-                  onClick={() => setPendingAction({ action: "prune", name: "Docker" })}
-                  disabled={actionLoading === "prune"}
+                  onClick={openCleanupPlan}
+                  disabled={actionLoading === "cleanup-preview" || actionLoading === "cleanup"}
                   className="px-3 py-1.5 text-xs font-mono border border-accent/30 text-accent rounded hover:bg-accent/10 transition-colors disabled:opacity-50"
                 >
-                  {actionLoading === "prune" ? "..." : "Prune Docker"}
+                  {actionLoading === "cleanup-preview" ? "..." : "Cleanup plan"}
                 </button>
                 <button
                   onClick={loadData}
@@ -251,7 +315,79 @@ export default function MemoryPanel({ open, onClose }: MemoryPanelProps) {
             onCancel={() => setPendingAction(null)}
           />
         )}
+
+        {cleanupPlan && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-2xl rounded-xl border border-border bg-card shadow-2xl">
+              <div className="border-b border-border p-4">
+                <h3 className="text-sm font-medium">Docker cleanup plan</h3>
+                <p className="mt-1 text-xs text-muted">
+                  GroundControl protects running images and stopped service images by default. Build cache can be cleaned safely, but future builds may take longer.
+                </p>
+              </div>
+              <div className="max-h-[55vh] overflow-auto p-4 space-y-4">
+                <CleanupSection title="Will remove" tone="warning" items={[
+                  ...cleanupPlan.containers.removable.map((item) => ({ label: item.name, detail: item.reason })),
+                  ...cleanupPlan.images.removable.map((item) => ({ label: item.fullName, detail: [item.size, item.reason].filter(Boolean).join(" · ") })),
+                  { label: "Docker build cache", detail: cleanupPlan.buildCache.reclaimable || cleanupPlan.buildCache.reason },
+                ]} />
+                <CleanupSection title="Protected" tone="success" items={[
+                  ...cleanupPlan.containers.protected.slice(0, 8).map((item) => ({ label: item.name, detail: item.reason })),
+                  ...cleanupPlan.images.protected.slice(0, 8).map((item) => ({ label: item.fullName, detail: [item.size, item.reason].filter(Boolean).join(" · ") })),
+                ]} />
+                <CleanupSection title="Kept" tone="accent" items={cleanupPlan.images.kept.slice(0, 8).map((item) => ({
+                  label: item.fullName,
+                  detail: [item.size, item.reason].filter(Boolean).join(" · "),
+                }))} />
+              </div>
+              <div className="flex justify-end gap-2 border-t border-border p-4">
+                <button
+                  onClick={() => setCleanupPlan(null)}
+                  className="rounded border border-border px-4 py-2 text-xs font-mono transition-colors hover:border-accent hover:text-accent"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={runCleanup}
+                  disabled={actionLoading === "cleanup"}
+                  className="rounded border border-warning/30 bg-warning/10 px-4 py-2 text-xs font-mono text-warning transition-colors hover:bg-warning/20 disabled:opacity-50"
+                >
+                  {actionLoading === "cleanup" ? "Cleaning..." : "Clean selected"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function CleanupSection({
+  title,
+  items,
+  tone,
+}: {
+  title: string;
+  items: { label: string; detail?: string }[];
+  tone: "warning" | "success" | "accent";
+}) {
+  const toneClass = tone === "warning" ? "text-warning" : tone === "success" ? "text-success" : "text-accent";
+  return (
+    <div>
+      <h4 className={`mb-2 text-xs font-mono ${toneClass}`}>{title}</h4>
+      {items.length > 0 ? (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={`${title}-${item.label}`} className="rounded-lg bg-background/40 px-3 py-2">
+              <div className="truncate text-xs font-mono">{item.label}</div>
+              {item.detail && <div className="mt-0.5 text-[10px] text-muted">{item.detail}</div>}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-lg bg-background/30 p-3 text-xs text-muted">Nothing in this group.</div>
+      )}
     </div>
   );
 }

@@ -11,6 +11,8 @@ export interface ContainerImageUsage {
   imageRef: string;
   imageId: string;
   state: string;
+  composeProject?: string;
+  composeService?: string;
 }
 
 export interface PlannedPruneImage extends DockerImageForPrune {
@@ -24,6 +26,37 @@ export interface ImagePrunePlan {
   kept: PlannedPruneImage[];
   protected: PlannedPruneImage[];
   removable: PlannedPruneImage[];
+}
+
+export interface ContainerForCleanup {
+  name: string;
+  id: string;
+  image: string;
+  state: string;
+  status?: string;
+  composeProject?: string;
+  composeService?: string;
+}
+
+export interface PlannedCleanupContainer extends ContainerForCleanup {
+  reason: string;
+}
+
+export interface DockerCleanupPlan {
+  images: {
+    kept: PlannedPruneImage[];
+    protected: PlannedPruneImage[];
+    removable: PlannedPruneImage[];
+  };
+  containers: {
+    protected: PlannedCleanupContainer[];
+    removable: PlannedCleanupContainer[];
+  };
+  buildCache: {
+    enabled: boolean;
+    reclaimable?: string;
+    reason: string;
+  };
 }
 
 function imageFullName(image: DockerImageForPrune): string {
@@ -91,4 +124,75 @@ export function planRepositoryImagePrune(input: {
   }
 
   return { repository: input.repository, kept, protected: protectedImages, removable };
+}
+
+export function planDockerCleanup(input: {
+  images: DockerImageForPrune[];
+  usages: ContainerImageUsage[];
+  containers: ContainerForCleanup[];
+  includeStoppedContainerImages?: boolean;
+  includeStoppedContainers?: boolean;
+  buildCacheReclaimable?: string;
+}): DockerCleanupPlan {
+  const grouped = new Map<string, DockerImageForPrune[]>();
+  for (const image of input.images) {
+    const key = image.repository || "<none>";
+    grouped.set(key, [...(grouped.get(key) || []), image]);
+  }
+
+  const kept: PlannedPruneImage[] = [];
+  const protectedImages: PlannedPruneImage[] = [];
+  const removable: PlannedPruneImage[] = [];
+
+  for (const [repository, repoImages] of grouped.entries()) {
+    const plan = planRepositoryImagePrune({
+      repository,
+      images: repoImages,
+      usages: input.usages,
+      includeStopped: input.includeStoppedContainerImages,
+    });
+
+    if (repository === "<none>") {
+      for (const image of plan.kept) {
+        const usages = input.usages.filter((usage) => imageMatchesUsage(image, usage));
+        if (usages.length > 0) {
+          protectedImages.push({ ...image, reason: "Dangling image is still used by a container", containers: usages });
+        } else {
+          removable.push({ ...image, reason: "Unused dangling image" });
+        }
+      }
+    } else {
+      kept.push(...plan.kept);
+    }
+    protectedImages.push(...plan.protected);
+    removable.push(...plan.removable);
+  }
+
+  const protectedContainers: PlannedCleanupContainer[] = [];
+  const removableContainers: PlannedCleanupContainer[] = [];
+  for (const container of input.containers) {
+    if (container.state === "running") {
+      protectedContainers.push({ ...container, reason: "Container is running" });
+      continue;
+    }
+    if (container.composeProject && !input.includeStoppedContainers) {
+      protectedContainers.push({ ...container, reason: "Stopped Compose service is protected by default" });
+      continue;
+    }
+    if (!input.includeStoppedContainers) {
+      protectedContainers.push({ ...container, reason: "Stopped container is protected by default" });
+      continue;
+    }
+    removableContainers.push({ ...container, reason: "Stopped container selected for cleanup" });
+  }
+
+  return {
+    images: { kept, protected: protectedImages, removable },
+    containers: { protected: protectedContainers, removable: removableContainers },
+    buildCache: {
+      enabled: true,
+      reclaimable: input.buildCacheReclaimable,
+      reason: "Build cache is not attached to running containers; cleaning it frees deploy workspace",
+    },
+  };
 }

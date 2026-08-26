@@ -202,8 +202,8 @@ export function scanSourceRoutes(files: SourceFile[]): SourceRoute[] {
       continue;
     }
 
-    const module = routeFileModule(file.path);
-    const prefix = mounts.get(module);
+    const routeModule = routeFileModule(file.path);
+    const prefix = mounts.get(routeModule);
     for (const call of extractCalls(file.content)) {
       if (call.object !== "router") continue;
       if (!HTTP_METHODS.has(call.verb.toLowerCase())) continue;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import { planRepositoryImagePrune } from "@/lib/image-prune";
 import { execOnVps, shQuote } from "@/lib/vps";
 
@@ -46,6 +47,7 @@ async function buildPlan(repository: string, includeStopped = false) {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireAuth(req);
     const { repository, preview, includeStopped } = await req.json();
     if (!repository) {
       return NextResponse.json({ error: "repository required" }, { status: 400 });
