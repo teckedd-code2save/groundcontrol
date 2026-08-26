@@ -148,6 +148,9 @@ describe("template engine", () => {
     const resolved = resolveTemplate(odoo!, inputsFor(odoo!.inputs.map((input) => input.name)));
 
     expect(resolved.dockerCompose).toContain("image: odoo_image-value");
+    expect(resolved.dockerCompose).not.toContain("--admin-passwd");
+    expect(resolved.dockerCompose).toContain("admin_passwd = $$");
+    expect(resolved.dockerCompose).toContain("dbfilter = $$");
     expect(resolved.dockerCompose).toContain("127.0.0.1:odoo_host_port-value:8069");
     expect(resolved.dockerCompose).toContain("odoo_data:/var/lib/odoo");
     expect(resolved.dockerCompose).toContain("postgres_data:/var/lib/postgresql/data/pgdata");

@@ -41,7 +41,8 @@ components:
 services:
   - name: odoo
     image: "{{odoo_image}}"
-    command: "--proxy-mode --admin-passwd={{odoo_master_password}} --db-filter=^{{db_name}}$"
+    command: >-
+      sh -c 'printf "%s\n" "[options]" "addons_path = /mnt/extra-addons" "data_dir = /var/lib/odoo" "admin_passwd = $${ODOO_ADMIN_PASSWD}" "dbfilter = $${ODOO_DB_FILTER}" "proxy_mode = True" "list_db = False" > /tmp/odoo.conf && exec odoo server --config=/tmp/odoo.conf --db_host="$${HOST}" --db_port="$${PORT}" --db_user="$${USER}" --db_password="$${PASSWORD}"'
     ports:
       - "127.0.0.1:{{odoo_host_port}}:8069"
     env:
@@ -49,6 +50,8 @@ services:
       - PORT=5432
       - USER={{db_user}}
       - PASSWORD={{db_password}}
+      - ODOO_ADMIN_PASSWD={{odoo_master_password}}
+      - ODOO_DB_FILTER=^{{db_name}}$
     volumes:
       - odoo_data:/var/lib/odoo
       - odoo_addons:/mnt/extra-addons
