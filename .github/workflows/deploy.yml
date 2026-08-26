@@ -67,13 +67,21 @@ jobs:
           timeout: 30s
           command_timeout: 10m
           script: |
+            set -eu
             cd /opt/groundcontrol || exit 1
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+              git fetch --depth=1 origin main
+              git reset --hard origin/main
+            fi
             # Sync docker-compose.yml from repo so infra changes (ports, env, volumes) propagate
             curl -sfL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml" \
               -o docker-compose.yml || echo "docker-compose.yml sync skipped (using existing)"
-            docker compose pull
+            docker compose pull || {
+              echo "Image pull failed; building web image from synced source on the VPS." >&2
+              docker compose build web
+            }
             docker compose run --rm --no-deps web npx prisma migrate deploy --schema /app/db/schema.prisma
             docker compose up -d --remove-orphans
             for i in $(seq 1 30); do
@@ -94,6 +102,8 @@ jobs:
               fi
               if [ "$i" -eq 12 ]; then
                 echo "Public smoke failed: $PUBLIC_URL" >&2
+                docker compose ps >&2 || true
+                docker compose logs --tail=120 web >&2 || true
                 exit 1
               fi
               sleep 5
