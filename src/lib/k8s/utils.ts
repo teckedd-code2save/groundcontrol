@@ -38,7 +38,7 @@ export async function getVpsPublicIp(vps?: VpsConnection | null): Promise<string
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return "";
 
-  const publicServices = ["ifconfig.me", "api.ipify.org", "icanhazip.com"];
+  const publicServices = ["https://api.ipify.org", "https://ifconfig.me", "https://icanhazip.com"];
   for (const svc of publicServices) {
     const res = await execOnVps(
       `curl -s --max-time 5 ${shQuote(svc)} 2>/dev/null || echo ""`,

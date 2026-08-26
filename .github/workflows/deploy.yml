@@ -111,4 +111,4 @@ jobs:
             docker compose ps
             docker compose logs --tail=80 web
             docker logout ghcr.io
-            docker system prune -f
+            docker system prune -f || echo "Docker prune skipped; another prune may already be running"
