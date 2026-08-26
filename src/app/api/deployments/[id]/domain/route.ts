@@ -7,11 +7,12 @@ import { parseDomainInput, switchDeploymentDomain } from "@/lib/domain-switch";
 
 export async function POST(
   req: NextRequest,
-  ctx: { params: Promise<{ slug: string }> }
+  ctx: { params: Promise<{ id: string }> }
 ) {
   try {
     requireAuth(req);
-    const { slug } = await ctx.params;
+    const { id } = await ctx.params;
+    const slug = decodeURIComponent(id);
     const body = (await req.json()) as {
       domain?: string;
       zoneId?: string;
