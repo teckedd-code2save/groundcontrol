@@ -156,6 +156,10 @@ describe("template engine", () => {
     expect(resolved.dockerCompose).toContain("postgres_data:/var/lib/postgresql/data/pgdata");
     expect(resolved.dockerCompose).toContain("pg_dumpall -h postgres");
     expect(resolved.dockerCompose).toContain("odoo_backups:/backups");
+    expect(resolved.dockerCompose).toContain("until pg_isready -h postgres");
+    expect(resolved.dockerCompose).toContain("sleep backup_interval_seconds-value");
+    expect(resolved.dockerCompose).toContain("expr backup_retention_days-value + 1");
+    expect(resolved.dockerCompose).toContain("backup-complete=");
     expect(resolved.proxyConfig).toContain("app.example.com");
     expect(resolved.proxyConfig).toContain("127.0.0.1:odoo_host_port-value");
     expect(validateComposeDocument(resolved.dockerCompose).ok).toBe(true);

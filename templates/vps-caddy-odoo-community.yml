@@ -81,7 +81,7 @@ services:
   - name: backup
     image: "{{postgres_image}}"
     command: >-
-      sh -c 'while true; do stamp=$$(date -u +%Y%m%dT%H%M%SZ); pg_dumpall -h postgres -U {{db_user}} > /backups/odoo-$$stamp.sql && tar -czf /backups/odoo-$$stamp-filestore.tgz -C /odoo-data . && find /backups -type f -mtime +{{backup_retention_days}} -delete; sleep {{backup_interval_seconds}}; done'
+      sh -c 'until pg_isready -h postgres -U {{db_user}}; do sleep 5; done; while true; do stamp=$$(date -u +%Y%m%dT%H%M%SZ); sql=/backups/odoo-$$stamp.sql; filestore=/backups/odoo-$$stamp-filestore.tgz; if pg_dumpall -h postgres -U {{db_user}} > $$sql.tmp && tar -czf $$filestore.tmp -C /odoo-data .; then mv $$sql.tmp $$sql; mv $$filestore.tmp $$filestore; ls -1t /backups/odoo-*.sql | tail -n +$$(expr {{backup_retention_days}} + 1) | while read old; do rm -f "$$old" "$${old%.sql}-filestore.tgz"; done; echo "backup-complete=$$stamp"; else rm -f $$sql.tmp $$filestore.tmp; echo "backup-failed=$$stamp" >&2; fi; sleep {{backup_interval_seconds}}; done'
     env:
       - PGPASSWORD={{db_password}}
     volumes:

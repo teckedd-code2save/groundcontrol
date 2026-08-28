@@ -55,7 +55,7 @@ Cloudflare DNS → host Caddy → Odoo Community → PostgreSQL
 
 **Use for:** A self-hosted Odoo Community business system on an operator-owned VPS. The generated stack binds Odoo to a loopback host port, keeps the database and Odoo filestore in named volumes, generates database and database-manager credentials, and records container/public-path health evidence.
 
-The included backup service produces paired PostgreSQL and filestore archives on a configurable interval and expires old local archives. This is the first recovery primitive, not a verified disaster-recovery claim: off-host replication and automated restore testing remain required before GroundControl can mark the deployment recoverable.
+The included backup service waits for PostgreSQL readiness, writes paired PostgreSQL and filestore archives atomically on a configurable interval, and retains the configured number of complete recovery pairs. The default is one archive per day with seven recovery points. This is the first recovery primitive, not a verified disaster-recovery claim: off-host replication and automated restore testing remain required before GroundControl can mark the deployment recoverable.
 
 **Inputs:** domain, Odoo/PostgreSQL image versions, loopback host port, database identity, generated credentials, archive interval and local retention.
 
