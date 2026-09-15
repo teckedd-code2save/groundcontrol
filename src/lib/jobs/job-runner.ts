@@ -44,24 +44,16 @@ export async function getJob(id: number) {
 
 export async function appendJobOutput(id: number, chunk: string) {
   if (!chunk) return;
-  const job = await prisma.job.findUnique({ where: { id }, select: { output: true } });
-  if (!job) return;
-  await prisma.job.update({
-    where: { id },
-    data: {
-      output: (job.output || "") + chunk,
-    },
-  });
+  await prisma.$executeRaw`UPDATE "Job" SET "output" = COALESCE("output", '') || ${chunk}, "updatedAt" = ${new Date()} WHERE "id" = ${id}`;
 }
 
 export async function setJobRunning(id: number) {
-  return prisma.job.update({
-    where: { id },
-    data: {
-      status: "running",
-      startedAt: new Date(),
-    },
+  const claimed = await prisma.job.updateMany({
+    where: { id, status: "pending" },
+    data: { status: "running", startedAt: new Date() },
   });
+  if (claimed.count !== 1) throw new Error(`Job ${id} is not pending; execution was not started`);
+  return prisma.job.findUniqueOrThrow({ where: { id } });
 }
 
 export async function setJobSuccess(id: number, result?: Record<string, unknown>) {
@@ -91,15 +83,16 @@ export async function appendAndUpdateJob(
   chunk: string,
   status?: JobStatus
 ) {
-  const job = await prisma.job.findUnique({ where: { id }, select: { output: true } });
   const data: Record<string, unknown> = {};
-  if (chunk) data.output = (job?.output || "") + chunk;
   if (status) data.status = status;
   if (status === "running" && !data.startedAt) data.startedAt = new Date();
   if ((status === "success" || status === "failed" || status === "cancelled") && !data.finishedAt) {
     data.finishedAt = new Date();
   }
-  return prisma.job.update({ where: { id }, data });
+  return prisma.$transaction(async (tx) => {
+    if (chunk) await tx.$executeRaw`UPDATE "Job" SET "output" = COALESCE("output", '') || ${chunk}, "updatedAt" = ${new Date()} WHERE "id" = ${id}`;
+    return tx.job.update({ where: { id }, data });
+  });
 }
 
 /**
@@ -111,20 +104,25 @@ export async function runJob<T>(
   runner: (log: (chunk: string) => void) => Promise<T>
 ): Promise<T> {
   await setJobRunning(jobId);
+  let writes = Promise.resolve();
+  let logFailure: unknown;
   const log = (chunk: string) => {
-    // Fire-and-forget; failures are logged but don't crash the runner.
-    appendJobOutput(jobId, chunk).catch((err) => {
-      console.error(`[job-runner] failed to append output for job ${jobId}`, err);
+    writes = writes.then(() => appendJobOutput(jobId, chunk)).catch((error) => {
+      logFailure ??= error;
+      console.error(`[job-runner] failed to append output for job ${jobId}`, error);
     });
   };
 
   try {
     const result = await runner(log);
+    await writes;
+    if (logFailure) throw new Error("Job output could not be persisted; inspect the operation before retrying");
     await setJobSuccess(jobId, result as Record<string, unknown>);
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log(`[error] ${message}\n`);
+    await writes;
     await setJobFailed(jobId, message);
     throw err;
   }

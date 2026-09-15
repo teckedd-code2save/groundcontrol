@@ -40,30 +40,6 @@ const BASHISM_PATTERNS: { pattern: RegExp; name: string }[] = [
   { pattern: /\bfunction\s+\w+\s*\(\)/, name: "function keyword" },
 ];
 
-function rewriteBashCommand(cmd: string): { command: string; hint?: string } {
-  const m = cmd.match(/^((?:\/usr)?\/bin\/)?bash\b([\s\S]*)$/);
-  if (!m) return { command: cmd };
-
-  const rest = (m[2] || "").trimStart();
-  const dashC = rest.match(/^-c\b\s*([\s\S]*)$/);
-  if (dashC) {
-    return {
-      command: `sh -c ${dashC[1]}`.trim(),
-      hint: "Remote shell is sh (BusyBox) — `bash` isn't installed. Rewrote `bash -c` → `sh -c`.",
-    };
-  }
-  if (rest) {
-    return {
-      command: `sh ${rest}`,
-      hint: "Remote shell is sh (BusyBox) — `bash` isn't installed. Rewrote `bash` → `sh`.",
-    };
-  }
-  return {
-    command: "sh",
-    hint: "Remote shell is sh (BusyBox) — `bash` isn't installed. Drop the `bash` prefix and run commands directly.",
-  };
-}
-
 function detectBashisms(cmd: string): string[] {
   const found = new Set<string>();
   for (const { pattern, name } of BASHISM_PATTERNS) {
@@ -87,7 +63,8 @@ export default function TerminalPage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [input, setInput] = useState("");
   const [working, setWorking] = useState(false);
-  const [cwd, setCwd] = useState("/opt");
+  const [cwd, setCwd] = useState("/");
+  const [target, setTarget] = useState<{ vpsId: number; host: string } | null>(null);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -114,12 +91,24 @@ export default function TerminalPage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/server-capabilities")
+    fetch("/api/terminal")
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not load terminal target");
+        setTarget({ vpsId: data.vpsId, host: data.host });
+        setCwd(data.cwd);
+      })
+      .catch((err) => setHistory((h) => [...h, { type: "error", text: err.message }]));
+  }, []);
+
+  useEffect(() => {
+    if (!target) return;
+    fetch(`/api/server-capabilities?vpsId=${target.vpsId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setCapabilities(data))
       .catch(() => {})
       .finally(() => setCapabilitiesLoading(false));
-  }, []);
+  }, [target]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -154,7 +143,7 @@ export default function TerminalPage() {
       const res = await fetch("/api/terminal/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: value, cwd, history: commandHistory }),
+        body: JSON.stringify({ input: value, cwd, history: commandHistory, vpsId: target?.vpsId }),
       });
       const data = await res.json();
       const list = data.suggestions || [];
@@ -172,6 +161,10 @@ export default function TerminalPage() {
     currentCwd: string,
     opts?: { skipInputEcho?: boolean }
   ) {
+    if (!target) {
+      setHistory((h) => [...h, { type: "error", text: "No terminal target selected. Reload after configuring a VPS." }]);
+      return;
+    }
     setWorking(true);
     setAiSuggestion(null);
     if (!opts?.skipInputEcho) {
@@ -181,9 +174,12 @@ export default function TerminalPage() {
       const res = await fetch("/api/terminal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd, cwd: currentCwd }),
+        body: JSON.stringify({ command: cmd, cwd: currentCwd, vpsId: target.vpsId }),
       });
       const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `Command request failed (${res.status})`);
+      if (data.vpsId !== target.vpsId) throw new Error("Terminal target changed unexpectedly");
+      if (typeof data.cwd === "string") setCwd(data.cwd);
       if (data.stdout) {
         setHistory((h) => [...h, { type: "output", text: data.stdout, cmd }]);
       }
@@ -221,7 +217,7 @@ export default function TerminalPage() {
       const res = await fetch("/api/terminal/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent, cwd }),
+        body: JSON.stringify({ intent, cwd, vpsId: target?.vpsId }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -270,26 +266,6 @@ export default function TerminalPage() {
     setHistoryIndex(-1);
 
     const cmd = raw;
-    if (cmd.startsWith("cd ") || cmd === "cd") {
-      const target = cmd === "cd" ? "/root" : cmd.slice(3).trim();
-      let newCwd: string;
-      if (target.startsWith("/")) {
-        newCwd = target;
-      } else {
-        newCwd = cwd === "/" ? `/${target}` : `${cwd}/${target}`;
-      }
-      const parts = newCwd.split("/").filter((p) => p !== "" && p !== ".");
-      const normalized: string[] = [];
-      for (const part of parts) {
-        if (part === "..") normalized.pop();
-        else normalized.push(part);
-      }
-      newCwd = "/" + normalized.join("/");
-      setCwd(newCwd || "/");
-      setHistory((h) => [...h, { type: "input", text: cmd }]);
-      return;
-    }
-
     // Context-aware hint for commands known to be unavailable.
     const capabilityHint = hintForCommand(cmd, capabilities);
     if (capabilityHint) {
@@ -302,18 +278,7 @@ export default function TerminalPage() {
       return;
     }
 
-    const { command: runCmd, hint } = rewriteBashCommand(cmd);
-    if (hint) {
-      setHistory((h) => [
-        ...h,
-        { type: "input", text: cmd },
-        { type: "hint", text: `${hint} Running: ${runCmd}` },
-      ]);
-      executeCommand(runCmd, cwd, { skipInputEcho: true });
-      return;
-    }
-
-    executeCommand(runCmd, cwd);
+    executeCommand(cmd, cwd);
   }
 
   function applySuggestion(s: Suggestion) {
@@ -445,7 +410,7 @@ export default function TerminalPage() {
             <>
               <p className="text-muted mt-1 text-xs">Safe remote shell on the active host</p>
               <p className="text-warning/70 text-[11px] font-mono mt-1">
-                Shell is <span className="font-semibold">sh</span> (BusyBox/POSIX) — not bash. Prefer chips and AI mode for common actions.
+                Commands use <span className="font-semibold">sh</span>. Invoke an installed shell explicitly when needed.
               </p>
             </>
           )}
@@ -496,9 +461,8 @@ export default function TerminalPage() {
           {history.length === 0 && (
             <div className="text-muted text-sm">
               <p>GroundControl Terminal v1.0</p>
-              <p className="mt-1">Type commands to execute on the VPS. Use with care.</p>
-              <p className="mt-1">Mounted: /opt, /var/www, /etc, /var/run/docker.sock</p>
-              <p className="mt-1 text-warning/70">Shell: sh (BusyBox) — bash is not available; `bash ...` is auto-rewritten to `sh ...`.</p>
+              <p className="mt-1">Commands run on {target?.host || "the selected VPS"}. Reload this terminal to change the target.</p>
+              <p className="mt-1 text-warning/70">Directory changes are confirmed by the server. Each command starts a new shell.</p>
               <p className="mt-1 text-accent/80">
                 Tip: type <span className="rounded bg-accent/15 px-1 text-accent">/ai</span>{" "}
                 <span className="text-muted">list deployments</span> for GroundControl-aware commands.
@@ -656,7 +620,7 @@ export default function TerminalPage() {
 
         {bashismWarnings.length > 0 && (
           <div className="px-3 pb-2 text-[10px] text-warning font-mono">
-            Warning: possible bashisms detected ({bashismWarnings.join(", ")}). Remote shell is sh/BusyBox.
+            Warning: possible bashisms detected ({bashismWarnings.join(", ")}). Use an explicit bash invocation if bash is installed.
           </div>
         )}
       </div>

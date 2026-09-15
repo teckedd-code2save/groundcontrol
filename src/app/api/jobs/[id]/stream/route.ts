@@ -14,63 +14,67 @@ export async function GET(
   try {
     await requireAuth(req);
     const { id } = await params;
-    const jobId = parseInt(id, 10);
-    if (!Number.isFinite(jobId)) {
+    const jobId = Number(id);
+    if (!Number.isSafeInteger(jobId) || jobId <= 0) {
       return new Response("Invalid job id", { status: 400 });
     }
 
-    const encoder = new TextEncoder();
+    const cursor = req.headers.get("last-event-id");
     let lastOutputLength = 0;
-    let closed = false;
-
-    req.signal.addEventListener("abort", () => {
-      closed = true;
-    });
+    if (cursor) {
+      const match = /^(\d+):(\d+)$/.exec(cursor);
+      if (!match || Number(match[1]) !== jobId || !Number.isSafeInteger(Number(match[2]))) {
+        return new Response("Invalid job stream cursor", { status: 400 });
+      }
+      lastOutputLength = Number(match[2]);
+    }
+    const encoder = new TextEncoder();
+    let stopped = req.signal.aborted;
+    let cancelled = false;
+    const abort = () => { stopped = true; };
+    req.signal.addEventListener("abort", abort);
 
     const stream = new ReadableStream({
       async start(controller) {
-        controller.enqueue(encoder.encode("event: connected\ndata: {}\n\n"));
-
-        while (!closed) {
-          try {
+        const send = (event: string, data: unknown, cursorId?: string) => {
+          if (!stopped) controller.enqueue(encoder.encode(
+            `${cursorId ? `id: ${cursorId}\n` : ""}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+          ));
+        };
+        try {
+          send("connected", {});
+          while (!stopped) {
             const job = await prisma.job.findUnique({
               where: { id: jobId },
               select: { output: true, status: true, error: true, result: true },
             });
-            if (!job) {
-              controller.enqueue(encoder.encode("event: error\ndata: {\"error\":\"Job not found\"}\n\n"));
-              controller.close();
-              return;
-            }
-
+            if (stopped) break;
+            if (!job) { send("error", { error: "Job not found" }); break; }
             const currentOutput = job.output || "";
+            if (lastOutputLength > currentOutput.length) {
+              lastOutputLength = 0;
+              send("reset", {}, `${jobId}:0`);
+            }
             if (currentOutput.length > lastOutputLength) {
               const delta = currentOutput.slice(lastOutputLength);
               lastOutputLength = currentOutput.length;
-              const payload = JSON.stringify({ delta, status: job.status, error: job.error });
-              controller.enqueue(encoder.encode(`event: log\ndata: ${payload}\n\n`));
+              send("log", { delta, status: job.status, error: job.error }, `${jobId}:${lastOutputLength}`);
             }
-
             if (TERMINAL_STATUSES.has(job.status)) {
-              const payload = JSON.stringify({
-                status: job.status,
-                error: job.error,
-                result: job.result,
-              });
-              controller.enqueue(encoder.encode(`event: done\ndata: ${payload}\n\n`));
-              controller.close();
-              return;
+              send("done", { status: job.status, error: job.error, result: job.result }, `${jobId}:${lastOutputLength}`);
+              break;
             }
-
             await new Promise((resolve) => setTimeout(resolve, 1000));
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`));
-            controller.close();
-            return;
           }
+        } catch (err) {
+          console.error("[job-stream]", err);
+          send("error", { error: "Unable to read job output" });
+        } finally {
+          req.signal.removeEventListener("abort", abort);
+          if (!cancelled) controller.close();
         }
       },
+      cancel() { cancelled = true; stopped = true; },
     });
 
     return new Response(stream, {

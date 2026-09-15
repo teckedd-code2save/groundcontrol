@@ -111,7 +111,10 @@ describe("M4 Daytona + blueprints", () => {
     expect(result.cleanedUp).toBe(true);
     expect(result.provider).toBe("local_sanitized");
     expect(result.logs.some((l) => l.includes("secrets=none"))).toBe(true);
-    expect(result.proposedPatch).toContain("web:3000");
+    expect(result.status).toBe("skipped");
+    expect(result.reproducedFailure).toBe(false);
+    expect(result.candidateValidated).toBe(false);
+    expect(result.proposedPatch).toBeUndefined();
     expect(result.logs.join(" ")).not.toMatch(/password\s*=\s*\w+/i);
   });
 
