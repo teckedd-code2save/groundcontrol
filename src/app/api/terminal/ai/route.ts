@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requireTerminalAdmin, resolveTerminalTarget } from "@/lib/terminal-execution";
+import { handleApiError } from "@/lib/errors";
+import { execOnTargetStrict } from "@/lib/host-exec";
 import { getActiveAi } from "@/lib/ai-config";
-import { getActiveVps, execOnVps, getSystemConfig, shQuote } from "@/lib/vps";
+import { getSystemConfig, shQuote, type VpsConnection } from "@/lib/vps";
 import { listManagedDeployments } from "@/lib/managed-deployments";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
@@ -96,7 +98,7 @@ function resolveDeterministicIntent(
   return null;
 }
 
-async function getServerContext(): Promise<{ text: string; managedRoot: string; projectRoot: string }> {
+async function getServerContext(vps: VpsConnection): Promise<{ text: string; managedRoot: string; projectRoot: string }> {
   let managedRoot = "/srv/groundcontrol/deployments";
   let projectRoot = "/opt";
   try {
@@ -108,16 +110,11 @@ async function getServerContext(): Promise<{ text: string; managedRoot: string; 
   }
 
   try {
-    const vps = await getActiveVps();
-    if (!vps) {
-      return { text: "No VPS connected.", managedRoot, projectRoot };
-    }
-
     const [hostname, os, docker, dockerPs, managed] = await Promise.all([
-      execOnVps("hostname 2>/dev/null || echo unknown", vps),
-      execOnVps("cat /etc/os-release 2>/dev/null | head -4 || uname -a", vps),
-      execOnVps("docker --version 2>/dev/null || echo 'no docker'", vps),
-      execOnVps(
+      execOnTargetStrict("hostname 2>/dev/null || echo unknown", vps),
+      execOnTargetStrict("cat /etc/os-release 2>/dev/null | head -4 || uname -a", vps),
+      execOnTargetStrict("docker --version 2>/dev/null || echo 'no docker'", vps),
+      execOnTargetStrict(
         "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Image}}' 2>/dev/null | head -20 || echo 'no containers'",
         vps
       ),
@@ -175,13 +172,13 @@ User: "inspect gc-company-site" → cd managed/gc-company-site && docker compose
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(req);
-    const { intent, cwd } = await req.json();
+    await requireTerminalAdmin(req);
+    const { intent, cwd, vpsId } = await req.json();
     if (!intent || typeof intent !== "string") {
       return NextResponse.json({ error: "intent required" }, { status: 400 });
     }
 
-    const ctx = await getServerContext();
+    const ctx = await getServerContext(await resolveTerminalTarget(vpsId));
     const deterministic = resolveDeterministicIntent(intent, ctx.managedRoot, ctx.projectRoot);
     if (deterministic) {
       return NextResponse.json(deterministic);
@@ -252,8 +249,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err);
   }
 }
 

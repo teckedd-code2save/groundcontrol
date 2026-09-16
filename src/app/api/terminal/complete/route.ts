@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
-import { execOnVps, getDockerContainers, getSystemConfig, shQuote } from "@/lib/vps";
+import { requireTerminalAdmin, resolveTerminalTarget } from "@/lib/terminal-execution";
+import { handleApiError } from "@/lib/errors";
+import { execOnTargetStrict } from "@/lib/host-exec";
+import { getDockerContainers, getSystemConfig, shQuote, type VpsConnection } from "@/lib/vps";
 
 const COMMON_COMMANDS = [
   "docker ps",
@@ -51,7 +53,7 @@ function normalizeInput(input: string): { command: string; prefix: string; word:
   return { command: match[1], prefix: match[0], word: match[2] };
 }
 
-async function completePaths(cwd: string, word: string): Promise<Suggestion[]> {
+async function completePaths(cwd: string, word: string, vps: VpsConnection): Promise<Suggestion[]> {
   const suggestions: Suggestion[] = [];
   const dir = word.includes("/")
     ? word.slice(0, word.lastIndexOf("/") + 1)
@@ -64,8 +66,8 @@ async function completePaths(cwd: string, word: string): Promise<Suggestion[]> {
     : cwd;
 
   try {
-    const result = await execOnVps(
-      `ls -1ap ${shQuote(targetDir)} 2>/dev/null || echo ""`,
+    const result = await execOnTargetStrict(
+      `ls -1ap ${shQuote(targetDir)} 2>/dev/null || echo ""`, vps,
     );
     const entries = result.stdout
       .split("\n")
@@ -85,9 +87,9 @@ async function completePaths(cwd: string, word: string): Promise<Suggestion[]> {
   return suggestions;
 }
 
-async function completeContainers(word: string): Promise<Suggestion[]> {
+async function completeContainers(word: string, vps: VpsConnection): Promise<Suggestion[]> {
   try {
-    const containers = await getDockerContainers();
+    const containers = await getDockerContainers(vps);
     return containers
       .filter((c) => c.name.toLowerCase().startsWith(word.toLowerCase()))
       .map((c) => ({
@@ -100,12 +102,12 @@ async function completeContainers(word: string): Promise<Suggestion[]> {
   }
 }
 
-async function completeProjects(word: string): Promise<Suggestion[]> {
+async function completeProjects(word: string, vps: VpsConnection): Promise<Suggestion[]> {
   try {
     const config = await getSystemConfig();
     const root = config.projectRoot || "/opt";
-    const result = await execOnVps(
-      `ls -1 ${shQuote(root)} 2>/dev/null || echo ""`,
+    const result = await execOnTargetStrict(
+      `ls -1 ${shQuote(root)} 2>/dev/null || echo ""`, vps,
     );
     return result.stdout
       .split("\n")
@@ -119,12 +121,14 @@ async function completeProjects(word: string): Promise<Suggestion[]> {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(req);
-    const { input, cwd, history = [] } = await req.json();
+    await requireTerminalAdmin(req);
+    const { input, cwd, history = [], vpsId } = await req.json();
     if (typeof input !== "string") {
       return NextResponse.json({ error: "input required" }, { status: 400 });
     }
 
+    const vps = await resolveTerminalTarget(vpsId);
+    if (!Array.isArray(history) || (cwd !== undefined && typeof cwd !== "string")) return NextResponse.json({ error: "Invalid completion context" }, { status: 400 });
     const { command, word } = normalizeInput(input);
     const suggestions: Suggestion[] = [];
 
@@ -145,18 +149,18 @@ export async function POST(req: NextRequest) {
     // Container-aware commands.
     const containerCommands = ["docker logs", "docker exec", "docker restart", "docker stop", "docker start", "docker rm"];
     if (containerCommands.some((c) => input.trimStart().toLowerCase().startsWith(c))) {
-      suggestions.push(...(await completeContainers(word)));
+      suggestions.push(...(await completeContainers(word, vps)));
     }
 
     // Project-aware commands.
     const projectCommands = ["cd", "ls", "cat", "docker compose -f", "docker compose"];
     if (projectCommands.some((c) => input.trimStart().toLowerCase().startsWith(c + " "))) {
-      suggestions.push(...(await completeProjects(word)));
+      suggestions.push(...(await completeProjects(word, vps)));
     }
 
     // Path completion for any command with a word argument.
     if (command && word) {
-      suggestions.push(...(await completePaths(cwd || "/", word)));
+      suggestions.push(...(await completePaths(cwd || "/", word, vps)));
     }
 
     // Deduplicate by value, preferring non-history entries.
@@ -170,7 +174,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ suggestions: deduped.slice(0, 20) });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err);
   }
 }

@@ -1,6 +1,6 @@
 /**
  * M4 — Daytona reproduction adapter + resilient blueprint comparison.
- * Daytona is optional: when no API token, runs a local sanitized reproduction plan.
+ * Daytona is optional: without an API token, structural checks are reported as unverified.
  * Never receives production secrets.
  */
 
@@ -510,15 +510,11 @@ export async function reproduceInDaytona(
 
     return {
       id,
-      status: composeOk && proxyOk ? "completed" : "failed",
+      status: composeOk && proxyOk ? "skipped" : "failed",
       provider: "local_sanitized",
-      detail: "Daytona is not configured — local sanitized reproduction only",
-      reproducedFailure: Boolean(req.proxySnippet && /:8080|:9999/.test(req.proxySnippet)),
+      detail: "Daytona is not configured. Structural checks only; no repository or validation command was executed.",
+      reproducedFailure: false,
       candidateValidated: false,
-      proposedPatch:
-        req.proxySnippet && /web:8080/.test(req.proxySnippet)
-          ? req.proxySnippet.replace(/web:8080/g, "web:3000")
-          : undefined,
       logs,
       cleanedUp: true,
     };
