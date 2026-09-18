@@ -177,7 +177,11 @@ async function createLocalTerminal(socket, ctx) {
   const dockerCommand = ["docker", ...args].map(shQuote).join(" ");
   const child = spawn("script", ["-q", "-e", "-f", "-c", dockerCommand, "/dev/null"], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: process.env,
+    // util-linux script(1) chooses its command shell from SHELL. GroundControl
+    // runs on Alpine where /bin/bash is not guaranteed to exist, so pin the
+    // relay shell explicitly. The host shell itself is still selected after
+    // nsenter by shellCommand().
+    env: { ...process.env, SHELL: "/bin/sh" },
   });
   let closed = false;
   child.stdout.on("data", (chunk) => emitOutput(socket, chunk));
