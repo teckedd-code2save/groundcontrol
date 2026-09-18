@@ -9,13 +9,31 @@ import {
 } from "lucide-react";
 import GithubAppPanel from "@/components/GithubAppPanel";
 
+type CapabilityHealth = {
+  id: string;
+  label: string;
+  status: "healthy" | "unverified" | "degraded" | "missing_scope" | "revoked" | "unavailable" | "not_configured";
+  detail: string;
+  remediation?: string;
+  checkedAt?: string | null;
+};
+
+type ConnectorHealth = {
+  id: "github" | "daytona";
+  name: string;
+  status: "healthy" | "unverified" | "degraded" | "not_configured";
+  configured: boolean;
+  capabilities: CapabilityHealth[];
+  checkedAt: string;
+};
+
 type ConnectorState = {
   id: string;
   name: string;
   provider: string;
   icon: "gemini" | "daytona" | "generic";
   configured: boolean;
-  status: "connected" | "disconnected" | "error";
+  status: "configured" | "connected" | "disconnected" | "error";
   config: Record<string, string>;
   description: string;
   purpose: string;
@@ -53,12 +71,18 @@ export default function ConnectorsPanel() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [health, setHealth] = useState<ConnectorHealth[]>([]);
+  const [verifyingHealth, setVerifyingHealth] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/connectors");
-      const data = await res.json();
+      const [res, healthRes] = await Promise.all([
+        fetch("/api/connectors"),
+        fetch("/api/connectors/health", { cache: "no-store" }),
+      ]);
+      const [data, healthData] = await Promise.all([res.json(), healthRes.json()]);
       if (data.connectors) setConnectors(data.connectors);
+      if (Array.isArray(healthData.connectors)) setHealth(healthData.connectors);
     } catch {}
   }, []);
 
@@ -69,6 +93,37 @@ export default function ConnectorsPanel() {
     if (!conn) return;
     setEditing(id);
     setDraft({ ...conn.config });
+  }
+
+  async function verifyCapabilities(id: "github" | "daytona") {
+    setVerifyingHealth(id);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/connectors/health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connector: id, deep: id === "daytona" }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Capability verification failed");
+      const refreshed = Array.isArray(data.connectors) ? data.connectors[0] : null;
+      if (refreshed) {
+        setHealth((current) => [
+          ...current.filter((item) => item.id !== refreshed.id),
+          refreshed,
+        ]);
+        setMessage({
+          tone: refreshed.status === "degraded" ? "error" : "success",
+          text: refreshed.status === "healthy"
+            ? `${refreshed.name} capabilities verified.`
+            : `${refreshed.name} verification completed with status: ${refreshed.status}.`,
+        });
+      }
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Capability verification failed" });
+    } finally {
+      setVerifyingHealth(null);
+    }
   }
 
   async function save(id: string) {
@@ -82,10 +137,10 @@ export default function ConnectorsPanel() {
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || "Save failed");
       setConnectors((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, config: draft, configured: true, status: "connected" } : c))
+        prev.map((c) => (c.id === id ? { ...c, config: draft, configured: true, status: "configured" } : c))
       );
       setEditing(null);
-      setMessage({ tone: "success", text: `${id} connector configured.` });
+      setMessage({ tone: "success", text: `${id} connector saved. Verify capabilities before treating it as ready.` });
     } catch (err) {
       setMessage({ tone: "error", text: err instanceof Error ? err.message : "Save failed" });
     } finally {
@@ -104,7 +159,7 @@ export default function ConnectorsPanel() {
       const data = await res.json();
       if (data.ok) {
         setConnectors((prev) =>
-          prev.map((c) => (c.id === id ? { ...c, status: "connected" } : c))
+          prev.map((c) => (c.id === id ? { ...c, status: "configured" } : c))
         );
         setMessage({ tone: "success", text: data.message || "Connection successful" });
       } else {
@@ -137,6 +192,21 @@ export default function ConnectorsPanel() {
         </p>
       </div>
 
+      <div className="grid gap-3 xl:grid-cols-2">
+        {(["github", "daytona"] as const).map((id) => {
+          const item = health.find((entry) => entry.id === id);
+          return (
+            <CapabilityHealthCard
+              key={id}
+              connector={item}
+              fallbackName={id === "github" ? "GitHub" : "Daytona"}
+              verifying={verifyingHealth === id}
+              onVerify={() => void verifyCapabilities(id)}
+            />
+          );
+        })}
+      </div>
+
       <GithubAppPanel />
 
       {message && (
@@ -146,20 +216,20 @@ export default function ConnectorsPanel() {
       )}
 
       {connectors.map((conn) => (
-        <div key={conn.id} className={`border bg-card ${conn.status === "connected" ? "border-success/30" : conn.status === "error" ? "border-error/30" : "border-border"}`}>
+        <div key={conn.id} className={`border bg-card ${conn.status === "error" ? "border-error/30" : "border-border"}`}>
           {/* Header */}
           <div className="flex items-start justify-between gap-4 px-5 py-4">
             <div className="flex items-start gap-3">
-              <div className={`mt-0.5 rounded p-1.5 ${conn.status === "connected" ? "bg-success/10 text-success" : conn.status === "error" ? "bg-error/10 text-error" : "bg-muted/10 text-muted"}`}>
+              <div className={`mt-0.5 rounded p-1.5 ${conn.status === "error" ? "bg-error/10 text-error" : conn.configured ? "bg-warning/10 text-warning" : "bg-muted/10 text-muted"}`}>
                 <IconComponent icon={conn.icon} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium">{conn.name}</h3>
                   <span className={`rounded px-1.5 py-0.5 text-[9px] font-mono ${
-                    conn.status === "connected" ? "bg-success/10 text-success" : conn.status === "error" ? "bg-error/10 text-error" : "bg-warning/10 text-warning"
+                    conn.status === "error" ? "bg-error/10 text-error" : "bg-warning/10 text-warning"
                   }`}>
-                    {conn.status === "connected" ? "connected" : conn.status === "error" ? "error" : conn.configured ? "configured" : "not configured"}
+                    {conn.status === "error" ? "error" : conn.configured ? "configured" : "not configured"}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-muted">{conn.description}</p>
@@ -226,5 +296,68 @@ export default function ConnectorsPanel() {
         </div>
       ))}
     </div>
+  );
+}
+
+
+function CapabilityHealthCard({
+  connector,
+  fallbackName,
+  verifying,
+  onVerify,
+}: {
+  connector?: ConnectorHealth;
+  fallbackName: string;
+  verifying: boolean;
+  onVerify: () => void;
+}) {
+  const status = connector?.status || "not_configured";
+  const statusClass = status === "healthy"
+    ? "bg-success/10 text-success"
+    : status === "degraded"
+      ? "bg-error/10 text-error"
+      : status === "unverified"
+        ? "bg-warning/10 text-warning"
+        : "bg-muted/10 text-muted";
+
+  return (
+    <section className="border border-border bg-card">
+      <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+        <div>
+          <p className="text-xs font-semibold">{connector?.name || fallbackName}</p>
+          <p className="mt-1 text-[10px] text-muted">Capability health, not credential presence.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`rounded-sm px-2 py-0.5 font-mono text-[9px] ${statusClass}`}>{status}</span>
+          <button type="button" onClick={onVerify} disabled={verifying} className="gc-button gc-button-quiet text-[10px]">
+            <RefreshCw className={`h-3 w-3 ${verifying ? "animate-spin" : ""}`} />
+            {verifying ? "Verifying…" : "Verify"}
+          </button>
+        </div>
+      </div>
+      <div className="divide-y divide-border">
+        {(connector?.capabilities || []).map((capability) => (
+          <div key={capability.id} className="px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[11px] font-medium">{capability.label}</span>
+              <span className={`font-mono text-[9px] ${
+                capability.status === "healthy"
+                  ? "text-success"
+                  : ["degraded", "revoked", "missing_scope", "unavailable"].includes(capability.status)
+                    ? "text-error"
+                    : "text-warning"
+              }`}>
+                {capability.status}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed text-muted">{capability.detail}</p>
+            {capability.remediation && (
+              <p className="mt-1 text-[10px] leading-relaxed text-warning">{capability.remediation}</p>
+            )}
+          </div>
+        ))}
+        {!connector && <p className="px-4 py-5 text-xs text-muted">Capability state has not loaded yet.</p>}
+      </div>
+    </section>
   );
 }

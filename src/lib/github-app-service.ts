@@ -86,6 +86,11 @@ export async function reconcileGithubRepositoryDeploymentLinks(installationId: s
     prisma.enrolledDeployment.findMany({ include: { legacyProject: true } }),
   ]);
   const repositoryByName = new Map(repositories.map((repository) => [repository.fullName.toLowerCase(), repository]));
+  const explicitLinks = await prisma.githubRepositoryDeployment.findMany({
+    where: { source: "explicit" },
+    select: { enrolledDeploymentId: true },
+  });
+  const explicitlyLinkedDeployments = new Set(explicitLinks.map((link) => link.enrolledDeploymentId));
 
   await prisma.githubRepositoryDeployment.deleteMany({
     where: {
@@ -96,26 +101,121 @@ export async function reconcileGithubRepositoryDeploymentLinks(installationId: s
 
   let linked = 0;
   for (const deployment of deployments) {
+    if (explicitlyLinkedDeployments.has(deployment.id)) continue;
     const identity = normalizeGithubRepositoryUrl(deployment.legacyProject?.repoUrl);
     const repository = repositoryByName.get(identity);
     if (!repository) continue;
-    await prisma.githubRepositoryDeployment.upsert({
-      where: {
-        githubRepositoryId_enrolledDeploymentId: {
-          githubRepositoryId: repository.id,
-          enrolledDeploymentId: deployment.id,
-        },
-      },
-      create: {
+    await prisma.githubRepositoryDeployment.create({
+      data: {
         githubRepositoryId: repository.id,
         enrolledDeploymentId: deployment.id,
         source: "repository_url",
       },
-      update: { source: "repository_url" },
+    }).catch(async () => {
+      // A concurrent sync may have linked the same repository/deployment pair.
+      // Never convert an explicit link back to inferred identity.
+      const existing = await prisma.githubRepositoryDeployment.findUnique({
+        where: {
+          githubRepositoryId_enrolledDeploymentId: {
+            githubRepositoryId: repository.id,
+            enrolledDeploymentId: deployment.id,
+          },
+        },
+      });
+      if (!existing || existing.source === "explicit") return;
+      await prisma.githubRepositoryDeployment.update({
+        where: {
+          githubRepositoryId_enrolledDeploymentId: {
+            githubRepositoryId: repository.id,
+            enrolledDeploymentId: deployment.id,
+          },
+        },
+        data: { source: "repository_url" },
+      });
     });
     linked += 1;
   }
   return linked;
+}
+
+export async function linkGithubRepositoryToDeployment(input: {
+  repositoryId: string;
+  deploymentId: number;
+}) {
+  const [repository, deployment] = await Promise.all([
+    prisma.githubRepository.findUnique({
+      where: { id: input.repositoryId },
+      include: { installation: true },
+    }),
+    prisma.enrolledDeployment.findUnique({
+      where: { id: input.deploymentId },
+      include: { legacyProject: true },
+    }),
+  ]);
+  if (!repository) throw new Error("GitHub repository is not available to this GroundControl installation.");
+  if (repository.installation.suspendedAt) throw new Error("The GitHub App installation for this repository is suspended.");
+  if (!deployment) throw new Error("Deployment not found.");
+
+  const canonicalUrl = `https://github.com/${repository.fullName}`;
+  let metadata: Record<string, unknown> = {};
+  try { metadata = JSON.parse(deployment.metadataJson || "{}"); } catch {}
+  metadata.manualRepoUrl = canonicalUrl;
+  metadata.repositoryIdentitySource = "github_app_explicit";
+  metadata.identityUpdatedAt = new Date().toISOString();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.githubRepositoryDeployment.deleteMany({
+      where: { enrolledDeploymentId: deployment.id },
+    });
+    await tx.githubRepositoryDeployment.create({
+      data: {
+        githubRepositoryId: repository.id,
+        enrolledDeploymentId: deployment.id,
+        source: "explicit",
+      },
+    });
+    if (deployment.legacyProjectId) {
+      await tx.project.update({
+        where: { id: deployment.legacyProjectId },
+        data: { repoUrl: canonicalUrl },
+      });
+    }
+    await tx.enrolledDeployment.update({
+      where: { id: deployment.id },
+      data: { metadataJson: JSON.stringify(metadata) },
+    });
+  });
+
+  return {
+    repository: {
+      id: repository.id,
+      fullName: repository.fullName,
+      htmlUrl: repository.htmlUrl,
+      defaultBranch: repository.defaultBranch,
+      private: repository.isPrivate,
+      installationId: repository.installationId,
+    },
+    deployment: {
+      id: deployment.id,
+      slug: deployment.slug,
+      name: deployment.name,
+    },
+    source: "explicit" as const,
+  };
+}
+
+export async function useInferredGithubRepositoryIdentity(deploymentId: number) {
+  const deployment = await prisma.enrolledDeployment.findUnique({ where: { id: deploymentId } });
+  if (!deployment) throw new Error("Deployment not found.");
+  await prisma.githubRepositoryDeployment.deleteMany({
+    where: { enrolledDeploymentId: deploymentId, source: "explicit" },
+  });
+  const installations = await prisma.githubInstallation.findMany({ select: { id: true } });
+  let linked = 0;
+  for (const installation of installations) {
+    linked += await reconcileGithubRepositoryDeploymentLinks(installation.id);
+  }
+  return { deploymentId, inferredLinks: linked };
 }
 
 export async function syncGithubInstallation(installationId: string) {
@@ -207,7 +307,7 @@ export async function githubAppPublicState() {
   const publicHttps = connection.publicUrl.startsWith("https://");
   const appPermissions = JSON.parse(connection.permissionsJson || "{}") as Record<string, string>;
   return {
-    status: installations.some((installation) => !installation.suspended) ? "connected" as const : "app_ready" as const,
+    status: installations.some((installation) => !installation.suspended) ? "installed" as const : "app_ready" as const,
     app: {
       id: connection.appId,
       slug: connection.slug,

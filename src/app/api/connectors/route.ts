@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
           id,
           ...CONNECTOR_META[id],
           configured,
-          status: configured && verifiedAt ? "connected" : "disconnected",
+          status: configured ? "configured" : "disconnected",
           config: { ...publicConfig, apiKey: "" },
         };
       }),
