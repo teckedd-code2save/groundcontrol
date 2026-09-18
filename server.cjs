@@ -173,7 +173,8 @@ async function createLocalTerminal(socket, ctx) {
     "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
     "sh", "-lc", shellCommand(ctx.cwd),
   ];
-  const child = spawn("docker", args, {
+  const dockerCommand = ["docker", ...args].map(shQuote).join(" ");
+  const child = spawn("script", ["-q", "-e", "-f", "-c", dockerCommand, "/dev/null"], {
     stdio: ["pipe", "pipe", "pipe"],
     env: process.env,
   });
@@ -383,6 +384,7 @@ function installTerminalSockets(io) {
         backend = vps.isLocal
           ? await createLocalTerminal(socket, { user, vps, cwd, cols, rows })
           : await createRemoteTerminal(socket, { user, vps, cwd, cols, rows });
+        await backend.resize(cols, rows);
 
         resetIdle();
         accessTimer = setInterval(async () => {
