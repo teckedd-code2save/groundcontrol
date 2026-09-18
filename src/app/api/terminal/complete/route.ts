@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireTerminalAdmin, resolveTerminalTarget } from "@/lib/terminal-execution";
 import { handleApiError } from "@/lib/errors";
 import { execOnTargetStrict } from "@/lib/host-exec";
-import { getDockerContainers, getSystemConfig, shQuote, type VpsConnection } from "@/lib/vps";
+import { getDockerContainers, shQuote, type VpsConnection } from "@/lib/vps";
 
 const COMMON_COMMANDS = [
   "docker ps",
@@ -150,12 +150,6 @@ export async function POST(req: NextRequest) {
     const containerCommands = ["docker logs", "docker exec", "docker restart", "docker stop", "docker start", "docker rm"];
     if (containerCommands.some((c) => input.trimStart().toLowerCase().startsWith(c))) {
       suggestions.push(...(await completeContainers(word, vps)));
-    }
-
-    // Project-aware commands.
-    const projectCommands = ["cd", "ls", "cat", "docker compose -f", "docker compose"];
-    if (projectCommands.some((c) => input.trimStart().toLowerCase().startsWith(c + " "))) {
-      suggestions.push(...(await completeProjects(word, vps)));
     }
 
     // Path completion for any command with a word argument.
