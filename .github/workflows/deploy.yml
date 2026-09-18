@@ -108,6 +108,26 @@ jobs:
               fi
               sleep 5
             done
+
+            # ChatGPT MCP discovery smoke: OAuth may protect tool invocation,
+            # but action discovery itself must remain readable and complete.
+            MCP_URL="${GC_MCP_URL:-https://groundcontrol.serendepify.com/mcp}"
+            MCP_TOOLS="$(curl -k -fsS --max-time 15 -X POST "$MCP_URL" \
+              -H 'Content-Type: application/json' \
+              --data '{"jsonrpc":"2.0","id":"tools-smoke","method":"tools/list","params":{}}')"
+            printf '%s' "$MCP_TOOLS" | grep -q '"deployment.list"'
+            printf '%s' "$MCP_TOOLS" | grep -q '"outputSchema"'
+            printf '%s' "$MCP_TOOLS" | grep -q '"securitySchemes"'
+
+            MCP_DISCOVER="$(curl -k -fsS --max-time 15 -X POST "$MCP_URL" \
+              -H 'Content-Type: application/json' \
+              -H 'MCP-Protocol-Version: 2026-07-28' \
+              -H 'Mcp-Method: server/discover' \
+              --data '{"jsonrpc":"2.0","id":"discover-smoke","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}')"
+            printf '%s' "$MCP_DISCOVER" | grep -q '"supportedVersions"'
+            printf '%s' "$MCP_DISCOVER" | grep -q '"2026-07-28"'
+            echo "MCP discovery smoke passed: $MCP_URL"
+
             docker compose ps
             docker compose logs --tail=80 web
             docker logout ghcr.io

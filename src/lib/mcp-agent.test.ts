@@ -24,4 +24,27 @@ describe("GroundControl MCP tool catalog", () => {
     expect(names).toContain("deployment.redeploy");
     expect(names.some((name) => /shell|exec|terminal/i.test(name))).toBe(false);
   });
+
+  it("publishes a complete public action catalog for ChatGPT discovery", () => {
+    const tools = toolDefinitionsForScopes();
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "deployment.list",
+      "deployment.inspect",
+      "deployment.logs",
+      "deployment.health",
+      "deployment.redeploy",
+      "operation.get",
+    ]);
+
+    for (const tool of tools) {
+      expect(tool.title).toBeTruthy();
+      expect(tool.description).toBeTruthy();
+      expect(tool.inputSchema).toMatchObject({ type: "object" });
+      expect(tool.outputSchema).toMatchObject({ type: "object" });
+      expect(tool.securitySchemes).toHaveLength(1);
+      expect(tool.securitySchemes[0]).toMatchObject({ type: "oauth2" });
+      expect(tool.securitySchemes[0].scopes.length).toBeGreaterThan(0);
+      expect(tool._meta.securitySchemes).toEqual(tool.securitySchemes);
+    }
+  });
 });
