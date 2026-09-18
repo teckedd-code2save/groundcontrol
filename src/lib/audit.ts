@@ -10,7 +10,9 @@ export type AuditAction =
   | "ai_tool_confirm"
   | "ai_thread_create"
   | "ai_thread_delete"
-  | "secret_export";
+  | "secret_export"
+  | "oauth_consent_granted"
+  | "oauth_consent_denied";
 
 export interface AuditContext {
   ip: string;
