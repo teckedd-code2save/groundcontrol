@@ -119,6 +119,11 @@ if docker inspect groundcontrol-web >/dev/null 2>&1; then
   fi
 fi
 
+if [ "$EXISTING_HEALTHY" -eq 1 ]; then
+  EXISTING_PORT="$(docker port groundcontrol-web 3000/tcp 2>/dev/null | head -n 1 | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+  if [ -n "$EXISTING_PORT" ]; then HOST_PORT="$EXISTING_PORT"; fi
+fi
+
 if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
   log "[install] healthy GroundControl already exists; leaving image and Compose unchanged"
   CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES" 2>/dev/null)" || {
@@ -205,7 +210,6 @@ services:
       - /opt:/opt
       - /etc:/etc
       - /var/www:/var/www
-      - /root/.ssh:/root/.ssh:ro
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/auth/claim"]
       interval: 10s
