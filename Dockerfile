@@ -36,7 +36,7 @@ LABEL org.opencontainers.image.description="groundcontrol — Next.js app"
 LABEL org.opencontainers.image.licenses="UNLICENSED"
 
 # Install Docker CLI + Compose plugin for host Docker socket management.
-RUN apk add --no-cache openssl docker-cli docker-cli-compose procps wget
+RUN apk add --no-cache openssl docker-cli docker-cli-compose procps util-linux wget
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
