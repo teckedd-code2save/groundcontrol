@@ -18,12 +18,13 @@ Read:
 - `deployment.inspect`
 - `deployment.logs`
 - `deployment.health`
+- `deployment.config.check` — exact-key presence/status only; never returns values
 - `operation.get`
 
 Write:
 - `deployment.redeploy`
 
-No MCP tool exposes SSH credentials, provider secrets, raw terminal access, or generic command execution.
+No MCP tool exposes SSH credentials, provider secrets, raw terminal access, or generic command execution. Configuration inspection is exact-key only and returns `configured`, `missing`, or `unmanaged` metadata without masked or partial secret values.
 
 ## Durable mutations
 
