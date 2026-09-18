@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 import { prisma } from "@/lib/prisma";
 import { getDockerContainers, type VpsConnection } from "@/lib/vps";
+import { inspectDeploymentEnvKeyPresence } from "@/lib/env-management";
 import {
   authenticateAccessToken,
   type OAuthScope,
@@ -208,6 +209,91 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+  },
+  {
+    name: "deployment.config.check",
+    title: "Check deployment configuration",
+    description: "Check whether explicitly named environment keys are configured for an approved deployment without returning any secret values. Returns configured, missing, or unmanaged status per requested key.",
+    requiredScope: "deployment:read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string", description: "Deployment slug or numeric id." },
+        keys: {
+          type: "array",
+          minItems: 1,
+          maxItems: 25,
+          uniqueItems: true,
+          items: {
+            type: "string",
+            pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+          },
+          description: "Exact environment variable names to check. Values are never returned.",
+        },
+        environment: {
+          type: "string",
+          maxLength: 80,
+          description: "Optional GroundControl environment slug such as production or staging.",
+        },
+      },
+      required: ["deployment", "keys"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string" },
+        profile: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                id: { type: "integer" },
+                name: { type: "string" },
+                slug: { type: "string" },
+                providerType: { type: "string" },
+                status: { type: "string" },
+                lastSyncedAt: { anyOf: [{ type: "string" }, { type: "null" }] },
+                lastError: { anyOf: [{ type: "string" }, { type: "null" }] },
+              },
+              required: ["id", "name", "slug", "providerType", "status", "lastSyncedAt", "lastError"],
+              additionalProperties: false,
+            },
+            { type: "null" },
+          ],
+        },
+        checks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string" },
+              state: { type: "string", enum: ["configured", "missing", "unmanaged"] },
+              configured: { type: "boolean" },
+              declared: { type: "boolean" },
+              matches: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    component: { anyOf: [{ type: "string" }, { type: "null" }] },
+                    required: { type: "boolean" },
+                    configured: { type: "boolean" },
+                  },
+                  required: ["component", "required", "configured"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["key", "state", "configured", "declared", "matches"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["deployment", "profile", "checks"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   {
     name: "deployment.redeploy",
@@ -447,6 +533,39 @@ export async function executeAgentTool(
       },
       public: publicProbe,
       healthy: runtimeHealthy && (publicProbe.checked ? Boolean(publicProbe.healthy) : true),
+    };
+  }
+
+  if (name === "deployment.config.check") {
+    const deployment = await allowedDeployment(context, args.deployment);
+    if (!deployment.legacyProject) {
+      throw new Error("This deployment does not have a managed GroundControl environment profile.");
+    }
+
+    const requestedKeys = Array.isArray(args.keys)
+      ? Array.from(new Set(args.keys.map((key) => String(key).trim())))
+      : [];
+    if (
+      requestedKeys.length < 1 ||
+      requestedKeys.length > 25 ||
+      requestedKeys.some((key) => !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key))
+    ) {
+      throw new Error("Provide 1 to 25 valid environment variable names.");
+    }
+
+    const environment = typeof args.environment === "string" && args.environment.trim()
+      ? args.environment.trim()
+      : undefined;
+    const status = await inspectDeploymentEnvKeyPresence(
+      deployment.legacyProject,
+      requestedKeys,
+      environment
+    );
+
+    return {
+      deployment: deployment.slug,
+      profile: status.profile,
+      checks: status.checks,
     };
   }
 
