@@ -25,7 +25,7 @@ function rpc(id: JsonRpcRequest["id"], result: unknown, status = 200) {
   });
 }
 
-function rpcError(id: JsonRpcRequest["id"], code: number, message: string, status = 200, data?: unknown, headers?: HeadersInit) {
+function rpcError(id: JsonRpcRequest["id"], code: number, message: string, status = 200, data?: unknown, headers?: Record<string, string>) {
   return NextResponse.json({
     jsonrpc: "2.0",
     id: id ?? null,
