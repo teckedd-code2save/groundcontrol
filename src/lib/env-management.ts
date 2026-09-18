@@ -464,6 +464,110 @@ export async function resolveDeploymentEnv(
   };
 }
 
+export type EnvKeyPresenceState = "configured" | "missing" | "unmanaged";
+
+export interface EnvKeyPresenceCheck {
+  key: string;
+  state: EnvKeyPresenceState;
+  configured: boolean;
+  declared: boolean;
+  matches: Array<{
+    component: string | null;
+    required: boolean;
+    configured: boolean;
+  }>;
+}
+
+export function summarizeEnvKeyPresence(
+  schema: EnvSchemaEntry[],
+  values: Record<string, string>,
+  componentValues: Record<string, Record<string, string>>,
+  keys: string[]
+): EnvKeyPresenceCheck[] {
+  return keys.map((key) => {
+    const declaredEntries = schema.filter((entry) => entry.key === key);
+    const scopes = new Map<string, { component: string | null; required: boolean; configured: boolean }>();
+
+    for (const entry of declaredEntries) {
+      const component = entry.component || null;
+      const source = component ? componentValues[component] || {} : values;
+      scopes.set(component || "", {
+        component,
+        required: Boolean(entry.required),
+        configured: Boolean(source[key]),
+      });
+    }
+
+    if (values[key] !== undefined && !scopes.has("")) {
+      scopes.set("", {
+        component: null,
+        required: false,
+        configured: Boolean(values[key]),
+      });
+    }
+
+    for (const [component, scoped] of Object.entries(componentValues)) {
+      if (scoped[key] === undefined || scopes.has(component)) continue;
+      scopes.set(component, {
+        component,
+        required: false,
+        configured: Boolean(scoped[key]),
+      });
+    }
+
+    const matches = [...scopes.values()];
+    const configured = matches.some((match) => match.configured);
+    const declared = declaredEntries.length > 0;
+
+    return {
+      key,
+      state: configured ? "configured" : declared ? "missing" : "unmanaged",
+      configured,
+      declared,
+      matches,
+    };
+  });
+}
+
+export async function inspectDeploymentEnvKeyPresence(
+  project: Project,
+  keys: string[],
+  environmentSlug?: string
+) {
+  const resolved = await resolveDeploymentEnv(project, environmentSlug);
+  if (!resolved) {
+    return {
+      profile: null,
+      checks: keys.map<EnvKeyPresenceCheck>((key) => ({
+        key,
+        state: "unmanaged",
+        configured: false,
+        declared: false,
+        matches: [],
+      })),
+    };
+  }
+
+  const schema = parseEnvJson(resolved.profile.schemaJson);
+  return {
+    profile: {
+      id: resolved.profile.id,
+      name: resolved.profile.name,
+      slug: resolved.profile.slug,
+      providerType: resolved.profile.providerType,
+      status: resolved.profile.status,
+      lastSyncedAt: resolved.profile.lastSyncedAt,
+      lastError: resolved.profile.lastError,
+    },
+    checks: summarizeEnvKeyPresence(
+      schema,
+      resolved.values,
+      resolved.componentValues,
+      keys
+    ),
+  };
+}
+
 export function validateEnvBundle(
   schema: EnvSchemaEntry[],
   values: Record<string, string>,
