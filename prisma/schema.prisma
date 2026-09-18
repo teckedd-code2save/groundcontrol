@@ -16,9 +16,10 @@ model User {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  auditLogs     AuditLog[]
-  aiThreads     AiThread[]
-  guideProgress UserGuideProgress[]
+  auditLogs          AuditLog[]
+  aiThreads          AiThread[]
+  guideProgress      UserGuideProgress[]
+  oauthGrants        OAuthGrant[]
 }
 
 model AuditLog {
@@ -125,6 +126,7 @@ model EnrolledDeployment {
   githubRepositories GithubRepositoryDeployment[]
   qaChecks           ComponentQACheck[]
   qaRuns             ComponentQARun[]
+  agentOperations    AgentOperation[]
 
   @@unique([vpsConfigId, sourcePath])
   @@unique([vpsConfigId, containerName])
@@ -734,4 +736,104 @@ model SourceRepairPlan {
 
   @@index([status, expiresAt])
   @@index([repositoryFullName, createdAt])
+}
+
+
+// -----------------------------------------------------------------------------
+// Agent access: OAuth grants, MCP bearer tokens, and durable operations
+// -----------------------------------------------------------------------------
+
+model OAuthClient {
+  id                      Int      @id @default(autoincrement())
+  clientId                String   @unique
+  clientName              String
+  redirectUris            String   @default("[]") // JSON string
+  source                  String   @default("dynamic") // dynamic | cimd
+  tokenEndpointAuthMethod String   @default("none")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  grants OAuthGrant[]
+
+  @@index([source, createdAt])
+}
+
+model OAuthGrant {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  clientDbId  Int
+  scope       String
+  resources   String    @default("[]") // JSON array of EnrolledDeployment ids
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user       User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client     OAuthClient              @relation(fields: [clientDbId], references: [id], onDelete: Cascade)
+  codes      OAuthAuthorizationCode[]
+  tokens     OAuthToken[]
+  operations AgentOperation[]
+
+  @@unique([userId, clientDbId])
+  @@index([clientDbId, revokedAt])
+}
+
+model OAuthAuthorizationCode {
+  id                  Int       @id @default(autoincrement())
+  grantId             Int
+  codeHash            String    @unique
+  redirectUri         String
+  scope               String
+  codeChallenge       String
+  codeChallengeMethod String    @default("S256")
+  expiresAt           DateTime
+  usedAt              DateTime?
+  createdAt           DateTime  @default(now())
+
+  grant OAuthGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId, expiresAt])
+}
+
+model OAuthToken {
+  id        Int       @id @default(autoincrement())
+  grantId   Int
+  tokenHash String    @unique
+  kind      String // access | refresh
+  familyId  String
+  scope     String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  grant OAuthGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId, kind, revokedAt])
+  @@index([familyId, kind])
+}
+
+model AgentOperation {
+  id             String    @id @default(cuid())
+  grantId        Int
+  deploymentId   Int
+  type           String
+  status         String    @default("pending") // pending | running | verifying | success | failed | cancelled | uncertain
+  idempotencyKey String
+  inputJson      String    @default("{}")
+  resultJson     String?
+  evidenceJson   String?
+  error          String?
+  attempts       Int       @default(0)
+  leaseUntil     DateTime?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  grant      OAuthGrant         @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  deployment EnrolledDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@unique([grantId, idempotencyKey])
+  @@index([status, createdAt])
+  @@index([deploymentId, createdAt])
 }
