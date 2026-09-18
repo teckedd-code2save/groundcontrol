@@ -21,6 +21,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         where: { slug },
         include: {
           projectGroup: true,
+          githubRepositories: {
+            include: {
+              repository: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  htmlUrl: true,
+                  defaultBranch: true,
+                  isPrivate: true,
+                  installationId: true,
+                },
+              },
+            },
+          },
           legacyProject: {
             include: {
               deployments: {
@@ -86,6 +100,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         projectId: deployment.projectGroupId,
         legacyProjectSlug: deployment.legacyProject?.slug || null,
         repoUrl: evidence.repoUrl,
+        repositoryIdentity: deployment.githubRepositories[0]
+          ? {
+              ...deployment.githubRepositories[0].repository,
+              source: deployment.githubRepositories[0].source,
+            }
+          : null,
         sourceRepair: evidence.sourceRepair,
         deployedCommit: evidence.sourceRepair?.deployedCommit || latestRelease?.commitSha || evidence.sourceCommit || null,
         domain: deployment.legacyProject?.domain || null,
