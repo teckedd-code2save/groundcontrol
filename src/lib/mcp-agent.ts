@@ -16,6 +16,7 @@ type ToolDefinition = {
   description: string;
   requiredScope: OAuthScope;
   inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
   annotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;
@@ -24,6 +25,57 @@ type ToolDefinition = {
   };
 };
 
+
+const DEPLOYMENT_SUMMARY_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+    name: { type: "string" },
+    slug: { type: "string" },
+    kind: { type: "string" },
+    managementMode: { type: "string" },
+    status: { type: "string" },
+    updatedAt: { type: "string" },
+  },
+  required: ["id", "name", "slug", "kind", "managementMode", "status", "updatedAt"],
+  additionalProperties: false,
+} as const;
+
+const OPERATION_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    deploymentId: { type: "integer" },
+    type: { type: "string" },
+    status: { type: "string" },
+    idempotencyKey: { type: "string" },
+    attempts: { type: "integer" },
+    result: {},
+    evidence: {},
+    error: { anyOf: [{ type: "string" }, { type: "null" }] },
+    createdAt: { type: "string" },
+    updatedAt: { type: "string" },
+    startedAt: { anyOf: [{ type: "string" }, { type: "null" }] },
+    finishedAt: { anyOf: [{ type: "string" }, { type: "null" }] },
+  },
+  required: [
+    "id",
+    "deploymentId",
+    "type",
+    "status",
+    "idempotencyKey",
+    "attempts",
+    "result",
+    "evidence",
+    "error",
+    "createdAt",
+    "updatedAt",
+    "startedAt",
+    "finishedAt",
+  ],
+  additionalProperties: false,
+} as const;
+
 const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.list",
@@ -31,6 +83,12 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
     description: "List only the GroundControl deployments this agent has been granted access to.",
     requiredScope: "deployment:read",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    outputSchema: {
+      type: "object",
+      properties: { deployments: { type: "array", items: DEPLOYMENT_SUMMARY_SCHEMA } },
+      required: ["deployments"],
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   {
@@ -41,6 +99,35 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: { deployment: { type: "string", description: "Deployment slug or numeric id." } },
+      required: ["deployment"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        deployment: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            name: { type: "string" },
+            slug: { type: "string" },
+            kind: { type: "string" },
+            managementMode: { type: "string" },
+            status: { type: "string" },
+            sourcePath: { anyOf: [{ type: "string" }, { type: "null" }] },
+            composePath: { anyOf: [{ type: "string" }, { type: "null" }] },
+            containerName: { anyOf: [{ type: "string" }, { type: "null" }] },
+            project: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
+            target: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
+            source: { type: "object", additionalProperties: true },
+            publicUrl: { anyOf: [{ type: "string" }, { type: "null" }] },
+            recentReleases: { type: "array", items: { type: "object", additionalProperties: true } },
+            updatedAt: { type: "string" },
+          },
+          required: ["id", "name", "slug", "kind", "managementMode", "status", "source", "publicUrl", "recentReleases", "updatedAt"],
+          additionalProperties: false,
+        },
+      },
       required: ["deployment"],
       additionalProperties: false,
     },
@@ -60,6 +147,34 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["deployment"],
       additionalProperties: false,
     },
+    outputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string" },
+        logs: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "integer" },
+              projectSlug: { type: "string" },
+              status: { type: "string" },
+              branch: { type: "string" },
+              commitSha: { anyOf: [{ type: "string" }, { type: "null" }] },
+              output: { anyOf: [{ type: "string" }, { type: "null" }] },
+              error: { anyOf: [{ type: "string" }, { type: "null" }] },
+              durationMs: { anyOf: [{ type: "integer" }, { type: "null" }] },
+              createdAt: { type: "string" },
+              updatedAt: { type: "string" },
+            },
+            required: ["id", "projectSlug", "status", "branch", "commitSha", "output", "error", "durationMs", "createdAt", "updatedAt"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["deployment", "logs"],
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   {
@@ -71,6 +186,25 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
       type: "object",
       properties: { deployment: { type: "string", description: "Deployment slug or numeric id." } },
       required: ["deployment"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string" },
+        runtime: {
+          type: "object",
+          properties: {
+            healthy: { type: "boolean" },
+            containers: { type: "array", items: { type: "object", additionalProperties: true } },
+          },
+          required: ["healthy", "containers"],
+          additionalProperties: false,
+        },
+        public: { type: "object", additionalProperties: true },
+        healthy: { type: "boolean" },
+      },
+      required: ["deployment", "runtime", "public", "healthy"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
@@ -90,6 +224,15 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["deployment", "idempotencyKey"],
       additionalProperties: false,
     },
+    outputSchema: {
+      type: "object",
+      properties: {
+        operation: OPERATION_SCHEMA,
+        reused: { type: "boolean" },
+      },
+      required: ["operation", "reused"],
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
@@ -103,12 +246,31 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["operationId"],
       additionalProperties: false,
     },
+    outputSchema: {
+      type: "object",
+      properties: { operation: OPERATION_SCHEMA },
+      required: ["operation"],
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
 ];
 
-export function toolDefinitionsForScopes(scopes: Set<string>) {
-  return TOOL_DEFINITIONS.filter((tool) => scopes.has(tool.requiredScope)).map(({ requiredScope: _scope, ...tool }) => tool);
+export function toolDefinitionsForScopes(scopes?: Set<string>) {
+  const visible = scopes
+    ? TOOL_DEFINITIONS.filter((tool) => scopes.has(tool.requiredScope))
+    : TOOL_DEFINITIONS;
+
+  return visible.map(({ requiredScope, ...tool }) => {
+    const securitySchemes = [{ type: "oauth2" as const, scopes: [requiredScope] }];
+    return {
+      ...tool,
+      securitySchemes,
+      _meta: {
+        securitySchemes,
+      },
+    };
+  });
 }
 
 function redactEvidenceText(value: string | null): string | null {
