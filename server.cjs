@@ -10,6 +10,7 @@ const { PrismaClient } = require("@prisma/client");
 const jwt = require("jsonwebtoken");
 const cookie = require("cookie");
 const { Client: SshClient } = require("ssh2");
+const { startAgentOperationWorker } = require("./scripts/agent-operation-worker.cjs");
 
 const execFileAsync = promisify(execFile);
 const prisma = new PrismaClient();
@@ -458,13 +459,20 @@ async function main() {
   });
   installTerminalSockets(io);
 
+  let stopAgentWorker = async () => {};
   httpServer.listen(port, hostname, () => {
     console.log(`> GroundControl ready on http://${hostname}:${port}`);
+    stopAgentWorker = startAgentOperationWorker({
+      prisma,
+      port,
+      jwtSecret: getJwtSecret(),
+    });
   });
 
   const shutdown = async (signal) => {
     console.log(`[server] ${signal} received, closing...`);
     io.close();
+    await stopAgentWorker().catch(() => {});
     httpServer.close(async () => {
       await prisma.$disconnect();
       process.exit(0);
