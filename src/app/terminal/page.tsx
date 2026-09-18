@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Bot, Maximize2, Minimize2, RefreshCw, Trash2 } from "lucide-react";
+import type { Socket } from "socket.io-client";
 import { useSidebar } from "@/components/SidebarContext";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
@@ -23,7 +24,7 @@ type ReadyInfo = {
 
 export default function TerminalPage() {
   const hostRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef<{ emit: (event: string, ...args: unknown[]) => void; connected?: boolean } | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const terminalRef = useRef<{ focus: () => void; clear: () => void } | null>(null);
   const [target, setTarget] = useState<TerminalTarget | null>(null);
   const [ready, setReady] = useState<ReadyInfo | null>(null);
