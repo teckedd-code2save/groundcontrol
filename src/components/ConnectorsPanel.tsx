@@ -8,6 +8,7 @@ import {
   Shield,
 } from "lucide-react";
 import GithubAppPanel from "@/components/GithubAppPanel";
+import DaytonaAcceptancePanel from "@/components/DaytonaAcceptancePanel";
 
 type CapabilityHealth = {
   id: string;
@@ -208,6 +209,7 @@ export default function ConnectorsPanel() {
       </div>
 
       <GithubAppPanel />
+      <DaytonaAcceptancePanel onVerified={load} />
 
       {message && (
         <div className={`rounded border px-3 py-2 text-xs ${message.tone === "success" ? "border-success/30 bg-success/5 text-success" : "border-error/30 bg-error/5 text-error"}`}>
