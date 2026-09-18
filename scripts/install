@@ -152,7 +152,6 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/prisma/prod.db
-      - COOKIE_SECURE=false
     volumes:
       - groundcontrol-db:/app/prisma
       - /var/run/docker.sock:/var/run/docker.sock
