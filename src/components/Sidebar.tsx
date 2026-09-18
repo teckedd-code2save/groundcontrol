@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { startTransition, useEffect, useState, type ComponentType } from "react";
 import {
   Bell,
+  Bot,
   Boxes,
   ChevronLeft,
   ChevronRight,
@@ -43,6 +44,7 @@ const navItems: NavItem[] = [
   { href: "/containers", label: "Runtime", icon: Boxes, section: "manage" },
   { href: "/templates", label: "Templates", icon: LayoutTemplate, section: "build" },
   { href: "/ai", label: "Assistant", icon: Sparkles, section: "tools" },
+  { href: "/agents", label: "Agents", icon: Bot, section: "tools" },
   { href: "/terminal", label: "Terminal", icon: Terminal, section: "tools" },
   { href: "/settings", label: "Settings", icon: Settings, section: "system" },
 ];
