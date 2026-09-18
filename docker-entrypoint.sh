@@ -39,4 +39,4 @@ if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
 
-exec node server.js
+exec node server.cjs
