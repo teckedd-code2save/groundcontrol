@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
-import { getActiveVps, shQuote, type VpsConnection } from "@/lib/vps";
+import { getActiveVps, getSystemConfig, shQuote, type VpsConnection } from "@/lib/vps";
 
 export async function requireTerminalAdmin(req: NextRequest) {
   const user = requireAuth(req);
@@ -24,7 +24,11 @@ export async function resolveTerminalTarget(id: unknown): Promise<VpsConnection>
 export async function initialTerminalTarget() {
   const vps = await getActiveVps();
   if (!vps) throw new HttpError("No VPS configured", 409);
-  return { vpsId: vps.id, host: vps.host, cwd: "/" };
+  const config = await getSystemConfig();
+  const projectRoot = typeof config.projectRoot === "string" && config.projectRoot.startsWith("/")
+    ? config.projectRoot
+    : "/opt";
+  return { vpsId: vps.id, host: vps.host, cwd: projectRoot };
 }
 
 /** The remote shell owns command parsing and directory resolution. */

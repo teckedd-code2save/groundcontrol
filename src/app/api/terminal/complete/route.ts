@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireTerminalAdmin, resolveTerminalTarget } from "@/lib/terminal-execution";
 import { handleApiError } from "@/lib/errors";
 import { execOnTargetStrict } from "@/lib/host-exec";
-import { getDockerContainers, getSystemConfig, shQuote, type VpsConnection } from "@/lib/vps";
+import { getDockerContainers, shQuote, type VpsConnection } from "@/lib/vps";
 
 const COMMON_COMMANDS = [
   "docker ps",
@@ -102,23 +102,6 @@ async function completeContainers(word: string, vps: VpsConnection): Promise<Sug
   }
 }
 
-async function completeProjects(word: string, vps: VpsConnection): Promise<Suggestion[]> {
-  try {
-    const config = await getSystemConfig();
-    const root = config.projectRoot || "/opt";
-    const result = await execOnTargetStrict(
-      `ls -1 ${shQuote(root)} 2>/dev/null || echo ""`, vps,
-    );
-    return result.stdout
-      .split("\n")
-      .map((d) => d.trim())
-      .filter((d) => d && d.toLowerCase().startsWith(word.toLowerCase()))
-      .map((d) => ({ value: d, label: `${d}/`, type: "project" as const }));
-  } catch {
-    return [];
-  }
-}
-
 export async function POST(req: NextRequest) {
   try {
     await requireTerminalAdmin(req);
@@ -152,14 +135,8 @@ export async function POST(req: NextRequest) {
       suggestions.push(...(await completeContainers(word, vps)));
     }
 
-    // Project-aware commands.
-    const projectCommands = ["cd", "ls", "cat", "docker compose -f", "docker compose"];
-    if (projectCommands.some((c) => input.trimStart().toLowerCase().startsWith(c + " "))) {
-      suggestions.push(...(await completeProjects(word, vps)));
-    }
-
-    // Path completion for any command with a word argument.
-    if (command && word) {
+    // Path completion follows the current remote cwd, including `cd ` with an empty argument.
+    if (command) {
       suggestions.push(...(await completePaths(cwd || "/", word, vps)));
     }
 
