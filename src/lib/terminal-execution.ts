@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
-import { getActiveVps, getSystemConfig, shQuote, type VpsConnection } from "@/lib/vps";
+import { getActiveVps, shQuote, type VpsConnection } from "@/lib/vps";
 
 export async function requireTerminalAdmin(req: NextRequest) {
   const user = requireAuth(req);
@@ -21,14 +21,14 @@ export async function resolveTerminalTarget(id: unknown): Promise<VpsConnection>
   return { id: vps.id, host: vps.host, port: vps.port, username: vps.username, isLocal: vps.isLocal };
 }
 
-export async function initialTerminalTarget() {
-  const vps = await getActiveVps();
+export async function initialTerminalTarget(id?: unknown) {
+  const vps = id === undefined ? await getActiveVps() : await resolveTerminalTarget(id);
   if (!vps) throw new HttpError("No VPS configured", 409);
-  const config = await getSystemConfig();
-  const projectRoot = typeof config.projectRoot === "string" && config.projectRoot.startsWith("/")
-    ? config.projectRoot
-    : "/opt";
-  return { vpsId: vps.id, host: vps.host, cwd: projectRoot };
+  const config = await prisma.systemConfig.findUnique({ where: { vpsConfigId: vps.id } }).catch(() => null);
+  const cwd = typeof config?.sshDefaultCwd === "string" && config.sshDefaultCwd.startsWith("/")
+    ? config.sshDefaultCwd
+    : null;
+  return { vpsId: vps.id, host: vps.host, username: vps.username, cwd };
 }
 
 /** The remote shell owns command parsing and directory resolution. */
