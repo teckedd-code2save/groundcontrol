@@ -16,6 +16,7 @@ HOST_PORT="3003"
 INSTALL_DIR="/opt/groundcontrol"
 JSON_MODE=0
 CLAIM_TTL_MINUTES="30"
+UPGRADE=0
 IMAGE_REPO="ghcr.io/teckedd-code2save/groundcontrol"
 
 log() {
@@ -48,6 +49,7 @@ Options:
   --dir PATH           Install directory. Default: /opt/groundcontrol.
   --claim-ttl MINUTES  One-time human claim lifetime, 5-120. Default: 30.
   --json               Emit one machine-readable result on stdout; progress goes to stderr.
+  --upgrade            Explicitly refresh a healthy existing install to the requested image tag.
   -h, --help           Show this help.
 
 The service binds 127.0.0.1 only. Use an HTTPS reverse proxy or an SSH tunnel
@@ -71,6 +73,8 @@ while [ "$#" -gt 0 ]; do
       CLAIM_TTL_MINUTES="$2"; shift 2 ;;
     --json)
       JSON_MODE=1; shift ;;
+    --upgrade)
+      UPGRADE=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -105,6 +109,49 @@ elif command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
 else
   fail "Docker Compose is required"
+fi
+
+EXISTING_HEALTHY=0
+if docker inspect groundcontrol-web >/dev/null 2>&1; then
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null || true)"
+  if [ "$health" = "healthy" ] || [ "$health" = "running" ]; then
+    EXISTING_HEALTHY=1
+  fi
+fi
+
+if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
+  log "[install] healthy GroundControl already exists; leaving image and Compose unchanged"
+  CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES" 2>/dev/null)" || {
+    fail "Existing GroundControl predates the claim installer. Re-run with --upgrade to install the current claim-capable image."
+  }
+  STAGE="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"stage":"\\([^"]*\\)".*/\\1/p')"
+  INSTANCE_ID="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"instanceId":"\\([^"]*\\)".*/\\1/p')"
+  CLAIM_TOKEN="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"claimToken":"\\([^"]*\\)".*/\\1/p')"
+  EXPIRES_AT="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"expiresAt":"\\([^"]*\\)".*/\\1/p')"
+
+  if [ "$STAGE" = "already_claimed" ]; then
+    if [ "$JSON_MODE" -eq 1 ]; then
+      printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"changed":false}\n' \
+        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT"
+    else
+      log "GroundControl is already claimed and healthy. Nothing changed."
+    fi
+    exit 0
+  fi
+
+  if [ "$STAGE" = "claim_required" ] && [ -n "$CLAIM_TOKEN" ]; then
+    CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
+    if [ "$JSON_MODE" -eq 1 ]; then
+      printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":false}\n' \
+        "$(json_escape "$INSTANCE_ID")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT"
+    else
+      log "GroundControl is healthy but unclaimed."
+      log "Create an SSH tunnel if remote: ssh -L $HOST_PORT:127.0.0.1:$HOST_PORT <user>@<server>"
+      log "Then open: http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
+    fi
+    exit 0
+  fi
+  fail "Existing GroundControl returned an unexpected claim state"
 fi
 
 if command -v openssl >/dev/null 2>&1; then
