@@ -213,11 +213,11 @@ async function claimPending(prisma) {
 }
 
 async function recoverInterrupted(prisma) {
-  const expired = await prisma.agentOperation.findMany({
-    where: { status: "running", leaseUntil: { lt: new Date() } },
+  const interrupted = await prisma.agentOperation.findMany({
+    where: { status: "running" },
     select: { id: true, evidenceJson: true },
   });
-  for (const operation of expired) {
+  for (const operation of interrupted) {
     const evidence = parseJson(operation.evidenceJson) || {};
     await prisma.agentOperation.update({
       where: { id: operation.id },
