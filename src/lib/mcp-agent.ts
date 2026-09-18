@@ -130,8 +130,10 @@ async function allowedDeployment(context: AgentAccessContext, value: unknown) {
   if (!context.resources.length) throw new Error("This grant has no deployment resources.");
   const deployment = await prisma.enrolledDeployment.findFirst({
     where: {
-      id: { in: context.resources },
-      ...(identifier.id ? { id: identifier.id } : { slug: identifier.text }),
+      AND: [
+        { id: { in: context.resources } },
+        identifier.id ? { id: identifier.id } : { slug: identifier.text },
+      ],
     },
     include: {
       projectGroup: { select: { id: true, name: true, slug: true } },
