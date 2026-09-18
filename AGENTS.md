@@ -13,7 +13,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **Onboarding**: `/onboarding` is the first-run flow. Preserve its auto-detect and test-connection behavior.
 - **Cloudflare**: account tokens are encrypted at rest (`encryptCloudflareToken` / `decryptCloudflareToken`). Active account is the one with `isActive=true`.
 - **Alert rules**: evaluated by `/api/alert-rules/evaluate`. `AlertScheduler` in `layout.tsx` calls it every 60s. Keep evaluation idempotent and deduplicated.
-- **Terminal helpers**: shown chips adapt to the active VPS (`/api/server-capabilities`). Don't show `systemctl` on OpenRC/Alpine or `caddy` if not installed.
+- **Terminal**: `/terminal` is a persistent xterm + PTY session over authenticated Socket.IO. Do not reintroduce browser-side command parsing, autocomplete, or per-command HTTP execution. Tab/control keys belong to the shell.
 - **Topology**: uses XYFlow group nodes for projects/sites. `TopologyFlow` wraps groups around their children after dagre layout.
 - **Sidebar**: collapsible via `SidebarContext`. Terminal and AI chat fullscreen modes collapse it and use `z-[70]` to overlay it.
 
@@ -28,7 +28,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **Deployment targets**: Projects deploy through pluggable adapters (`compose`, `static`, `k3s`, `cloudrun`, `terraform`) defined in `src/lib/deploy/targets/`. Target selection lives in the Projects panel; target configuration lives in Settings → Deploy Targets.
 - **Cloud accounts**: Encrypted GCP/AWS/Azure credentials are managed in Settings → Cloud Accounts and consumed by cloud adapters.
 - **Terraform control plane**: Infrastructure stacks are managed in Settings → Infrastructure. Stacks generate HCL, run `plan`/`apply`/`destroy` on the active VPS, and can feed outputs back into the deploy pipeline.
-- **Terminal AI mode**: `/ai <intent>` in the terminal calls `/api/terminal/ai`, shows the generated POSIX sh command for approval, then runs it via `/api/terminal`. Tab completion calls `/api/terminal/complete`.
+- **Agent access**: external agents connect through `/mcp` using OAuth Authorization Code + S256 PKCE. Grants are scoped to explicit deployments and capabilities. Never expose SSH keys, provider secrets, or a generic shell/exec MCP tool. Mutations return durable `AgentOperation` handles.
 - **AI alert synthesis**: `/api/alerts/synthesize` returns `{ summary, rootCauses, actions }` and is shown on the dashboard; the Investigate button opens the AI chat widget with a pre-filled query.
 
 ## Code conventions
@@ -36,3 +36,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Server logic lives in `src/lib/`. All remote/host operations go through `src/lib/vps.ts` (`execOnVps`, `shQuote`).
 - API routes must call `requireAuth(req)` and remain thin.
 - `src/lib/server-probe.ts` runs POSIX sh / BusyBox-compatible commands for auto-detection.
+
+
+## External agent contract
+
+- MCP follows the stateless 2026-07-28 shape while retaining a small compatibility response for older `initialize` clients. Keep `Mcp-Method` / `Mcp-Name` validation.
+- OAuth discovery is exposed through `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource`. Prefer Client ID Metadata Documents; dynamic registration remains a compatibility fallback.
+- Access tokens and refresh tokens are opaque and stored only as hashes. Refresh tokens rotate. Revoking a grant revokes live tokens immediately.
+- Agent grants are resource-scoped. Every deployment tool must resolve the requested deployment through the grant's approved `EnrolledDeployment` IDs before reading or mutating it.
+- External write operations must be idempotent and durable. Do not replay a mutation after an uncertain worker interruption; surface `uncertain` and require reconciliation/inspection.
+- The first MCP surface is intentionally narrow: `deployment.list`, `deployment.inspect`, `deployment.logs`, `deployment.health`, `deployment.redeploy`, and `operation.get`.
