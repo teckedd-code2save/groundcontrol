@@ -54,10 +54,11 @@ COPY server.cjs /app/server.cjs
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 COPY scripts/ensure-admin.cjs /app/ensure-admin.cjs
 COPY scripts/ensure-local-vps.cjs /app/ensure-local-vps.cjs
+COPY scripts/agent-operation-worker.cjs /app/scripts/agent-operation-worker.cjs
 RUN chmod +x /app/docker-entrypoint.sh
 
 # Ensure db directory exists for SQLite
-RUN mkdir -p /app/prisma
+RUN mkdir -p /app/prisma /app/scripts
 
 EXPOSE 3000
 
