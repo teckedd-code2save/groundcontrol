@@ -307,7 +307,7 @@ export async function githubAppPublicState() {
   const publicHttps = connection.publicUrl.startsWith("https://");
   const appPermissions = JSON.parse(connection.permissionsJson || "{}") as Record<string, string>;
   return {
-    status: installations.some((installation) => !installation.suspended) ? "connected" as const : "app_ready" as const,
+    status: installations.some((installation) => !installation.suspended) ? "installed" as const : "app_ready" as const,
     app: {
       id: connection.appId,
       slug: connection.slug,
