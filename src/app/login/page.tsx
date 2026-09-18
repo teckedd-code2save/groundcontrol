@@ -30,7 +30,10 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.location.hash === "#install") {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("next")) setShowLogin(true);
+    if (window.location.hash === "#install") {
       window.setTimeout(() => scrollToInstall(), 150);
     }
   }, []);
