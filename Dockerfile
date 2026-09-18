@@ -39,8 +39,9 @@ LABEL org.opencontainers.image.licenses="UNLICENSED"
 RUN apk add --no-cache openssl docker-cli docker-cli-compose procps wget
 
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/next.config.ts ./next.config.ts
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules ./node_modules
 
@@ -49,6 +50,7 @@ COPY --from=builder /app/node_modules ./node_modules
 # the volume-resident DB using /app/db/schema.prisma.
 COPY --from=builder /app/prisma /app/db
 
+COPY server.cjs /app/server.cjs
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 COPY scripts/ensure-admin.cjs /app/ensure-admin.cjs
 COPY scripts/ensure-local-vps.cjs /app/ensure-local-vps.cjs
