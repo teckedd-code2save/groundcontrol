@@ -77,6 +77,60 @@ export async function testDaytonaConnection(
   }
 }
 
+export async function testDaytonaSandboxLifecycle(
+  config?: DaytonaRuntimeConfig | null
+): Promise<{ ok: true; source: DaytonaRuntimeConfig["source"]; cleanedUp: true }> {
+  const resolved = config ?? await loadDaytonaRuntimeConfig();
+  if (!resolved) throw new Error("Daytona API key is not configured.");
+
+  const client = new Daytona({
+    apiKey: resolved.apiKey,
+    apiUrl: resolved.apiUrl,
+    target: resolved.target,
+  });
+  let sandbox: Sandbox | null = null;
+  let cleanedUp = false;
+  try {
+    sandbox = await client.create({
+      name: `gc-connector-probe-${Date.now()}`.slice(0, 63),
+      language: "typescript",
+      ephemeral: true,
+      ttlMinutes: 2,
+      labels: {
+        product: "groundcontrol",
+        purpose: "connector-health-probe",
+      },
+    }, { timeout: 60 });
+
+    const result = await sandbox.process.executeCommand(
+      "printf groundcontrol-daytona-ok",
+      undefined,
+      { CI: "1", GC_CONNECTOR_PROBE: "1" },
+      20
+    );
+    if (result.exitCode !== 0 || !result.result.includes("groundcontrol-daytona-ok")) {
+      throw new Error("Daytona created a sandbox but command execution did not complete successfully.");
+    }
+
+    await client.delete(sandbox, 30, true);
+    sandbox = null;
+    cleanedUp = true;
+    return { ok: true, source: resolved.source, cleanedUp: true };
+  } finally {
+    if (sandbox) {
+      try {
+        await client.delete(sandbox, 30, true);
+        cleanedUp = true;
+      } catch {
+        // The caller reports lifecycle verification as failed if cleanup throws
+        // before the successful return above. TTL remains a final safety net.
+      }
+    }
+    await client[Symbol.asyncDispose]();
+    void cleanedUp;
+  }
+}
+
 export type BlueprintId =
   | "single_web_caddy"
   | "frontend_api"
