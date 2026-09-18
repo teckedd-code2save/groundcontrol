@@ -61,6 +61,7 @@ type DeploymentDetailRecord = {
   project?: Group | null;
   legacyProjectId?: number | null;
   legacyProjectSlug?: string | null;
+  vpsConfigId?: number | null;
   repoUrl?: string | null;
   deployedCommit?: string | null;
   domain?: string | null;
@@ -165,6 +166,13 @@ export default function DeploymentDetail({
     if (domain) params.set("domain", domain);
     return `/intelligence?${params.toString()}`;
   })() : "/intelligence";
+  const terminalHref = deployment ? (() => {
+    const params = new URLSearchParams();
+    if (deployment.vpsConfigId) params.set("vpsId", String(deployment.vpsConfigId));
+    if (deployment.sourcePath?.startsWith("/")) params.set("cwd", deployment.sourcePath);
+    const query = params.toString();
+    return query ? `/terminal?${query}` : "/terminal";
+  })() : "/terminal";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -702,11 +710,12 @@ export default function DeploymentDetail({
               <section className="border border-border bg-card p-5">
                 <p className="gc-eyebrow">Management</p>
                 <h2 className="mt-2 text-base font-medium">Manage deployment</h2>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                   <ManagementLink icon={<Box size={16} />} onClick={() => {}} title="Containers" detail="Running services below" />
                   <ManagementLink icon={<Settings2 size={16} />} onClick={() => setTab("environment")} title="Environment" detail="Configuration and secrets" />
                   <ManagementLink icon={<Activity size={16} />} onClick={() => setTab("releases")} title="Releases" detail="Changes and outcomes" />
                   <ManagementLink icon={<ServerCog size={16} />} href={intelligenceHref} title="Intelligence" detail="Evidence and investigation" />
+                  <ManagementLink icon={<Code2 size={16} />} href={terminalHref} title="Terminal" detail={deployment.sourcePath ? "Open in deployment path" : "Open native shell"} />
                 </div>
               </section>
 

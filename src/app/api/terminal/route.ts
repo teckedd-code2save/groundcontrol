@@ -10,7 +10,8 @@ const DEFAULT_ENV_EXPORT = PATH_EXPORT + "; export " + getKubeconfigEnv();
 export async function GET(req: NextRequest) {
   try {
     await requireTerminalAdmin(req);
-    return NextResponse.json(await initialTerminalTarget());
+    const requestedTarget = req.nextUrl.searchParams.get("vpsId");
+    return NextResponse.json(await initialTerminalTarget(requestedTarget === null ? undefined : Number(requestedTarget)));
   } catch (err) { return handleApiError(err); }
 }
 

@@ -1,820 +1,344 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { Bot, Maximize2, Minimize2, RefreshCw, Trash2 } from "lucide-react";
+import type { Socket } from "socket.io-client";
 import { useSidebar } from "@/components/SidebarContext";
-import {
-  type ServerCapabilities,
-  buildHelperChips,
-  hintForCommand,
-} from "@/lib/server-capabilities-types";
 
-interface HistoryEntry {
-  type: "input" | "output" | "error" | "hint" | "ai";
-  text: string;
-  cmd?: string;
-}
+type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
-interface Suggestion {
-  value: string;
-  label: string;
-  type: "command" | "file" | "container" | "project" | "history";
-}
+type TerminalTarget = {
+  vpsId: number;
+  host: string;
+  username: string;
+  cwd: string | null;
+};
 
-interface AiSuggestion {
-  mode?: "command" | "help";
-  command?: string;
-  explanation?: string;
-  help?: string;
-  suggestions?: string[];
-}
-
-const HISTORY_KEY = "gc-terminal-history";
-
-const BASHISM_PATTERNS: { pattern: RegExp; name: string }[] = [
-  { pattern: /\[\[/, name: "[[ ]]" },
-  { pattern: /\]\]/, name: "[[ ]]" },
-  { pattern: /\bsource\b/, name: "source" },
-  { pattern: /\bdeclare\s+-a\b/, name: "arrays" },
-  { pattern: /\$\{[^}]*\[[^]]*\]\}/, name: "arrays" },
-  { pattern: /<<<\s*/, name: "here-strings" },
-  { pattern: /\bfunction\s+\w+\s*\(\)/, name: "function keyword" },
-];
-
-function detectBashisms(cmd: string): string[] {
-  const found = new Set<string>();
-  for (const { pattern, name } of BASHISM_PATTERNS) {
-    if (pattern.test(cmd)) found.add(name);
-  }
-  return Array.from(found);
-}
-
-function capabilitySummary(capabilities: ServerCapabilities | null): string {
-  if (!capabilities) return "";
-  const parts: string[] = [capabilities.osFamily];
-  if (capabilities.hasDocker) parts.push("Docker");
-  if (capabilities.hasCaddy) parts.push("Caddy");
-  if (capabilities.hasNginx) parts.push("Nginx");
-  if (capabilities.hasNode) parts.push("Node");
-  parts.push(capabilities.initSystem);
-  return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" · ");
-}
+type ReadyInfo = {
+  vpsId: number;
+  host: string;
+  mode: "local" | "ssh";
+  cwd: string | null;
+};
 
 export default function TerminalPage() {
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [input, setInput] = useState("");
-  const [working, setWorking] = useState(false);
-  const [cwd, setCwd] = useState("/");
-  const [target, setTarget] = useState<{ vpsId: number; host: string } | null>(null);
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
-  const [aiSuggestion, setAiSuggestion] = useState<AiSuggestion | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const terminalRef = useRef<{ focus: () => void; clear: () => void } | null>(null);
+  const [target, setTarget] = useState<TerminalTarget | null>(null);
+  const [ready, setReady] = useState<ReadyInfo | null>(null);
+  const [connection, setConnection] = useState<ConnectionState>("connecting");
+  const [error, setError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const [bashismWarnings, setBashismWarnings] = useState<string[]>([]);
-  const [capabilities, setCapabilities] = useState<ServerCapabilities | null>(null);
-  const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
+  const [sessionKey, setSessionKey] = useState(0);
   const { setCollapsed } = useSidebar();
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(HISTORY_KEY);
-      if (saved) setCommandHistory(JSON.parse(saved));
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    fetch("/api/terminal")
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Could not load terminal target");
-        setTarget({ vpsId: data.vpsId, host: data.host });
-        setCwd(data.cwd);
-      })
-      .catch((err) => setHistory((h) => [...h, { type: "error", text: err.message }]));
-  }, []);
-
-  useEffect(() => {
-    if (!target) return;
-    fetch(`/api/server-capabilities?vpsId=${target.vpsId}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setCapabilities(data))
-      .catch(() => {})
-      .finally(() => setCapabilitiesLoading(false));
-  }, [target]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history]);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, [working, fullscreen]);
-
-  useEffect(() => {
-    const warnings = detectBashisms(input);
-    setBashismWarnings(warnings);
-  }, [input]);
-
-  // Collapse sidebar while in fullscreen so content fills the viewport.
-  useEffect(() => {
-    if (fullscreen) {
-      setCollapsed(true);
-    }
+    if (fullscreen) setCollapsed(true);
   }, [fullscreen, setCollapsed]);
 
-  const helperChips = buildHelperChips(capabilities);
-  const summary = capabilitySummary(capabilities);
+  useEffect(() => {
+    let disposed = false;
+    let resizeObserver: ResizeObserver | null = null;
+    let terminal: import("@xterm/xterm").Terminal | null = null;
+    let fitAddon: import("@xterm/addon-fit").FitAddon | null = null;
+    let socket: import("socket.io-client").Socket | null = null;
 
-  async function fetchSuggestions(value: string) {
-    if (!value.trim()) {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      return;
-    }
-    try {
-      const res = await fetch("/api/terminal/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: value, cwd, history: commandHistory, vpsId: target?.vpsId }),
-      });
-      const data = await res.json();
-      const list = data.suggestions || [];
-      setSuggestions(list);
-      setShowSuggestions(list.length > 0);
-      setSelectedSuggestion(0);
-    } catch {
-      setSuggestions([]);
-      setShowSuggestions(false);
-    }
-  }
+    async function boot() {
+      setConnection("connecting");
+      setError(null);
+      setReady(null);
 
-  async function executeCommand(
-    cmd: string,
-    currentCwd: string,
-    opts?: { skipInputEcho?: boolean }
-  ) {
-    if (!target) {
-      setHistory((h) => [...h, { type: "error", text: "No terminal target selected. Reload after configuring a VPS." }]);
-      return;
-    }
-    setWorking(true);
-    setAiSuggestion(null);
-    if (!opts?.skipInputEcho) {
-      setHistory((h) => [...h, { type: "input", text: cmd }]);
-    }
-    try {
-      const res = await fetch("/api/terminal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd, cwd: currentCwd, vpsId: target.vpsId }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `Command request failed (${res.status})`);
-      if (data.vpsId !== target.vpsId) throw new Error("Terminal target changed unexpectedly");
-      if (typeof data.cwd === "string") setCwd(data.cwd);
-      if (data.stdout) {
-        setHistory((h) => [...h, { type: "output", text: data.stdout, cmd }]);
-      }
-      if (data.stderr) {
-        setHistory((h) => [...h, { type: "error", text: data.stderr, cmd }]);
-      }
-      if (data.code !== 0 && !data.stdout && !data.stderr) {
-        setHistory((h) => [...h, { type: "error", text: `Exit code: ${data.code}`, cmd }]);
-      }
-    } catch (err: unknown) {
-      setHistory((h) => [...h, { type: "error", text: err instanceof Error ? err.message : String(err), cmd }]);
-    } finally {
-      setWorking(false);
-    }
-  }
+      const query = new URLSearchParams(window.location.search);
+      const requestedVpsId = query.get("vpsId");
+      const requestedCwd = query.get("cwd");
+      const targetUrl = requestedVpsId
+        ? `/api/terminal?vpsId=${encodeURIComponent(requestedVpsId)}`
+        : "/api/terminal";
 
-  function pushCommandHistory(cmd: string) {
-    setCommandHistory((prev) => {
-      const next = prev.filter((c) => c !== cmd);
-      next.push(cmd);
-      if (next.length > 200) next.shift();
-      try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }
+      const response = await fetch(targetUrl);
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Could not resolve terminal target");
+      if (disposed) return;
 
-  async function handleAiIntent(intent: string) {
-    setAiLoading(true);
-    setAiSuggestion(null);
-    try {
-      const res = await fetch("/api/terminal/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent, cwd, vpsId: target?.vpsId }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setAiSuggestion(data);
-      } else {
-        setHistory((h) => [...h, { type: "error", text: data.error || "AI failed" }]);
-      }
-    } catch (err: unknown) {
-      setHistory((h) => [...h, { type: "error", text: err instanceof Error ? err.message : String(err) }]);
-    } finally {
-      setAiLoading(false);
-    }
-  }
+      const resolvedTarget: TerminalTarget = {
+        vpsId: data.vpsId,
+        host: data.host,
+        username: data.username || "root",
+        cwd: typeof data.cwd === "string" ? data.cwd : null,
+      };
+      setTarget(resolvedTarget);
 
-  function handleSubmit(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (!input.trim() || working) return;
-    const raw = input.trim();
-    setInput("");
-    setSuggestions([]);
-    setShowSuggestions(false);
-    setAiSuggestion(null);
-
-    // AI mode — /ai or /ai <intent>
-    if (raw === "/ai" || raw.startsWith("/ai ") || raw.startsWith("/ai\t")) {
-      const intent = raw === "/ai" ? "" : raw.replace(/^\/ai\s+/, "").trim();
-      setHistory((h) => [...h, { type: "ai", text: raw }]);
-      if (!intent) {
-        setAiSuggestion({
-          mode: "help",
-          help: "Terminal AI turns intent into a POSIX command on the active host. Enrolled deployments can live anywhere; containers are runtime instances, not deployment identity.",
-          suggestions: [
-            "/ai list deployments",
-            "/ai list containers",
-            "/ai check disk space",
-            "/ai inspect <slug>",
-          ],
-        });
-        return;
-      }
-      handleAiIntent(intent);
-      return;
-    }
-
-    pushCommandHistory(raw);
-    setHistoryIndex(-1);
-
-    const cmd = raw;
-    // Context-aware hint for commands known to be unavailable.
-    const capabilityHint = hintForCommand(cmd, capabilities);
-    if (capabilityHint) {
-      setHistory((h) => [
-        ...h,
-        { type: "input", text: cmd },
-        { type: "hint", text: `${capabilityHint} Running: ${cmd}` },
+      const [{ Terminal }, { FitAddon }, { io }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+        import("socket.io-client"),
       ]);
-      executeCommand(cmd, cwd, { skipInputEcho: true });
-      return;
+      if (disposed || !hostRef.current) return;
+
+      terminal = new Terminal({
+        cursorBlink: true,
+        cursorStyle: "bar",
+        convertEol: false,
+        scrollback: 10000,
+        fontSize: 13,
+        lineHeight: 1.2,
+        fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+        theme: {
+          background: "#0b0e0c",
+          foreground: "#f1f2eb",
+          cursor: "#94d85a",
+          cursorAccent: "#0b0e0c",
+          selectionBackground: "#4e5fd566",
+          black: "#151916",
+          red: "#f06b52",
+          green: "#94d85a",
+          yellow: "#e7b75b",
+          blue: "#6578ea",
+          magenta: "#9b82ef",
+          cyan: "#72c9b8",
+          white: "#f1f2eb",
+          brightBlack: "#626960",
+          brightRed: "#ff836d",
+          brightGreen: "#afe978",
+          brightYellow: "#f3ca75",
+          brightBlue: "#8090ff",
+          brightMagenta: "#b99fff",
+          brightCyan: "#8fe0d0",
+          brightWhite: "#ffffff",
+        },
+      });
+      fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.open(hostRef.current);
+      terminal.parser.registerOscHandler(52, () => true);
+      terminal.attachCustomKeyEventHandler((event) => {
+        if (event.type !== "keydown") return true;
+        if (event.key === "Tab") {
+          event.preventDefault();
+          return true;
+        }
+        if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c" && terminal?.hasSelection()) {
+          event.preventDefault();
+          void navigator.clipboard?.writeText(terminal.getSelection());
+          return false;
+        }
+        return true;
+      });
+      fitAddon.fit();
+      terminal.focus();
+      terminalRef.current = terminal;
+
+      socket = io({
+        path: "/socket.io",
+        transports: ["websocket"],
+        withCredentials: true,
+        reconnection: true,
+        reconnectionAttempts: 6,
+        reconnectionDelay: 600,
+        timeout: 12000,
+      });
+      socketRef.current = socket;
+
+      terminal.onData((chunk) => {
+        if (socket?.connected) socket.emit("terminal:input", chunk);
+      });
+      terminal.onResize(({ cols, rows }) => {
+        if (socket?.connected) socket.emit("terminal:resize", { cols, rows });
+      });
+
+      const startSession = () => {
+        if (!terminal || !socket) return;
+        setConnection("connecting");
+        socket.emit("terminal:start", {
+          vpsId: resolvedTarget.vpsId,
+          cwd: requestedCwd || resolvedTarget.cwd || undefined,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        }, (ack: { ok?: boolean; error?: string }) => {
+          if (!ack?.ok && ack?.error) {
+            setConnection("error");
+            setError(ack.error);
+          }
+        });
+      };
+
+      socket.on("connect", startSession);
+      socket.on("terminal:ready", (info: ReadyInfo) => {
+        setReady(info);
+        setConnection("connected");
+        setError(null);
+        window.setTimeout(() => {
+          fitAddon?.fit();
+          terminal?.focus();
+        }, 0);
+      });
+      socket.on("terminal:output", (chunk: string) => terminal?.write(chunk));
+      socket.on("terminal:error", (payload: { message?: string }) => {
+        const message = payload?.message || "Terminal session failed";
+        setConnection("error");
+        setError(message);
+        terminal?.writeln(`\r\n\x1b[31m[GroundControl] ${message}\x1b[0m`);
+      });
+      socket.on("terminal:exit", () => {
+        setConnection("disconnected");
+        terminal?.writeln("\r\n\x1b[90m[GroundControl] session ended\x1b[0m");
+      });
+      socket.on("disconnect", () => {
+        if (!disposed) setConnection("disconnected");
+      });
+      socket.on("connect_error", (connectError: Error) => {
+        if (disposed) return;
+        setConnection("error");
+        setError(connectError.message || "Could not connect terminal transport");
+      });
+
+      resizeObserver = new ResizeObserver(() => {
+        try { fitAddon?.fit(); } catch {}
+      });
+      resizeObserver.observe(hostRef.current);
     }
 
-    executeCommand(cmd, cwd);
+    boot().catch((bootError) => {
+      if (disposed) return;
+      setConnection("error");
+      setError(bootError instanceof Error ? bootError.message : String(bootError));
+    });
+
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      try { socket?.emit("terminal:close"); } catch {}
+      socket?.disconnect();
+      terminal?.dispose();
+      socketRef.current = null;
+      terminalRef.current = null;
+    };
+  }, [sessionKey]);
+
+  function sendControl(data: string) {
+    socketRef.current?.emit("terminal:input", data);
+    terminalRef.current?.focus();
   }
 
-  function applySuggestion(s: Suggestion) {
-    const words = input.split(/\s+/);
-    // For first word suggestions replace the whole input.
-    if (words.length <= 1 && !input.includes(" ")) {
-      setInput(s.value);
-    } else {
-      const lastSpace = input.lastIndexOf(" ");
-      setInput(input.slice(0, lastSpace + 1) + s.value);
-    }
-    setShowSuggestions(false);
-    inputRef.current?.focus();
-  }
+  const stateLabel = connection === "connected"
+    ? "Connected"
+    : connection === "connecting"
+      ? "Connecting"
+      : connection === "error"
+        ? "Attention"
+        : "Disconnected";
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (showSuggestions) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setSelectedSuggestion((i) => (i + 1) % suggestions.length);
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setSelectedSuggestion((i) => (i - 1 + suggestions.length) % suggestions.length);
-        return;
-      }
-      if (e.key === "Tab") {
-        e.preventDefault();
-        applySuggestion(suggestions[selectedSuggestion]);
-        return;
-      }
-      if (e.key === "Escape") {
-        setShowSuggestions(false);
-        return;
-      }
-    }
+  const shellLabel = target
+    ? `${target.username}@${target.host}`
+    : "Resolving target";
 
-    if (e.key === "ArrowUp" && !showSuggestions) {
-      e.preventDefault();
-      if (commandHistory.length === 0) return;
-      const idx = historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
-      setHistoryIndex(idx);
-      setInput(commandHistory[idx]);
-      return;
-    }
-    if (e.key === "ArrowDown" && !showSuggestions) {
-      e.preventDefault();
-      if (historyIndex === -1) return;
-      const idx = historyIndex + 1;
-      if (idx >= commandHistory.length) {
-        setHistoryIndex(-1);
-        setInput("");
-      } else {
-        setHistoryIndex(idx);
-        setInput(commandHistory[idx]);
-      }
-      return;
-    }
-    if (e.key === "Tab" && !showSuggestions) {
-      e.preventDefault();
-      fetchSuggestions(input);
-      return;
-    }
-  }
-
-  function onInputChange(value: string) {
-    setInput(value);
-    setHistoryIndex(-1);
-    if (value.endsWith(" ") || value.length > 2) {
-      // Debounce path/command suggestions.
-      const timer = setTimeout(() => fetchSuggestions(value), 150);
-      return () => clearTimeout(timer);
-    } else {
-      setShowSuggestions(false);
-    }
-  }
-
-  function formatOutput(entry: HistoryEntry): React.ReactNode {
-    if (entry.type === "error") {
-      return <pre className="text-error/80 whitespace-pre-wrap pl-4">{entry.text}</pre>;
-    }
-    if (entry.type === "hint") {
-      return <pre className="text-warning/80 whitespace-pre-wrap pl-4">{entry.text}</pre>;
-    }
-    if (entry.type === "ai") {
-      return (
-        <div className="flex flex-wrap items-baseline gap-2 font-mono text-sm">
-          <span className="text-success">➜</span>
-          <span className="text-muted">{cwd}</span>
-          <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">
-            /ai
-          </span>
-          <span className="text-accent">{entry.text.replace(/^\/ai\s*/, "") || "help"}</span>
-        </div>
-      );
-    }
-    if (entry.type === "input") {
-      return (
-        <div className="text-foreground">
-          <span className="text-success">➜</span>{" "}
-          <span className="text-muted">{cwd}</span> {entry.text}
-        </div>
-      );
-    }
-
-    const cmd = entry.cmd || "";
-    const text = entry.text;
-
-    if (cmd.startsWith("docker ps") || cmd.startsWith("docker container ls")) return formatDockerPs(text);
-    if (cmd.startsWith("docker images") || cmd.startsWith("docker image ls")) return formatDockerImages(text);
-    if (cmd.startsWith("docker stats")) return formatDockerStats(text);
-    if (cmd.startsWith("docker network ls")) return formatDockerNetworkLs(text);
-    if (cmd.startsWith("docker volume ls")) return formatDockerVolumeLs(text);
-
-    return <pre className="text-foreground/80 whitespace-pre-wrap pl-4">{text}</pre>;
-  }
-
-  const mainClasses = fullscreen
-    ? "fixed inset-0 z-[70] bg-background p-4 flex flex-col"
-    : "p-4 md:p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] flex flex-col";
+  const pageClass = fullscreen
+    ? "fixed inset-0 z-[80] flex flex-col bg-background p-3 md:p-4"
+    : "mx-auto flex h-[calc(100vh-2rem)] w-full max-w-[1500px] flex-col p-3 md:p-6";
 
   return (
-    <div className={mainClasses}>
-      <div className={`flex items-center justify-between ${fullscreen ? "mb-2" : "mb-4"}`}>
-        <div>
-          <h1 className={`${fullscreen ? "text-xl" : "text-2xl"} font-semibold tracking-tight`}>Terminal</h1>
-          {!fullscreen && (
-            <>
-              <p className="text-muted mt-1 text-xs">Safe remote shell on the active host</p>
-              <p className="text-warning/70 text-[11px] font-mono mt-1">
-                Commands use <span className="font-semibold">sh</span>. Invoke an installed shell explicitly when needed.
-              </p>
-            </>
-          )}
+    <div className={pageClass}>
+      <header className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${
+              connection === "connected"
+                ? "bg-success"
+                : connection === "connecting"
+                  ? "animate-pulse bg-warning"
+                  : "bg-error"
+            }`} />
+            <h1 className="truncate font-mono text-sm font-medium">{shellLabel}</h1>
+            <span className="hidden font-mono text-[10px] text-muted sm:inline">
+              {ready?.mode === "ssh" ? "SSH PTY" : ready?.mode === "local" ? "Host PTY" : "Terminal"}
+            </span>
+          </div>
+          <p className="mt-1 truncate font-mono text-[10px] text-muted">
+            {error || `${stateLabel} · native shell session · Tab and control keys go directly to the host`}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center gap-1.5">
+          <Link href="/ai" className="gc-button gc-button-quiet" title="Open GroundControl intelligence">
+            <Bot size={13} aria-hidden="true" />
+            <span className="hidden sm:inline">Copilot</span>
+          </Link>
           <button
-            onClick={() => setFullscreen((f) => !f)}
-            className="px-3 py-1.5 text-xs font-mono border border-border rounded-md hover:border-accent hover:text-accent transition-colors"
-            title={fullscreen ? "Exit full screen" : "Full screen"}
+            type="button"
+            onClick={() => terminalRef.current?.clear()}
+            className="gc-button gc-button-quiet"
+            title="Clear terminal viewport"
           >
-            {fullscreen ? "Exit" : "Full Screen"}
+            <Trash2 size={13} aria-hidden="true" />
+            <span className="hidden sm:inline">Clear</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSessionKey((value) => value + 1)}
+            className="gc-button gc-button-quiet"
+            title="Start a fresh terminal session"
+          >
+            <RefreshCw size={13} aria-hidden="true" />
+            <span className="hidden sm:inline">New session</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFullscreen((value) => !value)}
+            className="gc-button gc-button-quiet"
+            title={fullscreen ? "Exit fullscreen" : "Fullscreen terminal"}
+          >
+            {fullscreen ? <Minimize2 size={13} aria-hidden="true" /> : <Maximize2 size={13} aria-hidden="true" />}
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Capability summary + helper chips */}
-      {!fullscreen && (
-        <div className="mb-4 space-y-2">
-          <div className="flex items-center gap-2 text-[10px] font-mono text-muted">
-            <span className="">Capabilities</span>
-            {capabilitiesLoading ? (
-              <span className="animate-pulse">detecting…</span>
-            ) : summary ? (
-              <span className="text-foreground/70">{summary}</span>
-            ) : (
-              <span>unknown</span>
-            )}
+      <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden border border-border bg-bg-darker shadow-[0_20px_70px_rgba(0,0,0,0.22)]">
+        <div className="flex h-8 shrink-0 items-center justify-between border-b border-border bg-card/80 px-3">
+          <div className="flex items-center gap-1.5" aria-hidden="true">
+            <span className="h-2 w-2 rounded-full bg-error/75" />
+            <span className="h-2 w-2 rounded-full bg-warning/75" />
+            <span className="h-2 w-2 rounded-full bg-success/75" />
           </div>
-          <div className="flex flex-wrap gap-2">
-            {helperChips.map((chip) => (
-              <button
-                key={chip}
-                onClick={() => {
-                  setInput(chip);
-                  inputRef.current?.focus();
-                }}
-                className="px-2.5 py-1 text-[10px] font-mono border border-border rounded-md hover:border-accent hover:text-accent transition-colors"
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="flex-1 bg-card border border-border rounded-xl flex flex-col overflow-hidden relative">
-        <div className="flex-1 p-4 overflow-auto font-mono text-sm scrollbar-thin">
-          {history.length === 0 && (
-            <div className="text-muted text-sm">
-              <p>GroundControl Terminal v1.0</p>
-              <p className="mt-1">Commands run on {target?.host || "the selected VPS"}. Reload this terminal to change the target.</p>
-              <p className="mt-1 text-warning/70">Directory changes are confirmed by the server. Each command starts a new shell.</p>
-              <p className="mt-1 text-accent/80">
-                Tip: type <span className="rounded bg-accent/15 px-1 text-accent">/ai</span>{" "}
-                <span className="text-muted">list deployments</span> for GroundControl-aware commands.
-              </p>
-            </div>
-          )}
-          {history.map((entry, i) => (
-            <div key={i} className="mb-2">
-              {formatOutput(entry)}
-            </div>
-          ))}
-          {aiLoading && (
-            <div className="mb-2 flex items-center gap-2 font-mono text-xs text-accent">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-              Generating command…
-            </div>
-          )}
-          <div ref={bottomRef} />
+          <span className="max-w-[55vw] truncate font-mono text-[9px] text-muted">
+            {ready?.cwd || target?.cwd || "home"} · {stateLabel}
+          </span>
+          <span className="font-mono text-[9px] text-muted">xterm-256color</span>
         </div>
 
-        {/* AI suggestion / help */}
-        {aiSuggestion && (
-          <div className="border-t border-accent/30 bg-accent/5 p-3">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--accent-ink)]">
-                /ai
-              </span>
-              <span className="text-xs font-mono text-accent">
-                {aiSuggestion.mode === "help" ? "Help" : "Suggested command"}
-              </span>
-            </div>
-            {aiSuggestion.help && (
-              <div className="mb-2 text-xs leading-relaxed text-foreground/85">{aiSuggestion.help}</div>
-            )}
-            {aiSuggestion.command && (
-              <>
-                <div className="mb-1 break-all rounded-md border border-accent/20 bg-bg-darker px-2 py-1.5 font-mono text-sm text-accent">
-                  {aiSuggestion.command}
-                </div>
-                {aiSuggestion.explanation && (
-                  <div className="mb-2 text-xs text-muted">{aiSuggestion.explanation}</div>
-                )}
-              </>
-            )}
-            {aiSuggestion.suggestions?.length && aiSuggestion.suggestions.length > 0 && (
-              <div className="mb-2 space-y-1">
-                {aiSuggestion.suggestions.map((s: string, i: number) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => {
-                      if (s.startsWith("/ai")) {
-                        setInput(s);
-                        setAiSuggestion(null);
-                        inputRef.current?.focus();
-                      } else if (s.includes("Co-Pilot")) {
-                        window.location.href = "/ai";
-                      } else {
-                        setInput(s.startsWith("/") ? s : `/ai ${s}`);
-                        inputRef.current?.focus();
-                      }
-                    }}
-                    className="block w-full rounded-md px-2 py-1 text-left text-xs font-mono text-muted transition-colors hover:bg-accent/10 hover:text-accent"
-                  >
-                    → {s}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              {aiSuggestion.command && (
-                <button
-                  onClick={() => {
-                    executeCommand(aiSuggestion.command!, cwd);
-                    setAiSuggestion(null);
-                  }}
-                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-mono text-[var(--accent-ink)] transition-colors hover:bg-accent-bright"
-                >
-                  Run
-                </button>
-              )}
-              {aiSuggestion.command && (
-                <button
-                  onClick={() => {
-                    setInput(aiSuggestion.command || "");
-                    setAiSuggestion(null);
-                    inputRef.current?.focus();
-                  }}
-                  className="rounded-md border border-border px-3 py-1.5 text-xs font-mono text-muted hover:border-accent hover:text-accent"
-                >
-                  Edit
-                </button>
-              )}
-              <button
-                onClick={() => setAiSuggestion(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-mono text-muted hover:border-accent"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        )}
+        <div
+          ref={hostRef}
+          className="min-h-0 flex-1 bg-bg-darker px-2 py-2 md:px-3 md:py-3"
+          onClick={() => terminalRef.current?.focus()}
+        />
 
-        <form
-          onSubmit={handleSubmit}
-          className={`border-t p-3 flex items-center gap-3 relative transition-colors ${
-            input.startsWith("/ai")
-              ? "border-accent/40 bg-accent/5"
-              : "border-border"
-          }`}
-        >
-          <span className="text-success font-mono text-sm shrink-0">➜</span>
-          <span className="text-muted font-mono text-sm shrink-0 hidden sm:inline">{cwd}</span>
-          {input.startsWith("/ai") && (
-            <span className="hidden shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--accent-ink)] sm:inline">
-              AI
-            </span>
-          )}
-          <div className="relative flex-1">
-            <input
-              ref={inputRef}
-              type="text"
-              value={input}
-              onChange={(e) => onInputChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={working ? "Executing..." : aiLoading ? "AI is thinking..." : "command or /ai list deployments"}
-              disabled={working}
-              className={`w-full bg-transparent text-sm font-mono outline-none placeholder:text-muted min-w-0 ${
-                input.startsWith("/ai") ? "text-accent" : "text-foreground"
-              }`}
-              autoFocus
-            />
-            {showSuggestions && (
-              <div
-                ref={suggestionsRef}
-                className="absolute bottom-full left-0 mb-1 w-full max-h-56 overflow-auto bg-card border border-border rounded-lg shadow-lg z-10"
-              >
-                {suggestions.map((s, i) => (
-                  <button
-                    key={`${s.type}-${s.value}`}
-                    type="button"
-                    onClick={() => applySuggestion(s)}
-                    className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between ${
-                      i === selectedSuggestion ? "bg-accent/10" : "hover:bg-background/50"
-                    }`}
-                  >
-                    <span className="truncate">{s.label}</span>
-                    <span className="text-[9px] uppercase text-muted ml-2 shrink-0">{s.type}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </form>
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-card/70 px-2 py-1.5 md:hidden">
+          <TerminalKey label="Tab" onClick={() => sendControl("\t")} />
+          <TerminalKey label="Esc" onClick={() => sendControl("\x1b")} />
+          <TerminalKey label="Ctrl+C" onClick={() => sendControl("\x03")} />
+          <TerminalKey label="Ctrl+L" onClick={() => sendControl("\x0c")} />
+          <TerminalKey label="↑" onClick={() => sendControl("\x1b[A")} />
+          <TerminalKey label="↓" onClick={() => sendControl("\x1b[B")} />
+        </div>
+      </section>
 
-        {bashismWarnings.length > 0 && (
-          <div className="px-3 pb-2 text-[10px] text-warning font-mono">
-            Warning: possible bashisms detected ({bashismWarnings.join(", ")}). Use an explicit bash invocation if bash is installed.
-          </div>
-        )}
-      </div>
+      <footer className="mt-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[9px] text-muted">
+        <span>Tab completion · Ctrl+C interrupt · arrows/history · ANSI · interactive commands</span>
+        <span>Session pinned to VPS {target?.vpsId ?? "…"}</span>
+      </footer>
     </div>
   );
 }
 
-function formatDockerPs(output: string): React.ReactNode {
-  const lines = output.split("\n").filter((l) => l.trim());
-  if (lines.length < 1 || !lines[0].includes("CONTAINER ID")) {
-    return <pre className="text-foreground/80 whitespace-pre-wrap pl-4">{output}</pre>;
-  }
-
-  const headers = ["CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "PORTS", "NAMES"];
-  const headerLine = lines[0];
-  const positions = headers.map((h) => headerLine.indexOf(h)).filter((p) => p >= 0);
-  positions.push(headerLine.length);
-
-  const rows = lines.slice(1);
-
+function TerminalKey({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <div className="pl-4 overflow-x-auto">
-      <table className="text-[11px] font-mono border-collapse">
-        <thead>
-          <tr className="text-muted border-b border-border">
-            {headers.map((h, i) => (
-              <th key={i} className="text-left px-2 py-1 whitespace-nowrap">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-border/30 hover:bg-background/30">
-              {positions.slice(0, -1).map((pos, ci) => (
-                <td key={ci} className="px-2 py-1 text-foreground/80 whitespace-nowrap">
-                  {row.slice(pos, positions[ci + 1]).trim()}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function formatDockerImages(output: string): React.ReactNode {
-  const lines = output.split("\n").filter((l) => l.trim());
-  if (lines.length < 1 || !lines[0].includes("REPOSITORY")) {
-    return <pre className="text-foreground/80 whitespace-pre-wrap pl-4">{output}</pre>;
-  }
-
-  const headers = ["REPOSITORY", "TAG", "IMAGE ID", "CREATED", "SIZE"];
-  const headerLine = lines[0];
-  const positions = headers.map((h) => headerLine.indexOf(h)).filter((p) => p >= 0);
-  positions.push(headerLine.length);
-
-  const rows = lines.slice(1);
-
-  return (
-    <div className="pl-4 overflow-x-auto">
-      <table className="text-[11px] font-mono border-collapse">
-        <thead>
-          <tr className="text-muted border-b border-border">
-            {headers.map((h, i) => (
-              <th key={i} className="text-left px-2 py-1 whitespace-nowrap">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-border/30 hover:bg-background/30">
-              {positions.slice(0, -1).map((pos, ci) => (
-                <td key={ci} className="px-2 py-1 text-foreground/80 whitespace-nowrap">
-                  {row.slice(pos, positions[ci + 1]).trim()}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function formatDockerStats(output: string): React.ReactNode {
-  const lines = output.split("\n").filter((l) => l.trim());
-  if (lines.length < 1 || !lines[0].includes("CONTAINER ID")) {
-    return <pre className="text-foreground/80 whitespace-pre-wrap pl-4">{output}</pre>;
-  }
-
-  const headers = ["CONTAINER ID", "NAME", "CPU %", "MEM USAGE / LIMIT", "MEM %", "NET I/O", "BLOCK I/O", "PIDS"];
-  const headerLine = lines[0];
-  const positions = headers.map((h) => headerLine.indexOf(h)).filter((p) => p >= 0);
-  positions.push(headerLine.length);
-
-  const rows = lines.slice(1);
-
-  return (
-    <div className="pl-4 overflow-x-auto">
-      <table className="text-[11px] font-mono border-collapse">
-        <thead>
-          <tr className="text-muted border-b border-border">
-            {headers.map((h, i) => (
-              <th key={i} className="text-left px-2 py-1 whitespace-nowrap">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-border/30 hover:bg-background/30">
-              {positions.slice(0, -1).map((pos, ci) => (
-                <td key={ci} className="px-2 py-1 text-foreground/80 whitespace-nowrap">
-                  {row.slice(pos, positions[ci + 1]).trim()}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function formatDockerNetworkLs(output: string): React.ReactNode {
-  const lines = output.split("\n").filter((l) => l.trim());
-  if (lines.length < 1 || !lines[0].includes("NETWORK ID")) {
-    return <pre className="text-foreground/80 whitespace-pre-wrap pl-4">{output}</pre>;
-  }
-  const headers = ["NETWORK ID", "NAME", "DRIVER", "SCOPE"];
-  const headerLine = lines[0];
-  const positions = headers.map((h) => headerLine.indexOf(h)).filter((p) => p >= 0);
-  positions.push(headerLine.length);
-  const rows = lines.slice(1);
-
-  return (
-    <div className="pl-4 overflow-x-auto">
-      <table className="text-[11px] font-mono border-collapse">
-        <thead>
-          <tr className="text-muted border-b border-border">
-            {headers.map((h, i) => (
-              <th key={i} className="text-left px-2 py-1 whitespace-nowrap">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-border/30 hover:bg-background/30">
-              {positions.slice(0, -1).map((pos, ci) => (
-                <td key={ci} className="px-2 py-1 text-foreground/80 whitespace-nowrap">
-                  {row.slice(pos, positions[ci + 1]).trim()}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function formatDockerVolumeLs(output: string): React.ReactNode {
-  const lines = output.split("\n").filter((l) => l.trim());
-  if (lines.length < 1 || !lines[0].includes("VOLUME NAME")) {
-    return <pre className="text-foreground/80 whitespace-pre-wrap pl-4">{output}</pre>;
-  }
-  const headers = ["DRIVER", "VOLUME NAME"];
-  const headerLine = lines[0];
-  const positions = headers.map((h) => headerLine.indexOf(h)).filter((p) => p >= 0);
-  positions.push(headerLine.length);
-  const rows = lines.slice(1);
-
-  return (
-    <div className="pl-4 overflow-x-auto">
-      <table className="text-[11px] font-mono border-collapse">
-        <thead>
-          <tr className="text-muted border-b border-border">
-            {headers.map((h, i) => (
-              <th key={i} className="text-left px-2 py-1 whitespace-nowrap">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-border/30 hover:bg-background/30">
-              {positions.slice(0, -1).map((pos, ci) => (
-                <td key={ci} className="px-2 py-1 text-foreground/80 whitespace-nowrap">
-                  {row.slice(pos, positions[ci + 1]).trim()}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className="shrink-0 rounded border border-border bg-background px-2.5 py-1 font-mono text-[10px] text-muted active:border-accent active:text-foreground"
+    >
+      {label}
+    </button>
   );
 }
