@@ -33,7 +33,7 @@ type ConnectorState = {
   provider: string;
   icon: "gemini" | "daytona" | "generic";
   configured: boolean;
-  status: "connected" | "disconnected" | "error";
+  status: "configured" | "connected" | "disconnected" | "error";
   config: Record<string, string>;
   description: string;
   purpose: string;
@@ -137,7 +137,7 @@ export default function ConnectorsPanel() {
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || "Save failed");
       setConnectors((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, config: draft, configured: true, status: "disconnected" } : c))
+        prev.map((c) => (c.id === id ? { ...c, config: draft, configured: true, status: "configured" } : c))
       );
       setEditing(null);
       setMessage({ tone: "success", text: `${id} connector saved. Verify capabilities before treating it as ready.` });
@@ -159,7 +159,7 @@ export default function ConnectorsPanel() {
       const data = await res.json();
       if (data.ok) {
         setConnectors((prev) =>
-          prev.map((c) => (c.id === id ? { ...c, status: "connected" } : c))
+          prev.map((c) => (c.id === id ? { ...c, status: "configured" } : c))
         );
         setMessage({ tone: "success", text: data.message || "Connection successful" });
       } else {
@@ -216,20 +216,20 @@ export default function ConnectorsPanel() {
       )}
 
       {connectors.map((conn) => (
-        <div key={conn.id} className={`border bg-card ${conn.status === "connected" ? "border-success/30" : conn.status === "error" ? "border-error/30" : "border-border"}`}>
+        <div key={conn.id} className={`border bg-card ${conn.status === "error" ? "border-error/30" : "border-border"}`}>
           {/* Header */}
           <div className="flex items-start justify-between gap-4 px-5 py-4">
             <div className="flex items-start gap-3">
-              <div className={`mt-0.5 rounded p-1.5 ${conn.status === "connected" ? "bg-success/10 text-success" : conn.status === "error" ? "bg-error/10 text-error" : "bg-muted/10 text-muted"}`}>
+              <div className={`mt-0.5 rounded p-1.5 ${conn.status === "error" ? "bg-error/10 text-error" : conn.configured ? "bg-warning/10 text-warning" : "bg-muted/10 text-muted"}`}>
                 <IconComponent icon={conn.icon} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium">{conn.name}</h3>
                   <span className={`rounded px-1.5 py-0.5 text-[9px] font-mono ${
-                    conn.status === "connected" ? "bg-success/10 text-success" : conn.status === "error" ? "bg-error/10 text-error" : "bg-warning/10 text-warning"
+                    conn.status === "error" ? "bg-error/10 text-error" : "bg-warning/10 text-warning"
                   }`}>
-                    {conn.status === "connected" ? "connected" : conn.status === "error" ? "error" : conn.configured ? "configured" : "not configured"}
+                    {conn.status === "error" ? "error" : conn.configured ? "configured" : "not configured"}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-muted">{conn.description}</p>
