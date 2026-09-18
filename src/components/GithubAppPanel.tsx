@@ -36,7 +36,7 @@ type Installation = {
 };
 
 type GithubAppState = {
-  status: "not_configured" | "app_ready" | "connected";
+  status: "not_configured" | "app_ready" | "installed";
   publicUrl: string;
   webhookUrl?: string;
   lastWebhook?: { event: string; processedAt: string | null } | null;
@@ -230,19 +230,19 @@ export default function GithubAppPanel() {
     }
   }
 
-  const statusLabel = state.status === "connected" ? "connected" : state.status === "app_ready" ? "installation required" : "not configured";
+  const statusLabel = state.status === "installed" ? "installed" : state.status === "app_ready" ? "installation required" : "not configured";
 
   return (
     <section className="overflow-hidden border border-border bg-card">
       <div className="flex flex-col gap-4 border-b border-border px-5 py-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex min-w-0 items-start gap-3">
-          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border ${state.status === "connected" ? "border-success/30 bg-success/10 text-success" : "border-border bg-background text-muted"}`}>
+          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border ${state.status === "installed" ? "border-success/30 bg-success/10 text-success" : "border-border bg-background text-muted"}`}>
             <FolderGit2 className="h-4.5 w-4.5" />
           </span>
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold">GitHub App</h2>
-              <span className={`rounded-sm px-2 py-0.5 font-mono text-[9px] ${state.status === "connected" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>
+              <span className={`rounded-sm px-2 py-0.5 font-mono text-[9px] ${state.status === "installed" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>
                 {loading ? "checking" : statusLabel}
               </span>
             </div>
