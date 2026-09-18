@@ -46,6 +46,22 @@ async function markFailed(prisma, operation, error, evidence) {
   });
 }
 
+async function markUncertain(prisma, operation, error, evidence) {
+  await prisma.agentOperation.update({
+    where: { id: operation.id },
+    data: {
+      status: "uncertain",
+      error: String(error || "The mutation outcome could not be confirmed").slice(0, 4000),
+      evidenceJson: JSON.stringify({
+        ...(evidence || {}),
+        recovery: "inspect_before_retry",
+      }).slice(0, 20000),
+      finishedAt: new Date(),
+      leaseUntil: null,
+    },
+  });
+}
+
 async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
   const current = await prisma.agentOperation.findUnique({
     where: { id: operation.id },
@@ -263,7 +279,12 @@ function startAgentOperationWorker({ prisma, port, jwtSecret }) {
       if (operation) {
         await executeRedeploy({ prisma, operation, baseUrl, jwtSecret }).catch(async (error) => {
           console.error("[agent-worker] operation failed", operation.id, error);
-          await markFailed(prisma, operation, error instanceof Error ? error.message : String(error)).catch(() => {});
+          await markUncertain(
+            prisma,
+            operation,
+            error instanceof Error ? error.message : String(error),
+            { phase: "transport_or_worker_failure" }
+          ).catch(() => {});
         });
       }
     } catch (error) {
