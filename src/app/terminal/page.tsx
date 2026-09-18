@@ -306,7 +306,7 @@ export default function TerminalPage() {
         setSelectedSuggestion((i) => (i - 1 + suggestions.length) % suggestions.length);
         return;
       }
-      if (e.key === "Tab" || e.key === "Enter") {
+      if (e.key === "Tab") {
         e.preventDefault();
         applySuggestion(suggestions[selectedSuggestion]);
         return;
