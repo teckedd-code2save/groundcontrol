@@ -9,6 +9,7 @@ describe("GroundControl MCP tool catalog", () => {
     expect(names).toContain("deployment.list");
     expect(names).toContain("deployment.inspect");
     expect(names).toContain("deployment.health");
+    expect(names).toContain("deployment.config.check");
     expect(names).toContain("operation.get");
     expect(names).not.toContain("deployment.redeploy");
   });
@@ -32,9 +33,14 @@ describe("GroundControl MCP tool catalog", () => {
       "deployment.inspect",
       "deployment.logs",
       "deployment.health",
+      "deployment.config.check",
       "deployment.redeploy",
       "operation.get",
     ]);
+
+    const configTool = tools.find((tool) => tool.name === "deployment.config.check");
+    expect(configTool?.securitySchemes[0].scopes).toEqual(["deployment:read"]);
+    expect(JSON.stringify(configTool?.outputSchema)).not.toContain('"value"');
 
     for (const tool of tools) {
       expect(tool.title).toBeTruthy();

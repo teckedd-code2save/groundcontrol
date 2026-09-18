@@ -45,4 +45,4 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Access tokens and refresh tokens are opaque and stored only as hashes. Refresh tokens rotate. Revoking a grant revokes live tokens immediately.
 - Agent grants are resource-scoped. Every deployment tool must resolve the requested deployment through the grant's approved `EnrolledDeployment` IDs before reading or mutating it.
 - External write operations must be idempotent and durable. Do not replay a mutation after an uncertain worker interruption; surface `uncertain` and require reconciliation/inspection.
-- The first MCP surface is intentionally narrow: `deployment.list`, `deployment.inspect`, `deployment.logs`, `deployment.health`, `deployment.redeploy`, and `operation.get`.
+- The first MCP surface is intentionally narrow: `deployment.list`, `deployment.inspect`, `deployment.logs`, `deployment.health`, `deployment.config.check`, `deployment.redeploy`, and `operation.get`. `deployment.config.check` is exact-key metadata only: never return secret values or bulk-list configuration names.

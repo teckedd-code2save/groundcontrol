@@ -116,6 +116,7 @@ jobs:
               -H 'Content-Type: application/json' \
               --data '{"jsonrpc":"2.0","id":"tools-smoke","method":"tools/list","params":{}}')"
             printf '%s' "$MCP_TOOLS" | grep -q '"deployment.list"'
+            printf '%s' "$MCP_TOOLS" | grep -q '"deployment.config.check"'
             printf '%s' "$MCP_TOOLS" | grep -q '"outputSchema"'
             printf '%s' "$MCP_TOOLS" | grep -q '"securitySchemes"'
 
