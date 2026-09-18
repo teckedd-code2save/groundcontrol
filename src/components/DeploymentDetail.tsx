@@ -25,6 +25,14 @@ import { deploymentTargetDisplayName } from "@/lib/deployment-target-label";
 import { deploymentRunProgress, type DeploymentStageId } from "@/lib/operator-progress";
 
 type Group = { id: number; name: string; slug: string; description: string };
+type GithubRepositoryOption = {
+  id: string;
+  fullName: string;
+  htmlUrl: string;
+  defaultBranch: string;
+  isPrivate: boolean;
+  installationId: string;
+};
 type Release = {
   id: number;
   status: string;
@@ -63,6 +71,7 @@ type DeploymentDetailRecord = {
   legacyProjectSlug?: string | null;
   vpsConfigId?: number | null;
   repoUrl?: string | null;
+  repositoryIdentity?: (GithubRepositoryOption & { source: string }) | null;
   deployedCommit?: string | null;
   domain?: string | null;
   publicUrl?: string | null;
@@ -136,6 +145,9 @@ export default function DeploymentDetail({
   const [newDomainInput, setNewDomainInput] = useState("");
   const [domainBusy, setDomainBusy] = useState(false);
   const [repoUrlInput, setRepoUrlInput] = useState("");
+  const [githubRepositories, setGithubRepositories] = useState<GithubRepositoryOption[]>([]);
+  const [selectedRepositoryId, setSelectedRepositoryId] = useState("");
+  const [repositoryAccessMode, setRepositoryAccessMode] = useState<"github_app" | "manual">("manual");
   const [sourceDefaultBranch, setSourceDefaultBranch] = useState("main");
   const [sourceCommitInput, setSourceCommitInput] = useState("");
   const [sourceRootInput, setSourceRootInput] = useState("");
@@ -186,6 +198,22 @@ export default function DeploymentDetail({
       setDeployment(data.deployment);
       setProjects(Array.isArray(data.projects) ? data.projects : []);
       setContainers(Array.isArray(data.deployment?.runtime?.containers) ? data.deployment.runtime.containers : []);
+
+      if (data.deployment?.id) {
+        try {
+          const linkResponse = await fetch(`/api/github/repository-links?deploymentId=${encodeURIComponent(String(data.deployment.id))}`, { cache: "no-store" });
+          const linkData = await readJson(linkResponse);
+          if (linkResponse.ok) {
+            const options = Array.isArray(linkData.repositories) ? linkData.repositories : [];
+            setGithubRepositories(options);
+            setSelectedRepositoryId(linkData.current?.id || "");
+            setRepositoryAccessMode(options.length > 0 ? "github_app" : "manual");
+          }
+        } catch {
+          setGithubRepositories([]);
+          setRepositoryAccessMode("manual");
+        }
+      }
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -204,8 +232,9 @@ export default function DeploymentDetail({
     if (!deployment) return;
     const source = deployment.sourceRepair || {};
     setPublicUrlInput(liveUrl || "");
-    setRepoUrlInput(deployment.repoUrl || "");
-    setSourceDefaultBranch(source.defaultBranch || "main");
+    setRepoUrlInput(deployment.repositoryIdentity?.htmlUrl || deployment.repoUrl || "");
+    setSelectedRepositoryId(deployment.repositoryIdentity?.id || "");
+    setSourceDefaultBranch(deployment.repositoryIdentity?.defaultBranch || source.defaultBranch || "main");
     setSourceCommitInput(source.deployedCommit || deployment.deployedCommit || "");
     setSourceRootInput(source.sourceRoot || "");
     setDaytonaEnabled(source.daytonaEnabled !== false);
@@ -396,6 +425,32 @@ export default function DeploymentDetail({
       });
       const data = await readJson(response);
       if (!response.ok || data.error) throw new Error(data.error || "Could not save source settings");
+
+      if (selectedRepositoryId) {
+        const linkResponse = await fetch("/api/github/repository-links", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deploymentId: deployment.id,
+            repositoryId: selectedRepositoryId,
+          }),
+        });
+        const linkData = await readJson(linkResponse);
+        if (!linkResponse.ok || linkData.error) {
+          throw new Error(linkData.error || "Could not link the selected GitHub repository");
+        }
+      } else if (deployment.repositoryIdentity?.source === "explicit") {
+        const unlinkResponse = await fetch("/api/github/repository-links", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deploymentId: deployment.id }),
+        });
+        const unlinkData = await readJson(unlinkResponse);
+        if (!unlinkResponse.ok || unlinkData.error) {
+          throw new Error(unlinkData.error || "Could not return repository identity to automatic matching");
+        }
+      }
+
       await load();
       setMessage({ tone: "success", text: "Source and repair settings saved." });
     } catch (error) {
@@ -849,16 +904,66 @@ export default function DeploymentDetail({
                     />
                     <span className="mt-1 block text-[10px] text-muted">Used for public verification after deploy and repair.</span>
                   </label>
-                  <label className="block">
-                    <span className="text-xs font-medium text-muted">GitHub repository</span>
+                  <div className="block">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-medium text-muted">GitHub repository</span>
+                      <span className={`rounded-sm px-2 py-0.5 font-mono text-[9px] ${
+                        deployment.repositoryIdentity?.source === "explicit"
+                          ? "bg-success/10 text-success"
+                          : githubRepositories.length > 0
+                            ? "bg-warning/10 text-warning"
+                            : "bg-muted/10 text-muted"
+                      }`}>
+                        {deployment.repositoryIdentity?.source === "explicit"
+                          ? "explicit"
+                          : deployment.repositoryIdentity
+                            ? "inferred"
+                            : repositoryAccessMode === "github_app"
+                              ? "select repository"
+                              : "manual"}
+                      </span>
+                    </div>
+
+                    {githubRepositories.length > 0 && (
+                      <select
+                        value={selectedRepositoryId}
+                        onChange={(event) => {
+                          const id = event.target.value;
+                          setSelectedRepositoryId(id);
+                          const repository = githubRepositories.find((item) => item.id === id);
+                          if (repository) {
+                            setRepoUrlInput(repository.htmlUrl);
+                            setSourceDefaultBranch(repository.defaultBranch || "main");
+                          }
+                        }}
+                        className="gc-field mt-2 w-full font-mono"
+                      >
+                        <option value="">Use URL / automatic matching</option>
+                        {githubRepositories.map((repository) => (
+                          <option key={repository.id} value={repository.id}>
+                            {repository.fullName}{repository.isPrivate ? " · private" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
                     <input
                       value={repoUrlInput}
-                      onChange={(event) => setRepoUrlInput(event.target.value)}
+                      onChange={(event) => {
+                        setRepoUrlInput(event.target.value);
+                        const normalized = event.target.value.trim().replace(/\.git$/i, "").toLowerCase();
+                        const match = githubRepositories.find((repository) => repository.htmlUrl.toLowerCase() === normalized);
+                        setSelectedRepositoryId(match?.id || "");
+                      }}
                       placeholder="https://github.com/owner/repository"
                       className="gc-field mt-2 w-full font-mono"
                     />
-                    <span className="mt-1 block text-[10px] text-muted">Dedicated source field; Intelligence will not guess this from runtime names.</span>
-                  </label>
+                    <span className="mt-1 block text-[10px] text-muted">
+                      {githubRepositories.length > 0
+                        ? "Prefer an installation repository. Manual URL remains available for public or external sources."
+                        : "Connect the GitHub App to discover private and installation-scoped repositories."}
+                    </span>
+                  </div>
                   <label className="block">
                     <span className="text-xs font-medium text-muted">Default branch</span>
                     <input
