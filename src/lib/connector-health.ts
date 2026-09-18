@@ -360,10 +360,22 @@ async function githubHealth(refresh: boolean): Promise<ConnectorHealth> {
 }
 
 async function daytonaHealth(refresh: boolean, deep: boolean): Promise<ConnectorHealth> {
-  const [config, verifiedAtRow, lifecycleRow] = await Promise.all([
+  const [
+    config,
+    verifiedAtRow,
+    lifecycleRow,
+    repositoryVerifiedAtRow,
+    repositoryDeploymentRow,
+    repositoryRevisionRow,
+    repositoryOutcomeRow,
+  ] = await Promise.all([
     loadDaytonaRuntimeConfig(),
     prisma.appConfig.findUnique({ where: { key: "connector_daytona_verifiedAt" } }),
     prisma.appConfig.findUnique({ where: { key: "connector_daytona_lifecycleVerifiedAt" } }),
+    prisma.appConfig.findUnique({ where: { key: "connector_daytona_repositoryVerifiedAt" } }),
+    prisma.appConfig.findUnique({ where: { key: "connector_daytona_repositoryVerifiedDeployment" } }),
+    prisma.appConfig.findUnique({ where: { key: "connector_daytona_repositoryVerifiedRevision" } }),
+    prisma.appConfig.findUnique({ where: { key: "connector_daytona_repositoryValidationOutcome" } }),
   ]);
 
   if (!config) {
@@ -471,13 +483,25 @@ async function daytonaHealth(refresh: boolean, deep: boolean): Promise<Connector
     {
       id: "sandbox.repository_clone",
       label: "Exact revision reproduction",
-      status: lifecycleStatus === "healthy" ? "unverified" : lifecycleStatus,
-      detail: lifecycleStatus === "healthy"
-        ? "Sandbox lifecycle works, but the deployment → exact repository revision reproduction acceptance has not yet been proven."
-        : "Exact-revision reproduction cannot be trusted until sandbox lifecycle is healthy.",
-      remediation: lifecycleStatus === "healthy"
-        ? "Run the Daytona acceptance flow against one linked deployment and exact revision."
+      status: lifecycleStatus !== "healthy"
+        ? lifecycleStatus
+        : repositoryVerifiedAtRow?.value && isRecent(repositoryVerifiedAtRow.value)
+          ? "healthy"
+          : "unverified",
+      detail: lifecycleStatus !== "healthy"
+        ? "Exact-revision reproduction cannot be trusted until sandbox lifecycle is healthy."
+        : repositoryVerifiedAtRow?.value && isRecent(repositoryVerifiedAtRow.value)
+          ? `Exact repository revision verified for ${repositoryDeploymentRow?.value || "a deployment"} at ${repositoryRevisionRow?.value?.slice(0, 12) || "recorded revision"}; ${repositoryOutcomeRow?.value || "validation executed"}.`
+          : "Sandbox lifecycle works, but deployment → exact repository revision validation has not been proven recently.",
+      remediation: lifecycleStatus === "healthy" && !(repositoryVerifiedAtRow?.value && isRecent(repositoryVerifiedAtRow.value))
+        ? "Run the Daytona acceptance flow against one explicitly linked deployment and exact revision."
         : undefined,
+      checkedAt: repositoryVerifiedAtRow?.value || null,
+      metadata: repositoryVerifiedAtRow?.value ? {
+        deployment: repositoryDeploymentRow?.value || "",
+        revision: repositoryRevisionRow?.value || "",
+        validationOutcome: repositoryOutcomeRow?.value || "",
+      } : undefined,
     },
   ];
 
