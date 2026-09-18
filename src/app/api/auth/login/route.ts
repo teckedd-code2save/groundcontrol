@@ -36,7 +36,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Too many login attempts. Try again in 15 minutes." }, { status: 429 });
     }
 
-    const { username, password } = await req.json();
+    const { username, password, next } = await req.json();
+    const safeNext = typeof next === "string" && next.startsWith("/") && !next.startsWith("//") && !/[\r\n\0]/.test(next) && next.length <= 4096
+      ? next
+      : "/";
     if (!username || !password) {
       return NextResponse.json({ error: "Username and password required" }, { status: 400 });
     }
@@ -66,7 +69,7 @@ export async function POST(req: NextRequest) {
       username: user.username,
       forcePasswordChange: user.forcePasswordChange,
       // Clients can route first-time bootstrap users to the update form.
-      next: user.forcePasswordChange ? "/force-password-change" : "/",
+      next: user.forcePasswordChange ? "/force-password-change" : safeNext,
     });
     return setAuthCookie(response, { id: user.id, username: user.username, role: user.role }, req);
   } catch (err) {
