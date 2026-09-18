@@ -30,7 +30,10 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.location.hash === "#install") {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("next")) setShowLogin(true);
+    if (window.location.hash === "#install") {
       window.setTimeout(() => scrollToInstall(), 150);
     }
   }, []);
@@ -38,7 +41,7 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setLoading(true); setError("");
     try {
-      const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+      const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, next: new URLSearchParams(window.location.search).get("next") || undefined }) });
       if (res.ok) {
         const d = await res.json().catch(() => ({}));
         // Full navigation so the Set-Cookie session is always applied (client

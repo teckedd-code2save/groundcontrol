@@ -14,9 +14,9 @@ interface MeResponse {
   forcePasswordChange?: boolean;
 }
 
-const PUBLIC_PATHS = ["/login", "/setup"];
+const PUBLIC_PATHS = ["/login", "/setup", "/oauth/authorize"];
 const PUBLIC_PREFIXES = ["/shared/chat/"];
-const NO_LAYOUT_PATHS = ["/login", "/setup", "/force-password-change"];
+const NO_LAYOUT_PATHS = ["/login", "/setup", "/force-password-change", "/oauth/authorize"];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
