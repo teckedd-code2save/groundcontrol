@@ -7,9 +7,9 @@ import { getActiveVps, shQuote, type VpsConnection } from "@/lib/vps";
 const PREFIX = "github_registry_";
 const DOCKER_CONFIG = '"${HOME}/.groundcontrol/docker"';
 
-type RegistryStatus = "not_configured" | "ready" | "error";
+export type RegistryStatus = "not_configured" | "ready" | "error";
 
-type RegistryState = {
+export type RegistryState = {
   status: RegistryStatus;
   configured: boolean;
   username: string;
@@ -78,6 +78,99 @@ export async function ensureGithubRegistryLogin(vps?: VpsConnection | null) {
     );
   }
   return { configured: true };
+}
+
+function registryFailureKind(message: string) {
+  const normalized = message.toLowerCase();
+  if (/bad credentials|unauthorized|authentication required|denied|forbidden|invalid token/.test(normalized)) {
+    return "revoked_or_invalid";
+  }
+  if (/scope|permission|package/.test(normalized)) return "missing_scope";
+  return "unavailable";
+}
+
+export async function verifyGithubRegistryAccess(
+  vps?: VpsConnection | null
+): Promise<{
+  ok: boolean;
+  state: RegistryState;
+  failureKind?: "not_configured" | "revoked_or_invalid" | "missing_scope" | "unavailable";
+}> {
+  const config = await values();
+  if (!config.username || !config.token) {
+    return {
+      ok: false,
+      state: await githubRegistryPublicState(),
+      failureKind: "not_configured",
+    };
+  }
+
+  const target = vps || (await getActiveVps().catch(() => null));
+  if (!target) {
+    const error = "Connect a VPS before verifying private image access.";
+    await save({
+      status: "error",
+      last_checked_at: new Date().toISOString(),
+      error,
+    });
+    return {
+      ok: false,
+      state: await githubRegistryPublicState(),
+      failureKind: "unavailable",
+    };
+  }
+
+  const login = await loginGithubRegistry(config.username, config.token, target);
+  if (login.code !== 0) {
+    const error = (login.stderr || login.stdout || "GitHub registry login failed").trim().slice(0, 240);
+    await save({
+      status: "error",
+      verified_image: "",
+      last_checked_at: new Date().toISOString(),
+      error,
+    });
+    return {
+      ok: false,
+      state: await githubRegistryPublicState(),
+      failureKind: registryFailureKind(error),
+    };
+  }
+
+  const deployment = await prisma.deployment.findFirst({
+    where: { imageTag: { startsWith: "ghcr.io/" } },
+    orderBy: { createdAt: "desc" },
+    select: { imageTag: true },
+  });
+  const image = deployment?.imageTag?.trim() || "";
+
+  if (image) {
+    const probe = await execOnTargetStrict(
+      `DOCKER_CONFIG=${DOCKER_CONFIG} docker manifest inspect ${shQuote(image)} >/dev/null 2>&1`,
+      target
+    );
+    if (probe.code !== 0) {
+      const error = `GitHub authenticated, but package access could not read ${image}.`;
+      await save({
+        status: "error",
+        verified_image: "",
+        last_checked_at: new Date().toISOString(),
+        error,
+      });
+      return {
+        ok: false,
+        state: await githubRegistryPublicState(),
+        failureKind: "missing_scope",
+      };
+    }
+  }
+
+  await save({
+    status: "ready",
+    verified_image: image,
+    last_checked_at: new Date().toISOString(),
+    error: "",
+  });
+  return { ok: true, state: await githubRegistryPublicState() };
 }
 
 export async function githubRegistryPublicState(): Promise<RegistryState> {
