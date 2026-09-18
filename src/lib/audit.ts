@@ -12,7 +12,8 @@ export type AuditAction =
   | "ai_thread_delete"
   | "secret_export"
   | "oauth_consent_granted"
-  | "oauth_consent_denied";
+  | "oauth_consent_denied"
+  | "install_claim";
 
 export interface AuditContext {
   ip: string;
