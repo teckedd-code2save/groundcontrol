@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { validatePassword, setAuthCookie } from "@/lib/auth";
+import { installClaimStatus } from "@/lib/install-claim";
 
 export async function GET() {
   try {
-    const userCount = await prisma.user.count();
-    return NextResponse.json({ setupRequired: userCount === 0 });
+    const status = await installClaimStatus();
+    return NextResponse.json({
+      setupRequired: status.setupRequired,
+      claimRequired: status.claimRequired,
+      claimed: status.claimed,
+      instanceId: status.instanceId,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Server error";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -15,9 +21,15 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const userCount = await prisma.user.count();
-    if (userCount > 0) {
+    const status = await installClaimStatus();
+    if (status.claimed) {
       return NextResponse.json({ error: "Setup has already been completed." }, { status: 403 });
+    }
+    if (status.claimRequired) {
+      return NextResponse.json({
+        error: "This installation requires its one-time human claim before an administrator can be created.",
+        claimRequired: true,
+      }, { status: 409 });
     }
 
     const { username, password } = await req.json();
