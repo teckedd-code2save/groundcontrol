@@ -43,7 +43,7 @@ export async function installClaimStatus() {
     prisma.installClaim.findFirst({
       where: { status: "active", expiresAt: { gt: now } },
       orderBy: { createdAt: "desc" },
-      select: { id: true, expiresAt: true, createdAt: true },
+      select: { expiresAt: true, createdAt: true },
     }),
   ]);
   return {
@@ -53,7 +53,6 @@ export async function installClaimStatus() {
     setupRequired: userCount === 0 && !activeClaim,
     activeClaim: activeClaim
       ? {
-          id: activeClaim.id,
           expiresAt: activeClaim.expiresAt,
           createdAt: activeClaim.createdAt,
         }
