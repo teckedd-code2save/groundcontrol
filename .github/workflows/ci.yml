@@ -17,4 +17,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - run: bash -n scripts/install
       - run: npm run build
