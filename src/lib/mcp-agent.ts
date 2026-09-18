@@ -111,6 +111,13 @@ export function toolDefinitionsForScopes(scopes: Set<string>) {
   return TOOL_DEFINITIONS.filter((tool) => scopes.has(tool.requiredScope)).map(({ requiredScope: _scope, ...tool }) => tool);
 }
 
+function redactEvidenceText(value: string | null): string | null {
+  if (!value) return value;
+  return value
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+\/-]+=*/gi, "$1 [REDACTED]")
+    .replace(/\b(password|passwd|token|secret|api[_-]?key|authorization)\s*[:=]\s*([^\s"'\x60]+)/gi, "$1=[REDACTED]");
+}
+
 function parseIdentifier(value: unknown) {
   const text = String(value || "").trim();
   if (!text) throw new Error("deployment is required");
@@ -249,7 +256,14 @@ export async function executeAgentTool(
       take: limit,
       select: { id: true, projectSlug: true, status: true, branch: true, commitSha: true, output: true, error: true, durationMs: true, createdAt: true, updatedAt: true },
     });
-    return { deployment: deployment.slug, logs };
+    return {
+      deployment: deployment.slug,
+      logs: logs.map((log) => ({
+        ...log,
+        output: redactEvidenceText(log.output),
+        error: redactEvidenceText(log.error),
+      })),
+    };
   }
 
   if (name === "deployment.health") {
