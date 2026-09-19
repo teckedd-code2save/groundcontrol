@@ -655,12 +655,13 @@ export async function verifyGroundControlInstance(
     }),
     httpCheck(`${localBase}/.well-known/oauth-protected-resource`),
   ]);
-  const tools = (
-    mcp.body &&
-    typeof mcp.body === "object" &&
-    "result" in mcp.body &&
-    (mcp.body as { result?: { tools?: Array<{ name?: string }> } }).result?.tools
-  ) || [];
+  let tools: Array<{ name?: string }> = [];
+  if (mcp.body && typeof mcp.body === "object" && "result" in mcp.body) {
+    const result = (mcp.body as {
+      result?: { tools?: Array<{ name?: string }> };
+    }).result;
+    if (Array.isArray(result?.tools)) tools = result.tools;
+  }
   const mcpReady = mcp.ok && tools.some((tool) => tool.name === "deployment.list");
   const oauthReady = oauth.ok &&
     Boolean(
