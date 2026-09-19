@@ -51,7 +51,7 @@ export type InstanceVerification = {
 };
 
 export function normalizePublicHostname(value: string) {
-  const hostname = value.trim().toLowerCase().replace(/.$/, "");
+  const hostname = value.trim().toLowerCase().replace(/\.$/, "");
   if (
     hostname.length < 3 ||
     hostname.length > 253 ||
@@ -683,14 +683,42 @@ export async function verifyGroundControlInstance(
       };
     } else {
       let publicProbe = await httpCheck(`${publicUrl}/.well-known/oauth-protected-resource`);
-      for (let attempt = 0; attempt < 5 && !publicProbe.ok; attempt += 1) {
+      let publicMcp = await httpCheck(`${publicUrl}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "public-install-verification",
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      for (let attempt = 0; attempt < 7 && (!publicProbe.ok || !publicMcp.ok); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));
-        publicProbe = await httpCheck(`${publicUrl}/.well-known/oauth-protected-resource`);
+        if (!publicProbe.ok) {
+          publicProbe = await httpCheck(`${publicUrl}/.well-known/oauth-protected-resource`);
+        }
+        if (!publicMcp.ok) {
+          publicMcp = await httpCheck(`${publicUrl}/mcp`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: "public-install-verification",
+              method: "tools/list",
+              params: {},
+            }),
+          });
+        }
       }
+      const publicTools = publicMcp.body && typeof publicMcp.body === "object" && "result" in publicMcp.body
+        ? ((publicMcp.body as { result?: { tools?: Array<{ name?: string }> } }).result?.tools || [])
+        : [];
+      const publicMcpReady = publicMcp.ok && publicTools.some((tool) => tool.name === "deployment.list");
       publicHttps = check(
-        publicProbe.ok,
-        `HTTPS and OAuth metadata are reachable at ${publicUrl}.`,
-        `Could not verify HTTPS at ${publicUrl} (HTTP ${publicProbe.status || "unreachable"}).`
+        publicProbe.ok && publicMcpReady,
+        `HTTPS, OAuth metadata and MCP discovery are reachable at ${publicUrl}.`,
+        `Public verification failed at ${publicUrl} (OAuth HTTP ${publicProbe.status || "unreachable"}, MCP HTTP ${publicMcp.status || "unreachable"}).`
       );
     }
   }
