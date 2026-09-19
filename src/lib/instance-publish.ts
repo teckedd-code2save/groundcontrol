@@ -100,10 +100,14 @@ async function groundControlHostPort() {
 
 async function groundControlDockerNetwork() {
   const result = await execOnHost(
-    "docker inspect groundcontrol-web --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{"\\n"}}{{end}}' 2>/dev/null | head -n 1",
+    "docker inspect groundcontrol-web --format '{{json .NetworkSettings.Networks}}' 2>/dev/null",
     { requireHost: true }
   );
-  const network = result.stdout.trim().split("\n")[0] || "";
+  let network = "";
+  try {
+    const networks = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+    network = Object.keys(networks)[0] || "";
+  } catch {}
   if (!network || !/^[A-Za-z0-9_.-]+$/.test(network)) {
     throw new Error("Could not resolve GroundControl's Docker network.");
   }
