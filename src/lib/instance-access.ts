@@ -12,12 +12,16 @@ import {
 } from "@/lib/cloudflare";
 import { ensureGroundControlInstanceId } from "@/lib/install-claim";
 import { execOnHost, execOnTargetStrict } from "@/lib/host-exec";
-import { getActiveVps, shQuote } from "@/lib/vps";
+import { shQuote } from "@/lib/vps";
 
 const ACCESS_CONFIG_KEY = "groundcontrol_instance_access";
 const QUICK_CONTAINER = "gc-instance-quick-tunnel";
 const NAMED_CONTAINER = "gc-instance-access";
-const LOCAL_ORIGIN = "http://127.0.0.1:3000";
+function localHostOrigin() {
+  const port = Number(process.env.HOST_PORT || 3003);
+  const safePort = Number.isSafeInteger(port) && port >= 1024 && port <= 65535 ? port : 3003;
+  return `http://127.0.0.1:${safePort}`;
+}
 
 export type InstanceAccessMode = "private" | "quick_tunnel" | "cloudflare_domain";
 
@@ -100,7 +104,7 @@ async function dockerRunCloudflared(name: string, args: string[]) {
     shQuote(name),
     "--restart unless-stopped",
     "--network",
-    "container:groundcontrol-web",
+    "host",
     "cloudflare/cloudflared:latest",
     ...args.map(shQuote),
   ].join(" ");
@@ -179,14 +183,27 @@ export async function verifyInstanceAccess(publicUrl?: string | null): Promise<I
     detail: containerState || "container not found",
   });
 
-  const active = await getActiveVps().catch(() => null);
-  const hostExec = active
-    ? await execOnTargetStrict("printf gc-host-ok", active).catch((error) => ({
+  const localRow = await prisma.vpsConfig.findFirst({
+    where: { isLocal: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  const localTarget = localRow
+    ? {
+        id: localRow.id,
+        host: localRow.host,
+        port: localRow.port,
+        username: localRow.username,
+        isLocal: true,
+        authType: localRow.authType,
+      }
+    : null;
+  const hostExec = localTarget
+    ? await execOnTargetStrict("printf gc-host-ok", localTarget).catch((error) => ({
         stdout: "",
         stderr: error instanceof Error ? error.message : String(error),
         code: 1,
       }))
-    : { stdout: "", stderr: "No active local target", code: 1 };
+    : { stdout: "", stderr: "No local GroundControl host target is enrolled", code: 1 };
   checks.push({
     id: "host_exec",
     label: "Host execution",
@@ -304,7 +321,7 @@ export async function publishTemporaryHttps(): Promise<InstanceAccessState> {
     "tunnel",
     "--no-autoupdate",
     "--url",
-    LOCAL_ORIGIN,
+    localHostOrigin(),
   ]);
   const publicUrl = await waitForQuickTunnelUrl();
   await waitForPublicOrigin(publicUrl);
@@ -381,7 +398,7 @@ export async function publishCloudflareDomain(inputDomain: string): Promise<Inst
 
   await updateTunnelConfiguration(
     tunnelId,
-    [{ hostname: domain, service: LOCAL_ORIGIN }],
+    [{ hostname: domain, service: localHostOrigin() }],
     account
   );
 
