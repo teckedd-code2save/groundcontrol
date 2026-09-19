@@ -50,7 +50,7 @@ export type InstanceVerification = {
   };
 };
 
-function validHostname(value: string) {
+export function normalizePublicHostname(value: string) {
   const hostname = value.trim().toLowerCase().replace(/.$/, "");
   if (
     hostname.length < 3 ||
@@ -273,7 +273,7 @@ export async function publishWithCloudflare(input: {
   apiToken?: string;
   accountId?: string;
 }) {
-  const hostname = validHostname(input.hostname);
+  const hostname = normalizePublicHostname(input.hostname);
   await stopQuickTunnel();
 
   let account = await getActiveCloudflareAccount();
@@ -433,7 +433,7 @@ async function configureCaddy(hostname: string, port: number) {
 }
 
 export async function publishWithCaddy(input: { hostname: string }) {
-  const hostname = validHostname(input.hostname);
+  const hostname = normalizePublicHostname(input.hostname);
   await stopQuickTunnel();
 
   const originIp = await currentPublicIpv4();
