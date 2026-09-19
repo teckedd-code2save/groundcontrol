@@ -18,4 +18,5 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: bash -n scripts/install
+      - run: sha256sum -c scripts/install.sha256
       - run: npm run build
