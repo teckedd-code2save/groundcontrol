@@ -377,7 +377,7 @@ async function ensureCaddyInstalled() {
   if (check.stdout.trim()) return;
 
   const os = await execOnHost(
-    ". /etc/os-release 2>/dev/null || true; printf '%s' "${ID:-unknown}"",
+    '. /etc/os-release 2>/dev/null || true; printf \'%s\' "${ID:-unknown}"',
     { requireHost: true }
   );
   const family = os.stdout.trim().toLowerCase();
@@ -407,6 +407,16 @@ async function ensureCaddyInstalled() {
 }
 
 async function configureCaddy(hostname: string, port: number) {
+  const listeners = await execOnHost(
+    "if command -v ss >/dev/null 2>&1; then ss -ltnp 2>/dev/null | grep -E ':(80|443)[[:space:]]' | grep -vi caddy || true; fi",
+    { requireHost: true }
+  );
+  if (listeners.stdout.trim()) {
+    throw new Error(
+      "Ports 80/443 are already owned by another service. Use Cloudflare Tunnel or configure the existing reverse proxy instead of replacing it."
+    );
+  }
+
   const config = [
     `${hostname} {`,
     `  reverse_proxy 127.0.0.1:${port}`,
@@ -423,7 +433,7 @@ async function configureCaddy(hostname: string, port: number) {
     "grep -Fq 'import /etc/caddy/sites/*' /etc/caddy/Caddyfile || printf '\nimport /etc/caddy/sites/*\n' >> /etc/caddy/Caddyfile",
     `cat > /etc/caddy/sites/groundcontrol.caddy <<'GC_CADDY'\n${config}GC_CADDY`,
     "caddy validate --config /etc/caddy/Caddyfile",
-    "(caddy reload --config /etc/caddy/Caddyfile || systemctl reload caddy || rc-service caddy restart)",
+    "(caddy reload --config /etc/caddy/Caddyfile || systemctl restart caddy || rc-service caddy restart || caddy start --config /etc/caddy/Caddyfile)",
   ].join("\n");
 
   const result = await execOnHost(command, { requireHost: true });
@@ -479,7 +489,6 @@ export async function publishQuickTunnel() {
   const command = [
     "docker run -d",
     `--name ${shQuote(QUICK_TUNNEL_CONTAINER)}`,
-    "--restart unless-stopped",
     `--network ${shQuote(network)}`,
     "cloudflare/cloudflared:latest",
     "tunnel --no-autoupdate --url http://groundcontrol-web:3000",
@@ -494,7 +503,7 @@ export async function publishQuickTunnel() {
       "i=0",
       "while [ $i -lt 25 ]; do",
       `  url=$(docker logs ${shQuote(QUICK_TUNNEL_CONTAINER)} 2>&1 | grep -Eo 'https://[A-Za-z0-9-]+\\.trycloudflare\\.com' | tail -n 1 || true)`,
-      "  if [ -n "$url" ]; then printf '%s' "$url"; exit 0; fi",
+      `  if [ -n "$url" ]; then printf '%s' "$url"; exit 0; fi`,
       "  i=$((i+1)); sleep 1",
       "done",
       `docker logs --tail 80 ${shQuote(QUICK_TUNNEL_CONTAINER)} >&2 || true`,
