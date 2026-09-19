@@ -30,7 +30,6 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin(req);
     const user = await requireAdmin(req);
     const body = await req.json() as {
       action?: string;
