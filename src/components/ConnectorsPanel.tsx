@@ -49,8 +49,8 @@ const DEFAULT_CONNECTORS: ConnectorState[] = [
     configured: false,
     status: "disconnected",
     config: { apiKey: "" },
-    description: "Structured incident investigation and recovery planning.",
-    purpose: "Analyses service evidence, forms hypotheses, and proposes least-disruptive recovery actions.",
+    description: "Optional investigation model.",
+    purpose: "Adds a second reasoning layer over GroundControl's operational evidence.",
   },
   {
     id: "daytona",
@@ -60,8 +60,8 @@ const DEFAULT_CONNECTORS: ConnectorState[] = [
     configured: false,
     status: "disconnected",
     config: { apiKey: "", apiUrl: "https://app.daytona.io/api" },
-    description: "Isolated sandbox for reproducing failures before applying fixes.",
-    purpose: "Clones the exact commit, applies suspect changes, and validates fixes without touching production.",
+    description: "Isolated repair sandbox.",
+    purpose: "Proves the exact repository revision away from production before a source repair is promoted.",
   },
 ];
 
@@ -82,18 +82,22 @@ export default function ConnectorsPanel() {
         fetch("/api/connectors/health", { cache: "no-store" }),
       ]);
       const [data, healthData] = await Promise.all([res.json(), healthRes.json()]);
-      if (data.connectors) setConnectors(data.connectors);
+      if (Array.isArray(data.connectors)) setConnectors(data.connectors);
       if (Array.isArray(healthData.connectors)) setHealth(healthData.connectors);
-    } catch {}
+    } catch {
+      // Existing connector surfaces remain usable if the health summary cannot load.
+    }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   function startEdit(id: string) {
-    const conn = connectors.find((c) => c.id === id);
-    if (!conn) return;
+    const connector = connectors.find((item) => item.id === id);
+    if (!connector) return;
     setEditing(id);
-    setDraft({ ...conn.config });
+    setDraft({ ...connector.config });
   }
 
   async function verifyCapabilities(id: "github" | "daytona") {
@@ -107,6 +111,7 @@ export default function ConnectorsPanel() {
       });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || "Capability verification failed");
+
       const refreshed = Array.isArray(data.connectors) ? data.connectors[0] : null;
       if (refreshed) {
         setHealth((current) => [
@@ -117,7 +122,7 @@ export default function ConnectorsPanel() {
           tone: refreshed.status === "degraded" ? "error" : "success",
           text: refreshed.status === "healthy"
             ? `${refreshed.name} capabilities verified.`
-            : `${refreshed.name} verification completed with status: ${refreshed.status}.`,
+            : `${refreshed.name} verification finished: ${refreshed.status}.`,
         });
       }
     } catch (error) {
@@ -130,20 +135,31 @@ export default function ConnectorsPanel() {
   async function save(id: string) {
     setSaving(true);
     try {
-      const res = await fetch("/api/connectors", {
+      const response = await fetch("/api/connectors", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ connectorId: id, config: draft }),
       });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || "Save failed");
-      setConnectors((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, config: draft, configured: true, status: "configured" } : c))
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Save failed");
+
+      setConnectors((current) =>
+        current.map((item) =>
+          item.id === id
+            ? { ...item, config: draft, configured: true, status: "configured" }
+            : item
+        )
       );
       setEditing(null);
-      setMessage({ tone: "success", text: `${id} connector saved. Verify capabilities before treating it as ready.` });
-    } catch (err) {
-      setMessage({ tone: "error", text: err instanceof Error ? err.message : "Save failed" });
+      setMessage({
+        tone: "success",
+        text: id === "daytona"
+          ? "Daytona saved. Run Verify to prove sandbox access."
+          : `${id} connector saved.`,
+      });
+      await load();
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Save failed" });
     } finally {
       setSaving(false);
     }
@@ -152,214 +168,313 @@ export default function ConnectorsPanel() {
   async function testConnection(id: string) {
     setTesting(id);
     try {
-      const res = await fetch("/api/connectors/test", {
+      const response = await fetch("/api/connectors/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ connectorId: id }),
       });
-      const data = await res.json();
+      const data = await response.json();
       if (data.ok) {
-        setConnectors((prev) =>
-          prev.map((c) => (c.id === id ? { ...c, status: "configured" } : c))
-        );
         setMessage({ tone: "success", text: data.message || "Connection successful" });
       } else {
-        setConnectors((prev) =>
-          prev.map((c) => (c.id === id ? { ...c, status: "error" } : c))
-        );
         setMessage({ tone: "error", text: data.error || "Connection failed" });
       }
-    } catch (err) {
-      setMessage({ tone: "error", text: err instanceof Error ? err.message : "Test failed" });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Test failed" });
     } finally {
       setTesting(null);
     }
   }
 
-  const IconComponent = ({ icon }: { icon: ConnectorState["icon"] }) => {
-    switch (icon) {
-      case "gemini": return <span className="text-lg">✦</span>;
-      case "daytona": return <Shield className="h-5 w-5" />;
-      default: return <Plug className="h-5 w-5" />;
-    }
-  };
+  const daytona = connectors.find((item) => item.id === "daytona");
+  const gemini = connectors.find((item) => item.id === "gemini");
+  const githubHealth = health.find((item) => item.id === "github");
+  const daytonaHealth = health.find((item) => item.id === "daytona");
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
       <div className="border-b border-border pb-4">
         <h2 className="text-sm font-semibold">Connectors</h2>
-        <p className="mt-1 text-xs text-muted max-w-2xl">
-          Connect the systems that provide repository change evidence, investigation intelligence and isolated reproduction.
+        <p className="mt-1 max-w-2xl text-xs text-muted">
+          Connect a source, an isolated sandbox, and optional investigation intelligence. GroundControl verifies capabilities separately from saved credentials.
         </p>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-2">
-        {(["github", "daytona"] as const).map((id) => {
-          const item = health.find((entry) => entry.id === id);
-          return (
-            <CapabilityHealthCard
-              key={id}
-              connector={item}
-              fallbackName={id === "github" ? "GitHub" : "Daytona"}
-              verifying={verifyingHealth === id}
-              onVerify={() => void verifyCapabilities(id)}
-            />
-          );
-        })}
-      </div>
-
-      <GithubAppPanel />
-      <DaytonaAcceptancePanel onVerified={load} />
-
       {message && (
-        <div className={`rounded border px-3 py-2 text-xs ${message.tone === "success" ? "border-success/30 bg-success/5 text-success" : "border-error/30 bg-error/5 text-error"}`}>
+        <div className={`rounded border px-3 py-2 text-xs ${
+          message.tone === "success"
+            ? "border-success/30 bg-success/5 text-success"
+            : "border-error/30 bg-error/5 text-error"
+        }`}>
           {message.text}
         </div>
       )}
 
-      {connectors.map((conn) => (
-        <div key={conn.id} className={`border bg-card ${conn.status === "error" ? "border-error/30" : "border-border"}`}>
-          {/* Header */}
-          <div className="flex items-start justify-between gap-4 px-5 py-4">
-            <div className="flex items-start gap-3">
-              <div className={`mt-0.5 rounded p-1.5 ${conn.status === "error" ? "bg-error/10 text-error" : conn.configured ? "bg-warning/10 text-warning" : "bg-muted/10 text-muted"}`}>
-                <IconComponent icon={conn.icon} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium">{conn.name}</h3>
-                  <span className={`rounded px-1.5 py-0.5 text-[9px] font-mono ${
-                    conn.status === "error" ? "bg-error/10 text-error" : "bg-warning/10 text-warning"
-                  }`}>
-                    {conn.status === "error" ? "error" : conn.configured ? "configured" : "not configured"}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-muted">{conn.description}</p>
-                <p className="mt-0.5 text-[10px] text-muted/70">{conn.purpose}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {conn.configured && (
-                <button
-                  onClick={() => testConnection(conn.id)}
-                  disabled={testing === conn.id}
-                  className="gc-button gc-button-secondary text-[10px]">
-                  <RefreshCw className={`h-3 w-3 ${testing === conn.id ? "animate-spin" : ""}`} />
-                  {testing === conn.id ? "Testing..." : "Test"}
-                </button>
-              )}
-              <button
-                onClick={() => editing === conn.id ? save(conn.id) : startEdit(conn.id)}
-                disabled={saving}
-                className={`text-[10px] px-3 py-1.5 rounded border font-mono transition-colors ${
-                  editing === conn.id
-                    ? "bg-accent/10 border-accent/30 text-accent"
-                    : "border-border text-muted hover:border-accent/40 hover:text-accent"
-                }`}>
-                {editing === conn.id ? (saving ? "Saving..." : "Save") : conn.configured ? "Edit" : "Configure"}
-              </button>
-            </div>
-          </div>
+      <ConnectorSection
+        eyebrow="Source"
+        title="GitHub"
+        description="Repository identity, source events, repair PRs and optional private GHCR pulls."
+      >
+        <CapabilityStrip
+          connector={githubHealth}
+          verifying={verifyingHealth === "github"}
+          onVerify={() => void verifyCapabilities("github")}
+        />
+        <GithubAppPanel />
+      </ConnectorSection>
 
-          {/* Config form */}
-          {editing === conn.id && (
-            <div className="border-t border-border bg-background/50 px-5 py-4">
-              {conn.id === "gemini" && (
-                <div className="space-y-3 max-w-lg">
-                  <div>
-                    <label className="block text-[10px] font-mono text-muted mb-1">API key</label>
-                    <input type="password" value={draft.apiKey || ""} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-                      placeholder={conn.configured ? "Leave blank to keep current key" : "AIza..."} className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent" />
-                    <p className="mt-1 text-[10px] text-muted">Get a key from{" "}
-                      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-accent hover:underline inline-flex items-center gap-0.5">
-                        Google AI Studio <ExternalLink className="h-2.5 w-2.5" />
-                      </a>
-                    </p>
-                  </div>
-                </div>
-              )}
+      <ConnectorSection
+        eyebrow="Sandbox"
+        title="Daytona"
+        description="Prove a deployment's exact repository revision in an isolated environment before trusting repairs."
+      >
+        <CapabilityStrip
+          connector={daytonaHealth}
+          verifying={verifyingHealth === "daytona"}
+          onVerify={() => void verifyCapabilities("daytona")}
+        />
+        {daytona && (
+          <ConnectorConfigCard
+            connector={daytona}
+            editing={editing === daytona.id}
+            draft={draft}
+            saving={saving}
+            testing={testing === daytona.id}
+            onEdit={() => startEdit(daytona.id)}
+            onSave={() => void save(daytona.id)}
+            onTest={() => void verifyCapabilities("daytona")}
+            onDraft={setDraft}
+            showTest={false}
+          />
+        )}
+        <DaytonaAcceptancePanel onVerified={load} />
+      </ConnectorSection>
 
-              {conn.id === "daytona" && (
-                <div className="space-y-3 max-w-lg">
-                  <div>
-                    <label className="block text-[10px] font-mono text-muted mb-1">API URL</label>
-                    <input type="text" value={draft.apiUrl || "https://app.daytona.io/api"} onChange={(e) => setDraft({ ...draft, apiUrl: e.target.value })}
-                      className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-mono text-muted mb-1">API key</label>
-                    <input type="password" value={draft.apiKey || ""} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-                      placeholder={conn.configured ? "Leave blank to keep current key" : "dtn_..."} className="w-full bg-background border border-border px-3 py-2 text-sm font-mono outline-none focus:border-accent" />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      ))}
+      <ConnectorSection
+        eyebrow="Optional intelligence"
+        title="Investigation model"
+        description="Use GroundControl's evidence without making a model provider part of the infrastructure trust boundary."
+      >
+        {gemini && (
+          <ConnectorConfigCard
+            connector={gemini}
+            editing={editing === gemini.id}
+            draft={draft}
+            saving={saving}
+            testing={testing === gemini.id}
+            onEdit={() => startEdit(gemini.id)}
+            onSave={() => void save(gemini.id)}
+            onTest={() => void testConnection(gemini.id)}
+            onDraft={setDraft}
+            showTest
+          />
+        )}
+      </ConnectorSection>
     </div>
   );
 }
 
+function ConnectorSection({
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-accent">{eyebrow}</p>
+        <h3 className="mt-1 text-base font-semibold">{title}</h3>
+        <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-muted">{description}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
 
-function CapabilityHealthCard({
+function CapabilityStrip({
   connector,
-  fallbackName,
   verifying,
   onVerify,
 }: {
   connector?: ConnectorHealth;
-  fallbackName: string;
   verifying: boolean;
   onVerify: () => void;
 }) {
   const status = connector?.status || "not_configured";
   const statusClass = status === "healthy"
-    ? "bg-success/10 text-success"
+    ? "text-success"
     : status === "degraded"
-      ? "bg-error/10 text-error"
-      : status === "unverified"
-        ? "bg-warning/10 text-warning"
-        : "bg-muted/10 text-muted";
+      ? "text-error"
+      : "text-warning";
 
   return (
-    <section className="border border-border bg-card">
-      <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
-        <div>
-          <p className="text-xs font-semibold">{connector?.name || fallbackName}</p>
-          <p className="mt-1 text-[10px] text-muted">Capability health, not credential presence.</p>
+    <div className="border border-border bg-background/40">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+        <p className="text-[10px] text-muted">
+          Capability health <span className={`ml-1 font-mono ${statusClass}`}>{status}</span>
+        </p>
+        <button
+          type="button"
+          onClick={onVerify}
+          disabled={verifying}
+          className="gc-button gc-button-quiet text-[10px]"
+        >
+          <RefreshCw className={`h-3 w-3 ${verifying ? "animate-spin" : ""}`} />
+          {verifying ? "Verifying…" : "Verify"}
+        </button>
+      </div>
+
+      <div className="grid sm:grid-cols-2 xl:grid-cols-3">
+        {(connector?.capabilities || []).map((capability) => {
+          const unhealthy = capability.status !== "healthy";
+          return (
+            <div key={capability.id} className="border-b border-border px-4 py-3 last:border-b-0 sm:border-r">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] font-medium">{capability.label}</span>
+                <span className={`font-mono text-[8px] ${
+                  capability.status === "healthy"
+                    ? "text-success"
+                    : ["degraded", "revoked", "missing_scope", "unavailable"].includes(capability.status)
+                      ? "text-error"
+                      : "text-warning"
+                }`}>
+                  {capability.status}
+                </span>
+              </div>
+              {unhealthy && (
+                <p className="mt-1.5 text-[9px] leading-relaxed text-muted">
+                  {capability.remediation || capability.detail}
+                </p>
+              )}
+            </div>
+          );
+        })}
+        {!connector && <p className="px-4 py-4 text-[10px] text-muted">Health state has not loaded yet.</p>}
+      </div>
+    </div>
+  );
+}
+
+function ConnectorConfigCard({
+  connector,
+  editing,
+  draft,
+  saving,
+  testing,
+  onEdit,
+  onSave,
+  onTest,
+  onDraft,
+  showTest,
+}: {
+  connector: ConnectorState;
+  editing: boolean;
+  draft: Record<string, string>;
+  saving: boolean;
+  testing: boolean;
+  onEdit: () => void;
+  onSave: () => void;
+  onTest: () => void;
+  onDraft: (value: Record<string, string>) => void;
+  showTest: boolean;
+}) {
+  return (
+    <div className={`border bg-card ${connector.status === "error" ? "border-error/30" : "border-border"}`}>
+      <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="rounded bg-background p-1.5 text-muted">
+            {connector.icon === "gemini"
+              ? <span className="text-lg">✦</span>
+              : connector.icon === "daytona"
+                ? <Shield className="h-5 w-5" />
+                : <Plug className="h-5 w-5" />}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-medium">{connector.name}</h4>
+              <span className="rounded bg-muted/10 px-1.5 py-0.5 font-mono text-[8px] text-muted">
+                {connector.configured ? "configured" : "not configured"}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] text-muted">{connector.description}</p>
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
-          <span className={`rounded-sm px-2 py-0.5 font-mono text-[9px] ${statusClass}`}>{status}</span>
-          <button type="button" onClick={onVerify} disabled={verifying} className="gc-button gc-button-quiet text-[10px]">
-            <RefreshCw className={`h-3 w-3 ${verifying ? "animate-spin" : ""}`} />
-            {verifying ? "Verifying…" : "Verify"}
+          {showTest && connector.configured && (
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={testing}
+              className="gc-button gc-button-secondary text-[10px]"
+            >
+              <RefreshCw className={`h-3 w-3 ${testing ? "animate-spin" : ""}`} />
+              {testing ? "Testing…" : "Test"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={editing ? onSave : onEdit}
+            disabled={saving}
+            className="gc-button gc-button-quiet text-[10px]"
+          >
+            {editing ? (saving ? "Saving…" : "Save") : connector.configured ? "Edit" : "Configure"}
           </button>
         </div>
       </div>
-      <div className="divide-y divide-border">
-        {(connector?.capabilities || []).map((capability) => (
-          <div key={capability.id} className="px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[11px] font-medium">{capability.label}</span>
-              <span className={`font-mono text-[9px] ${
-                capability.status === "healthy"
-                  ? "text-success"
-                  : ["degraded", "revoked", "missing_scope", "unavailable"].includes(capability.status)
-                    ? "text-error"
-                    : "text-warning"
-              }`}>
-                {capability.status}
-              </span>
+
+      {editing && (
+        <div className="border-t border-border bg-background/50 px-5 py-4">
+          {connector.id === "gemini" && (
+            <div className="max-w-lg">
+              <label className="mb-1 block font-mono text-[10px] text-muted">API key</label>
+              <input
+                type="password"
+                value={draft.apiKey || ""}
+                onChange={(event) => onDraft({ ...draft, apiKey: event.target.value })}
+                placeholder={connector.configured ? "Leave blank to keep current key" : "AIza..."}
+                className="gc-field w-full font-mono"
+              />
+              <p className="mt-1 text-[10px] text-muted">
+                Get a key from{" "}
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="inline-flex items-center gap-0.5 text-accent hover:underline">
+                  Google AI Studio <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              </p>
             </div>
-            <p className="mt-1 text-[10px] leading-relaxed text-muted">{capability.detail}</p>
-            {capability.remediation && (
-              <p className="mt-1 text-[10px] leading-relaxed text-warning">{capability.remediation}</p>
-            )}
-          </div>
-        ))}
-        {!connector && <p className="px-4 py-5 text-xs text-muted">Capability state has not loaded yet.</p>}
-      </div>
-    </section>
+          )}
+
+          {connector.id === "daytona" && (
+            <div className="grid max-w-2xl gap-3 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] text-muted">API URL</label>
+                <input
+                  type="text"
+                  value={draft.apiUrl || "https://app.daytona.io/api"}
+                  onChange={(event) => onDraft({ ...draft, apiUrl: event.target.value })}
+                  className="gc-field w-full font-mono"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-mono text-[10px] text-muted">API key</label>
+                <input
+                  type="password"
+                  value={draft.apiKey || ""}
+                  onChange={(event) => onDraft({ ...draft, apiKey: event.target.value })}
+                  placeholder={connector.configured ? "Leave blank to keep current key" : "dtn_..."}
+                  className="gc-field w-full font-mono"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
