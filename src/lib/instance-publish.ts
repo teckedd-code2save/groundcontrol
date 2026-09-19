@@ -121,6 +121,37 @@ async function stopQuickTunnel() {
   );
 }
 
+async function disableCaddyExposure() {
+  const result = await execOnHost(
+    [
+      "if [ -f /etc/caddy/sites/groundcontrol.caddy ]; then",
+      "  rm -f /etc/caddy/sites/groundcontrol.caddy",
+      "  if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then",
+      "    caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || exit 1",
+      "    caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || systemctl reload caddy >/dev/null 2>&1 || rc-service caddy restart >/dev/null 2>&1 || true",
+      "  fi",
+      "fi",
+    ].join("\n"),
+    { requireHost: true }
+  );
+  if (result.code !== 0) {
+    throw new Error(result.stderr || "Could not remove the previous GroundControl Caddy route.");
+  }
+}
+
+async function stopNamedManagementTunnel() {
+  const row = await activeNamedTunnelRow();
+  if (!row?.connectorId) return;
+  await execOnHost(
+    `docker rm -f ${shQuote(row.connectorId)} >/dev/null 2>&1 || true`,
+    { requireHost: true }
+  );
+  await prisma.cloudflareTunnel.update({
+    where: { id: row.id },
+    data: { status: "inactive" },
+  });
+}
+
 async function activeNamedTunnelRow() {
   return prisma.cloudflareTunnel.findFirst({
     where: { name: NAMED_TUNNEL_NAME },
@@ -279,9 +310,10 @@ export async function publishWithCloudflare(input: {
 }) {
   const hostname = normalizePublicHostname(input.hostname);
   await stopQuickTunnel();
+  await disableCaddyExposure();
 
   let account = await getActiveCloudflareAccount();
-  if (!account && input.apiToken) {
+  if ((!account || !account.accountId) && input.apiToken) {
     account = await saveActiveCloudflareAccount({
       apiToken: input.apiToken,
       accountId: input.accountId,
@@ -449,6 +481,7 @@ async function configureCaddy(hostname: string, port: number) {
 export async function publishWithCaddy(input: { hostname: string }) {
   const hostname = normalizePublicHostname(input.hostname);
   await stopQuickTunnel();
+  await stopNamedManagementTunnel();
 
   const originIp = await currentPublicIpv4();
   let resolved: string[] = [];
@@ -485,6 +518,8 @@ export async function publishWithCaddy(input: { hostname: string }) {
 export async function publishQuickTunnel() {
   const network = await groundControlDockerNetwork();
   await stopQuickTunnel();
+  await stopNamedManagementTunnel();
+  await disableCaddyExposure();
 
   const command = [
     "docker run -d",
@@ -528,6 +563,8 @@ export async function publishQuickTunnel() {
 
 export async function keepInstancePrivate() {
   await stopQuickTunnel();
+  await stopNamedManagementTunnel();
+  await disableCaddyExposure();
   await setConfig(PUBLIC_URL_KEY, "");
   await setConfig(PUBLISH_MODE_KEY, "private");
   return {
@@ -726,7 +763,7 @@ export async function instancePublishStatus() {
     mode: (mode || "private") as PublishMode,
     publicUrl: publicUrl || null,
     claimed: claim.claimed,
-    cloudflareConfigured: Boolean(activeCloudflare),
+    cloudflareConfigured: Boolean(activeCloudflare?.accountId),
     cloudflareAccountId: activeCloudflare?.accountId || null,
     lastVerification,
   };
