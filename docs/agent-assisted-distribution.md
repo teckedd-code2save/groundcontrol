@@ -97,3 +97,22 @@ The result is persisted and returned as structured data instead of shell-log sou
 - publishing requires authenticated admin access;
 - external agents receive MCP/OAuth grants, not operator sessions;
 - provider/tunnel credentials remain encrypted at rest.
+
+
+## Upgrade and recovery contract
+
+The canonical installer also owns upgrades. Agents should call `--preview` before `--upgrade`.
+
+A guarded upgrade:
+
+1. identifies the current image and persistent `/app/prisma` storage;
+2. pulls and resolves the requested image to a digest;
+3. quiesces the app and backs up SQLite plus Compose/env state;
+4. starts the new digest-pinned image;
+5. treats the container health check as the migration/startup acceptance gate;
+6. restores the previous DB, image and configuration if the gate fails;
+7. returns structured evidence.
+
+An automatic rollback that restores health exits non-zero because the requested upgrade still failed. Agents should report the rollback as successful recovery, not as a successful upgrade.
+
+`--uninstall` is data-preserving by default. It removes the runtime but leaves the database volume and install directory available for recovery.

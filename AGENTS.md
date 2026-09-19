@@ -65,3 +65,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Post-install verification covers container health, persistent DB volume, host execution, PTY relay, MCP discovery, OAuth metadata, consumed claim state, and public HTTPS when configured.
 - Cloudflare/tunnel credentials are secrets and must be encrypted at rest. Never return them to the browser after save.
 - Additional VPS targets are explicit later connections. Do not conflate “where GroundControl runs” with “all servers GroundControl may manage.”
+
+
+### Upgrade safety
+
+- `scripts/install --preview` must remain non-mutating with respect to the running GroundControl instance.
+- `--upgrade` must identify persistent `/app/prisma` storage before any migration-capable image is started.
+- Upgrade targets should run by resolved registry digest when available; do not regress the canonical installer to mutable-tag-only Compose state.
+- Back up SQLite plus Compose/env state while the old container is quiesced.
+- If the new container fails startup/health, restore the DB and previous image/config automatically and verify rollback health.
+- A successful rollback after a failed upgrade still exits non-zero and reports `upgrade_rolled_back`.
+- `--uninstall` preserves data by default. Destructive purge must never be implicit.

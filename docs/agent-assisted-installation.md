@@ -25,6 +25,17 @@ curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/mai
   | sudo bash -s -- --json
 ```
 
+For a download/verify/run flow:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install
+curl -fsSLO https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install.sha256
+sha256sum -c install.sha256
+sudo bash install --json
+```
+
+CI verifies `scripts/install.sha256` on every change to keep the published checksum in sync.
+
 Progress is written to stderr in JSON mode. stdout contains one final JSON object.
 
 ## Fresh-install result
@@ -82,11 +93,57 @@ Running the canonical installer against a healthy existing instance does not upd
 
 - already claimed → `already_claimed`, no change;
 - healthy but unclaimed → rotate/return a fresh claim, no image change;
-- explicit `--upgrade` → refresh the requested image/version.
+- explicit `--upgrade` → run the guarded upgrade transaction.
+
+## Upgrade preview
+
+Before changing a running instance:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install \
+  | sudo bash -s -- --preview --version <tag-or-short-sha> --json
+```
+
+Preview checks the current container, persistent DB mount, target image reachability and available disk without changing the running instance.
+
+## Guarded upgrade
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install \
+  | sudo bash -s -- --upgrade --version <tag-or-short-sha> --json
+```
+
+GroundControl:
+
+1. pulls the requested image while the current instance is still running;
+2. resolves the pulled tag to a registry digest when available;
+3. stops the current container briefly for a consistent SQLite volume backup;
+4. saves the previous Compose/env state;
+5. starts the digest-pinned image;
+6. waits for the health check after migrations;
+7. restores the DB + previous image/config automatically when the new instance fails health;
+8. records `result.json` and failed-upgrade logs in the backup directory.
+
+Machine-readable outcomes include:
+
+- `upgrade_complete`
+- `upgrade_rolled_back`
+- `rollback_failed`
+
+The last three backup directories are retained by default.
+
+## Data-preserving uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install \
+  | sudo bash -s -- --uninstall --json
+```
+
+This removes the runtime container/bridge processes but preserves the GroundControl DB volume and install directory for recovery.
 
 ## Versioning
 
-`--version TAG` pins the container tag/short SHA. Production distribution should prefer published release tags or immutable SHA tags over `latest`.
+`--version TAG` selects a release/short-SHA tag. The installer resolves that tag to the pulled registry digest when possible and writes the immutable digest into the generated Compose file.
 
 ## Security properties
 
@@ -97,6 +154,6 @@ Running the canonical installer against a healthy existing instance does not upd
 - claim token is random, short-lived, hashed at rest, single-use;
 - no bootstrap credential survives successful claim.
 
-## Next distribution slice
+## Post-claim distribution
 
-The remaining #93 work is post-claim automation: supported HTTPS/Caddy or outbound bridge setup, structured host-execution/PTY/MCP/OAuth verification, release-channel upgrades and rollback evidence.
+After claim, onboarding can keep the instance private or publish it through direct Caddy HTTPS, a named Cloudflare Tunnel, or a temporary outbound HTTPS bridge. GroundControl then verifies host execution, PTY, MCP discovery, OAuth metadata, persistent storage, consumed claim state and public HTTPS when configured.
