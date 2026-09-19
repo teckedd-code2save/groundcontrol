@@ -576,11 +576,11 @@ export async function verifyGroundControlInstance(
 
   const [containerResult, storageResult, hostResult, claim] = await Promise.all([
     execOnHost(
-      "test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null)" = healthy && echo ready || echo failed",
+      `test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null)" = healthy && echo ready || echo failed`,
       { requireHost: true }
     ),
     execOnHost(
-      "docker inspect groundcontrol-web --format '{{range .Mounts}}{{if eq .Destination "/app/prisma"}}{{.Type}}:{{.Name}}{{end}}{{end}}' 2>/dev/null",
+      `docker inspect groundcontrol-web --format '{{range .Mounts}}{{if eq .Destination "/app/prisma"}}{{.Type}}:{{.Name}}{{end}}{{end}}' 2>/dev/null`,
       { requireHost: true }
     ),
     execOnHost("printf groundcontrol-host-ok", { requireHost: true }),
