@@ -2,9 +2,8 @@ import { isIP } from "node:net";
 import { resolve4 } from "node:dns/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { encryptIfNeeded } from "@/lib/crypto";
+import { decryptMaybe, encryptIfNeeded } from "@/lib/crypto";
 import {
-  cfRequest,
   createDnsRecord,
   createTunnel,
   getActiveCloudflareAccount,
@@ -293,7 +292,7 @@ export async function publishWithCloudflare(input: {
   const zone = await findZoneForHostname(hostname, account);
   let row = await activeNamedTunnelRow();
   let tunnelId = row?.tunnelId || "";
-  let token = row?.tunnelSecret || "";
+  let token = decryptMaybe(row?.tunnelSecret) || "";
 
   if (!row || !tunnelId || !token) {
     const created = await createTunnel(NAMED_TUNNEL_NAME, account);
@@ -319,7 +318,7 @@ export async function publishWithCloudflare(input: {
     create: {
       tunnelId,
       name: NAMED_TUNNEL_NAME,
-      tunnelSecret: token,
+      tunnelSecret: encryptIfNeeded(token),
       connectorId,
       status: "active",
       domains: hostname,
