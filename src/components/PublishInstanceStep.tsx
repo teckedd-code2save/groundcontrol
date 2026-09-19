@@ -122,10 +122,7 @@ export default function PublishInstanceStep({
       const response = await fetch("/api/instance/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "verify",
-          publicUrl: status?.publicUrl || null,
-        }),
+        body: JSON.stringify({ action: "verify" }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Verification failed");
