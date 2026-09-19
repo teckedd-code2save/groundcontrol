@@ -49,7 +49,7 @@ describe("GroundControl distribution installer contract", () => {
 
   it("uses one claim JSON parser across fresh and idempotent paths", () => {
     expect(installer).toContain("json_string_field()");
-    expect(installer.match(/json_string_field "\\$CLAIM_JSON"/g)?.length).toBeGreaterThanOrEqual(8);
+    expect(installer.match(/json_string_field "\$CLAIM_JSON"/g)?.length).toBeGreaterThanOrEqual(8);
     expect(installer).not.toContain('sed -n \'s/.*"stage":"\\\\(');
   });
 
