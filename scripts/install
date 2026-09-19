@@ -17,6 +17,9 @@ INSTALL_DIR="/opt/groundcontrol"
 JSON_MODE=0
 CLAIM_TTL_MINUTES="30"
 UPGRADE=0
+PREVIEW=0
+UNINSTALL=0
+BACKUP_KEEP=3
 IMAGE_REPO="ghcr.io/teckedd-code2save/groundcontrol"
 
 log() {
@@ -42,6 +45,9 @@ GroundControl installer
 
 Usage:
   install [--version TAG] [--port PORT] [--dir PATH] [--claim-ttl MINUTES] [--json]
+  install --preview [--version TAG] [--json]
+  install --upgrade [--version TAG] [--json]
+  install --uninstall [--json]
 
 Options:
   --version TAG        Container tag/short SHA. Default: latest.
@@ -49,11 +55,13 @@ Options:
   --dir PATH           Install directory. Default: /opt/groundcontrol.
   --claim-ttl MINUTES  One-time human claim lifetime, 5-120. Default: 30.
   --json               Emit one machine-readable result on stdout; progress goes to stderr.
-  --upgrade            Explicitly refresh a healthy existing install to the requested image tag.
+  --preview            Check the requested image and local upgrade prerequisites without changing the instance.
+  --upgrade            Upgrade with a quiesced SQLite backup, health verification and automatic rollback.
+  --uninstall          Remove the GroundControl runtime while preserving data and install files.
   -h, --help           Show this help.
 
-The service binds 127.0.0.1 only. Use an HTTPS reverse proxy or an SSH tunnel
-to complete the one-time human claim.
+The service binds 127.0.0.1 only. After human claim, publish the instance
+through GroundControl's HTTPS/domain or outbound bridge flow.
 USAGE
 }
 
@@ -75,6 +83,10 @@ while [ "$#" -gt 0 ]; do
       JSON_MODE=1; shift ;;
     --upgrade)
       UPGRADE=1; shift ;;
+    --preview)
+      PREVIEW=1; shift ;;
+    --uninstall)
+      UNINSTALL=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -91,6 +103,12 @@ case "$CLAIM_TTL_MINUTES" in
   ''|*[!0-9]*) fail "Claim TTL must be numeric" ;;
 esac
 [ "$CLAIM_TTL_MINUTES" -ge 5 ] && [ "$CLAIM_TTL_MINUTES" -le 120 ] || fail "Claim TTL must be between 5 and 120 minutes"
+
+case "$VERSION" in
+  ''|*[!A-Za-z0-9_.-]*) fail "Image version contains unsupported characters" ;;
+esac
+[ "$PREVIEW" -eq 0 ] || [ "$UNINSTALL" -eq 0 ] || fail "--preview and --uninstall cannot be combined"
+[ "$UPGRADE" -eq 0 ] || [ "$UNINSTALL" -eq 0 ] || fail "--upgrade and --uninstall cannot be combined"
 
 [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || fail "This installer currently supports Linux hosts"
 
@@ -111,9 +129,133 @@ else
   fail "Docker Compose is required"
 fi
 
+container_health() {
+  docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null || true
+}
+
+wait_healthy() {
+  local tries="$1"
+  local i
+  for i in $(seq 1 "$tries"); do
+    local health
+    health="$(container_health)"
+    if [ "$health" = "healthy" ] || [ "$health" = "running" ]; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+image_repo_digest() {
+  local image="$1"
+  docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null     | grep "^$IMAGE_REPO@" | head -n 1 || true
+}
+
+database_mount() {
+  docker inspect groundcontrol-web     --format '{{range .Mounts}}{{if eq .Destination "/app/prisma"}}{{.Type}}|{{.Name}}|{{.Source}}{{end}}{{end}}'     2>/dev/null || true
+}
+
+backup_existing() {
+  local image_id="$1"
+  local mount_line="$2"
+  local backup_dir="$3"
+  local mount_type=""
+  local mount_name=""
+  local mount_source=""
+
+  mkdir -p "$backup_dir/db"
+  chmod 700 "$backup_dir"
+  [ -f "$INSTALL_DIR/.env" ] && cp -p "$INSTALL_DIR/.env" "$backup_dir/env"
+  [ -f "$INSTALL_DIR/docker-compose.yml" ] && cp -p "$INSTALL_DIR/docker-compose.yml" "$backup_dir/docker-compose.yml"
+
+  IFS='|' read -r mount_type mount_name mount_source <<EOF
+$mount_line
+EOF
+
+  if [ "$mount_type" = "volume" ] && [ -n "$mount_name" ]; then
+    docker run --rm --entrypoint sh       -v "$mount_name:/data:ro"       -v "$backup_dir:/backup"       "$image_id"       -c 'cp -a /data/. /backup/db/'
+  elif [ "$mount_type" = "bind" ] && [ -n "$mount_source" ]; then
+    cp -a "$mount_source"/. "$backup_dir/db/"
+  else
+    return 1
+  fi
+}
+
+restore_backup() {
+  local image_id="$1"
+  local image_ref="$2"
+  local mount_line="$3"
+  local backup_dir="$4"
+  local mount_type=""
+  local mount_name=""
+  local mount_source=""
+
+  docker rm -f groundcontrol-web >/dev/null 2>&1 || true
+
+  IFS='|' read -r mount_type mount_name mount_source <<EOF
+$mount_line
+EOF
+
+  if [ "$mount_type" = "volume" ] && [ -n "$mount_name" ]; then
+    docker run --rm --entrypoint sh       -v "$mount_name:/data"       -v "$backup_dir:/backup:ro"       "$image_id"       -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /backup/db/. /data/'
+  elif [ "$mount_type" = "bind" ] && [ -n "$mount_source" ]; then
+    find "$mount_source" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    cp -a "$backup_dir/db/." "$mount_source/"
+  else
+    return 1
+  fi
+
+  [ -f "$backup_dir/env" ] && cp -p "$backup_dir/env" "$INSTALL_DIR/.env"
+  [ -f "$backup_dir/docker-compose.yml" ] && cp -p "$backup_dir/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
+
+  if [ -n "$image_ref" ] && [ -n "$image_id" ]; then
+    case "$image_ref" in sha256:*) ;; *) docker tag "$image_id" "$image_ref" >/dev/null 2>&1 || true ;; esac
+  fi
+
+  cd "$INSTALL_DIR"
+  $COMPOSE up -d --remove-orphans >/dev/null
+  wait_healthy 36
+}
+
+write_upgrade_evidence() {
+  local backup_dir="$1"
+  local status="$2"
+  local previous="$3"
+  local requested="$4"
+  local resolved="$5"
+  local rollback="$6"
+  cat > "$backup_dir/result.json" <<EOF
+{"status":"$(json_escape "$status")","previousImage":"$(json_escape "$previous")","requestedImage":"$(json_escape "$requested")","resolvedImage":"$(json_escape "$resolved")","rollback":"$(json_escape "$rollback")","checkedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+EOF
+  chmod 600 "$backup_dir/result.json"
+}
+
+prune_backups() {
+  [ -d "$INSTALL_DIR/backups" ] || return 0
+  local count=0
+  local path
+  while IFS= read -r path; do
+    count=$((count + 1))
+    if [ "$count" -gt "$BACKUP_KEEP" ]; then
+      rm -rf -- "$path"
+    fi
+  done < <(find "$INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort -r)
+}
+
+EXISTING=0
 EXISTING_HEALTHY=0
+CURRENT_REF=""
+CURRENT_ID=""
+CURRENT_DIGEST=""
+DB_MOUNT=""
 if docker inspect groundcontrol-web >/dev/null 2>&1; then
-  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null || true)"
+  EXISTING=1
+  CURRENT_REF="$(docker inspect --format '{{.Config.Image}}' groundcontrol-web 2>/dev/null || true)"
+  CURRENT_ID="$(docker inspect --format '{{.Image}}' groundcontrol-web 2>/dev/null || true)"
+  CURRENT_DIGEST="$(image_repo_digest "$CURRENT_ID")"
+  DB_MOUNT="$(database_mount)"
+  health="$(container_health)"
   if [ "$health" = "healthy" ] || [ "$health" = "running" ]; then
     EXISTING_HEALTHY=1
   fi
