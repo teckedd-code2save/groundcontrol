@@ -195,7 +195,11 @@ export default function OnboardingPage() {
           });
         }
       }
-      setStep("publish");
+      if (addMode && existingServers.length > 0) {
+        await runProbe();
+      } else {
+        setStep("publish");
+      }
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "Connection failed");
     } finally {
