@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { HttpError, handleApiError } from "@/lib/errors";
+import { createAuditLog } from "@/lib/audit";
 import {
   instancePublishStatus,
   keepInstancePrivate,
@@ -30,23 +31,32 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     await requireAdmin(req);
+    const user = await requireAdmin(req);
     const body = await req.json() as {
       action?: string;
       hostname?: string;
       apiToken?: string;
       accountId?: string;
-      publicUrl?: string | null;
     };
 
     if (body.action === "private") {
       const result = await keepInstancePrivate();
       const verification = await verifyGroundControlInstance(null);
+      await createAuditLog(user.id, "instance_access_disable", req, {
+        mode: "private",
+        verificationOk: verification.ok,
+      });
       return NextResponse.json({ result, verification });
     }
 
     if (body.action === "quick_tunnel") {
       const result = await publishQuickTunnel();
       const verification = await verifyGroundControlInstance(result.publicUrl);
+      await createAuditLog(user.id, "instance_access_publish", req, {
+        mode: result.mode,
+        publicUrl: result.publicUrl,
+        verificationOk: verification.ok,
+      });
       return NextResponse.json({ result, verification });
     }
 
@@ -57,6 +67,11 @@ export async function POST(req: NextRequest) {
       try {
         const result = await publishWithCaddy({ hostname: body.hostname });
         const verification = await verifyGroundControlInstance(result.publicUrl);
+        await createAuditLog(user.id, "instance_access_publish", req, {
+          mode: result.mode,
+          publicUrl: result.publicUrl,
+          verificationOk: verification.ok,
+        });
         return NextResponse.json({ result, verification });
       } catch (error) {
         const typed = error as Error & {
@@ -84,11 +99,20 @@ export async function POST(req: NextRequest) {
         accountId: body.accountId,
       });
       const verification = await verifyGroundControlInstance(result.publicUrl);
+      await createAuditLog(user.id, "instance_access_publish", req, {
+        mode: result.mode,
+        publicUrl: result.publicUrl,
+        verificationOk: verification.ok,
+      });
       return NextResponse.json({ result, verification });
     }
 
     if (body.action === "verify") {
-      const verification = await verifyGroundControlInstance(body.publicUrl);
+      const verification = await verifyGroundControlInstance();
+      await createAuditLog(user.id, "instance_access_verify", req, {
+        publicUrl: verification.publicUrl,
+        verificationOk: verification.ok,
+      });
       return NextResponse.json({ verification });
     }
 
