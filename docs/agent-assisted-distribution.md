@@ -116,3 +116,25 @@ A guarded upgrade:
 An automatic rollback that restores health exits non-zero because the requested upgrade still failed. Agents should report the rollback as successful recovery, not as a successful upgrade.
 
 `--uninstall` is data-preserving by default. It removes the runtime but leaves the database volume and install directory available for recovery.
+
+
+## Clean-host acceptance
+
+`.github/workflows/distribution-acceptance.yml` provides a disposable-host acceptance run after relevant production deployments and on manual dispatch.
+
+The workflow proves the canonical distribution contract on a fresh GitHub-hosted Linux machine:
+
+1. verifies the published installer checksum;
+2. installs the selected GHCR image through `scripts/install --json`;
+3. proves the management port is loopback-only and that the canonical install does not mount `/root/.ssh`;
+4. completes the real one-time claim API and creates the first administrator;
+5. runs GroundControl's private-mode post-install verification;
+6. checks PTY, host execution, MCP discovery, OAuth metadata, persistent storage and claim consumption;
+7. reruns the installer to prove idempotency;
+8. previews and performs a guarded same-image upgrade, including DB backup evidence and digest-pinned runtime;
+9. proves the operator session survives the upgrade;
+10. runs the data-preserving uninstall and verifies the database volume remains.
+
+Only redacted evidence is uploaded. Claim tokens and claim URLs are removed before artifacts are created.
+
+External HTTPS/Cloudflare paths remain provider-dependent integration checks; the deterministic clean-host job validates all local trust boundaries without relying on a third-party tunnel during CI.
