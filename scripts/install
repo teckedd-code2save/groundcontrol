@@ -210,7 +210,7 @@ EOF
   [ -f "$backup_dir/docker-compose.yml" ] && cp -p "$backup_dir/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
 
   if [ -n "$image_ref" ] && [ -n "$image_id" ]; then
-    case "$image_ref" in sha256:*) ;; *) docker tag "$image_id" "$image_ref" >/dev/null 2>&1 || true ;; esac
+    case "$image_ref" in sha256:*|*@sha256:*) ;; *) docker tag "$image_id" "$image_ref" >/dev/null 2>&1 || true ;; esac
   fi
 
   cd "$INSTALL_DIR"
@@ -448,9 +448,12 @@ chmod 600 "$INSTALL_DIR/docker-compose.yml"
 
 cd "$INSTALL_DIR"
 log "[install] starting GroundControl with immutable image $RESOLVED_IMAGE"
-$COMPOSE up -d --remove-orphans >/dev/null
+start_ok=1
+if ! $COMPOSE up -d --remove-orphans >/dev/null; then
+  start_ok=0
+fi
 
-if ! wait_healthy 36; then
+if [ "$start_ok" -ne 1 ] || ! wait_healthy 36; then
   $COMPOSE ps >&2 || true
   $COMPOSE logs --tail=120 web >&2 || true
 
@@ -494,12 +497,23 @@ EXPIRES_AT="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"expiresAt":"\([^"]*\)".*/
 
 if [ "$STAGE" = "already_claimed" ]; then
   if [ "$JSON_MODE" -eq 1 ]; then
-    printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","checks":{"docker":"ready","container":"ready","health":"ready"}}\n'       "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT"
+    if [ -n "$BACKUP_DIR" ]; then
+      printf '{"product":"groundcontrol","stage":"upgrade_complete","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","previousImage":"%s","image":"%s","backup":"%s","checks":{"container":"ready","health":"ready","storageBackup":"ready"},"changed":true}\n'         "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CURRENT_EFFECTIVE")" "$(json_escape "$RESOLVED_IMAGE")" "$(json_escape "$BACKUP_DIR")"
+    else
+      printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","image":"%s","checks":{"docker":"ready","container":"ready","health":"ready"},"changed":true}\n'         "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$RESOLVED_IMAGE")"
+    fi
   else
     log ""
-    log "GroundControl is already claimed and healthy."
-    log "Instance: $INSTANCE_ID"
-    log "Local endpoint: http://127.0.0.1:$HOST_PORT"
+    if [ -n "$BACKUP_DIR" ]; then
+      log "GroundControl upgrade completed and verified."
+      log "Previous image: $CURRENT_EFFECTIVE"
+      log "Running image:  $RESOLVED_IMAGE"
+      log "Rollback backup: $BACKUP_DIR"
+    else
+      log "GroundControl is already claimed and healthy."
+      log "Instance: $INSTANCE_ID"
+      log "Local endpoint: http://127.0.0.1:$HOST_PORT"
+    fi
   fi
   exit 0
 fi
@@ -511,8 +525,8 @@ CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
 LOCAL_CLAIM_URL="http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
 
 if [ "$JSON_MODE" -eq 1 ]; then
-  printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"http://127.0.0.1:%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim"}\n' \
-    "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT"
+  printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"http://127.0.0.1:%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"image":"%s","checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":true}\n' \
+    "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT" "$(json_escape "$RESOLVED_IMAGE")"
 else
   log ""
   log "GroundControl is installed and waiting for its owner."
