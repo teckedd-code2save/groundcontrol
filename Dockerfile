@@ -56,6 +56,7 @@ COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 COPY scripts/ensure-admin.cjs /app/ensure-admin.cjs
 COPY scripts/ensure-local-vps.cjs /app/ensure-local-vps.cjs
 COPY scripts/agent-operation-worker.cjs /app/scripts/agent-operation-worker.cjs
+COPY scripts/create-install-claim.cjs /app/scripts/create-install-claim.cjs
 RUN chmod +x /app/docker-entrypoint.sh
 
 # Ensure db directory exists for SQLite

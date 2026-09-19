@@ -96,36 +96,46 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 
 ## 🚀 Quick Start
 
-### One-command install on a VPS
+### Install on a VPS
 
-GroundControl can install Docker (if needed) and start itself on a remote host over SSH. The installer lives in [`scripts/bootstrap`](./scripts/bootstrap).
+The canonical installer runs **on the VPS itself**. This is the path automation agents should use after the user has already authorized them to operate that host.
 
 ```bash
-# Recommended: same as `ssh -i` — pass your private key path
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
-  | bash -s -- -i ~/.ssh/id_ed25519 root@YOUR_VPS_IP
-
-# Interactive: prompts for host, key path, and SSH port (works with curl|bash via /dev/tty)
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
-  | bash -s -- --interactive
-
-# Default agent keys only (fails if the host expects a non-default identity file)
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
-  | bash -s -- root@YOUR_VPS_IP
-
-# Local install (this machine is the VPS)
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install | sudo bash
 ```
+
+For an agent, use machine-readable output:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install \
+  | sudo bash -s -- --json
+```
+
+A fresh install does **not** generate an administrator password. GroundControl starts unclaimed and returns a short-lived, single-use claim token. The human completes one claim action in the browser and chooses the first administrator credentials.
+
+GroundControl binds to loopback by default. Before a public HTTPS reverse proxy is configured, claim it safely through an SSH tunnel:
+
+```bash
+ssh -L 3003:127.0.0.1:3003 root@YOUR_VPS
+```
+
+Then open the claim URL returned by the installer. Claim tokens are stored only as hashes, expire, are single-use, and all outstanding claims are revoked when the first administrator is created.
+
+Useful installer flags:
 
 | Flag | Meaning |
 |------|---------|
-| `-i` / `--identity` / `--key` | Path to private key (like `ssh -i`) |
-| `-p` / `--port` | SSH port (default `22`) |
-| `--interactive` / `-I` | Prompt for host, key, and port |
+| `--version TAG` | Install a specific image tag/short SHA instead of `latest` |
+| `--port PORT` | Loopback host port (default `3003`) |
+| `--claim-ttl MINUTES` | Claim lifetime, 5–120 minutes |
+| `--json` | Machine-readable final install/claim result |
+| `--upgrade` | Explicitly refresh a healthy existing install |
 
-After install, open `http://YOUR_VPS_IP:3737` and complete **Setup** (`/onboarding`). To manage **additional** hosts later, use **Add Server** in the app (`/onboarding?add=1`) or **Settings → Connections**.
+Rerunning the installer against a healthy instance is a no-op unless `--upgrade` is supplied.
 
-See also [`DEPLOY.md`](./DEPLOY.md) for domain, reverse proxy, and production hardening.
+The older remote SSH bootstrap remains available at [`scripts/bootstrap`](./scripts/bootstrap) for compatibility, but new agent-assisted workflows should prefer the on-host installer so GroundControl never needs to ingest an SSH private key.
+
+See [`docs/agent-assisted-installation.md`](./docs/agent-assisted-installation.md) for the install/claim contract and [`DEPLOY.md`](./DEPLOY.md) for HTTPS/reverse-proxy hardening.
 
 ### Local development
 

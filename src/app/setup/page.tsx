@@ -18,8 +18,10 @@ export default function SetupPage() {
     fetch("/api/auth/setup")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!data?.setupRequired) {
-          router.push("/login");
+        if (data?.claimRequired) {
+          router.replace("/claim");
+        } else if (!data?.setupRequired) {
+          router.replace("/login");
         }
       })
       .catch(() => router.push("/login"))

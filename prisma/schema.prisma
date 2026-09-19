@@ -22,6 +22,19 @@ model User {
   oauthGrants        OAuthGrant[]
 }
 
+model InstallClaim {
+  id         String    @id @default(cuid())
+  instanceId String
+  tokenHash  String    @unique
+  status     String    @default("active") // active | claimed | revoked | expired
+  expiresAt  DateTime
+  claimedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([status, expiresAt])
+  @@index([instanceId, createdAt])
+}
+
 model AuditLog {
   id        Int      @id @default(autoincrement())
   userId    Int

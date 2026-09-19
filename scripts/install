@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+# GroundControl canonical on-host installer.
+#
+# Human:
+#   curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install | sudo bash
+#
+# Agent:
+#   curl -fsSL .../scripts/install | sudo bash -s -- --json
+#
+# This installer assumes it is already running on the authorized target host.
+# It never asks for, uploads, or stores SSH credentials.
+set -euo pipefail
+
+VERSION="latest"
+HOST_PORT="3003"
+INSTALL_DIR="/opt/groundcontrol"
+JSON_MODE=0
+CLAIM_TTL_MINUTES="30"
+UPGRADE=0
+IMAGE_REPO="ghcr.io/teckedd-code2save/groundcontrol"
+
+log() {
+  if [ "$JSON_MODE" -eq 1 ]; then
+    printf '%s\n' "$*" >&2
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+fail() {
+  log "ERROR: $*"
+  exit 1
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\r/\\r/g; s/\n/\\n/g'
+}
+
+usage() {
+  cat <<'USAGE'
+GroundControl installer
+
+Usage:
+  install [--version TAG] [--port PORT] [--dir PATH] [--claim-ttl MINUTES] [--json]
+
+Options:
+  --version TAG        Container tag/short SHA. Default: latest.
+  --port PORT          Loopback host port. Default: 3003.
+  --dir PATH           Install directory. Default: /opt/groundcontrol.
+  --claim-ttl MINUTES  One-time human claim lifetime, 5-120. Default: 30.
+  --json               Emit one machine-readable result on stdout; progress goes to stderr.
+  --upgrade            Explicitly refresh a healthy existing install to the requested image tag.
+  -h, --help           Show this help.
+
+The service binds 127.0.0.1 only. Use an HTTPS reverse proxy or an SSH tunnel
+to complete the one-time human claim.
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version)
+      [ "$#" -ge 2 ] || fail "--version needs a value"
+      VERSION="$2"; shift 2 ;;
+    --port)
+      [ "$#" -ge 2 ] || fail "--port needs a value"
+      HOST_PORT="$2"; shift 2 ;;
+    --dir)
+      [ "$#" -ge 2 ] || fail "--dir needs a value"
+      INSTALL_DIR="$2"; shift 2 ;;
+    --claim-ttl)
+      [ "$#" -ge 2 ] || fail "--claim-ttl needs a value"
+      CLAIM_TTL_MINUTES="$2"; shift 2 ;;
+    --json)
+      JSON_MODE=1; shift ;;
+    --upgrade)
+      UPGRADE=1; shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      fail "Unknown option: $1" ;;
+  esac
+done
+
+case "$HOST_PORT" in
+  ''|*[!0-9]*) fail "Port must be numeric" ;;
+esac
+[ "$HOST_PORT" -ge 1024 ] && [ "$HOST_PORT" -le 65535 ] || fail "Port must be between 1024 and 65535"
+
+case "$CLAIM_TTL_MINUTES" in
+  ''|*[!0-9]*) fail "Claim TTL must be numeric" ;;
+esac
+[ "$CLAIM_TTL_MINUTES" -ge 5 ] && [ "$CLAIM_TTL_MINUTES" -le 120 ] || fail "Claim TTL must be between 5 and 120 minutes"
+
+[ "$(uname -s 2>/dev/null || true)" = "Linux" ] || fail "This installer currently supports Linux hosts"
+
+if ! command -v docker >/dev/null 2>&1; then
+  [ "$(id -u)" -eq 0 ] || fail "Docker is missing. Re-run as root/sudo so GroundControl can install Docker."
+  command -v curl >/dev/null 2>&1 || fail "curl is required to install Docker"
+  log "[install] Docker not found; installing Docker Engine"
+  curl -fsSL https://get.docker.com | sh
+fi
+
+docker info >/dev/null 2>&1 || fail "Docker daemon is not reachable by the current user"
+
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE="docker-compose"
+else
+  fail "Docker Compose is required"
+fi
+
+EXISTING_HEALTHY=0
+if docker inspect groundcontrol-web >/dev/null 2>&1; then
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null || true)"
+  if [ "$health" = "healthy" ] || [ "$health" = "running" ]; then
+    EXISTING_HEALTHY=1
+  fi
+fi
+
+if [ "$EXISTING_HEALTHY" -eq 1 ]; then
+  EXISTING_PORT="$(docker port groundcontrol-web 3000/tcp 2>/dev/null | head -n 1 | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+  if [ -n "$EXISTING_PORT" ]; then HOST_PORT="$EXISTING_PORT"; fi
+fi
+
+if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
+  log "[install] healthy GroundControl already exists; leaving image and Compose unchanged"
+  CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES" 2>/dev/null)" || {
+    fail "Existing GroundControl predates the claim installer. Re-run with --upgrade to install the current claim-capable image."
+  }
+  STAGE="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"stage":"\\([^"]*\\)".*/\\1/p')"
+  INSTANCE_ID="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"instanceId":"\\([^"]*\\)".*/\\1/p')"
+  CLAIM_TOKEN="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"claimToken":"\\([^"]*\\)".*/\\1/p')"
+  EXPIRES_AT="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"expiresAt":"\\([^"]*\\)".*/\\1/p')"
+
+  if [ "$STAGE" = "already_claimed" ]; then
+    if [ "$JSON_MODE" -eq 1 ]; then
+      printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"changed":false}\n' \
+        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT"
+    else
+      log "GroundControl is already claimed and healthy. Nothing changed."
+    fi
+    exit 0
+  fi
+
+  if [ "$STAGE" = "claim_required" ] && [ -n "$CLAIM_TOKEN" ]; then
+    CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
+    if [ "$JSON_MODE" -eq 1 ]; then
+      printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":false}\n' \
+        "$(json_escape "$INSTANCE_ID")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT"
+    else
+      log "GroundControl is healthy but unclaimed."
+      log "Create an SSH tunnel if remote: ssh -L $HOST_PORT:127.0.0.1:$HOST_PORT <user>@<server>"
+      log "Then open: http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
+    fi
+    exit 0
+  fi
+  fail "Existing GroundControl returned an unexpected claim state"
+fi
+
+if command -v openssl >/dev/null 2>&1; then
+  random_hex() { openssl rand -hex "$1"; }
+else
+  random_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+fi
+
+mkdir -p "$INSTALL_DIR"
+chmod 700 "$INSTALL_DIR" 2>/dev/null || true
+
+if [ ! -f "$INSTALL_DIR/.env" ]; then
+  JWT_SECRET="$(random_hex 32)"
+  GC_SECRET="$(random_hex 32)"
+  cat > "$INSTALL_DIR/.env" <<EOF
+JWT_SECRET=$JWT_SECRET
+GROUNDCONTROL_SECRET=$GC_SECRET
+HOST_PORT=$HOST_PORT
+EOF
+  chmod 600 "$INSTALL_DIR/.env"
+  log "[install] generated on-host session and encryption keys"
+else
+  if ! grep -q '^JWT_SECRET=' "$INSTALL_DIR/.env"; then
+    printf 'JWT_SECRET=%s\n' "$(random_hex 32)" >> "$INSTALL_DIR/.env"
+  fi
+  if ! grep -q '^GROUNDCONTROL_SECRET=' "$INSTALL_DIR/.env"; then
+    printf 'GROUNDCONTROL_SECRET=%s\n' "$(random_hex 32)" >> "$INSTALL_DIR/.env"
+  fi
+  if ! grep -q '^HOST_PORT=' "$INSTALL_DIR/.env"; then
+    printf 'HOST_PORT=%s\n' "$HOST_PORT" >> "$INSTALL_DIR/.env"
+  fi
+fi
+
+IMAGE="$IMAGE_REPO:$VERSION"
+cat > "$INSTALL_DIR/docker-compose.yml" <<EOF
+services:
+  web:
+    image: $IMAGE
+    container_name: groundcontrol-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:\${HOST_PORT:-$HOST_PORT}:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/prisma/prod.db
+    volumes:
+      - groundcontrol-db:/app/prisma
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt:/opt
+      - /etc:/etc
+      - /var/www:/var/www
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/auth/claim"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+volumes:
+  groundcontrol-db:
+EOF
+chmod 600 "$INSTALL_DIR/docker-compose.yml"
+
+cd "$INSTALL_DIR"
+log "[install] pulling $IMAGE"
+$COMPOSE pull
+log "[install] starting GroundControl"
+$COMPOSE up -d --remove-orphans
+
+ready=0
+for _ in $(seq 1 36); do
+  if $COMPOSE ps web 2>/dev/null | grep -q healthy; then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+
+if [ "$ready" -ne 1 ]; then
+  $COMPOSE ps >&2 || true
+  $COMPOSE logs --tail=100 web >&2 || true
+  fail "GroundControl did not become healthy"
+fi
+
+CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES")"   || fail "GroundControl is healthy but could not create the installation claim"
+
+STAGE="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"stage":"\([^"]*\)".*/\1/p')"
+INSTANCE_ID="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"instanceId":"\([^"]*\)".*/\1/p')"
+CLAIM_TOKEN="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"claimToken":"\([^"]*\)".*/\1/p')"
+EXPIRES_AT="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"expiresAt":"\([^"]*\)".*/\1/p')"
+
+[ -n "$STAGE" ] || fail "Unexpected claim generator response"
+
+if [ "$STAGE" = "already_claimed" ]; then
+  if [ "$JSON_MODE" -eq 1 ]; then
+    printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"}}\n'       "$(json_escape "$INSTANCE_ID")" "$HOST_PORT"
+  else
+    log ""
+    log "GroundControl is already claimed and healthy."
+    log "Instance: $INSTANCE_ID"
+    log "Local endpoint: http://127.0.0.1:$HOST_PORT"
+  fi
+  exit 0
+fi
+
+[ "$STAGE" = "claim_required" ] || fail "Unsupported install stage: $STAGE"
+[ -n "$CLAIM_TOKEN" ] || fail "Claim generator did not return a one-time token"
+
+CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
+LOCAL_CLAIM_URL="http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
+
+if [ "$JSON_MODE" -eq 1 ]; then
+  printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim"}\n'     "$(json_escape "$INSTANCE_ID")"     "$(json_escape "$CLAIM_PATH")"     "$(json_escape "$CLAIM_TOKEN")"     "$(json_escape "$EXPIRES_AT")"     "$HOST_PORT"
+else
+  log ""
+  log "GroundControl is installed and waiting for its owner."
+  log ""
+  log "Instance: $INSTANCE_ID"
+  log "Claim expires: $EXPIRES_AT"
+  log ""
+  log "If you are on this machine, open:"
+  log "  $LOCAL_CLAIM_URL"
+  log ""
+  log "From another computer, keep GC private and create an SSH tunnel:"
+  log "  ssh -L $HOST_PORT:127.0.0.1:$HOST_PORT <user>@<server>"
+  log "Then open:"
+  log "  http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
+  log ""
+  log "The claim is single-use. No administrator password was generated by the installer."
+fi
