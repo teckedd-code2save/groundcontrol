@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { AmbientShader } from "@/components/AmbientShader";
+import PublishInstanceStep from "@/components/PublishInstanceStep";
 
 interface Message {
   role: "system" | "user" | "assistant";
@@ -12,12 +13,12 @@ interface Message {
   actions?: { label: string; action: string }[];
 }
 
-type WizardStep = "welcome" | "connect" | "domain" | "probing" | "ready";
+type WizardStep = "welcome" | "connect" | "publish" | "probing" | "ready";
 
 const WIZARD_STEPS: { id: WizardStep; label: string }[] = [
   { id: "welcome", label: "Welcome" },
   { id: "connect", label: "Connect" },
-  { id: "domain", label: "Domain" },
+  { id: "publish", label: "Publish" },
   { id: "probing", label: "Scan" },
   { id: "ready", label: "Ready" },
 ];
@@ -63,11 +64,6 @@ export default function OnboardingPage() {
   const [testOk, setTestOk] = useState<string | null>(null);
   const [hasVps, setHasVps] = useState<boolean | null>(null);
 
-  const [domainForm, setDomainForm] = useState({
-    primaryDomain: "",
-    skipDomain: true,
-  });
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const wantAdd =
@@ -84,7 +80,8 @@ export default function OnboardingPage() {
         if (list.length > 0) {
           setHasVps(true);
           if (wantAdd) {
-            // Explicitly adding another VPS — do not probe the current host
+            // Additional servers are explicit. The canonical installer already
+            // enrolls the GroundControl host as a local target.
             setServerForm((f) => ({
               ...f,
               name: `vps-${list.length + 1}`,
@@ -92,15 +89,8 @@ export default function OnboardingPage() {
             }));
             setStep("connect");
           } else {
-            // First-run style revisit without ?add=1: go to connect chooser for add,
-            // don't silently re-probe as if this is initial setup.
-            setServerForm((f) => ({
-              ...f,
-              name: `vps-${list.length + 1}`,
-              isLocal: false,
-            }));
-            setAddMode(true);
-            setStep("connect");
+            setAddMode(false);
+            setStep("publish");
           }
         } else {
           setHasVps(false);
@@ -205,21 +195,12 @@ export default function OnboardingPage() {
           });
         }
       }
-      setStep("domain");
+      setStep("publish");
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "Connection failed");
     } finally {
       setConnecting(false);
     }
-  }
-
-  async function finishDomainAndProbe() {
-    // Persist optional cert domain into system config after probe via answers
-    if (domainForm.primaryDomain.trim()) {
-      setAnswers((prev) => ({ ...prev, certDomain: domainForm.primaryDomain.trim() }));
-    }
-    setStep("probing");
-    await runProbe();
   }
 
   async function runProbe() {
@@ -448,20 +429,8 @@ export default function OnboardingPage() {
   async function handleSave() {
     setSaving(true);
     try {
-      // VPS is already saved + activated in the Connect step.
-      // Persist optional cert domain into active system config.
-      const certDomain = domainForm.primaryDomain.trim() || answers.certDomain || "";
-      if (certDomain) {
-        try {
-          await fetch("/api/system-config", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ certDomain }),
-          });
-        } catch {
-          /* optional — don't block finish */
-        }
-      }
+      // Server enrollment and control-plane publishing are completed before
+      // the scan. Finishing simply enters the private dashboard.
       router.push("/dashboard");
     } catch {
       setSaving(false);
@@ -533,21 +502,21 @@ export default function OnboardingPage() {
       <WizardChrome>
         <h1 className="text-3xl font-semibold tracking-tight">Connect your VPS</h1>
         <p className="mt-2 max-w-md text-sm text-muted leading-relaxed">
-          GroundControl runs as a control plane. Point it at a server (this host or remote SSH),
-          scan what is already running, then deploy templates with DNS and health checks.
+          The canonical installer enrolls the VPS it is running on automatically. Use this
+          screen only when you are connecting a different server over SSH.
         </p>
         <ul className="mt-6 space-y-2 text-sm text-muted">
           <li className="flex gap-2">
-            <span className="text-accent">1.</span> SSH or local host connection
+            <span className="text-accent">1.</span> Local install is auto-connected
           </li>
           <li className="flex gap-2">
-            <span className="text-accent">2.</span> Optional primary domain
+            <span className="text-accent">2.</span> Publish this GroundControl instance securely
           </li>
           <li className="flex gap-2">
-            <span className="text-accent">3.</span> Auto-detect Docker, proxy, stacks
+            <span className="text-accent">3.</span> Auto-detect Docker, proxy and workloads
           </li>
           <li className="flex gap-2">
-            <span className="text-accent">4.</span> Deploy from Templates
+            <span className="text-accent">4.</span> Connect agents and start operating
           </li>
         </ul>
         <button
@@ -791,65 +760,19 @@ export default function OnboardingPage() {
     );
   }
 
-  // ── Domain (optional) ────────────────────────────────
-  if (step === "domain") {
+  // ── Publish this GroundControl instance ──────────────
+  if (step === "publish") {
     return (
       <WizardChrome>
-        <h1 className="text-2xl font-semibold tracking-tight">Domain (optional)</h1>
-        <p className="mt-1 text-xs text-muted">
-          Used as a default for TLS/DNS when deploying templates. You can configure Cloudflare
-          fully later in Settings.
+        <h1 className="text-2xl font-semibold tracking-tight">Publish this GroundControl instance</h1>
+        <p className="mt-1 max-w-lg text-xs leading-relaxed text-muted">
+          Your managed VPS is already connected. Now choose how this private control plane
+          should be reached. GroundControl stays loopback-only unless you deliberately publish it.
         </p>
-        <div className="mt-6 space-y-4 rounded-lg border border-border bg-card p-5">
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={domainForm.skipDomain}
-              onChange={(e) =>
-                setDomainForm({ ...domainForm, skipDomain: e.target.checked })
-              }
-              className="mt-1 accent-accent"
-            />
-            <span>
-              <span className="text-sm">Skip for now</span>
-              <span className="mt-0.5 block text-[11px] text-muted">
-                Deploy with IPs or add domains per template later
-              </span>
-            </span>
-          </label>
-          {!domainForm.skipDomain && (
-            <div>
-              <label className="mb-1 block text-xs font-mono text-muted">Primary domain</label>
-              <input
-                type="text"
-                value={domainForm.primaryDomain}
-                onChange={(e) =>
-                  setDomainForm({ ...domainForm, primaryDomain: e.target.value })
-                }
-                placeholder="app.example.com"
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono outline-none focus:border-accent"
-              />
-              <p className="mt-2 text-[11px] text-muted">
-                Point DNS A/CNAME to this VPS after deploy, or use Cloudflare integration in
-                Settings → Cloudflare.
-              </p>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={finishDomainAndProbe}
-            className="w-full rounded-md bg-accent py-3 text-sm font-mono text-[var(--accent-ink)] hover:bg-accent-bright"
-          >
-            Scan server →
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => setStep("connect")}
-          className="mt-4 text-xs font-mono text-muted hover:text-accent"
-        >
-          ← Back
-        </button>
+        <PublishInstanceStep
+          onComplete={() => void runProbe()}
+          onBack={existingServers.length === 0 ? () => setStep("connect") : undefined}
+        />
       </WizardChrome>
     );
   }
