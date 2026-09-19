@@ -1,0 +1,233 @@
+name: Distribution Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "GroundControl image tag to install"
+        required: false
+        default: "latest"
+  workflow_run:
+    workflows: ["Build & Deploy"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  clean-host:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - name: Checkout tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 2
+
+      - name: Decide whether distribution changed
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed="$(git diff-tree --no-commit-id --name-only -r HEAD)"
+          printf '%s\n' "$changed"
+
+          if printf '%s\n' "$changed" | grep -Eq '^(scripts/install|scripts/install\.sha256|scripts/create-install-claim\.cjs|docker-entrypoint\.sh|scripts/ensure-local-vps\.cjs|Dockerfile|docker-compose\.yml|src/lib/install-claim\.ts|src/app/api/auth/claim/route\.ts|src/lib/instance-publish\.ts|src/app/api/instance/publish/route\.ts|\.github/workflows/distribution-acceptance\.yml)$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Select image
+        if: steps.scope.outputs.run == 'true'
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            tag="$(git rev-parse --short=7 HEAD)"
+          else
+            tag="${{ inputs.image_tag }}"
+            tag="${tag:-latest}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Testing image tag: $tag"
+
+      - name: Authenticate Docker to GHCR
+        if: steps.scope.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Verify installer integrity
+        if: steps.scope.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/install
+          (cd scripts && sha256sum -c install.sha256)
+
+      - name: Install, claim, verify and upgrade on clean host
+        if: steps.scope.outputs.run == 'true'
+        id: acceptance
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          INSTALL_JSON=/tmp/gc-install.json
+          CLAIM_JSON=/tmp/gc-claim.json
+          CLAIM_STATUS=/tmp/gc-claim-status.json
+          VERIFY_JSON=/tmp/gc-verify.json
+          RERUN_JSON=/tmp/gc-rerun.json
+          PREVIEW_JSON=/tmp/gc-preview.json
+          UPGRADE_JSON=/tmp/gc-upgrade.json
+          UNINSTALL_JSON=/tmp/gc-uninstall.json
+          COOKIE_JAR=/tmp/gc-cookies.txt
+          EVIDENCE_DIR=/tmp/gc-acceptance-evidence
+          mkdir -p "$EVIDENCE_DIR"
+
+          cleanup() {
+            rm -f "$INSTALL_JSON" "$COOKIE_JAR" /tmp/gc-claim-payload.json
+            sudo docker logout ghcr.io >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          sudo bash scripts/install --version "$IMAGE_TAG" --json > "$INSTALL_JSON"
+          jq -e '
+            .product == "groundcontrol" and
+            .stage == "claim_required" and
+            .next == "human_claim" and
+            (.localUrl | startswith("http://127.0.0.1:")) and
+            (.claimUrl | startswith("http://127.0.0.1:")) and
+            .checks.container == "ready" and
+            .checks.health == "ready"
+          ' "$INSTALL_JSON" >/dev/null
+
+          LOCAL_URL="$(jq -r '.localUrl' "$INSTALL_JSON")"
+          CLAIM_TOKEN="$(jq -r '.claimToken' "$INSTALL_JSON")"
+          test -n "$CLAIM_TOKEN"
+          test "$CLAIM_TOKEN" != "null"
+
+          PORT_LINE="$(sudo docker port groundcontrol-web 3000/tcp | head -n 1)"
+          printf '%s\n' "$PORT_LINE" | grep -Eq '^127\.0\.0\.1:[0-9]+$'
+          if printf '%s\n' "$PORT_LINE" | grep -Eq '(^|:)0\.0\.0\.0:'; then
+            echo "GroundControl management port is globally bound" >&2
+            exit 1
+          fi
+
+          if sudo docker inspect groundcontrol-web --format '{{range .Mounts}}{{println .Destination}}{{end}}' | grep -q '^/root/.ssh$'; then
+            echo "Canonical install mounted /root/.ssh" >&2
+            exit 1
+          fi
+
+          ADMIN_PASSWORD="GcAcceptance!Aa1$(openssl rand -hex 10)"
+          jq -n             --arg token "$CLAIM_TOKEN"             --arg username "acceptance-admin"             --arg password "$ADMIN_PASSWORD"             '{token:$token,username:$username,password:$password}'             > /tmp/gc-claim-payload.json
+
+          curl --fail-with-body -sS             -c "$COOKIE_JAR"             -H 'Content-Type: application/json'             --data-binary @/tmp/gc-claim-payload.json             "$LOCAL_URL/api/auth/claim"             > "$CLAIM_JSON"
+
+          jq -e '.ok == true and .user.role == "admin"' "$CLAIM_JSON" >/dev/null
+
+          curl --fail-with-body -sS "$LOCAL_URL/api/auth/claim" > "$CLAIM_STATUS"
+          jq -e '.claimed == true and .claimRequired == false and .activeClaim == null' "$CLAIM_STATUS" >/dev/null
+
+          curl --fail-with-body -sS             -b "$COOKIE_JAR"             -H 'Content-Type: application/json'             --data '{"action":"private"}'             "$LOCAL_URL/api/instance/publish"             > "$VERIFY_JSON"
+
+          jq -e '
+            .verification.ok == true and
+            .verification.checks.container.status == "ready" and
+            .verification.checks.storage.status == "ready" and
+            .verification.checks.hostExecution.status == "ready" and
+            .verification.checks.terminalPty.status == "ready" and
+            .verification.checks.mcpDiscovery.status == "ready" and
+            .verification.checks.oauthMetadata.status == "ready" and
+            .verification.checks.claimBoundary.status == "ready" and
+            .verification.checks.publicHttps.status == "skipped"
+          ' "$VERIFY_JSON" >/dev/null
+
+          MCP_TOOLS="$(curl --fail-with-body -sS             -X POST "$LOCAL_URL/mcp"             -H 'Content-Type: application/json'             --data '{"jsonrpc":"2.0","id":"acceptance-tools","method":"tools/list","params":{}}')"
+          printf '%s' "$MCP_TOOLS" | jq -e '.result.tools | map(.name) | index("deployment.list") != null' >/dev/null
+
+          curl --fail-with-body -sS "$LOCAL_URL/.well-known/oauth-protected-resource"             | jq -e '.resource | endswith("/mcp")' >/dev/null
+
+          sudo bash scripts/install --version "$IMAGE_TAG" --json > "$RERUN_JSON"
+          jq -e '.stage == "already_claimed" and .changed == false' "$RERUN_JSON" >/dev/null
+
+          sudo bash scripts/install --preview --version "$IMAGE_TAG" --json > "$PREVIEW_JSON"
+          jq -e '
+            .stage == "upgrade_preview" and
+            .changed == false and
+            .checks.container == "ready" and
+            .checks.storage == "ready" and
+            .checks.targetImage == "ready"
+          ' "$PREVIEW_JSON" >/dev/null
+
+          VOLUME_NAME="$(sudo docker inspect groundcontrol-web --format '{{range .Mounts}}{{if eq .Destination "/app/prisma"}}{{.Name}}{{end}}{{end}}')"
+          test -n "$VOLUME_NAME"
+
+          sudo bash scripts/install --upgrade --version "$IMAGE_TAG" --json > "$UPGRADE_JSON"
+          jq -e '
+            .stage == "upgrade_complete" and
+            .changed == true and
+            .checks.container == "ready" and
+            .checks.health == "ready" and
+            .checks.storageBackup == "ready"
+          ' "$UPGRADE_JSON" >/dev/null
+
+          BACKUP_DIR="$(jq -r '.backup' "$UPGRADE_JSON")"
+          sudo test -f "$BACKUP_DIR/result.json"
+          sudo cat "$BACKUP_DIR/result.json" | jq -e '.status == "upgrade_complete"' >/dev/null
+
+          RUNNING_IMAGE="$(sudo docker inspect groundcontrol-web --format '{{.Config.Image}}')"
+          if ! printf '%s' "$RUNNING_IMAGE" | grep -q '@sha256:'; then
+            echo "Upgraded canonical Compose is not pinned to a registry digest: $RUNNING_IMAGE" >&2
+            exit 1
+          fi
+
+          curl --fail-with-body -sS -b "$COOKIE_JAR" "$LOCAL_URL/api/auth/me"             | jq -e '.username == "acceptance-admin" and .role == "admin"' >/dev/null
+
+          sudo bash scripts/install --uninstall --json > "$UNINSTALL_JSON"
+          jq -e '.stage == "uninstalled" and .dataPreserved == true' "$UNINSTALL_JSON" >/dev/null
+          sudo docker volume inspect "$VOLUME_NAME" >/dev/null
+
+          jq 'del(.claimToken,.claimUrl,.claimPath)' "$INSTALL_JSON" > "$EVIDENCE_DIR/install.json"
+          cp "$CLAIM_JSON" "$EVIDENCE_DIR/claim.json"
+          cp "$CLAIM_STATUS" "$EVIDENCE_DIR/claim-status.json"
+          cp "$VERIFY_JSON" "$EVIDENCE_DIR/verification.json"
+          cp "$RERUN_JSON" "$EVIDENCE_DIR/rerun.json"
+          cp "$PREVIEW_JSON" "$EVIDENCE_DIR/upgrade-preview.json"
+          cp "$UPGRADE_JSON" "$EVIDENCE_DIR/upgrade.json"
+          cp "$UNINSTALL_JSON" "$EVIDENCE_DIR/uninstall.json"
+
+          sudo docker volume rm "$VOLUME_NAME" >/dev/null 2>&1 || true
+          sudo rm -rf /opt/groundcontrol
+
+          echo "GroundControl clean-host distribution acceptance passed."
+          echo "evidence_dir=$EVIDENCE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Upload redacted acceptance evidence
+        if: always() && steps.scope.outputs.run == 'true' && steps.acceptance.outputs.evidence_dir != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-acceptance-${{ env.TARGET_SHA }}
+          path: ${{ steps.acceptance.outputs.evidence_dir }}
+          retention-days: 7
+
+      - name: Skip note
+        if: steps.scope.outputs.run != 'true'
+        run: echo "Distribution surface unchanged in this deployment; clean-host acceptance skipped."
