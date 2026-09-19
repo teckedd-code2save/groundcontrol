@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { encryptIfNeeded } from "@/lib/crypto";
 import { createTunnel, deleteTunnel, listTunnels } from "@/lib/cloudflare";
 import { getCloudflaredContainerStatus, startCloudflaredConnector, stopCloudflaredConnector } from "@/lib/bootstrap";
 
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
       create: {
         tunnelId,
         name,
-        tunnelSecret: token,
+        tunnelSecret: encryptIfNeeded(token),
         connectorId,
         status: "active",
         cloudflareAccountId: activeAccount.id,
@@ -112,7 +113,7 @@ export async function POST(req: NextRequest) {
       },
       update: {
         name,
-        tunnelSecret: token,
+        tunnelSecret: encryptIfNeeded(token),
         connectorId,
         status: "active",
         cloudflareAccountId: activeAccount.id,
