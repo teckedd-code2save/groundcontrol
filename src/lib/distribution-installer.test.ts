@@ -47,6 +47,12 @@ describe("GroundControl distribution installer contract", () => {
     expect(installer).not.toContain("docker compose down -v");
   });
 
+  it("uses one claim JSON parser across fresh and idempotent paths", () => {
+    expect(installer).toContain("json_string_field()");
+    expect(installer.match(/json_string_field "\$CLAIM_JSON"/g)?.length).toBeGreaterThanOrEqual(8);
+    expect(installer).not.toContain('sed -n \'s/.*"stage":"\\\\(');
+  });
+
   it("keeps the management port loopback-only", () => {
     expect(installer).toContain('127.0.0.1:');
     expect(installer).not.toContain("/root/.ssh");

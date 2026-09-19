@@ -39,6 +39,12 @@ json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\r/\\r/g; s/\n/\\n/g'
 }
 
+json_string_field() {
+  local json="$1"
+  local field="$2"
+  printf '%s' "$json" | sed -n "s/.*\"${field}\":\"\\([^\"]*\\)\".*/\\1/p"
+}
+
 usage() {
   cat <<'USAGE'
 GroundControl installer
@@ -327,10 +333,10 @@ if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
   CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES" 2>/dev/null)" || {
     fail "Existing GroundControl predates the claim installer. Re-run with --upgrade to install the current claim-capable image."
   }
-  STAGE="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"stage":"\\([^"]*\\)".*/\\1/p')"
-  INSTANCE_ID="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"instanceId":"\\([^"]*\\)".*/\\1/p')"
-  CLAIM_TOKEN="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"claimToken":"\\([^"]*\\)".*/\\1/p')"
-  EXPIRES_AT="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"expiresAt":"\\([^"]*\\)".*/\\1/p')"
+  STAGE="$(json_string_field "$CLAIM_JSON" "stage")"
+  INSTANCE_ID="$(json_string_field "$CLAIM_JSON" "instanceId")"
+  CLAIM_TOKEN="$(json_string_field "$CLAIM_JSON" "claimToken")"
+  EXPIRES_AT="$(json_string_field "$CLAIM_JSON" "expiresAt")"
 
   if [ "$STAGE" = "already_claimed" ]; then
     if [ "$JSON_MODE" -eq 1 ]; then
@@ -488,10 +494,10 @@ fi
 
 CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES")"   || fail "GroundControl is healthy but could not create the installation claim"
 
-STAGE="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"stage":"\([^"]*\)".*/\1/p')"
-INSTANCE_ID="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"instanceId":"\([^"]*\)".*/\1/p')"
-CLAIM_TOKEN="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"claimToken":"\([^"]*\)".*/\1/p')"
-EXPIRES_AT="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"expiresAt":"\([^"]*\)".*/\1/p')"
+STAGE="$(json_string_field "$CLAIM_JSON" "stage")"
+INSTANCE_ID="$(json_string_field "$CLAIM_JSON" "instanceId")"
+CLAIM_TOKEN="$(json_string_field "$CLAIM_JSON" "claimToken")"
+EXPIRES_AT="$(json_string_field "$CLAIM_JSON" "expiresAt")"
 
 [ -n "$STAGE" ] || fail "Unexpected claim generator response"
 
