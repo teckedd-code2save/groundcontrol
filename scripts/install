@@ -136,8 +136,8 @@ if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
 
   if [ "$STAGE" = "already_claimed" ]; then
     if [ "$JSON_MODE" -eq 1 ]; then
-      printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"changed":false}\n' \
-        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT"
+      printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","checks":{"docker":"ready","container":"ready","health":"ready"},"changed":false}\n' \
+        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT"
     else
       log "GroundControl is already claimed and healthy. Nothing changed."
     fi
@@ -147,12 +147,13 @@ if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
   if [ "$STAGE" = "claim_required" ] && [ -n "$CLAIM_TOKEN" ]; then
     CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
     if [ "$JSON_MODE" -eq 1 ]; then
-      printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":false}\n' \
-        "$(json_escape "$INSTANCE_ID")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT"
+      printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"http://127.0.0.1:%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":false}\n' \
+        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT"
     else
       log "GroundControl is healthy but unclaimed."
       log "Create an SSH tunnel if remote: ssh -L $HOST_PORT:127.0.0.1:$HOST_PORT <user>@<server>"
-      log "Then open: http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
+      log "Local URL: http://127.0.0.1:$HOST_PORT"
+      log "Claim URL: http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
     fi
     exit 0
   fi
@@ -254,7 +255,7 @@ EXPIRES_AT="$(printf '%s' "$CLAIM_JSON" | sed -n 's/.*"expiresAt":"\([^"]*\)".*/
 
 if [ "$STAGE" = "already_claimed" ]; then
   if [ "$JSON_MODE" -eq 1 ]; then
-    printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"}}\n'       "$(json_escape "$INSTANCE_ID")" "$HOST_PORT"
+    printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","checks":{"docker":"ready","container":"ready","health":"ready"}}\n'       "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT"
   else
     log ""
     log "GroundControl is already claimed and healthy."
@@ -271,7 +272,8 @@ CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
 LOCAL_CLAIM_URL="http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
 
 if [ "$JSON_MODE" -eq 1 ]; then
-  printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim"}\n'     "$(json_escape "$INSTANCE_ID")"     "$(json_escape "$CLAIM_PATH")"     "$(json_escape "$CLAIM_TOKEN")"     "$(json_escape "$EXPIRES_AT")"     "$HOST_PORT"
+  printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"http://127.0.0.1:%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim"}\n' \
+    "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT"
 else
   log ""
   log "GroundControl is installed and waiting for its owner."

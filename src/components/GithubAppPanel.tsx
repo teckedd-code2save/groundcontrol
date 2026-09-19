@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Check,
   ExternalLink,
   FolderGit2,
   GitBranch,
@@ -108,8 +107,9 @@ export default function GithubAppPanel() {
         fetch("/api/github/registry"),
       ]);
       const [data, registryData] = await Promise.all([response.json(), registryResponse.json()]);
-      if (!response.ok) throw new Error(data.error || "Could not load GitHub App status");
-      if (!registryResponse.ok) throw new Error(registryData.error || "Could not load private image status");
+      if (!response.ok) throw new Error(data.error || "Could not load GitHub");
+      if (!registryResponse.ok) throw new Error(registryData.error || "Could not load GHCR status");
+
       setState(data);
       setRegistry(registryData);
       setPublicUrl(data.publicUrl || (window.location.protocol === "https:" ? window.location.origin : ""));
@@ -118,17 +118,20 @@ export default function GithubAppPanel() {
         token: "",
       });
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Could not load GitHub App status" });
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Could not load GitHub" });
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
     const params = new URLSearchParams(window.location.search);
     if (params.get("github") === "app-created") {
-      setMessage({ tone: "success", text: "GitHub App created. Install it on the repositories GroundControl should observe." });
+      setMessage({
+        tone: "success",
+        text: "GitHub is connected. Choose Connect Repo to grant repository access.",
+      });
     }
     const callbackError = params.get("github_error");
     if (callbackError) setMessage({ tone: "error", text: callbackError });
@@ -156,7 +159,8 @@ export default function GithubAppPanel() {
         body: JSON.stringify({ publicUrl }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not start GitHub App setup");
+      if (!response.ok) throw new Error(data.error || "Could not start GitHub setup");
+
       const form = document.createElement("form");
       form.method = "POST";
       form.action = data.action;
@@ -168,7 +172,7 @@ export default function GithubAppPanel() {
       document.body.appendChild(form);
       form.submit();
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Could not start GitHub App setup" });
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Could not start GitHub setup" });
       setOperation(null);
     }
   }
@@ -181,7 +185,7 @@ export default function GithubAppPanel() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Repository sync failed");
       await load();
-      setMessage({ tone: "success", text: "Repository access and deployment links reconciled." });
+      setMessage({ tone: "success", text: "GitHub repository access refreshed." });
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "Repository sync failed" });
     } finally {
@@ -200,14 +204,14 @@ export default function GithubAppPanel() {
       });
       const data = await response.json();
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || data.state?.error || "Private image access could not be verified");
+        throw new Error(data.error || data.state?.error || "Private GHCR access could not be verified");
       }
       setRegistry(data.state);
       setRegistryDraft((current) => ({ ...current, token: "" }));
       setRegistryOpen(false);
-      setMessage({ tone: "success", text: data.message || "Private image access is ready." });
+      setMessage({ tone: "success", text: data.message || "Private GHCR pulls are ready." });
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Private image access could not be verified" });
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Private GHCR access could not be verified" });
       await load();
     } finally {
       setOperation(null);
@@ -215,14 +219,14 @@ export default function GithubAppPanel() {
   }
 
   async function disconnect() {
-    if (!window.confirm("Remove the GitHub App, repository links and private image access from this GroundControl instance?")) return;
+    if (!window.confirm("Disconnect GitHub, repository links and private GHCR access from this GroundControl instance?")) return;
     setOperation("disconnect");
     try {
       const response = await fetch("/api/github/app", { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Disconnect failed");
       await load();
-      setMessage({ tone: "success", text: data.note || "GitHub App disconnected locally." });
+      setMessage({ tone: "success", text: data.note || "GitHub disconnected locally." });
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "Disconnect failed" });
     } finally {
@@ -230,34 +234,45 @@ export default function GithubAppPanel() {
     }
   }
 
-  const statusLabel = state.status === "installed" ? "installed" : state.status === "app_ready" ? "installation required" : "not configured";
+  const statusLabel = state.status === "installed"
+    ? "GitHub connected"
+    : state.status === "app_ready"
+      ? "Connect a repo"
+      : "Not connected";
 
   return (
     <section className="overflow-hidden border border-border bg-card">
-      <div className="flex flex-col gap-4 border-b border-border px-5 py-5 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border ${state.status === "installed" ? "border-success/30 bg-success/10 text-success" : "border-border bg-background text-muted"}`}>
+      <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-border bg-background text-muted">
             <FolderGit2 className="h-4.5 w-4.5" />
           </span>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold">GitHub App</h2>
-              <span className={`rounded-sm px-2 py-0.5 font-mono text-[9px] ${state.status === "installed" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>
+              <h2 className="text-sm font-semibold">GitHub</h2>
+              <span className="rounded-sm bg-muted/10 px-2 py-0.5 font-mono text-[9px] text-muted">
                 {loading ? "checking" : statusLabel}
               </span>
             </div>
-            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
-              Repository-scoped access, signed change events and private image readiness in one connection. Repository access always uses short-lived App credentials.
+            <p className="mt-1 text-xs text-muted">
+              Connect GitHub once, then choose the repositories GroundControl may operate.
             </p>
           </div>
         </div>
+
         {state.app && (
           <div className="flex flex-wrap gap-2">
-            <a href={`https://github.com/apps/${state.app.slug}/installations/new`} target="_blank" rel="noreferrer" className="gc-button gc-button-primary text-[10px]">
-              Install on repositories <ExternalLink className="h-3 w-3" />
+            <a
+              href={`https://github.com/apps/${state.app.slug}/installations/new`}
+              target="_blank"
+              rel="noreferrer"
+              className="gc-button gc-button-primary text-[10px]"
+            >
+              Connect Repo <ExternalLink className="h-3 w-3" />
             </a>
             <button type="button" onClick={syncRepositories} disabled={operation !== null} className="gc-button gc-button-secondary text-[10px]">
-              <RefreshCw className={`h-3 w-3 ${operation === "sync" ? "animate-spin" : ""}`} /> Sync
+              <RefreshCw className={`h-3 w-3 ${operation === "sync" ? "animate-spin" : ""}`} />
+              Sync
             </button>
             <button type="button" onClick={disconnect} disabled={operation !== null} className="gc-button gc-button-quiet text-[10px] text-error">
               <Unplug className="h-3 w-3" /> Disconnect
@@ -273,186 +288,174 @@ export default function GithubAppPanel() {
       )}
 
       {!state.app ? (
-        <div className="grid gap-6 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
           <div>
-            <label className="gc-label" htmlFor="github-public-url">GroundControl public URL</label>
+            <label className="gc-label" htmlFor="github-public-url">This GroundControl URL</label>
             <input
               id="github-public-url"
               value={publicUrl}
               onChange={(event) => setPublicUrl(event.target.value)}
-              placeholder="https://groundcontrol.example.com"
-              className="gc-field mt-2 w-full max-w-xl font-mono"
+              placeholder="https://gc.example.com"
+              className="gc-field mt-2 w-full font-mono"
             />
-            <p className="mt-2 max-w-xl text-[11px] leading-relaxed text-muted">
-              GitHub must reach this HTTPS address for signed webhooks. If GroundControl is private, expose only the webhook endpoint through your Cloudflare Tunnel before continuing.
+            <p className="mt-2 text-[10px] leading-relaxed text-muted">
+              GitHub uses this HTTPS URL for the App callback and signed webhooks.
             </p>
-            <button type="button" onClick={createApp} disabled={operation !== null || !publicUrl.trim()} className="gc-button gc-button-primary mt-4">
-              <ShieldCheck className="h-3.5 w-3.5" /> {operation === "create" ? "Opening GitHub…" : "Create operator-owned GitHub App"}
-            </button>
           </div>
-          <Readiness requirements={state.requirements} />
+          <button
+            type="button"
+            onClick={createApp}
+            disabled={operation !== null || !publicUrl.trim()}
+            className="gc-button gc-button-primary"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            {operation === "create" ? "Opening GitHub…" : "Connect GitHub"}
+          </button>
         </div>
       ) : (
         <>
-          <div className="grid border-b border-border sm:grid-cols-3">
-            <Metric label="Installations" value={state.installations.length} detail={state.app.name} />
-            <Metric label="Repositories" value={repositoryCount} detail="Explicit GitHub access" />
-            <Metric label="Linked workloads" value={linkedCount} detail="Matched by repository identity" accent />
+          <div className="grid border-b border-border sm:grid-cols-4">
+            <CompactStat label="Repos" value={repositoryCount} />
+            <CompactStat label="Connected" value={linkedCount} />
+            <CompactState
+              icon={<Webhook className="h-3 w-3" />}
+              label="Webhooks"
+              value={state.requirements.webhookReachable ? "verified" : "pending"}
+              good={state.requirements.webhookReachable}
+            />
+            <CompactState
+              icon={<GitBranch className="h-3 w-3" />}
+              label="Repair PRs"
+              value={state.requirements.sourceRepairWrite ? "ready" : "permission needed"}
+              good={state.requirements.sourceRepairWrite}
+            />
           </div>
-          <div className="grid gap-5 px-5 py-5 xl:grid-cols-[280px_minmax(0,1fr)]">
-            <div className="space-y-4">
-              <Readiness requirements={state.requirements} />
-              {!state.requirements.sourceRepairWrite && (
-                <div className="border border-warning/25 bg-warning/5 p-3">
-                  <p className="text-[11px] font-medium text-warning">Source repair needs one permission update</p>
-                  <p className="mt-1 text-[10px] leading-relaxed text-muted">
-                    Validated fixes stay blocked until this App has Contents and Pull requests set to read and write. Update the App permissions on GitHub, then sync.
-                  </p>
-                  {state.app?.slug && (
-                    <a
-                      href={`https://github.com/settings/apps/${state.app.slug}/permissions`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="gc-button gc-button-quiet mt-3 text-[10px]"
-                    >
-                      Update GitHub permissions <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </div>
-              )}
-              <div className="border border-border bg-background p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-2">
-                    <PackageCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-medium">Private images</p>
-                      <p className="mt-1 text-[10px] leading-relaxed text-muted">
-                        {registry.status === "ready"
-                          ? `Ready as ${registry.username}`
-                          : registry.status === "error"
-                            ? "Credential connected; package access needs attention"
-                            : "Enable only when a deployment uses private GHCR images"}
-                      </p>
-                    </div>
-                  </div>
-                  <span className={`shrink-0 rounded-sm px-2 py-0.5 font-mono text-[9px] ${
-                    registry.status === "ready"
-                      ? "bg-success/10 text-success"
-                      : registry.status === "error"
-                        ? "bg-error/10 text-error"
-                        : "bg-muted/10 text-muted"
-                  }`}>
-                    {registry.status === "ready" ? "ready" : registry.status === "error" ? "attention" : "optional"}
-                  </span>
-                </div>
 
-                {registryOpen ? (
-                  <div className="mt-3 space-y-2 border-t border-border pt-3">
-                    <input
-                      value={registryDraft.username}
-                      onChange={(event) => setRegistryDraft((current) => ({ ...current, username: event.target.value }))}
-                      placeholder="GitHub username"
-                      autoComplete="username"
-                      className="gc-field w-full font-mono"
-                    />
-                    <input
-                      type="password"
-                      value={registryDraft.token}
-                      onChange={(event) => setRegistryDraft((current) => ({ ...current, token: event.target.value }))}
-                      placeholder="GitHub package token"
-                      autoComplete="new-password"
-                      className="gc-field w-full font-mono"
-                    />
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <a
-                        href="https://github.com/settings/tokens/new?scopes=read:packages&description=GroundControl%20image%20pulls"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-[10px] text-accent hover:underline"
-                      >
-                        Create package credential <ExternalLink className="h-2.5 w-2.5" />
-                      </a>
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => setRegistryOpen(false)} disabled={operation === "registry"} className="gc-button gc-button-quiet text-[10px]">
-                          Cancel
-                        </button>
-                        <button type="button" onClick={saveRegistry} disabled={operation !== null || !registryDraft.username.trim() || !registryDraft.token.trim()} className="gc-button gc-button-primary text-[10px]">
-                          {operation === "registry" ? "Verifying…" : "Enable"}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setRegistryOpen(true)}
-                    disabled={operation !== null}
-                    className="gc-button gc-button-quiet mt-3 text-[10px]"
-                  >
-                    {registry.configured ? "Update access" : "Enable private pulls"}
-                  </button>
-                )}
-
-                {registry.error && <p className="mt-2 text-[10px] leading-relaxed text-error">{registry.error}</p>}
-                {registry.verifiedImage && <p className="mt-2 break-all font-mono text-[9px] text-muted">Verified: {registry.verifiedImage}</p>}
-              </div>
-              <div className="border border-border bg-background p-3">
-                <p className="gc-label">Webhook endpoint</p>
-                <p className="mt-2 break-all font-mono text-[10px] text-muted">{state.webhookUrl}</p>
-                <p className="mt-2 text-[10px] text-muted">Payloads are signature-verified and only sanitized event metadata is retained.</p>
-                <p className="mt-2 font-mono text-[9px] text-muted">
-                  {state.lastWebhook?.processedAt ? `Last verified: ${state.lastWebhook.event} · ${new Date(state.lastWebhook.processedAt).toLocaleString()}` : "No verified delivery received yet"}
-                </p>
-              </div>
+          {state.installations.length === 0 ? (
+            <div className="p-5">
+              <p className="text-sm font-medium">GitHub is connected. No repositories are granted yet.</p>
+              <p className="mt-1 text-xs text-muted">
+                Choose <strong className="font-medium text-foreground">Connect Repo</strong>, select your GitHub account and grant only the repositories GroundControl should see.
+              </p>
             </div>
-            <div className="space-y-3">
-              {state.installations.length === 0 ? (
-                <div className="border border-dashed border-border p-6">
-                  <p className="text-sm font-medium">The App exists, but it is not installed.</p>
-                  <p className="mt-1 text-xs text-muted">Choose “Install on repositories,” select an account and grant access only to the repositories GroundControl should manage.</p>
-                </div>
-              ) : state.installations.map((installation) => (
-                <div key={installation.id} className="border border-border bg-background">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-                    <div>
-                      <p className="text-xs font-medium">{installation.accountLogin}</p>
-                      <p className="mt-0.5 font-mono text-[9px] text-muted">{installation.repositorySelection} repositories · installation {installation.id}</p>
-                    </div>
-                    <span className={`rounded-sm px-2 py-1 font-mono text-[9px] ${installation.suspended ? "bg-error/10 text-error" : "bg-success/10 text-success"}`}>
-                      {installation.suspended ? "suspended" : "active"}
-                    </span>
+          ) : (
+            <div className="divide-y divide-border">
+              {state.installations.map((installation) => (
+                <div key={installation.id}>
+                  <div className="flex items-center justify-between gap-3 bg-background/40 px-5 py-2.5">
+                    <p className="text-xs font-medium">{installation.accountLogin}</p>
+                    <p className="font-mono text-[9px] text-muted">{installation.repositories.length} repo{installation.repositories.length === 1 ? "" : "s"}</p>
                   </div>
                   <div className="divide-y divide-border">
                     {installation.repositories.map((repository) => (
-                      <div key={repository.id} className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                      <div key={repository.id} className="flex flex-col gap-2 px-5 py-3 md:flex-row md:items-center md:justify-between">
                         <div className="min-w-0">
-                          <a href={repository.htmlUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 truncate text-xs font-medium hover:text-accent">
+                          <a
+                            href={repository.htmlUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex max-w-full items-center gap-1.5 truncate text-xs font-medium hover:text-accent"
+                          >
                             {repository.fullName} <ExternalLink className="h-3 w-3 shrink-0" />
                           </a>
-                          <p className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[9px] text-muted">
-                            <span className="inline-flex items-center gap-1"><GitBranch className="h-3 w-3" />{repository.defaultBranch}</span>
-                            <span>{repository.private ? "private" : "public"}</span>
-                            {repository.archived && <span>archived</span>}
+                          <p className="mt-1 font-mono text-[9px] text-muted">
+                            {repository.defaultBranch} · {repository.private ? "private" : "public"}
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
-                          {repository.deployments.length > 0 ? repository.deployments.map((deployment) => (
-                            <a key={deployment.id} href={`/deployments/${deployment.slug}`} className="inline-flex items-center gap-1 rounded-sm border border-success/25 bg-success/5 px-2 py-1 font-mono text-[9px] text-success">
-                              <Link2 className="h-3 w-3" /> {deployment.name}
-                            </a>
-                          )) : (
-                            <Link href="/deployments" className="rounded-sm border border-border px-2 py-1 font-mono text-[9px] text-muted hover:border-accent/40 hover:text-foreground">
-                              Set repository on deployment
+                          {repository.deployments.length > 0 ? (
+                            repository.deployments.map((deployment) => (
+                              <Link
+                                key={deployment.id}
+                                href={`/deployments/${deployment.slug}?tab=source`}
+                                className="inline-flex items-center gap-1 rounded-sm border border-success/25 bg-success/5 px-2 py-1 font-mono text-[9px] text-success"
+                              >
+                                <Link2 className="h-3 w-3" /> {deployment.name}
+                              </Link>
+                            ))
+                          ) : (
+                            <Link
+                              href="/deployments"
+                              className="rounded-sm border border-border px-2 py-1 font-mono text-[9px] text-muted hover:border-accent/40 hover:text-foreground"
+                            >
+                              Connect Repo
                             </Link>
                           )}
                         </div>
                       </div>
                     ))}
-                    {installation.repositories.length === 0 && <p className="px-4 py-5 text-xs text-muted">No repository access has been reported yet. Install the App or sync after changing repository access.</p>}
                   </div>
                 </div>
               ))}
             </div>
+          )}
+
+          <div className="border-t border-border bg-background/30 px-5 py-4">
+            <button
+              type="button"
+              onClick={() => setRegistryOpen((open) => !open)}
+              className="flex w-full items-center justify-between gap-3 text-left"
+            >
+              <span className="flex items-center gap-2">
+                <PackageCheck className="h-3.5 w-3.5 text-muted" />
+                <span>
+                  <span className="block text-[11px] font-medium">Private GHCR pulls</span>
+                  <span className="mt-0.5 block text-[10px] text-muted">
+                    {registry.status === "ready"
+                      ? `Verified as ${registry.username}`
+                      : "Optional. Public images need no credential."}
+                  </span>
+                </span>
+              </span>
+              <span className={`font-mono text-[9px] ${registry.status === "ready" ? "text-success" : registry.status === "error" ? "text-error" : "text-muted"}`}>
+                {registry.status === "ready" ? "ready" : registry.status === "error" ? "attention" : registryOpen ? "close" : "configure"}
+              </span>
+            </button>
+
+            {registryOpen && (
+              <div className="mt-4 grid gap-3 border-t border-border pt-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div>
+                  <p className="text-[10px] leading-relaxed text-muted">
+                    GitHub Packages currently requires a classic personal access token for direct registry authentication.
+                    GroundControl only needs <code className="text-foreground">read:packages</code> for private pulls and stores the token encrypted.
+                  </p>
+                  <a
+                    href="https://github.com/settings/tokens/new?scopes=read:packages&description=GroundControl%20private%20image%20pulls"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex items-center gap-1 text-[10px] text-accent hover:underline"
+                  >
+                    Create read-only package token <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                </div>
+                <div className="space-y-2">
+                  <input
+                    value={registryDraft.username}
+                    onChange={(event) => setRegistryDraft((current) => ({ ...current, username: event.target.value }))}
+                    placeholder="GitHub username"
+                    autoComplete="username"
+                    className="gc-field w-full font-mono"
+                  />
+                  <input
+                    type="password"
+                    value={registryDraft.token}
+                    onChange={(event) => setRegistryDraft((current) => ({ ...current, token: event.target.value }))}
+                    placeholder={registry.configured ? "Paste a replacement token" : "Paste read:packages token"}
+                    autoComplete="new-password"
+                    className="gc-field w-full font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={saveRegistry}
+                    disabled={operation !== null || !registryDraft.username.trim() || !registryDraft.token.trim()}
+                    className="gc-button gc-button-primary text-[10px]"
+                  >
+                    {operation === "registry" ? "Verifying…" : registry.configured ? "Update & verify" : "Enable & verify"}
+                  </button>
+                  {registry.error && <p className="text-[10px] leading-relaxed text-error">{registry.error}</p>}
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -460,35 +463,32 @@ export default function GithubAppPanel() {
   );
 }
 
-function Readiness({ requirements }: { requirements: GithubAppState["requirements"] }) {
-  const items = [
-    ["Public HTTPS", requirements.publicHttps, Webhook],
-    ["App credentials", requirements.appCreated, ShieldCheck],
-    ["Repository installation", requirements.installationConnected, FolderGit2],
-    ["Signed event path", requirements.webhookReachable, Check],
-    ["Source repair PRs", requirements.sourceRepairWrite, GitBranch],
-  ] as const;
+function CompactStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="border border-border bg-background p-3">
-      <p className="gc-label">Connection readiness</p>
-      <div className="mt-3 space-y-2">
-        {items.map(([label, ready, Icon]) => (
-          <div key={label} className="flex items-center justify-between gap-3 text-[11px]">
-            <span className="inline-flex items-center gap-2 text-muted"><Icon className="h-3.5 w-3.5" />{label}</span>
-            <span className={ready ? "text-success" : "text-warning"}>{ready ? "ready" : "required"}</span>
-          </div>
-        ))}
-      </div>
+    <div className="border-b border-border px-5 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+      <p className="font-mono text-[9px] uppercase tracking-[0.08em] text-muted">{label}</p>
+      <p className="mt-1 text-lg font-semibold">{value}</p>
     </div>
   );
 }
 
-function Metric({ label, value, detail, accent = false }: { label: string; value: number; detail: string; accent?: boolean }) {
+function CompactState({
+  icon,
+  label,
+  value,
+  good,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  good: boolean;
+}) {
   return (
-    <div className="border-b border-border px-5 py-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
-      <p className="gc-label">{label}</p>
-      <p className={`mt-2 text-2xl font-semibold ${accent ? "text-accent" : ""}`}>{value}</p>
-      <p className="mt-1 text-[10px] text-muted">{detail}</p>
+    <div className="border-b border-border px-5 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+      <p className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-muted">
+        {icon}{label}
+      </p>
+      <p className={`mt-1 text-[11px] ${good ? "text-success" : "text-warning"}`}>{value}</p>
     </div>
   );
 }
