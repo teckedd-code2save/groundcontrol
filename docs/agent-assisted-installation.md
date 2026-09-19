@@ -25,6 +25,17 @@ curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/mai
   | sudo bash -s -- --json
 ```
 
+For a download/verify/run flow:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install
+curl -fsSLO https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install.sha256
+sha256sum -c install.sha256
+sudo bash install --json
+```
+
+CI verifies `scripts/install.sha256` on every change to keep the published checksum in sync.
+
 Progress is written to stderr in JSON mode. stdout contains one final JSON object.
 
 ## Fresh-install result
