@@ -266,6 +266,62 @@ if [ "$EXISTING_HEALTHY" -eq 1 ]; then
   if [ -n "$EXISTING_PORT" ]; then HOST_PORT="$EXISTING_PORT"; fi
 fi
 
+TARGET_REF="$IMAGE_REPO:$VERSION"
+CURRENT_EFFECTIVE="$CURRENT_DIGEST"
+if [ -z "$CURRENT_EFFECTIVE" ]; then CURRENT_EFFECTIVE="$CURRENT_REF"; fi
+if [ -z "$CURRENT_EFFECTIVE" ]; then CURRENT_EFFECTIVE="none"; fi
+
+if [ "$UNINSTALL" -eq 1 ]; then
+  docker rm -f groundcontrol-quick-tunnel >/dev/null 2>&1 || true
+  for name in $(docker ps -a --format '{{.Names}}' | grep '^gc-control-plane-' || true); do
+    docker rm -f "$name" >/dev/null 2>&1 || true
+  done
+  if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
+    (cd "$INSTALL_DIR" && $COMPOSE down --remove-orphans) >/dev/null 2>&1 || true
+  else
+    docker rm -f groundcontrol-web >/dev/null 2>&1 || true
+  fi
+  if [ "$JSON_MODE" -eq 1 ]; then
+    printf '{"product":"groundcontrol","stage":"uninstalled","dataPreserved":true,"installDir":"%s","changed":%s}\n'       "$(json_escape "$INSTALL_DIR")" "$([ "$EXISTING" -eq 1 ] && printf true || printf false)"
+  else
+    log "GroundControl runtime removed. Database volume and $INSTALL_DIR were preserved."
+  fi
+  exit 0
+fi
+
+if [ "$PREVIEW" -eq 1 ]; then
+  target_status="ready"
+  if ! docker manifest inspect "$TARGET_REF" >/dev/null 2>&1; then
+    target_status="failed"
+  fi
+  disk_kb="$(df -Pk "$INSTALL_DIR" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  if [ -z "$disk_kb" ]; then disk_kb="0"; fi
+  disk_mb=$((disk_kb / 1024))
+  storage_status="skipped"
+  if [ "$EXISTING" -eq 1 ]; then
+    if [ -n "$DB_MOUNT" ]; then storage_status="ready"; else storage_status="failed"; fi
+  fi
+  container_status="skipped"
+  if [ "$EXISTING" -eq 1 ]; then
+    if [ "$EXISTING_HEALTHY" -eq 1 ]; then container_status="ready"; else container_status="failed"; fi
+  fi
+
+  if [ "$JSON_MODE" -eq 1 ]; then
+    printf '{"product":"groundcontrol","stage":"upgrade_preview","currentImage":"%s","targetImage":"%s","hostPort":%s,"existing":%s,"checks":{"container":"%s","storage":"%s","targetImage":"%s","diskMb":%s},"changed":false}\n'       "$(json_escape "$CURRENT_EFFECTIVE")" "$(json_escape "$TARGET_REF")" "$HOST_PORT"       "$([ "$EXISTING" -eq 1 ] && printf true || printf false)"       "$container_status" "$storage_status" "$target_status" "$disk_mb"
+  else
+    log "GroundControl upgrade preview"
+    log "  current: $CURRENT_EFFECTIVE"
+    log "  target:  $TARGET_REF"
+    log "  container: $container_status"
+    log "  DB storage: $storage_status"
+    log "  target registry check: $target_status"
+    log "  free disk: $disk_mb MB"
+  fi
+  [ "$target_status" = "ready" ] || exit 1
+  [ "$storage_status" != "failed" ] || exit 1
+  exit 0
+fi
+
 if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
   log "[install] healthy GroundControl already exists; leaving image and Compose unchanged"
   CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES" 2>/dev/null)" || {
@@ -333,7 +389,32 @@ else
   fi
 fi
 
-IMAGE="$IMAGE_REPO:$VERSION"
+if [ "$UPGRADE" -eq 1 ] && [ "$EXISTING" -eq 1 ] && [ -z "$DB_MOUNT" ]; then
+  fail "Upgrade refused: persistent /app/prisma storage could not be identified for backup"
+fi
+
+log "[install] pulling $TARGET_REF"
+docker pull "$TARGET_REF" >/dev/null
+RESOLVED_IMAGE="$(image_repo_digest "$TARGET_REF")"
+if [ -z "$RESOLVED_IMAGE" ]; then RESOLVED_IMAGE="$TARGET_REF"; fi
+IMAGE="$RESOLVED_IMAGE"
+
+BACKUP_DIR=""
+if [ "$UPGRADE" -eq 1 ] && [ "$EXISTING" -eq 1 ]; then
+  [ -n "$CURRENT_ID" ] || fail "Upgrade refused: current image identity could not be determined"
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  short_id="$(printf '%s' "$CURRENT_ID" | sed 's/^sha256://' | cut -c1-12)"
+  BACKUP_DIR="$INSTALL_DIR/backups/$timestamp-$short_id"
+  log "[upgrade] stopping GroundControl briefly for a consistent SQLite backup"
+  docker stop groundcontrol-web >/dev/null
+  if ! backup_existing "$CURRENT_ID" "$DB_MOUNT" "$BACKUP_DIR"; then
+    docker start groundcontrol-web >/dev/null 2>&1 || true
+    fail "Upgrade refused: persistent database backup failed"
+  fi
+  write_upgrade_evidence "$BACKUP_DIR" "backup_ready" "$CURRENT_EFFECTIVE" "$TARGET_REF" "$RESOLVED_IMAGE" "not_needed"
+  log "[upgrade] backup ready at $BACKUP_DIR"
+fi
+
 cat > "$INSTALL_DIR/docker-compose.yml" <<EOF
 services:
   web:
@@ -366,24 +447,40 @@ EOF
 chmod 600 "$INSTALL_DIR/docker-compose.yml"
 
 cd "$INSTALL_DIR"
-log "[install] pulling $IMAGE"
-$COMPOSE pull
-log "[install] starting GroundControl"
-$COMPOSE up -d --remove-orphans
+log "[install] starting GroundControl with immutable image $RESOLVED_IMAGE"
+$COMPOSE up -d --remove-orphans >/dev/null
 
-ready=0
-for _ in $(seq 1 36); do
-  if $COMPOSE ps web 2>/dev/null | grep -q healthy; then
-    ready=1
-    break
-  fi
-  sleep 2
-done
-
-if [ "$ready" -ne 1 ]; then
+if ! wait_healthy 36; then
   $COMPOSE ps >&2 || true
-  $COMPOSE logs --tail=100 web >&2 || true
+  $COMPOSE logs --tail=120 web >&2 || true
+
+  if [ -n "$BACKUP_DIR" ]; then
+    $COMPOSE logs --tail=200 web > "$BACKUP_DIR/failed-upgrade.log" 2>&1 || true
+    log "[upgrade] new image failed health; restoring previous database and image"
+    if restore_backup "$CURRENT_ID" "$CURRENT_REF" "$DB_MOUNT" "$BACKUP_DIR"; then
+      write_upgrade_evidence "$BACKUP_DIR" "upgrade_rolled_back" "$CURRENT_EFFECTIVE" "$TARGET_REF" "$RESOLVED_IMAGE" "success"
+      if [ "$JSON_MODE" -eq 1 ]; then
+        printf '{"product":"groundcontrol","stage":"upgrade_rolled_back","previousImage":"%s","requestedImage":"%s","resolvedImage":"%s","backup":"%s","checks":{"upgradeHealth":"failed","rollbackHealth":"ready"},"changed":false}\n'           "$(json_escape "$CURRENT_EFFECTIVE")" "$(json_escape "$TARGET_REF")" "$(json_escape "$RESOLVED_IMAGE")" "$(json_escape "$BACKUP_DIR")"
+      else
+        log "Upgrade failed. GroundControl rolled back successfully and is healthy on the previous image."
+        log "Evidence: $BACKUP_DIR"
+      fi
+      exit 1
+    fi
+
+    write_upgrade_evidence "$BACKUP_DIR" "rollback_failed" "$CURRENT_EFFECTIVE" "$TARGET_REF" "$RESOLVED_IMAGE" "failed"
+    if [ "$JSON_MODE" -eq 1 ]; then
+      printf '{"product":"groundcontrol","stage":"rollback_failed","previousImage":"%s","requestedImage":"%s","resolvedImage":"%s","backup":"%s","checks":{"upgradeHealth":"failed","rollbackHealth":"failed"},"changed":true}\n'         "$(json_escape "$CURRENT_EFFECTIVE")" "$(json_escape "$TARGET_REF")" "$(json_escape "$RESOLVED_IMAGE")" "$(json_escape "$BACKUP_DIR")"
+    fi
+    fail "GroundControl upgrade and automatic rollback both failed; evidence is in $BACKUP_DIR"
+  fi
+
   fail "GroundControl did not become healthy"
+fi
+
+if [ -n "$BACKUP_DIR" ]; then
+  write_upgrade_evidence "$BACKUP_DIR" "upgrade_complete" "$CURRENT_EFFECTIVE" "$TARGET_REF" "$RESOLVED_IMAGE" "not_needed"
+  prune_backups
 fi
 
 CLAIM_JSON="$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes "$CLAIM_TTL_MINUTES")"   || fail "GroundControl is healthy but could not create the installation claim"
