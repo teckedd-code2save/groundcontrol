@@ -298,6 +298,7 @@ export default function OnboardingPage() {
     if (data.reverseProxy?.type === "none") {
       a.push({ label: "Set up Caddy reverse proxy", action: "install-caddy" });
     }
+    a.push({ label: "Connect ChatGPT / agent", action: "goto-agents" });
     a.push({ label: "Deploy a template", action: "goto-templates" });
     a.push({ label: "Open dashboard", action: "goto-dashboard" });
     return a;
@@ -351,6 +352,7 @@ export default function OnboardingPage() {
 
   function handleActionClick(action: string) {
     if (action === "goto-dashboard") router.push("/dashboard");
+    else if (action === "goto-agents") router.push("/agents");
     else if (action === "goto-templates") router.push("/templates");
     else if (action === "reconnect") {
       setStep("connect");
@@ -367,6 +369,7 @@ export default function OnboardingPage() {
         content:
           "All clear! Deploy a template, open the dashboard, or ask me to install tooling. Click Finish when you're ready.",
         actions: [
+          { label: "Connect ChatGPT / agent", action: "goto-agents" },
           { label: "Deploy a template", action: "goto-templates" },
           { label: "Open dashboard", action: "goto-dashboard" },
         ],
