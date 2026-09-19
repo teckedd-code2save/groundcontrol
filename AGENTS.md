@@ -46,3 +46,22 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Agent grants are resource-scoped. Every deployment tool must resolve the requested deployment through the grant's approved `EnrolledDeployment` IDs before reading or mutating it.
 - External write operations must be idempotent and durable. Do not replay a mutation after an uncertain worker interruption; surface `uncertain` and require reconciliation/inspection.
 - The first MCP surface is intentionally narrow: `deployment.list`, `deployment.inspect`, `deployment.logs`, `deployment.health`, `deployment.config.check`, `deployment.redeploy`, and `operation.get`. `deployment.config.check` is exact-key metadata only: never return secret values or bulk-list configuration names.
+
+
+## Distribution and instance publishing
+
+- The canonical `scripts/install` runs **on the authorized GroundControl host** and binds the web container to `127.0.0.1` only.
+- `docker-entrypoint.sh` / `ensure-local-vps.cjs` automatically enroll that host as the first active local VPS target. Fresh canonical installs must not ask the operator to SSH back into the same machine.
+- Fresh installs are unclaimed. The human claim is the ownership boundary; instance publishing is authenticated and happens only after claim.
+- The management plane must not be published by opening port 3003 globally.
+- Supported publish modes are:
+  - direct domain + Caddy after DNS resolves to the host,
+  - named Cloudflare Tunnel + DNS for a private origin,
+  - temporary outbound quick tunnel for bootstrap/no-domain use,
+  - private/local-only.
+- Temporary `trycloudflare.com` URLs are explicitly non-durable and must never be presented as permanent instance identity.
+- Public management URLs must use HTTPS and become the OAuth/MCP base for that instance.
+- `src/lib/instance-publish.ts` owns publishing mechanics and post-install verification. Keep onboarding thin.
+- Post-install verification covers container health, persistent DB volume, host execution, PTY relay, MCP discovery, OAuth metadata, consumed claim state, and public HTTPS when configured.
+- Cloudflare/tunnel credentials are secrets and must be encrypted at rest. Never return them to the browser after save.
+- Additional VPS targets are explicit later connections. Do not conflate “where GroundControl runs” with “all servers GroundControl may manage.”

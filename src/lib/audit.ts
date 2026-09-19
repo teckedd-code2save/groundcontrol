@@ -13,7 +13,10 @@ export type AuditAction =
   | "secret_export"
   | "oauth_consent_granted"
   | "oauth_consent_denied"
-  | "install_claim";
+  | "install_claim"
+  | "instance_access_publish"
+  | "instance_access_verify"
+  | "instance_access_disable";
 
 export interface AuditContext {
   ip: string;

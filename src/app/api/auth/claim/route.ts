@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
         username: user.username,
         role: user.role,
       },
-      next: "/onboarding",
+      next: "/onboarding?fresh=1",
     });
     return setAuthCookie(response, {
       id: user.id,
