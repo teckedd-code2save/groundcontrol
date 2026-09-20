@@ -4,6 +4,7 @@ import {
   isAllowedRedirectUri,
   normalizeScope,
   pkceChallenge,
+  refreshClientMatches,
   verifyPkce,
 } from "./oauth";
 
@@ -25,5 +26,34 @@ describe("agent OAuth primitives", () => {
     expect(isAllowedRedirectUri("http://example.com/callback")).toBe(false);
     expect(isAllowedRedirectUri("https://user:pass@example.com/callback")).toBe(false);
     expect(isAllowedRedirectUri("https://example.com/callback#fragment")).toBe(false);
+  });
+
+  it("allows a public PKCE client to refresh without repeating client_id", () => {
+    expect(refreshClientMatches({
+      expectedClientId: "gc_client_chatgpt",
+      tokenEndpointAuthMethod: "none",
+      presentedClientId: "",
+    })).toBe(true);
+  });
+
+  it("still enforces client binding when client_id is supplied", () => {
+    expect(refreshClientMatches({
+      expectedClientId: "gc_client_chatgpt",
+      tokenEndpointAuthMethod: "none",
+      presentedClientId: "gc_client_chatgpt",
+    })).toBe(true);
+    expect(refreshClientMatches({
+      expectedClientId: "gc_client_chatgpt",
+      tokenEndpointAuthMethod: "none",
+      presentedClientId: "another-client",
+    })).toBe(false);
+  });
+
+  it("does not allow a client that requires token-endpoint authentication to omit identity", () => {
+    expect(refreshClientMatches({
+      expectedClientId: "confidential-client",
+      tokenEndpointAuthMethod: "client_secret_basic",
+      presentedClientId: "",
+    })).toBe(false);
   });
 });
