@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   hashOpaqueToken,
   issueTokenPair,
+  refreshClientMatches,
   verifyPkce,
 } from "@/lib/oauth";
 import { prisma } from "@/lib/prisma";
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
 
   if (grantType === "refresh_token") {
     const rawRefresh = params.get("refresh_token") || "";
-    if (!rawRefresh || !clientId) return oauthError("invalid_request", "refresh_token and client_id are required");
+    if (!rawRefresh) return oauthError("invalid_request", "refresh_token is required");
     const refresh = await prisma.oAuthToken.findUnique({
       where: { tokenHash: hashOpaqueToken(rawRefresh) },
       include: { grant: { include: { client: true } } },
@@ -71,7 +72,11 @@ export async function POST(req: NextRequest) {
       refresh.revokedAt ||
       refresh.expiresAt <= new Date() ||
       refresh.grant.revokedAt ||
-      refresh.grant.client.clientId !== clientId
+      !refreshClientMatches({
+        expectedClientId: refresh.grant.client.clientId,
+        tokenEndpointAuthMethod: refresh.grant.client.tokenEndpointAuthMethod,
+        presentedClientId: clientId,
+      })
     ) {
       return oauthError("invalid_grant", "Refresh token is invalid, expired, or revoked");
     }

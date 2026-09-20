@@ -144,6 +144,21 @@ export function isAllowedRedirectUri(value: string): boolean {
   }
 }
 
+export function refreshClientMatches(input: {
+  expectedClientId: string;
+  tokenEndpointAuthMethod: string;
+  presentedClientId?: string | null;
+}) {
+  const presented = String(input.presentedClientId || "").trim();
+
+  // Public OAuth clients using token_endpoint_auth_method=none cannot
+  // authenticate themselves at refresh time. The refresh token is already
+  // bound to its grant/client in GroundControl, so client_id is optional.
+  // If a client_id is presented, it must still match exactly.
+  if (!presented) return input.tokenEndpointAuthMethod === "none";
+  return presented === input.expectedClientId;
+}
+
 export function parseRedirectUris(value: string): string[] {
   try {
     const parsed = JSON.parse(value);
