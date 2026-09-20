@@ -10,10 +10,11 @@ import { executeAgentTool, toolDefinitionsForScopes } from "@/lib/mcp-agent";
 
 const LEGACY_PROTOCOL_VERSION = "2025-11-25";
 const LEGACY_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+const TOOLSET_REVISION = "2026-09-20.1";
 const SERVER_INFO = {
   name: "GroundControl",
   title: "GroundControl",
-  version: "0.1.0",
+  version: "0.2.0",
 };
 const SERVER_INSTRUCTIONS =
   "GroundControl exposes scoped infrastructure operations. Inspect state before changing it, use durable operation handles for mutations, and never assume access to workloads outside the OAuth grant.";
@@ -58,6 +59,7 @@ function addServerMeta(result: unknown, modern: boolean): unknown {
     _meta: {
       ...existingMeta,
       "io.modelcontextprotocol/serverInfo": SERVER_INFO,
+      "io.groundcontrol/toolsetRevision": TOOLSET_REVISION,
     },
   };
 }
@@ -169,7 +171,7 @@ export async function POST(req: NextRequest) {
   if (body.method === "initialize") {
     return rpc(body.id, {
       protocolVersion: negotiateLegacyVersion(body),
-      capabilities: { tools: { listChanged: false } },
+      capabilities: { tools: { listChanged: true } },
       serverInfo: SERVER_INFO,
       instructions: SERVER_INSTRUCTIONS,
     }, false);
@@ -178,7 +180,7 @@ export async function POST(req: NextRequest) {
   if (body.method === "server/discover") {
     return rpc(body.id, {
       supportedVersions: [MCP_PROTOCOL_VERSION, ...LEGACY_PROTOCOL_VERSIONS],
-      capabilities: { tools: { listChanged: false } },
+      capabilities: { tools: { listChanged: true } },
       instructions: SERVER_INSTRUCTIONS,
       ttlMs: 30_000,
       cacheScope: "private",
