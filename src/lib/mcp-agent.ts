@@ -296,6 +296,33 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   {
+    name: "deployment.source.deploy",
+    title: "Build and deploy linked source",
+    description: "Queue a durable deployment that syncs a linked GitHub source branch through the GroundControl GitHub App, builds on the target host, recreates the Compose workload, and verifies it without relying on GitHub Actions.",
+    requiredScope: "deployment:redeploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string", description: "Deployment slug or numeric id." },
+        branch: { type: "string", minLength: 1, maxLength: 200, description: "Optional GitHub branch. Defaults to the linked repository default branch." },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 160, description: "Stable unique key. Reusing it returns the original operation instead of deploying twice." },
+        reason: { type: "string", maxLength: 500, description: "Short operational reason for the source deployment." },
+      },
+      required: ["deployment", "idempotencyKey"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        operation: OPERATION_SCHEMA,
+        reused: { type: "boolean" },
+      },
+      required: ["operation", "reused"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
     name: "deployment.redeploy",
     title: "Redeploy deployment",
     description: "Queue a durable GroundControl redeploy for an approved workload. Returns an operation id immediately; use operation.get to follow verification and evidence.",
@@ -567,6 +594,40 @@ export async function executeAgentTool(
       profile: status.profile,
       checks: status.checks,
     };
+  }
+
+  if (name === "deployment.source.deploy") {
+    const deployment = await allowedDeployment(context, args.deployment);
+    if (deployment.managementMode !== "managed") {
+      throw new Error("Source deployment requires a GroundControl-managed deployment.");
+    }
+    if (!deployment.legacyProject) {
+      throw new Error("This deployment does not have a managed GroundControl project.");
+    }
+    const idempotencyKey = String(args.idempotencyKey || "").trim();
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
+      throw new Error("idempotencyKey must be between 8 and 160 characters");
+    }
+    const branch = typeof args.branch === "string" ? args.branch.trim() : "";
+    if (branch.length > 200) throw new Error("branch must be 200 characters or fewer");
+    const existing = await prisma.agentOperation.findUnique({
+      where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } },
+    });
+    if (existing) return { operation: serializeOperation(existing), reused: true };
+
+    const operation = await prisma.agentOperation.create({
+      data: {
+        grantId: context.grant.id,
+        deploymentId: deployment.id,
+        type: "deployment.source.deploy",
+        idempotencyKey,
+        inputJson: JSON.stringify({
+          branch: branch || undefined,
+          reason: String(args.reason || "").trim().slice(0, 500),
+        }),
+      },
+    });
+    return { operation: serializeOperation(operation), reused: false };
   }
 
   if (name === "deployment.redeploy") {
