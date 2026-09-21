@@ -4,6 +4,12 @@ import { verifyGithubWebhookSignature } from "@/lib/github-app";
 import { syncGithubInstallation, upsertGithubInstallation } from "@/lib/github-app-service";
 import { getLoopEngine, ingestEvents, setLoopEngine, type OperationalEvent } from "@/lib/intelligence";
 import { prisma } from "@/lib/prisma";
+import {
+  branchFromPushRef,
+  githubAutoDeployIdempotencyKey,
+  grantCanDeploy,
+  readGithubAutoDeployPolicy,
+} from "@/lib/github-auto-deploy";
 
 export const runtime = "nodejs";
 
@@ -79,6 +85,56 @@ async function recordLoopChange(deliveryId: string, event: string, payload: Webh
   setLoopEngine(ingestEvents(getLoopEngine(), [change]));
 }
 
+async function queueGithubAutoDeploys(deliveryId: string, event: string, payload: WebhookPayload) {
+  if (event !== "push") return [];
+  const branch = branchFromPushRef(payload.ref);
+  const repositoryFullName = payload.repository?.full_name || "";
+  if (!branch || !repositoryFullName || !payload.after || /^0+$/.test(payload.after)) return [];
+
+  const repository = await prisma.githubRepository.findUnique({
+    where: { fullName: repositoryFullName },
+    include: { deployments: { include: { deployment: true } } },
+  });
+  if (!repository) return [];
+
+  const grants = await prisma.oAuthGrant.findMany({
+    where: { revokedAt: null },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, scope: true, resources: true },
+  });
+  const queued: Array<{ deploymentId: number; operationId: string; commitSha: string }> = [];
+  for (const link of repository.deployments) {
+    const deployment = link.deployment;
+    const policy = readGithubAutoDeployPolicy(deployment.metadataJson);
+    if (!policy.enabled || policy.branch !== branch || deployment.managementMode !== "managed") continue;
+    const grant = grants.find((candidate) => grantCanDeploy(candidate.scope, candidate.resources, deployment.id));
+    if (!grant) {
+      throw new Error(`Auto deploy for ${deployment.slug} needs an active deployment:redeploy grant for this workload.`);
+    }
+    const idempotencyKey = githubAutoDeployIdempotencyKey(deliveryId, deployment.id);
+    const operation = await prisma.agentOperation.upsert({
+      where: { grantId_idempotencyKey: { grantId: grant.id, idempotencyKey } },
+      create: {
+        grantId: grant.id,
+        deploymentId: deployment.id,
+        type: "deployment.source.deploy",
+        idempotencyKey,
+        inputJson: JSON.stringify({
+          branch,
+          reason: `GitHub push ${payload.after.slice(0, 12)} to ${repositoryFullName}:${branch}`,
+          trigger: "github_push",
+          deliveryId,
+          commitSha: payload.after,
+        }),
+      },
+      update: {},
+      select: { id: true },
+    });
+    queued.push({ deploymentId: deployment.id, operationId: operation.id, commitSha: payload.after });
+  }
+  return queued;
+}
+
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const deliveryId = req.headers.get("x-github-delivery") || "";
@@ -139,11 +195,16 @@ export async function POST(req: NextRequest) {
       await syncGithubInstallation(installationId);
     }
     await recordLoopChange(deliveryId, event, payload);
+    const autoDeploys = await queueGithubAutoDeploys(deliveryId, event, payload);
     await prisma.githubWebhookDelivery.update({
       where: { id: deliveryId },
-      data: { status: "processed", processedAt: new Date() },
+      data: {
+        status: "processed",
+        processedAt: new Date(),
+        summaryJson: JSON.stringify({ ...safeSummary(event, payload), autoDeploys }),
+      },
     });
-    return NextResponse.json({ ok: true }, { status: 202 });
+    return NextResponse.json({ ok: true, autoDeploys }, { status: 202 });
   } catch (error) {
     console.error("[github-webhook]", error);
     await prisma.githubWebhookDelivery.update({
