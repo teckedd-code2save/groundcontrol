@@ -26,7 +26,7 @@ function sessionCookie(user, jwtSecret) {
 }
 
 async function fetchJson(url, init) {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(15 * 60 * 1000) });
+  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(30 * 60 * 1000) });
   const text = await response.text();
   let body = {};
   try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text.slice(0, 1000) }; }
@@ -84,10 +84,12 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
   if (!parseResources(current.grant.resources).includes(current.deploymentId)) {
     return markFailed(prisma, current, "The grant no longer authorizes this deployment");
   }
-  if (current.type !== "deployment.redeploy") {
+  if (!["deployment.redeploy", "deployment.source.deploy"].includes(current.type)) {
     return markFailed(prisma, current, `Unsupported operation type: ${current.type}`);
   }
 
+  const input = parseJson(current.inputJson) || {};
+  const sourceDeploy = current.type === "deployment.source.deploy";
   const projectSlug = current.deployment.legacyProject?.slug || current.deployment.slug;
   const latestRelease = current.deployment.legacyProjectId
     ? await prisma.deployment.findFirst({
@@ -111,7 +113,8 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
       projectPath: current.deployment.sourcePath || undefined,
       composePath: current.deployment.composePath || undefined,
       publicUrl,
-      action: "redeploy",
+      action: sourceDeploy ? "source-deploy" : "redeploy",
+      branch: sourceDeploy && typeof input.branch === "string" ? input.branch : undefined,
     }),
   });
 
@@ -125,7 +128,11 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
       data: {
         status: "verifying",
         resultJson: JSON.stringify(body).slice(0, 20000),
-        evidenceJson: JSON.stringify({ phase: "redeploy_started", projectSlug }).slice(0, 20000),
+        evidenceJson: JSON.stringify({
+          phase: sourceDeploy ? "source_deploy_started" : "redeploy_started",
+          projectSlug,
+          branch: sourceDeploy && typeof input.branch === "string" ? input.branch : undefined,
+        }).slice(0, 20000),
         leaseUntil: new Date(Date.now() + LEASE_MS),
       },
     });

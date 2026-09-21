@@ -29,6 +29,7 @@ import { resolveTemplateDeploymentTarget } from "@/lib/template-deployment-state
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { validateSafePath } from "@/lib/host-safety";
+import { syncGithubDeploymentSource } from "@/lib/github-source-deploy";
 
 function normalizePath(value: unknown): string {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -284,6 +285,7 @@ export async function POST(req: NextRequest) {
       verificationChecks: requestedVerificationChecks,
       services,
       action,
+      branch,
     } = await req.json();
     if (!isValidProjectSlug(projectSlug)) {
       return NextResponse.json({ error: "A valid projectSlug is required" }, { status: 400 });
@@ -302,7 +304,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: requestedComposePathError }, { status: 400 });
     }
     const vps = await getActiveVps();
-    if (action === "redeploy") {
+    const isRedeploy = action === "redeploy" || action === "source-deploy";
+    const isSourceDeploy = action === "source-deploy";
+    if (isRedeploy) {
       redeployLogFile = `/tmp/gc-redeploy-${projectSlug}.log`;
       redeployVps = vps;
       await recordRedeployEvidence(
@@ -337,7 +341,7 @@ export async function POST(req: NextRequest) {
         404
       );
     }
-    if (action === "redeploy") {
+    if (isRedeploy) {
       await recordRedeployEvidence(
         redeployLogFile!,
         `[target] Using ${target.projectPath} (${target.source})`,
@@ -370,7 +374,7 @@ export async function POST(req: NextRequest) {
     ].map(normalizePublicEndpointUrl).find((url): url is string => Boolean(url)) || null;
     const verificationChecks = normalizeDeploymentVerificationChecks(publicUrl, requestedVerificationChecks);
 
-    if (action !== "redeploy") {
+    if (!isRedeploy) {
       if (["start", "recreate", "restart"].includes(action || "start") && project) {
         await applyEnvToDeployment(
           { ...project, path: target.projectPath },
@@ -411,6 +415,58 @@ export async function POST(req: NextRequest) {
     }
 
     const startedAt = Date.now();
+
+    let sourceSync: Awaited<ReturnType<typeof syncGithubDeploymentSource>> | null = null;
+    if (isSourceDeploy) {
+      if (!project) {
+        throw new HttpError("Source deployment requires a managed GroundControl project.", 409);
+      }
+      const enrolled = await prisma.enrolledDeployment.findFirst({
+        where: {
+          OR: [
+            { legacyProjectId: project.id },
+            { sourcePath: target.projectPath },
+            { slug: projectSlug },
+          ],
+        },
+        select: { id: true, managementMode: true },
+      });
+      if (!enrolled) {
+        throw new HttpError("Source deployment is not enrolled in GroundControl.", 409);
+      }
+      if (enrolled.managementMode !== "managed") {
+        throw new HttpError("Source deployment requires managementMode=managed.", 409);
+      }
+
+      redeployPhase = "source";
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[source] Syncing linked GitHub repository on the deployment host",
+        vps
+      );
+      sourceSync = await syncGithubDeploymentSource({
+        deploymentId: enrolled.id,
+        projectPath: target.projectPath,
+        branch,
+        vps,
+      });
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        `[source] Synced ${sourceSync.repository}@${sourceSync.commitSha.slice(0, 12)} branch=${sourceSync.branch}`,
+        vps
+      );
+
+      const refreshedCompose = await resolveComposeFile(
+        target.projectPath,
+        vps,
+        requestedComposePathForCandidate(requestedComposePath, target.projectPath)
+      );
+      if (!refreshedCompose) {
+        throw new HttpError("The synced source does not contain the expected Compose file.", 409);
+      }
+      composeFile = refreshedCompose;
+    }
+
     redeployPhase = "configuration";
     let environmentHash: string | undefined;
     if (project) {
@@ -488,41 +544,66 @@ export async function POST(req: NextRequest) {
     const selectedServices = Array.isArray(services) ? services.map((service) => String(service)) : undefined;
     const expectedImages = expectedComposeImages(configCheck.stdout, selectedServices);
 
-    redeployPhase = "registry";
-    await recordRedeployEvidence(
-      redeployLogFile!,
-      "[registry] Authenticating configured container registry",
-      vps
-    );
-    await ensureGithubRegistryLogin(vps);
-    await recordRedeployEvidence(
-      redeployLogFile!,
-      "[registry] Registry authentication ready",
-      vps
-    );
-    redeployPhase = "pull";
-    await recordRedeployEvidence(
-      redeployLogFile!,
-      "[pull] Pulling images from the effective Compose configuration",
-      vps
-    );
-    const pullResult = await execOnTargetStrict(
-      `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
-      vps
-    );
-    if (serviceArgs && pullResult.code !== 0) {
-      throw new HttpError(
-        `Image pull failed: ${(pullResult.stderr || pullResult.stdout || "registry rejected the image").trim().slice(0, 500)}`,
-        400
+    let pullResult: { stdout: string; stderr: string; code: number } = { stdout: "", stderr: "", code: 0 };
+    if (isSourceDeploy) {
+      redeployPhase = "build";
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[build] Building Compose services on the deployment host",
+        vps
+      );
+      const buildResult = await execOnTargetStrict(
+        `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `build${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
+        vps
+      );
+      if (buildResult.code !== 0) {
+        throw new HttpError(
+          `Source build failed: ${(buildResult.stderr || buildResult.stdout || "docker compose build failed").trim().slice(-1500)}`,
+          400
+        );
+      }
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[build] Host build completed",
+        vps
+      );
+    } else {
+      redeployPhase = "registry";
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[registry] Authenticating configured container registry",
+        vps
+      );
+      await ensureGithubRegistryLogin(vps);
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[registry] Registry authentication ready",
+        vps
+      );
+      redeployPhase = "pull";
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        "[pull] Pulling images from the effective Compose configuration",
+        vps
+      );
+      pullResult = await execOnTargetStrict(
+        `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
+        vps
+      );
+      if (serviceArgs && pullResult.code !== 0) {
+        throw new HttpError(
+          `Image pull failed: ${(pullResult.stderr || pullResult.stdout || "registry rejected the image").trim().slice(0, 500)}`,
+          400
+        );
+      }
+      await recordRedeployEvidence(
+        redeployLogFile!,
+        pullResult.code === 0
+          ? "[pull] Images resolved"
+          : "[pull] Image pull completed with build-only services skipped",
+        vps
       );
     }
-    await recordRedeployEvidence(
-      redeployLogFile!,
-      pullResult.code === 0
-        ? "[pull] Images resolved"
-        : "[pull] Image pull completed with build-only services skipped",
-      vps
-    );
 
     redeployPhase = "recreate";
     const deployArgs = `up -d --remove-orphans --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`;
@@ -624,6 +705,11 @@ export async function POST(req: NextRequest) {
       imageDigest,
       vps,
     });
+    if (sourceSync) {
+      sourceFingerprint.repoUrl = `https://github.com/${sourceSync.repository}`;
+      sourceFingerprint.commitSha = sourceSync.commitSha;
+      sourceFingerprint.branch = sourceSync.branch;
+    }
     if (project) {
       if (sourceFingerprint.repoUrl && !project.repoUrl) {
         await prisma.project.update({
@@ -648,6 +734,7 @@ export async function POST(req: NextRequest) {
           `[validate] Effective Compose configuration OK (${composeFile})`,
           environmentHash ? `[configuration] revision=${environmentHash}` : "",
           sourceFingerprint.commitSha ? `[source] revision=${sourceFingerprint.commitSha.slice(0, 12)} repo=${sourceFingerprint.repoUrl || "unresolved"}` : "[source] revision unresolved",
+          sourceSync ? `[source] ${sourceSync.repository}@${sourceSync.commitSha} branch=${sourceSync.branch}` : "",
           pullResult.stdout || pullResult.stderr ? `[pull]\n${pullResult.stdout || pullResult.stderr}` : "",
           result.stdout,
         ].filter(Boolean).join("\n") || null,
@@ -691,6 +778,11 @@ export async function POST(req: NextRequest) {
       detached: detached || undefined,
       imageDigest: imageDigest || undefined,
       sourceFingerprint,
+      sourceSync: sourceSync ? {
+        repository: sourceSync.repository,
+        branch: sourceSync.branch,
+        commitSha: sourceSync.commitSha,
+      } : undefined,
       environmentHash,
       changedFields: changedFields.length > 0 ? changedFields : undefined,
     });

@@ -103,7 +103,9 @@ describe("GroundControl MCP transport", () => {
     expect(data.result.capabilities.tools).toEqual({ listChanged: false });
     expect(data.result._meta["io.modelcontextprotocol/serverInfo"]).toMatchObject({
       name: "GroundControl",
+      version: "0.1.0",
     });
+    expect(data.result._meta["io.groundcontrol/toolsetRevision"]).toBe("2026-09-20.1");
     expect(response.headers.get("MCP-Protocol-Version")).toBe("2026-07-28");
     expect(mock.authenticateAccessToken).not.toHaveBeenCalled();
   });

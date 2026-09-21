@@ -10,6 +10,7 @@ import { executeAgentTool, toolDefinitionsForScopes } from "@/lib/mcp-agent";
 
 const LEGACY_PROTOCOL_VERSION = "2025-11-25";
 const LEGACY_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+const TOOLSET_REVISION = "2026-09-20.1";
 const SERVER_INFO = {
   name: "GroundControl",
   title: "GroundControl",
@@ -58,6 +59,7 @@ function addServerMeta(result: unknown, modern: boolean): unknown {
     _meta: {
       ...existingMeta,
       "io.modelcontextprotocol/serverInfo": SERVER_INFO,
+      "io.groundcontrol/toolsetRevision": TOOLSET_REVISION,
     },
   };
 }
@@ -193,7 +195,7 @@ export async function POST(req: NextRequest) {
   if (body.method === "tools/list") {
     return rpc(body.id, {
       tools: toolDefinitionsForScopes(),
-      ...(modern ? { ttlMs: 30_000, cacheScope: "private" } : {}),
+      ...(modern ? { ttlMs: 5_000, cacheScope: "private" } : {}),
     }, modern);
   }
 

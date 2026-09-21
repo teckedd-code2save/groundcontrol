@@ -12,6 +12,7 @@ describe("GroundControl MCP tool catalog", () => {
     expect(names).toContain("deployment.config.check");
     expect(names).toContain("operation.get");
     expect(names).not.toContain("deployment.redeploy");
+    expect(names).not.toContain("deployment.source.deploy");
   });
 
   it("exposes redeploy only when explicitly granted and never exposes a shell tool", () => {
@@ -23,6 +24,7 @@ describe("GroundControl MCP tool catalog", () => {
       "operation:read",
     ])).map((tool) => tool.name);
     expect(names).toContain("deployment.redeploy");
+    expect(names).toContain("deployment.source.deploy");
     expect(names.some((name) => /shell|exec|terminal/i.test(name))).toBe(false);
   });
 
@@ -34,6 +36,7 @@ describe("GroundControl MCP tool catalog", () => {
       "deployment.logs",
       "deployment.health",
       "deployment.config.check",
+      "deployment.source.deploy",
       "deployment.redeploy",
       "operation.get",
     ]);
