@@ -176,6 +176,7 @@ function parseSourceRepair(value: unknown) {
       daytonaConnectorId: cleanOptionalText(input.daytonaConnectorId, 80) || "daytona",
       validationCommand: cleanOptionalText(input.validationCommand, 500),
       regressionCommand: cleanOptionalText(input.regressionCommand, 500),
+      autoDeployEnabled: input.autoDeployEnabled === true,
     },
   };
 }
