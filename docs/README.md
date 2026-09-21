@@ -12,6 +12,11 @@
 
 ## 🚀 Run it
 
+- **[ADOPTION.md](./ADOPTION.md)** — install privately, run a safe first pilot, connect an agent, enable merge-triggered delivery, and operate upgrades.
+- **[acceptance/distribution-2026-09-21.md](./acceptance/distribution-2026-09-21.md)** — redacted evidence from the successful clean-host distribution acceptance.
+- **[LAUNCH-PLAYBOOK.md](./LAUNCH-PLAYBOOK.md)** — evidence-led Product Hunt, Show HN, LinkedIn, community, and pilot plan.
+- **[articles/chatgpt-operated-my-deployment.md](./articles/chatgpt-operated-my-deployment.md)** — technical article draft explaining the ChatGPT production proof and trust boundary.
+
 - **[../DEPLOY.md](../DEPLOY.md)** — complete production deployment: VPS → domain → Caddy → SSL → first login.
 - **[DEPLOYMENT-AUTOMATION-AND-DAYTONA.md](./DEPLOYMENT-AUTOMATION-AND-DAYTONA.md)** — the live merge-to-deploy contract, verified RentAWeekend proof, production safety rules, and Daytona's bounded role.
 - **[agent-assisted-distribution.md](./agent-assisted-distribution.md)** — agent-assisted installation, publishing, verification, upgrades, and clean-host distribution acceptance.
