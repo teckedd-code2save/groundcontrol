@@ -14,7 +14,7 @@ const TOOLSET_REVISION = "2026-09-20.1";
 const SERVER_INFO = {
   name: "GroundControl",
   title: "GroundControl",
-  version: "0.2.0",
+  version: "0.1.0",
 };
 const SERVER_INSTRUCTIONS =
   "GroundControl exposes scoped infrastructure operations. Inspect state before changing it, use durable operation handles for mutations, and never assume access to workloads outside the OAuth grant.";
@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
   if (body.method === "initialize") {
     return rpc(body.id, {
       protocolVersion: negotiateLegacyVersion(body),
-      capabilities: { tools: { listChanged: true } },
+      capabilities: { tools: { listChanged: false } },
       serverInfo: SERVER_INFO,
       instructions: SERVER_INSTRUCTIONS,
     }, false);
@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
   if (body.method === "server/discover") {
     return rpc(body.id, {
       supportedVersions: [MCP_PROTOCOL_VERSION, ...LEGACY_PROTOCOL_VERSIONS],
-      capabilities: { tools: { listChanged: true } },
+      capabilities: { tools: { listChanged: false } },
       instructions: SERVER_INSTRUCTIONS,
       ttlMs: 30_000,
       cacheScope: "private",
@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
   if (body.method === "tools/list") {
     return rpc(body.id, {
       tools: toolDefinitionsForScopes(),
-      ...(modern ? { ttlMs: 30_000, cacheScope: "private" } : {}),
+      ...(modern ? { ttlMs: 5_000, cacheScope: "private" } : {}),
     }, modern);
   }
 
