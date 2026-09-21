@@ -13,6 +13,8 @@
 ## 🚀 Run it
 
 - **[../DEPLOY.md](../DEPLOY.md)** — complete production deployment: VPS → domain → Caddy → SSL → first login.
+- **[DEPLOYMENT-AUTOMATION-AND-DAYTONA.md](./DEPLOYMENT-AUTOMATION-AND-DAYTONA.md)** — the live merge-to-deploy contract, verified RentAWeekend proof, production safety rules, and Daytona's bounded role.
+- **[agent-assisted-distribution.md](./agent-assisted-distribution.md)** — agent-assisted installation, publishing, verification, upgrades, and clean-host distribution acceptance.
 - **[../docker-compose.yml](../docker-compose.yml)** — the default compose file; no `--pid=host` required.
 
 ## 🎥 Show it off
