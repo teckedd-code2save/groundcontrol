@@ -106,6 +106,7 @@ export function readDeploymentOverrides(metadataJson?: string | null) {
         daytonaConnectorId?: string;
         validationCommand?: string;
         regressionCommand?: string;
+        autoDeployEnabled?: boolean;
       };
     };
     return {
@@ -119,6 +120,7 @@ export function readDeploymentOverrides(metadataJson?: string | null) {
         daytonaConnectorId: typeof parsed.sourceRepair.daytonaConnectorId === "string" ? parsed.sourceRepair.daytonaConnectorId : "daytona",
         validationCommand: typeof parsed.sourceRepair.validationCommand === "string" ? parsed.sourceRepair.validationCommand : "",
         regressionCommand: typeof parsed.sourceRepair.regressionCommand === "string" ? parsed.sourceRepair.regressionCommand : "",
+        autoDeployEnabled: parsed.sourceRepair.autoDeployEnabled === true,
       } : null,
     };
   } catch {

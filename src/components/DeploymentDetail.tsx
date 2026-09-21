@@ -83,6 +83,7 @@ type DeploymentDetailRecord = {
     daytonaConnectorId?: string;
     validationCommand?: string;
     regressionCommand?: string;
+    autoDeployEnabled?: boolean;
   } | null;
   releases: Release[];
   envProfile?: {
@@ -155,6 +156,7 @@ export default function DeploymentDetail({
   const [daytonaConnectorId, setDaytonaConnectorId] = useState("daytona");
   const [validationCommand, setValidationCommand] = useState("");
   const [regressionCommand, setRegressionCommand] = useState("");
+  const [autoDeployEnabled, setAutoDeployEnabled] = useState(false);
   const [composeContent, setComposeContent] = useState("");
   const [composeLoading, setComposeLoading] = useState(false);
   const [imageSourceInput, setImageSourceInput] = useState("");
@@ -241,6 +243,7 @@ export default function DeploymentDetail({
     setDaytonaConnectorId(source.daytonaConnectorId || "daytona");
     setValidationCommand(source.validationCommand || "");
     setRegressionCommand(source.regressionCommand || "");
+    setAutoDeployEnabled(source.autoDeployEnabled === true);
   }, [deployment, liveUrl]);
 
   useEffect(() => {
@@ -420,6 +423,7 @@ export default function DeploymentDetail({
             daytonaConnectorId,
             validationCommand,
             regressionCommand,
+            autoDeployEnabled,
           },
         }),
       });
@@ -971,6 +975,22 @@ export default function DeploymentDetail({
                       onChange={(event) => setSourceDefaultBranch(event.target.value)}
                       placeholder="main"
                       className="gc-field mt-2 w-full font-mono"
+                    />
+                  </label>
+                  <label className="flex items-start justify-between gap-4 rounded-lg bg-background/55 p-4 lg:col-span-2">
+                    <span>
+                      <span className="block text-xs font-medium">Autopilot after merge</span>
+                      <span className="mt-1 block text-[10px] leading-relaxed text-muted">
+                        A signed GitHub push to the default branch queues a source build, managed-environment reconciliation, Compose recreation, and release verification. A failed build leaves the running workload untouched.
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={autoDeployEnabled}
+                      onChange={(event) => setAutoDeployEnabled(event.target.checked)}
+                      disabled={deployment.managementMode !== "managed" || !selectedRepositoryId}
+                      className="mt-1 h-4 w-4 accent-[var(--accent)]"
+                      aria-label="Autopilot after merge"
                     />
                   </label>
                   <label className="block">
