@@ -32,3 +32,9 @@ Repositories are linked automatically to enrolled deployments when their normali
 The Settings experience remains one GitHub connector. Repository access uses the GitHub App, while private GHCR pulls can be enabled as an optional capability inside the same connector because GitHub's container registry does not accept App installation tokens.
 
 GroundControl stores the package credential encrypted, sends it to Docker through standard input, and keeps Docker authentication in `$HOME/.groundcontrol/docker` on the active VPS. Managed Compose operations use that isolated configuration automatically. When a recent GHCR image is known, setup verifies access to its manifest instead of treating registry login alone as proof of package access. Disconnecting GitHub removes both the App credentials and the managed GHCR login.
+
+## Autopilot after merge
+
+A managed deployment with an explicitly linked repository can opt into **Autopilot after merge**. A signed `push` webhook for its configured default branch queues the same durable `deployment.source.deploy` operation used by agents: sync source, build on the target host, reconcile managed environment, recreate Compose, and verify the public result.
+
+The policy is off by default, branch-scoped, deployment-scoped, and webhook-delivery-idempotent. It also requires an active operator-approved grant with `deployment:redeploy` for that workload. If source sync or build fails, GroundControl records the failure and does not replace the running workload.
