@@ -148,6 +148,8 @@ export async function createGithubInstallationToken(input: {
   appId: string;
   privateKey: string;
   installationId: string;
+  repositoryIds?: number[];
+  contentsReadOnly?: boolean;
 }): Promise<{ token: string; expiresAt: string; permissions: Record<string, string> }> {
   const appJwt = createGithubAppJwt(input.appId, input.privateKey);
   const value = await githubFetch<{
@@ -156,7 +158,13 @@ export async function createGithubInstallationToken(input: {
     permissions?: Record<string, string>;
   }>(
     `/app/installations/${encodeURIComponent(input.installationId)}/access_tokens`,
-    { method: "POST", headers: { Authorization: `Bearer ${appJwt}` } }
+    {
+      method: "POST", headers: { Authorization: `Bearer ${appJwt}` },
+      body: JSON.stringify({
+        ...(input.repositoryIds ? { repository_ids: input.repositoryIds } : {}),
+        ...(input.contentsReadOnly ? { permissions: { contents: "read" } } : {}),
+      }),
+    }
   );
   return {
     token: value.token,

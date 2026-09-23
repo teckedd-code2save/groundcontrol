@@ -37,7 +37,7 @@ function redactCredential(value: string, credential: string): string {
   return value.split(credential).join("[REDACTED]");
 }
 
-async function sourceAccessForDeployment(deploymentId: number) {
+export async function sourceAccessForDeployment(deploymentId: number) {
   const links = await prisma.githubRepositoryDeployment.findMany({
     where: { enrolledDeploymentId: deploymentId },
     include: {
@@ -72,6 +72,8 @@ async function sourceAccessForDeployment(deploymentId: number) {
     appId: repository.installation.connection.appId,
     privateKey,
     installationId: repository.installationId,
+    repositoryIds: [Number(repository.id)],
+    contentsReadOnly: true,
   });
   if (!["read", "write"].includes(access.permissions.contents || "")) {
     throw new Error("The GroundControl GitHub App does not have repository contents access.");
@@ -96,7 +98,9 @@ export function buildGithubSourceSyncCommand(input: {
   projectPath: string;
   repository: string;
   branch: string;
+  commitSha?: string;
 }): string {
+  if (input.commitSha && !/^[a-f0-9]{40}$/i.test(input.commitSha)) throw new Error("Invalid exact source revision.");
   const remote = `https://github.com/${input.repository}.git`;
   return [
     "set -eu",
@@ -119,7 +123,8 @@ export function buildGithubSourceSyncCommand(input: {
     `cd ${shQuote(input.projectPath)}`,
     "if [ ! -d .git ]; then git init; fi",
     `if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin ${shQuote(remote)}; else git remote add origin ${shQuote(remote)}; fi`,
-    `git fetch --depth 1 origin ${shQuote(input.branch)}`,
+    `git fetch --depth 1 origin ${shQuote(input.commitSha || input.branch)}`,
+    ...(input.commitSha ? [`test "$(git rev-parse FETCH_HEAD)" = ${shQuote(input.commitSha)}`] : []),
     `git checkout -B ${shQuote(input.branch)} --force FETCH_HEAD`,
     "git reset --hard FETCH_HEAD",
     "printf 'commit=%s\\n' \"$(git rev-parse HEAD)\"",
@@ -130,6 +135,7 @@ export async function syncGithubDeploymentSource(input: {
   deploymentId: number;
   projectPath: string;
   branch?: unknown;
+  commitSha?: string;
   vps?: VpsConnection | null;
 }): Promise<GithubSourceSyncResult> {
   const access = await sourceAccessForDeployment(input.deploymentId);
@@ -138,6 +144,7 @@ export async function syncGithubDeploymentSource(input: {
     projectPath: input.projectPath,
     repository: access.repository.fullName,
     branch,
+    commitSha: input.commitSha,
   });
   const result = await execOnTargetStrict(command, input.vps, undefined, `${access.token}\n`);
   if (result.code !== 0) {
