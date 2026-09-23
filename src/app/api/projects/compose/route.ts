@@ -29,6 +29,8 @@ import { resolveTemplateDeploymentTarget } from "@/lib/template-deployment-state
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { validateSafePath } from "@/lib/host-safety";
+import { parseReleaseBuildPolicy } from "@/lib/daytona-release-plan";
+import { startDaytonaSourceDeploy } from "@/lib/daytona-source-deploy";
 import { syncGithubDeploymentSource } from "@/lib/github-source-deploy";
 
 function normalizePath(value: unknown): string {
@@ -198,7 +200,7 @@ async function recordRedeployEvidence(
   reset = false
 ): Promise<void> {
   const command = reset
-    ? `: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)} && printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`
+    ? `rm -f ${shQuote(logFile)} && : > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)} && printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`
     : `printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`;
   const result = await execOnTargetStrict(command, vps);
   if (result.code !== 0) {
@@ -275,8 +277,10 @@ export async function POST(req: NextRequest) {
   let redeployLogFile: string | null = null;
   let redeployVps: Awaited<ReturnType<typeof getActiveVps>> = null;
   let redeployPhase = "prepare";
+  let lockDirectory: string | null = null;
+  let lockTransferred = false;
   try {
-    requireAuth(req);
+    const actor = requireAuth(req);
     const {
       projectSlug,
       projectPath: requestedPath,
@@ -286,6 +290,7 @@ export async function POST(req: NextRequest) {
       services,
       action,
       branch,
+      commitSha,
     } = await req.json();
     if (!isValidProjectSlug(projectSlug)) {
       return NextResponse.json({ error: "A valid projectSlug is required" }, { status: 400 });
@@ -306,7 +311,12 @@ export async function POST(req: NextRequest) {
     const vps = await getActiveVps();
     const isRedeploy = action === "redeploy" || action === "source-deploy";
     const isSourceDeploy = action === "source-deploy";
+    if (isSourceDeploy && actor.role !== "admin") throw new HttpError("Source releases require administrator access.", 403);
     if (isRedeploy) {
+      const requestedLock = `/tmp/gc-redeploy-${projectSlug}.lock`;
+      const lock = await execOnTargetStrict(`umask 077; mkdir ${shQuote(requestedLock)}`, vps);
+      if (lock.code !== 0) throw new HttpError("A deployment is already running or requires reconciliation before retrying.", 409);
+      lockDirectory = requestedLock;
       redeployLogFile = `/tmp/gc-redeploy-${projectSlug}.log`;
       redeployVps = vps;
       await recordRedeployEvidence(
@@ -429,7 +439,7 @@ export async function POST(req: NextRequest) {
             { slug: projectSlug },
           ],
         },
-        select: { id: true, managementMode: true },
+        select: { id: true, managementMode: true, metadataJson: true },
       });
       if (!enrolled) {
         throw new HttpError("Source deployment is not enrolled in GroundControl.", 409);
@@ -438,6 +448,19 @@ export async function POST(req: NextRequest) {
         throw new HttpError("Source deployment requires managementMode=managed.", 409);
       }
 
+      const metadata = JSON.parse(enrolled.metadataJson || "{}");
+      const policy = parseReleaseBuildPolicy(metadata.sourceRepair?.releaseBuild);
+      if (policy.provider === "daytona") {
+        redeployPhase = "daytona";
+        const release = await startDaytonaSourceDeploy({
+          deploymentId: enrolled.id, project, projectPath: target.projectPath, composeFile,
+          sourceRoot: metadata.sourceRepair?.sourceRoot, branch, commitSha,
+          services: Array.isArray(services) ? services.map(String) : undefined,
+          policy, vps, logFile: redeployLogFile!, lockDirectory: lockDirectory!, publicUrl, checks: verificationChecks,
+        });
+        lockTransferred = true;
+        return NextResponse.json(release);
+      }
       redeployPhase = "source";
       await recordRedeployEvidence(
         redeployLogFile!,
@@ -448,6 +471,7 @@ export async function POST(req: NextRequest) {
         deploymentId: enrolled.id,
         projectPath: target.projectPath,
         branch,
+        commitSha,
         vps,
       });
       await recordRedeployEvidence(
@@ -622,10 +646,11 @@ export async function POST(req: NextRequest) {
         verificationChecks,
       });
       const logFile = redeployLogFile!;
-      const launch = await execDetachedOnTarget(command, logFile, vps, { append: true });
+      const launch = await execDetachedOnTarget(`trap ${shQuote(`rmdir ${shQuote(lockDirectory!)} 2>/dev/null || true`)} EXIT\n${command}`, logFile, vps, { append: true });
       if (launch.code !== 0) {
         throw new HttpError(launch.stderr || "Could not start detached redeploy.", 500);
       }
+      lockTransferred = true;
       detached = true;
       result = { stdout: `Redeploy initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
     } else {
@@ -812,5 +837,7 @@ export async function POST(req: NextRequest) {
       code: "COMPOSE_REDEPLOY_FAILED",
       cause: err,
     }));
+  } finally {
+    if (lockDirectory && !lockTransferred) await execOnTargetStrict(`rmdir ${shQuote(lockDirectory)} 2>/dev/null || true`, redeployVps).catch(() => undefined);
   }
 }
