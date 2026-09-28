@@ -70,7 +70,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 | ☁️ | **Cloud Accounts** | Store encrypted GCP/AWS/Azure credentials and use them across deployment targets. |
 | 🚀 | **Smart Onboarding** | Auto-detects OS, Docker, compose command, Kubernetes, and server paths from a local or SSH connection. |
 | 🤖 | **AI Ops Assistant** | GPT-powered assistant that reasons about logs, metrics, and deploys with streamed responses. |
-| 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
+| 💻 | **Persistent Terminal** | Authenticated xterm + PTY session on the selected VPS. Tab/control keys belong to the shell; Copilot links to the separate intelligence workspace. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
 | 🔁 | **Loop foundation** | Intelligence workspace with a live service graph, change ledger, journeys, evidence-backed investigation, approved recovery, and opt-in live adapters. The production workspace no longer loads demo fixtures; guarded autopilot remains disabled until host evaluation passes. **Intelligence** at `/intelligence`. |
@@ -86,13 +86,9 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 
 ## 📸 What it looks like
 
-> Screenshots live in [`docs/screenshots/`](./docs/screenshots/). Drop captures there and they will render below.
+![Live GroundControl terminal showing recorded BNL verification results](./docs/screenshots/bnl-2026-09-28/gc-bnl-scorecard-20260928.jpg)
 
-<!-- Add screenshots here, e.g.:
-![Dashboard](./docs/screenshots/dashboard.png)
-![Topology](./docs/screenshots/topology.png)
-![Terminal](./docs/screenshots/terminal.png)
--->
+Supervised verification on 28 September 2026: a read-only script displays saved scorecard outcomes and the exact BNL runtime identity. The crop excludes infrastructure identifiers and the shell prompt. This is a real terminal capture, not a native GC metrics panel or autonomous Loop run. [Captions and provenance](./docs/screenshots/bnl-2026-09-28/README.md) · [Full case study](./docs/articles/bnl-playground-from-the-browser.md).
 
 ---
 
