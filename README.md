@@ -37,6 +37,8 @@ No agents to install on managed hosts. No SaaS in the middle. No telemetry leavi
 
 ## 🧬 The story
 
+**Live case study:** [Shipping a real BNL playground through GroundControl](docs/articles/bnl-playground-from-the-browser.md) records the supervised terminal workflow, build/test outcomes, public execution check and captioned screenshots. It uses the existing VPS foundation and the application's existing delivery pipeline; it is not an autonomous Loop run.
+
 GroundControl started as a dashboard. Then it became an experiment in **containerized privilege**.
 
 The obvious way to ship a VPS cockpit is to put it in a container on the VPS it manages. But containers are jails: the dashboard could see Docker containers through the mounted socket, yet it could not run `systemctl`, install packages with `apk`/`apt`, call `kubectl`, or even find `caddy` on the host. The terminal reported `command not found` for tools that were clearly installed. The install buttons failed. The dashboard lied.

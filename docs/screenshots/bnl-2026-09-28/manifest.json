@@ -1,0 +1,85 @@
+{
+  "schema": "bnl-screenshot-evidence-1",
+  "capturedDate": "2026-09-28",
+  "timezone": "Africa/Accra (UTC)",
+  "portfolioRelease": "cb61c49e5fe133ee465d13f4e965af4511443721",
+  "runtimeSource": "a1d606c588ceb849c6a85561a9820c6ab6885e58",
+  "wasmSha256": "fa55334543c5e22ef64ea7adb3a7583f134a071fc3c739a91c86a0bc0d49e337",
+  "publicUrl": "https://precisionxyz.serendepify.com/#/playground/bnl",
+  "files": [
+    {
+      "file": "bnl-production-empty-20260928.jpg",
+      "sha256": "027033cd53c8b903cde8fe4de74505a12f3d31f5120476b37fe5cbd230ac48c2",
+      "width": 1357,
+      "height": 932,
+      "caption": "Fresh public runtime with zero business records. Starter declarations provide grammar, not fabricated customer values.",
+      "scope": "Production UI capture"
+    },
+    {
+      "file": "bnl-production-execution-20260928.jpg",
+      "sha256": "f78f44522994104641a4f41b6f236d171fbaa45b79a7cb583b833218edeb74e2",
+      "width": 1357,
+      "height": 932,
+      "caption": "Actual deployed Rust runtime returned false for the supplied integer days=12 under days>30. An earlier input of 31 returned true.",
+      "scope": "Production UI execution; explicit test inputs"
+    },
+    {
+      "file": "gc-bnl-scorecard-20260928.jpg",
+      "sha256": "4dac76c67b49fad258a84a1a0d6baea388cce7f989527e17ec9533f997528923",
+      "width": 1057,
+      "height": 369,
+      "caption": "A read-only script prints saved scorecard outcomes in GroundControl's live terminal. Cropped to omit infrastructure identity and prompt; these are not built-in GC dashboard metrics.",
+      "scope": "Supervised terminal evidence"
+    }
+  ],
+  "productionCheck": {
+    "declaration": "Compose LiveRuleCheck\nInput days: integer\nCheck eligible when $input.days > 30\nReturn eligible",
+    "runs": [
+      {
+        "inputs": {
+          "days": {
+            "type": "integer",
+            "value": 31
+          }
+        },
+        "result": true
+      },
+      {
+        "inputs": {
+          "days": {
+            "type": "integer",
+            "value": 12
+          }
+        },
+        "result": false
+      }
+    ],
+    "initialRecords": 0
+  },
+  "limitations": [
+    "Screenshots record visible state; scorecards document assertions.",
+    "GC terminal work was supervised; no autonomous Loop run is claimed.",
+    "Production inputs were explicit verification values, not seeded business records.",
+    "Payments/messages/native host were not exposed."
+  ],
+  "relatedAcceptance": [
+    {
+      "file": "01-empty-desktop.png",
+      "sha256": "79e7fc212ee09244e83f51ca30c3a912f1dae19e8925269e408749781c0a67ab",
+      "caption": "Full-page empty runtime in the GC Chromium harness.",
+      "url": "https://github.com/teckedd-code2save/edward.entire/blob/cb61c49e5fe133ee465d13f4e965af4511443721/docs/evidence/bnl-playground-2026-09-28/01-empty-desktop.png"
+    },
+    {
+      "file": "02-real-result-desktop.png",
+      "sha256": "7233fed5158a3631dab3acb3ef12cb415e7cd953d83cba4b4127ffec9b55fd30",
+      "caption": "Actual execution using explicitly synthetic harness-supplied records; not product defaults.",
+      "url": "https://github.com/teckedd-code2save/edward.entire/blob/cb61c49e5fe133ee465d13f4e965af4511443721/docs/evidence/bnl-playground-2026-09-28/02-real-result-desktop.png"
+    },
+    {
+      "file": "03-mobile-empty.png",
+      "sha256": "4c1409fa288ba332d50a79ec7983a2e0ad97ab0293739854128da73cfdcc3fb3",
+      "caption": "390px full-page mobile acceptance capture.",
+      "url": "https://github.com/teckedd-code2save/edward.entire/blob/cb61c49e5fe133ee465d13f4e965af4511443721/docs/evidence/bnl-playground-2026-09-28/03-mobile-empty.png"
+    }
+  ]
+}
