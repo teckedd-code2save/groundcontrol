@@ -37,6 +37,8 @@ No agents to install on managed hosts. No SaaS in the middle. No telemetry leavi
 
 ## 🧬 The story
 
+**Live case study:** [Shipping a real BNL playground through GroundControl](docs/articles/bnl-playground-from-the-browser.md) records the supervised terminal workflow, build/test outcomes, public execution check and captioned screenshots. It uses the existing VPS foundation and the application's existing delivery pipeline; it is not an autonomous Loop run.
+
 GroundControl started as a dashboard. Then it became an experiment in **containerized privilege**.
 
 The obvious way to ship a VPS cockpit is to put it in a container on the VPS it manages. But containers are jails: the dashboard could see Docker containers through the mounted socket, yet it could not run `systemctl`, install packages with `apk`/`apt`, call `kubectl`, or even find `caddy` on the host. The terminal reported `command not found` for tools that were clearly installed. The install buttons failed. The dashboard lied.
@@ -68,7 +70,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 | ☁️ | **Cloud Accounts** | Store encrypted GCP/AWS/Azure credentials and use them across deployment targets. |
 | 🚀 | **Smart Onboarding** | Auto-detects OS, Docker, compose command, Kubernetes, and server paths from a local or SSH connection. |
 | 🤖 | **AI Ops Assistant** | GPT-powered assistant that reasons about logs, metrics, and deploys with streamed responses. |
-| 💻 | **AI Terminal** | Browser terminal with `/ai` natural-language command generation, tab autocomplete, and helper chips. |
+| 💻 | **Persistent Terminal** | Authenticated xterm + PTY session on the selected VPS. Tab/control keys belong to the shell; Copilot links to the separate intelligence workspace. |
 | 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
 | 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
 | 🔁 | **Loop foundation** | Intelligence workspace with a live service graph, change ledger, journeys, evidence-backed investigation, approved recovery, and opt-in live adapters. The production workspace no longer loads demo fixtures; guarded autopilot remains disabled until host evaluation passes. **Intelligence** at `/intelligence`. |
@@ -84,13 +86,9 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 
 ## 📸 What it looks like
 
-> Screenshots live in [`docs/screenshots/`](./docs/screenshots/). Drop captures there and they will render below.
+![Live GroundControl terminal showing recorded BNL verification results](./docs/screenshots/bnl-2026-09-28/gc-bnl-scorecard-20260928.jpg)
 
-<!-- Add screenshots here, e.g.:
-![Dashboard](./docs/screenshots/dashboard.png)
-![Topology](./docs/screenshots/topology.png)
-![Terminal](./docs/screenshots/terminal.png)
--->
+Supervised verification on 28 September 2026: a read-only script displays saved scorecard outcomes and the exact BNL runtime identity. The crop excludes infrastructure identifiers and the shell prompt. This is a real terminal capture, not a native GC metrics panel or autonomous Loop run. [Captions and provenance](./docs/screenshots/bnl-2026-09-28/README.md) · [Full case study](./docs/articles/bnl-playground-from-the-browser.md).
 
 ---
 

@@ -24,6 +24,9 @@
 
 ## 🎥 Show it off
 
+- **[articles/bnl-playground-from-the-browser.md](./articles/bnl-playground-from-the-browser.md)** — live supervised GC build/verification case study with captioned production screenshots and measured outcomes.
+- **[screenshots/bnl-2026-09-28/README.md](./screenshots/bnl-2026-09-28/README.md)** — screenshot provenance, captions, hashes and links to the full browser evidence.
+
 - **[DEMO.md](./DEMO.md)** — a click-by-click script for recording a 2–4 minute demo.
 - **[demo-data.md](./demo-data.md)** — seed fake data so the dashboard looks alive without a real server.
 
