@@ -84,6 +84,7 @@ type DeploymentDetailRecord = {
     validationCommand?: string;
     regressionCommand?: string;
     autoDeployEnabled?: boolean;
+    releaseBuild?: { provider?: "host" | "daytona"; imagePrefix?: string; builderImage?: string; timeoutSeconds?: number };
   } | null;
   releases: Release[];
   envProfile?: {
@@ -157,6 +158,8 @@ export default function DeploymentDetail({
   const [validationCommand, setValidationCommand] = useState("");
   const [regressionCommand, setRegressionCommand] = useState("");
   const [autoDeployEnabled, setAutoDeployEnabled] = useState(false);
+  const [releaseProvider, setReleaseProvider] = useState<"host" | "daytona">("host");
+  const [releaseImagePrefix, setReleaseImagePrefix] = useState("");
   const [composeContent, setComposeContent] = useState("");
   const [composeLoading, setComposeLoading] = useState(false);
   const [imageSourceInput, setImageSourceInput] = useState("");
@@ -244,6 +247,8 @@ export default function DeploymentDetail({
     setValidationCommand(source.validationCommand || "");
     setRegressionCommand(source.regressionCommand || "");
     setAutoDeployEnabled(source.autoDeployEnabled === true);
+    setReleaseProvider(source.releaseBuild?.provider || "host");
+    setReleaseImagePrefix(source.releaseBuild?.imagePrefix || "");
   }, [deployment, liveUrl]);
 
   useEffect(() => {
@@ -424,6 +429,7 @@ export default function DeploymentDetail({
             validationCommand,
             regressionCommand,
             autoDeployEnabled,
+            releaseBuild: { ...deployment.sourceRepair?.releaseBuild, provider: releaseProvider, imagePrefix: releaseImagePrefix },
           },
         }),
       });
@@ -977,6 +983,21 @@ export default function DeploymentDetail({
                       className="gc-field mt-2 w-full font-mono"
                     />
                   </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-muted">Release builder</span>
+                    <select aria-label="Release builder" value={releaseProvider} onChange={(event) => setReleaseProvider(event.target.value as "host" | "daytona")} className="gc-field mt-2 w-full">
+                      <option value="host">Deployment host</option>
+                      <option value="daytona">Daytona</option>
+                    </select>
+                    <span className="mt-1 block text-[10px] leading-relaxed text-muted">
+                      {releaseProvider === "daytona" ? "Builds the exact commit in an isolated sandbox, publishes immutable images, then verifies the release on your server. Failed verification restores previous images." : "Builds source using the deployment server's CPU and memory."}
+                    </span>
+                  </label>
+                  {releaseProvider === "daytona" && <label className="block">
+                    <span className="text-xs font-medium text-muted">GHCR image prefix</span>
+                    <input aria-label="GHCR image prefix" value={releaseImagePrefix} onChange={(event) => setReleaseImagePrefix(event.target.value)} placeholder="ghcr.io/owner/app" className="gc-field mt-2 w-full font-mono" />
+                    <span className="mt-1 block text-[10px] text-muted">Requires a connected Daytona account and GHCR credentials with package write access. Database migrations need their own recovery plan.</span>
+                  </label>}
                   <label className="flex items-start justify-between gap-4 rounded-lg bg-background/55 p-4 lg:col-span-2">
                     <span>
                       <span className="block text-xs font-medium">Autopilot after merge</span>

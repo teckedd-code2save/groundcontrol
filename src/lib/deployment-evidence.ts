@@ -107,6 +107,7 @@ export function readDeploymentOverrides(metadataJson?: string | null) {
         validationCommand?: string;
         regressionCommand?: string;
         autoDeployEnabled?: boolean;
+        releaseBuild?: { provider?: "host" | "daytona"; imagePrefix?: string; builderImage?: string; timeoutSeconds?: number };
       };
     };
     return {
@@ -121,6 +122,7 @@ export function readDeploymentOverrides(metadataJson?: string | null) {
         validationCommand: typeof parsed.sourceRepair.validationCommand === "string" ? parsed.sourceRepair.validationCommand : "",
         regressionCommand: typeof parsed.sourceRepair.regressionCommand === "string" ? parsed.sourceRepair.regressionCommand : "",
         autoDeployEnabled: parsed.sourceRepair.autoDeployEnabled === true,
+        releaseBuild: parsed.sourceRepair.releaseBuild,
       } : null,
     };
   } catch {

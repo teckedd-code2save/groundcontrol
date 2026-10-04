@@ -1,3 +1,4 @@
+import { parseReleaseBuildPolicy } from "@/lib/daytona-release-plan";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
@@ -167,8 +168,11 @@ function parseSourceRepair(value: unknown) {
   if (sourceRoot && (sourceRoot.startsWith("/") || sourceRoot.includes(".."))) {
     return { error: "Source path must be repository-relative." };
   }
+  let releaseBuild;
+  try { if (Object.prototype.hasOwnProperty.call(input, "releaseBuild")) releaseBuild = parseReleaseBuildPolicy(input.releaseBuild); } catch (error) { return { error: error instanceof Error ? error.message : "Invalid build policy" }; }
   return {
     value: {
+      releaseBuild,
       defaultBranch: cleanOptionalText(input.defaultBranch, 120) || "main",
       deployedCommit,
       sourceRoot,
@@ -183,12 +187,13 @@ function parseSourceRepair(value: unknown) {
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: string }> }) {
   try {
-    requireAuth(req);
+    const actor = requireAuth(req);
     const { slug } = await ctx.params;
     const body = await req.json();
     const hasPublicUrl = Object.prototype.hasOwnProperty.call(body, "publicUrl");
     const hasRepoUrl = Object.prototype.hasOwnProperty.call(body, "repoUrl");
     const hasSourceRepair = Object.prototype.hasOwnProperty.call(body, "sourceRepair");
+    if (hasSourceRepair && actor.role !== "admin") return NextResponse.json({ error: "Release policy changes require administrator access." }, { status: 403 });
     if (!hasPublicUrl && !hasRepoUrl && !hasSourceRepair) {
       return NextResponse.json({ error: "Provide the deployment identity field to update." }, { status: 400 });
     }
@@ -205,7 +210,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
     const previousOverrides = readDeploymentOverrides(deployment.metadataJson);
     if (hasPublicUrl) metadata.manualPublicUrl = publicIdentity?.url || null;
     if (hasRepoUrl) metadata.manualRepoUrl = repository?.url || null;
-    if (hasSourceRepair) metadata.sourceRepair = sourceRepair?.value || null;
+    if (hasSourceRepair) metadata.sourceRepair = sourceRepair?.value ? {
+      ...sourceRepair.value,
+      // Older clients must not silently switch a remote deployment back to host compilation.
+      releaseBuild: sourceRepair.value.releaseBuild || previousOverrides.sourceRepair?.releaseBuild,
+    } : null;
     metadata.identityUpdatedAt = new Date().toISOString();
 
     const currentPublicUrl = hasPublicUrl

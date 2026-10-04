@@ -27,6 +27,23 @@ async function values() {
   );
 }
 
+/** Server-only release publishing credential. Never return this from a route. */
+export async function loadGithubRegistryPublishCredential() {
+  const config = await values();
+  if (!config.username || !config.token) throw new Error("Configure GHCR package access before remote releases.");
+  // A successful Docker login/read probe does not establish permission to publish.
+  const response = await fetch("https://api.github.com/user", {
+    headers: { Authorization: `Bearer ${config.token}`, Accept: "application/vnd.github+json", "User-Agent": "GroundControl" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const scopes = (response.headers.get("x-oauth-scopes") || "").split(",").map(scope => scope.trim());
+  await response.body?.cancel();
+  if (!response.ok || !scopes.includes("write:packages")) {
+    throw new Error("GHCR publishing requires a valid personal access token (classic) with write:packages. Update GitHub container registry credentials in Settings before retrying.");
+  }
+  return { username: config.username, token: config.token };
+}
+
 async function save(input: Record<string, string>) {
   await prisma.$transaction(
     Object.entries(input).map(([field, value]) =>

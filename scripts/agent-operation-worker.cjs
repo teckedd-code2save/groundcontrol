@@ -114,6 +114,8 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
       composePath: current.deployment.composePath || undefined,
       publicUrl,
       action: sourceDeploy ? "source-deploy" : "redeploy",
+      commitSha: sourceDeploy && typeof input.commitSha === "string" ? input.commitSha : undefined,
+      services: Array.isArray(input.services) ? input.services : undefined,
       branch: sourceDeploy && typeof input.branch === "string" ? input.branch : undefined,
     }),
   });
@@ -170,7 +172,7 @@ async function reconcileDetached({ prisma, operation, baseUrl, jwtSecret }) {
   }
   const projectSlug = current.deployment.legacyProject?.slug || current.deployment.slug;
   const { response, body } = await fetchJson(
-    `${baseUrl}/api/projects/compose/log?slug=${encodeURIComponent(projectSlug)}`,
+    `${baseUrl}/api/projects/compose/log?slug=${encodeURIComponent(projectSlug)}${parseJson(current.resultJson)?.releaseId ? `&releaseId=${encodeURIComponent(parseJson(current.resultJson).releaseId)}` : ""}`,
     { headers: { Cookie: sessionCookie(current.grant.user, jwtSecret) } }
   );
   if (!response.ok) {

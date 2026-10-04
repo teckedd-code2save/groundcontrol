@@ -20,7 +20,11 @@ export async function GET(req: NextRequest) {
     if (!slug || !/^[A-Za-z0-9_.-]+$/.test(slug)) {
       return NextResponse.json({ error: "Invalid slug" }, { status: 400 });
     }
-    const logFile = `/tmp/gc-redeploy-${slug}.log`;
+    const releaseId = searchParams.get("releaseId");
+    if (releaseId && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(releaseId)) {
+      return NextResponse.json({ error: "Invalid release ID" }, { status: 400 });
+    }
+    const logFile = `/tmp/gc-redeploy-${slug}${releaseId ? `-${releaseId}` : ""}.log`;
     const vps = await getActiveVps();
     const [result, modified] = await Promise.all([
       execOnTargetStrict(`tail -n 200 ${shQuote(logFile)} 2>/dev/null || echo ""`, vps),
@@ -30,7 +34,9 @@ export async function GET(req: NextRequest) {
     const { lines, exitCode } = parsed;
     let { status, error } = parsed;
     const modifiedAt = Number(modified.stdout.trim() || 0) * 1000;
-    if (status === "running" && modifiedAt > 0 && Date.now() - modifiedAt > 10 * 60 * 1000) {
+    const observedId = releaseId || result.stdout.match(/__GC_RELEASE_ID__=([a-f0-9-]{36})/)?.[1];
+    const recordFilter = observedId ? { output: { contains: `__GC_RELEASE_ID__=${observedId}` } } : {};
+    if (status === "running" && modifiedAt > 0 && Date.now() - modifiedAt > (observedId ? 20 : 10) * 60 * 1000) {
       status = "failed";
       error = "Deployment run stalled: no new execution evidence was recorded for 10 minutes.";
     }
@@ -40,7 +46,7 @@ export async function GET(req: NextRequest) {
     if (status !== "running") {
       const project = await prisma.project.findUnique({ where: { slug }, select: { id: true } });
       const latestLog = await prisma.deploymentLog.findFirst({
-        where: { projectSlug: slug, status: "running" },
+        where: { projectSlug: slug, status: "running", ...recordFilter },
         orderBy: { createdAt: "desc" },
         select: { id: true },
       });
@@ -56,9 +62,9 @@ export async function GET(req: NextRequest) {
       }
       if (project) {
         const latestRelease = await prisma.deployment.findFirst({
-          where: { projectId: project.id, status: "deploying" },
+          where: { projectId: project.id, status: "deploying", ...recordFilter },
           orderBy: { createdAt: "desc" },
-          select: { id: true },
+          select: { id: true, commitSha: true, branch: true, createdAt: true },
         });
         if (latestRelease) {
           await prisma.deployment.update({
@@ -69,6 +75,19 @@ export async function GET(req: NextRequest) {
               error: status === "failed" ? error : null,
             },
           });
+          // A queued or built commit is not a deployed commit. Advance identity only after verification.
+          if (observedId && status === "success" && latestRelease.commitSha) {
+            const enrolled = await prisma.enrolledDeployment.findFirst({ where: { legacyProjectId: project.id } });
+            if (enrolled) {
+              const metadata = JSON.parse(enrolled.metadataJson || "{}");
+              if (!metadata.lastVerifiedDaytonaReleaseAt || new Date(metadata.lastVerifiedDaytonaReleaseAt) < latestRelease.createdAt) {
+                metadata.sourceRepair = { ...metadata.sourceRepair, deployedCommit: latestRelease.commitSha, defaultBranch: latestRelease.branch };
+                metadata.lastVerifiedDaytonaReleaseAt = latestRelease.createdAt.toISOString();
+                metadata.lastVerifiedDaytonaReleaseId = observedId;
+                await prisma.enrolledDeployment.update({ where: { id: enrolled.id }, data: { metadataJson: JSON.stringify(metadata) } });
+              }
+            }
+          }
         }
       }
     }
