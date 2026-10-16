@@ -32,6 +32,12 @@ export function normalizeSourceBranch(value: unknown, fallback = "main"): string
   return branch;
 }
 
+/** Validate an exact commit SHA (40-64 hex). Returns lowercased, or null. */
+export function normalizeCommitSha(value: unknown): string | null {
+  const sha = String(value || "").trim().toLowerCase();
+  return /^[a-f0-9]{40,64}$/.test(sha) ? sha : null;
+}
+
 function redactCredential(value: string, credential: string): string {
   if (!value || !credential) return value;
   return value.split(credential).join("[REDACTED]");
@@ -91,13 +97,28 @@ async function sourceAccessForDeployment(deploymentId: number) {
  * Sync a linked GitHub repository onto an existing deployment tree without
  * persisting the short-lived installation token in the git remote or command.
  * The token is supplied over stdin to a temporary GIT_ASKPASS helper.
+ *
+ * When `sha` is provided the checkout is pinned to that exact commit; otherwise
+ * the branch tip is checked out (matching the original source-deploy behavior).
  */
 export function buildGithubSourceSyncCommand(input: {
   projectPath: string;
   repository: string;
   branch: string;
+  sha?: string;
 }): string {
   const remote = `https://github.com/${input.repository}.git`;
+  const checkout = input.sha
+    ? [
+        `git fetch --depth 1 origin ${shQuote(input.sha)}`,
+        "git checkout --detach FETCH_HEAD",
+        `test \"$(git rev-parse HEAD)\" = \"${input.sha}\"`,
+      ]
+    : [
+        `git fetch --depth 1 origin ${shQuote(input.branch)}`,
+        `git checkout -B ${shQuote(input.branch)} --force FETCH_HEAD`,
+        "git reset --hard FETCH_HEAD",
+      ];
   return [
     "set -eu",
     "umask 077",
@@ -119,9 +140,7 @@ export function buildGithubSourceSyncCommand(input: {
     `cd ${shQuote(input.projectPath)}`,
     "if [ ! -d .git ]; then git init; fi",
     `if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin ${shQuote(remote)}; else git remote add origin ${shQuote(remote)}; fi`,
-    `git fetch --depth 1 origin ${shQuote(input.branch)}`,
-    `git checkout -B ${shQuote(input.branch)} --force FETCH_HEAD`,
-    "git reset --hard FETCH_HEAD",
+    ...checkout,
     "printf 'commit=%s\\n' \"$(git rev-parse HEAD)\"",
   ].join("\n");
 }
@@ -130,14 +149,19 @@ export async function syncGithubDeploymentSource(input: {
   deploymentId: number;
   projectPath: string;
   branch?: unknown;
+  sha?: unknown;
   vps?: VpsConnection | null;
 }): Promise<GithubSourceSyncResult> {
   const access = await sourceAccessForDeployment(input.deploymentId);
   const branch = normalizeSourceBranch(input.branch, access.repository.defaultBranch);
+  const sha = typeof input.sha === "string" && input.sha.trim()
+    ? normalizeCommitSha(input.sha) ?? undefined
+    : undefined;
   const command = buildGithubSourceSyncCommand({
     projectPath: input.projectPath,
     repository: access.repository.fullName,
     branch,
+    sha,
   });
   const result = await execOnTargetStrict(command, input.vps, undefined, `${access.token}\n`);
   if (result.code !== 0) {
@@ -153,6 +177,9 @@ export async function syncGithubDeploymentSource(input: {
     ?.slice("commit=".length) || "";
   if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
     throw new Error("GitHub source sync completed without a verifiable commit SHA.");
+  }
+  if (sha && commitSha.toLowerCase() !== sha) {
+    throw new Error(`GitHub source sync landed on ${commitSha}, expected the requested ${sha}.`);
   }
   return {
     repository: access.repository.fullName,

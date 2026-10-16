@@ -151,6 +151,181 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
   });
 }
 
+async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
+  const current = await prisma.agentOperation.findUnique({
+    where: { id: operation.id },
+    include: {
+      grant: {
+        include: {
+          user: { select: { id: true, username: true, role: true, forcePasswordChange: true } },
+        },
+      },
+      deployment: { include: { legacyProject: true } },
+    },
+  });
+  if (!current) return;
+  if (current.grant.revokedAt) return markFailed(prisma, current, "Agent grant was revoked before execution");
+  if (current.grant.user.forcePasswordChange || current.grant.user.role !== "admin") {
+    return markFailed(prisma, current, "The approving GroundControl user no longer has administrator deployment access");
+  }
+  if (!parseResources(current.grant.resources).includes(current.deploymentId)) {
+    return markFailed(prisma, current, "The grant no longer authorizes this deployment");
+  }
+  if (current.type !== "deployment.build_publish") {
+    return markFailed(prisma, current, `Unsupported operation type: ${current.type}`);
+  }
+
+  const input = parseJson(current.inputJson) || {};
+  const commitSha = String(input.commitSha || "");
+  const projectSlug = current.deployment.legacyProject?.slug || current.deployment.slug;
+
+  const response = await fetchJson(`${baseUrl}/api/projects/compose/build-publish`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: sessionCookie(current.grant.user, jwtSecret),
+      "X-GroundControl-Agent-Operation": current.id,
+    },
+    body: JSON.stringify({
+      projectSlug,
+      commitSha,
+      branch: typeof input.branch === "string" ? input.branch : undefined,
+      services: Array.isArray(input.services) ? input.services : undefined,
+      builder: input.builder === "buildkit" ? "buildkit" : "local",
+      runTests: input.runTests === true,
+      testCommand: typeof input.testCommand === "string" ? input.testCommand : undefined,
+    }),
+  });
+
+  if (!response.ok || response.body.success === false || response.body.error) {
+    return markFailed(prisma, current, response.body.error || `Build failed with HTTP ${response.status}`, response.body);
+  }
+
+  const images = response.body.images || [];
+  const tests = response.body.tests || { status: "skipped" };
+  await prisma.agentOperation.update({
+    where: { id: current.id },
+    data: {
+      status: "success",
+      resultJson: JSON.stringify({ images, tests, commitSha }).slice(0, 20000),
+      evidenceJson: JSON.stringify({ phase: "build_published", projectSlug, commitSha, images, tests }).slice(0, 20000),
+      finishedAt: new Date(),
+      leaseUntil: null,
+    },
+  });
+}
+
+async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
+  const current = await prisma.agentOperation.findUnique({
+    where: { id: operation.id },
+    include: {
+      grant: {
+        include: {
+          user: { select: { id: true, username: true, role: true, forcePasswordChange: true } },
+        },
+      },
+      deployment: { include: { legacyProject: true } },
+    },
+  });
+  if (!current) return;
+  if (current.grant.revokedAt) return markFailed(prisma, current, "Agent grant was revoked before execution");
+  if (current.grant.user.forcePasswordChange || current.grant.user.role !== "admin") {
+    return markFailed(prisma, current, "The approving GroundControl user no longer has administrator deployment access");
+  }
+  if (!parseResources(current.grant.resources).includes(current.deploymentId)) {
+    return markFailed(prisma, current, "The grant no longer authorizes this deployment");
+  }
+  if (current.type !== "deployment.release") {
+    return markFailed(prisma, current, `Unsupported operation type: ${current.type}`);
+  }
+
+  const input = parseJson(current.inputJson) || {};
+  const buildOperationId = String(input.buildOperationId || "");
+  const projectSlug = current.deployment.legacyProject?.slug || current.deployment.slug;
+
+  // Resolve the referenced build and refuse to promote a failed one.
+  const buildOperation = await prisma.agentOperation.findFirst({
+    where: { id: buildOperationId, deploymentId: current.deploymentId, type: "deployment.build_publish" },
+  });
+  if (!buildOperation) {
+    return markFailed(prisma, current, `No build operation found for ${buildOperationId}`);
+  }
+  if (buildOperation.status !== "success") {
+    return markFailed(prisma, current, `The referenced build is not successful (status ${buildOperation.status})`);
+  }
+  const buildResult = parseJson(buildOperation.resultJson) || {};
+  const tests = buildResult.tests || {};
+  if (tests.status === "failed") {
+    return markFailed(prisma, current, "Refusing to release: the referenced build's tests failed", buildResult);
+  }
+  const images = Array.isArray(buildResult.images) ? buildResult.images : [];
+  if (images.length === 0) {
+    return markFailed(prisma, current, "The referenced build produced no image digests to release");
+  }
+
+  // 1. Pin each service to the built digest (captures the rollback pair).
+  const pinResp = await fetchJson(`${baseUrl}/api/projects/compose/release`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: sessionCookie(current.grant.user, jwtSecret),
+      "X-GroundControl-Agent-Operation": current.id,
+    },
+    body: JSON.stringify({
+      projectSlug,
+      images: images.map((img) => ({ service: img.service, digest: img.digest })),
+    }),
+  });
+  if (!pinResp.response.ok || pinResp.body.success === false || pinResp.body.error) {
+    return markFailed(prisma, current, pinResp.body.error || `Release pin failed with HTTP ${pinResp.response.status}`, pinResp.body);
+  }
+  const rollbackPair = pinResp.body.previous || {};
+
+  // 2. Switch onto the pinned digests via the existing redeploy path.
+  const { response, body } = await fetchJson(`${baseUrl}/api/projects/compose`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: sessionCookie(current.grant.user, jwtSecret),
+      "X-GroundControl-Agent-Operation": current.id,
+    },
+    body: JSON.stringify({
+      projectSlug,
+      projectPath: current.deployment.sourcePath || undefined,
+      composePath: current.deployment.composePath || undefined,
+      action: "redeploy",
+    }),
+  });
+
+  if (!response.ok || body.success === false || body.error) {
+    return markFailed(prisma, current, body.error || `Release switch failed with HTTP ${response.status}`, { images, rollbackPair, ...body });
+  }
+
+  if (body.detached) {
+    await prisma.agentOperation.update({
+      where: { id: current.id },
+      data: {
+        status: "verifying",
+        resultJson: JSON.stringify({ images, rollbackPair, ...body }).slice(0, 20000),
+        evidenceJson: JSON.stringify({ phase: "release_switching", projectSlug, buildOperationId, images, rollbackPair }).slice(0, 20000),
+        leaseUntil: new Date(Date.now() + LEASE_MS),
+      },
+    });
+    return;
+  }
+
+  await prisma.agentOperation.update({
+    where: { id: current.id },
+    data: {
+      status: "success",
+      resultJson: JSON.stringify({ images, rollbackPair, ...body }).slice(0, 20000),
+      evidenceJson: JSON.stringify({ phase: "release_verified", projectSlug, buildOperationId, images, rollbackPair, result: body }).slice(0, 20000),
+      finishedAt: new Date(),
+      leaseUntil: null,
+    },
+  });
+}
+
 async function reconcileDetached({ prisma, operation, baseUrl, jwtSecret }) {
   const current = await prisma.agentOperation.findUnique({
     where: { id: operation.id },
@@ -284,7 +459,12 @@ function startAgentOperationWorker({ prisma, port, jwtSecret }) {
 
       const operation = await claimPending(prisma);
       if (operation) {
-        await executeRedeploy({ prisma, operation, baseUrl, jwtSecret }).catch(async (error) => {
+        const handler = operation.type === "deployment.build_publish"
+          ? executeBuildPublish
+          : operation.type === "deployment.release"
+            ? executeRelease
+            : executeRedeploy;
+        await handler({ prisma, operation, baseUrl, jwtSecret }).catch(async (error) => {
           console.error("[agent-worker] operation failed", operation.id, error);
           await markUncertain(
             prisma,

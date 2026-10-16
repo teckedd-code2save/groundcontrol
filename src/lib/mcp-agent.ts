@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { prisma } from "@/lib/prisma";
 import { getDockerContainers, type VpsConnection } from "@/lib/vps";
 import { inspectDeploymentEnvKeyPresence } from "@/lib/env-management";
+import { normalizeReleaseSha } from "@/lib/github-image-release";
 import {
   authenticateAccessToken,
   type OAuthScope,
@@ -349,6 +350,66 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
+    name: "deployment.build_publish",
+    title: "Build and publish a release image",
+    description: "Build an exact commit SHA, tag the built images with that SHA, push them to the container registry, and verify the artifacts (optionally running tests). Produces a durable build operation whose verified digests a later deployment.release can deploy. Unlike deployment.source.deploy (an in-place git-mode build) this yields a pushable, SHA-tagged, digest-verified image.",
+    requiredScope: "deployment:redeploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string", description: "Deployment slug or numeric id." },
+        commitSha: { type: "string", minLength: 40, maxLength: 64, description: "Exact 40-64 character commit SHA to build and publish." },
+        branch: { type: "string", minLength: 1, maxLength: 200, description: "Optional GitHub branch to fetch the SHA from. Defaults to the linked repository default branch." },
+        services: { type: "array", items: { type: "string" }, description: "Optional subset of buildable services to build. Defaults to all buildable services." },
+        builder: { type: "string", enum: ["local", "buildkit"], description: "Build executor. local (default) builds on the host; buildkit uses an isolated, resource-capped BuildKit builder." },
+        runTests: { type: "boolean", description: "Run the test command against the built image and record pass/fail (default false)." },
+        testCommand: { type: "string", maxLength: 1000, description: "Explicit test command; otherwise the package.json test script is used." },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 160, description: "Stable unique key. Reusing it returns the original operation instead of building twice." },
+        reason: { type: "string", maxLength: 500, description: "Short operational reason for the build." },
+      },
+      required: ["deployment", "commitSha", "idempotencyKey"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        operation: OPERATION_SCHEMA,
+        reused: { type: "boolean" },
+      },
+      required: ["operation", "reused"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "deployment.release",
+    title: "Release a built image by digest",
+    description: "Deploy a previously built image (from deployment.build_publish) by its exact digest to an approved environment. Refuses to promote a build whose tests failed. Records the prior running digests as a rollback pair.",
+    requiredScope: "deployment:redeploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string", description: "Deployment slug or numeric id." },
+        buildOperationId: { type: "string", minLength: 8, description: "The successful build operation whose digests to deploy." },
+        expectedCurrentRevision: { type: "string", description: "Optional CAS guard: refuse the release if the deployment is not on this revision." },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 160, description: "Stable unique key. Reusing it returns the original operation instead of releasing twice." },
+        reason: { type: "string", maxLength: 500, description: "Short operational reason for the release." },
+      },
+      required: ["deployment", "buildOperationId", "idempotencyKey"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        operation: OPERATION_SCHEMA,
+        reused: { type: "boolean" },
+      },
+      required: ["operation", "reused"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  {
     name: "operation.get",
     title: "Get operation",
     description: "Read the current state, result, verification evidence, and error for an operation created by this grant.",
@@ -648,6 +709,77 @@ export async function executeAgentTool(
         type: "deployment.redeploy",
         idempotencyKey,
         inputJson: JSON.stringify({ reason: String(args.reason || "").trim().slice(0, 500) }),
+      },
+    });
+    return { operation: serializeOperation(operation), reused: false };
+  }
+
+  if (name === "deployment.build_publish") {
+    const deployment = await allowedDeployment(context, args.deployment);
+    const commitSha = normalizeReleaseSha(args.commitSha);
+    const idempotencyKey = String(args.idempotencyKey || "").trim();
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
+      throw new Error("idempotencyKey must be between 8 and 160 characters");
+    }
+    const branch = typeof args.branch === "string" ? args.branch.trim() : "";
+    if (branch.length > 200) throw new Error("branch must be 200 characters or fewer");
+    const services = Array.isArray(args.services)
+      ? args.services.map((service: unknown) => String(service)).filter(Boolean)
+      : undefined;
+    const existing = await prisma.agentOperation.findUnique({
+      where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } },
+    });
+    if (existing) return { operation: serializeOperation(existing), reused: true };
+
+    const operation = await prisma.agentOperation.create({
+      data: {
+        grantId: context.grant.id,
+        deploymentId: deployment.id,
+        type: "deployment.build_publish",
+        idempotencyKey,
+        inputJson: JSON.stringify({
+          commitSha,
+          branch: branch || undefined,
+          services,
+          builder: args.builder === "buildkit" ? "buildkit" : "local",
+          runTests: args.runTests === true,
+          testCommand: typeof args.testCommand === "string" ? args.testCommand.trim() : undefined,
+          reason: String(args.reason || "").trim().slice(0, 500),
+        }),
+      },
+    });
+    return { operation: serializeOperation(operation), reused: false };
+  }
+
+  if (name === "deployment.release") {
+    const deployment = await allowedDeployment(context, args.deployment);
+    const buildOperationId = String(args.buildOperationId || "").trim();
+    if (buildOperationId.length < 8) {
+      throw new Error("buildOperationId is required");
+    }
+    const idempotencyKey = String(args.idempotencyKey || "").trim();
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
+      throw new Error("idempotencyKey must be between 8 and 160 characters");
+    }
+    const existing = await prisma.agentOperation.findUnique({
+      where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } },
+    });
+    if (existing) return { operation: serializeOperation(existing), reused: true };
+
+    const operation = await prisma.agentOperation.create({
+      data: {
+        grantId: context.grant.id,
+        deploymentId: deployment.id,
+        type: "deployment.release",
+        idempotencyKey,
+        inputJson: JSON.stringify({
+          buildOperationId,
+          expectedCurrentRevision:
+            typeof args.expectedCurrentRevision === "string"
+              ? args.expectedCurrentRevision.trim()
+              : undefined,
+          reason: String(args.reason || "").trim().slice(0, 500),
+        }),
       },
     });
     return { operation: serializeOperation(operation), reused: false };
