@@ -45,7 +45,7 @@ function writeOverrideCommand(projectPath: string, content: string): string {
 }
 
 function normalizeBuilder(value: unknown): "local" | "buildkit" {
-  return value === "buildkit" ? "buildkit" : "local";
+  return value === "local" ? "local" : "buildkit";
 }
 
 /** Resolve a test command: explicit input → package.json `test` script. */

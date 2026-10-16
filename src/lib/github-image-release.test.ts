@@ -150,7 +150,7 @@ describe("github-image-release", () => {
     const ensure = buildEnsureBuildkitBuilderCommand("gc-buildkit", "2", "2g");
     expect(ensure).toContain("docker buildx create --name 'gc-buildkit'");
     expect(ensure).toContain("--driver docker-container");
-    expect(ensure).toContain("docker update --cpus '2' --memory '2g'");
+    expect(ensure).toContain("docker update --cpus '2' --memory '2g' --memory-swap '2g'");
 
     const bake = buildBuildkitBuildPushCommand({
       projectPath: "/opt/myapp",

@@ -283,7 +283,7 @@ export function buildEnsureBuildkitBuilderCommand(
   const safeBuilder = builder.replace(/[^A-Za-z0-9_.-]/g, "");
   return [
     `docker buildx inspect ${shQuote(safeBuilder)} >/dev/null 2>&1 || docker buildx create --name ${shQuote(safeBuilder)} --driver docker-container --bootstrap >/dev/null 2>&1`,
-    `docker update --cpus ${shQuote(cpus)} --memory ${shQuote(memory)} buildx_buildkit_${safeBuilder}0 >/dev/null 2>&1 || true`,
+    `docker update --cpus ${shQuote(cpus)} --memory ${shQuote(memory)} --memory-swap ${shQuote(memory)} buildx_buildkit_${safeBuilder}0 >/dev/null 2>&1 || true`,
   ].join("\n");
 }
 
