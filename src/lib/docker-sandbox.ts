@@ -48,8 +48,14 @@ export function buildSbxExecCommand(sandboxId: string, script: string): string {
  */
 export function buildSandboxBuildScript(spec: SandboxBuildSpec): string {
   const registry = spec.registry || "ghcr.io";
-  const dockerfile = spec.dockerfile ? ` -f ${shQuote(spec.dockerfile)}` : "";
-  const context = spec.context ? ` ${shQuote(spec.context)}` : " .";
+  const contextPath = spec.context || ".";
+  // compose's `dockerfile` is relative to the context; `docker build -f` is
+  // relative to the cwd, so only emit `-f` for a non-default dockerfile and
+  // anchor it to the context path.
+  const dockerfileFlag =
+    spec.dockerfile && spec.dockerfile !== "Dockerfile"
+      ? ` -f ${shQuote(`${contextPath}/${spec.dockerfile}`)}`
+      : "";
   const repoHost = spec.repoUrl.replace(/^https:\/\//, "");
   return [
     "set -eu",
@@ -61,7 +67,7 @@ export function buildSandboxBuildScript(spec: SandboxBuildSpec): string {
     "cd /tmp/repo",
     `git checkout ${spec.commitSha}`,
     `test "$(git rev-parse HEAD)" = "${spec.commitSha}"`,
-    `docker build -t ${shQuote(spec.ref)}${dockerfile}${context}`,
+    `docker build -t ${shQuote(spec.ref)}${dockerfileFlag} ${shQuote(contextPath)}`,
     `docker push ${shQuote(spec.ref)}`,
     `docker image inspect ${shQuote(spec.ref)} --format '{{index .RepoDigests 0}}'`,
   ].join("\n");

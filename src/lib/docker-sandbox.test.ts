@@ -40,7 +40,7 @@ describe("docker-sandbox", () => {
     expect(script).toContain("docker login 'ghcr.io' -u 'teckedd-code2save' --password-stdin");
     expect(script).toContain('git clone "https://x-access-token:${GC_GIT_TOKEN}@github.com/org/app.git" /tmp/repo');
     expect(script).toContain(`git checkout ${SHA}`);
-    expect(script).toContain(`docker build -t 'ghcr.io/org/app:${SHA}' .`);
+    expect(script).toContain(`docker build -t 'ghcr.io/org/app:${SHA}' '.'`);
     expect(script).toContain(`docker push 'ghcr.io/org/app:${SHA}'`);
     expect(script).toContain("RepoDigests");
   });
