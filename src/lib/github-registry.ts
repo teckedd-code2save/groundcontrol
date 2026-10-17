@@ -173,6 +173,13 @@ export async function verifyGithubRegistryAccess(
   return { ok: true, state: await githubRegistryPublicState() };
 }
 
+/** Decrypted GHCR credential (username + token) for off-host build injection. */
+export async function githubRegistryCredential(): Promise<{ username: string; token: string } | null> {
+  const config = await values();
+  if (!config.username || !config.token) return null;
+  return { username: config.username, token: config.token };
+}
+
 export async function githubRegistryPublicState(): Promise<RegistryState> {
   const config = await values();
   const configured = Boolean(config.token && config.username);

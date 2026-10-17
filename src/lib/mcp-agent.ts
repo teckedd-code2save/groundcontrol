@@ -361,7 +361,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
         commitSha: { type: "string", minLength: 40, maxLength: 64, description: "Exact 40-64 character commit SHA to build and publish." },
         branch: { type: "string", minLength: 1, maxLength: 200, description: "Optional GitHub branch to fetch the SHA from. Defaults to the linked repository default branch." },
         services: { type: "array", items: { type: "string" }, description: "Optional subset of buildable services to build. Defaults to all buildable services." },
-        builder: { type: "string", enum: ["local", "buildkit"], description: "Build executor. buildkit (default) uses an isolated, resource-capped BuildKit builder so a build never competes with the production workload; local builds directly on the host (dev only)." },
+        builder: { type: "string", enum: ["local", "buildkit", "docker-agentic"], description: "Build executor. buildkit (default) uses an isolated, resource-capped BuildKit builder on the host; docker-agentic builds in an ephemeral Docker Agentic Platform sandbox (fully off-host, amd64); local builds directly on the host (dev only)." },
         runTests: { type: "boolean", description: "Run the test command against the built image and record pass/fail (default false)." },
         testCommand: { type: "string", maxLength: 1000, description: "Explicit test command; otherwise the package.json test script is used." },
         idempotencyKey: { type: "string", minLength: 8, maxLength: 160, description: "Stable unique key. Reusing it returns the original operation instead of building twice." },
@@ -741,7 +741,11 @@ export async function executeAgentTool(
           commitSha,
           branch: branch || undefined,
           services,
-          builder: args.builder === "local" ? "local" : "buildkit",
+          builder: args.builder === "docker-agentic"
+            ? "docker-agentic"
+            : args.builder === "local"
+              ? "local"
+              : "buildkit",
           runTests: args.runTests === true,
           testCommand: typeof args.testCommand === "string" ? args.testCommand.trim() : undefined,
           reason: String(args.reason || "").trim().slice(0, 500),

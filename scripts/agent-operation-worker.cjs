@@ -191,7 +191,7 @@ async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
       commitSha,
       branch: typeof input.branch === "string" ? input.branch : undefined,
       services: Array.isArray(input.services) ? input.services : undefined,
-      builder: input.builder === "buildkit" ? "buildkit" : "local",
+      builder: input.builder === "local" || input.builder === "docker-agentic" ? input.builder : "buildkit",
       runTests: input.runTests === true,
       testCommand: typeof input.testCommand === "string" ? input.testCommand : undefined,
     }),

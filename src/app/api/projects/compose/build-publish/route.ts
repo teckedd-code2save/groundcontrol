@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { execOnTargetStrict } from "@/lib/host-exec";
-import { ensureGithubRegistryLogin } from "@/lib/github-registry";
+import { ensureGithubRegistryLogin, githubRegistryCredential } from "@/lib/github-registry";
 import { syncGithubDeploymentSource } from "@/lib/github-source-deploy";
+import {
+  buildSandboxBuildScript,
+  buildSbxCreateCommand,
+  buildSbxExecCommand,
+  buildSbxRmCommand,
+  parseSandboxId,
+} from "@/lib/docker-sandbox";
 import {
   buildManagedComposeInvocation,
   getActiveVps,
@@ -44,8 +51,10 @@ function writeOverrideCommand(projectPath: string, content: string): string {
   ].join("\n");
 }
 
-function normalizeBuilder(value: unknown): "local" | "buildkit" {
-  return value === "local" ? "local" : "buildkit";
+function normalizeBuilder(value: unknown): "local" | "buildkit" | "docker-agentic" {
+  if (value === "local") return "local";
+  if (value === "docker-agentic") return "docker-agentic";
+  return "buildkit";
 }
 
 /** Resolve a test command: explicit input → package.json `test` script. */
@@ -153,6 +162,61 @@ export async function POST(req: NextRequest) {
     }
     const { content: overrideContent, refs } = buildReleaseImageOverride(buildable, commitSha);
     const services = Object.keys(refs);
+
+    if (builder === "docker-agentic") {
+      const ghcr = await githubRegistryCredential();
+      if (!ghcr) {
+        throw new HttpError("A GitHub container registry credential is required to push release images.", 400);
+      }
+      const repoUrl = `https://github.com/${sourceSync.repository}.git`;
+      let sandboxId: string | null = null;
+      try {
+        const create = await execOnTargetStrict(
+          buildSbxCreateCommand(`gc-build-${commitSha.slice(0, 8)}`),
+          vps
+        );
+        sandboxId = parseSandboxId(create.stdout);
+        if (!sandboxId) {
+          throw new HttpError(
+            `Could not create a Docker sandbox: ${(create.stderr || create.stdout).trim().slice(0, 500)}`,
+            500
+          );
+        }
+
+        const images: { service: string; ref: string; digest: string | null }[] = [];
+        for (const service of services) {
+          const ref = refs[service];
+          const script = buildSandboxBuildScript({ repoUrl, commitSha, ref });
+          const result = await execOnTargetStrict(
+            buildSbxExecCommand(sandboxId, `docker login ghcr.io -u ${ghcr.username} --password-stdin && ${script}`),
+            vps,
+            undefined,
+            `${ghcr.token}\n`
+          );
+          if (result.code !== 0) {
+            throw new HttpError(
+              `Sandbox build failed for ${service}: ${(result.stderr || result.stdout).trim().slice(0, 1500)}`,
+              400
+            );
+          }
+          const digest = result.stdout.trim().split("\n").filter(Boolean).pop() || null;
+          images.push({ service, ref, digest });
+        }
+
+        return NextResponse.json({
+          success: true,
+          commitSha,
+          images,
+          tests: { status: "skipped", command: null, output: null },
+          builder,
+          commit: sourceSync.commitSha,
+        });
+      } finally {
+        if (sandboxId) {
+          await execOnTargetStrict(buildSbxRmCommand(sandboxId), vps).catch(() => undefined);
+        }
+      }
+    }
 
     const previousOverride = await execOnTargetStrict(
       `cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`,
