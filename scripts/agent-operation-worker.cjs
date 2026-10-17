@@ -179,7 +179,7 @@ async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
   const commitSha = String(input.commitSha || "");
   const projectSlug = current.deployment.legacyProject?.slug || current.deployment.slug;
 
-  const response = await fetchJson(`${baseUrl}/api/projects/compose/build-publish`, {
+  const { response, body } = await fetchJson(`${baseUrl}/api/projects/compose/build-publish`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -197,12 +197,12 @@ async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
     }),
   });
 
-  if (!response.ok || response.body.success === false || response.body.error) {
-    return markFailed(prisma, current, response.body.error || `Build failed with HTTP ${response.status}`, response.body);
+  if (!response.ok || body.success === false || body.error) {
+    return markFailed(prisma, current, body.error || `Build failed with HTTP ${response.status}`, body);
   }
 
-  const images = response.body.images || [];
-  const tests = response.body.tests || { status: "skipped" };
+  const images = body.images || [];
+  const tests = body.tests || { status: "skipped" };
   await prisma.agentOperation.update({
     where: { id: current.id },
     data: {
