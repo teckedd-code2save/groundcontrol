@@ -28,13 +28,17 @@ describe("docker-sandbox", () => {
     expect(buildSbxRmCommand("sbx_abc")).toContain("sbx --cloud rm --force 'sbx_abc'");
   });
 
-  it("builds the clone-checkout-build-push-inspect script", () => {
+  it("builds the login-clone-build-push-inspect script with both tokens", () => {
     const script = buildSandboxBuildScript({
       repoUrl: "https://github.com/org/app.git",
       commitSha: SHA,
       ref: `ghcr.io/org/app:${SHA}`,
+      username: "teckedd-code2save",
     });
-    expect(script).toContain("git clone 'https://github.com/org/app.git' /tmp/repo");
+    expect(script).toContain("IFS= read -r GC_GIT_TOKEN");
+    expect(script).toContain("IFS= read -r GC_GHCR_TOKEN");
+    expect(script).toContain("docker login 'ghcr.io' -u 'teckedd-code2save' --password-stdin");
+    expect(script).toContain('git clone "https://x-access-token:${GC_GIT_TOKEN}@github.com/org/app.git" /tmp/repo');
     expect(script).toContain(`git checkout ${SHA}`);
     expect(script).toContain(`docker build -t 'ghcr.io/org/app:${SHA}' .`);
     expect(script).toContain(`docker push 'ghcr.io/org/app:${SHA}'`);

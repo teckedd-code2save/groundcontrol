@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { execOnTargetStrict } from "@/lib/host-exec";
 import { ensureGithubRegistryLogin, githubRegistryCredential } from "@/lib/github-registry";
-import { syncGithubDeploymentSource } from "@/lib/github-source-deploy";
+import { sourceAccessForDeployment, syncGithubDeploymentSource } from "@/lib/github-source-deploy";
 import {
   buildSandboxBuildScript,
   buildSbxCreateCommand,
@@ -168,7 +168,8 @@ export async function POST(req: NextRequest) {
       if (!ghcr) {
         throw new HttpError("A GitHub container registry credential is required to push release images.", 400);
       }
-      const repoUrl = `https://github.com/${sourceSync.repository}.git`;
+      const source = await sourceAccessForDeployment(enrolled.id);
+      const repoUrl = `https://github.com/${source.repository.fullName}.git`;
       let sandboxId: string | null = null;
       try {
         const create = await execOnTargetStrict(
@@ -186,12 +187,12 @@ export async function POST(req: NextRequest) {
         const images: { service: string; ref: string; digest: string | null }[] = [];
         for (const service of services) {
           const ref = refs[service];
-          const script = buildSandboxBuildScript({ repoUrl, commitSha, ref });
+          const script = buildSandboxBuildScript({ repoUrl, commitSha, ref, username: ghcr.username });
           const result = await execOnTargetStrict(
-            buildSbxExecCommand(sandboxId, `docker login ghcr.io -u ${ghcr.username} --password-stdin && ${script}`),
+            buildSbxExecCommand(sandboxId, script),
             vps,
             undefined,
-            `${ghcr.token}\n`
+            `${source.token}\n${ghcr.token}\n`
           );
           if (result.code !== 0) {
             throw new HttpError(

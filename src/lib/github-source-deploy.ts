@@ -43,7 +43,7 @@ function redactCredential(value: string, credential: string): string {
   return value.split(credential).join("[REDACTED]");
 }
 
-async function sourceAccessForDeployment(deploymentId: number) {
+export async function sourceAccessForDeployment(deploymentId: number) {
   const links = await prisma.githubRepositoryDeployment.findMany({
     where: { enrolledDeploymentId: deploymentId },
     include: {
