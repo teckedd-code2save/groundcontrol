@@ -194,13 +194,25 @@ export async function POST(req: NextRequest) {
           const ref = refs[service];
           if (digestByRef.has(ref)) continue;
           const info = buildInfo[service];
+          // The effective compose config resolves build paths to absolute paths
+          // on the VPS (e.g. /opt/agent-flow/RentAWeekend/rentweekend-backend).
+          // Relativize them against the project path so the sandbox (which
+          // clones to /tmp/repo) can resolve them.
+          let context = info?.context;
+          if (context && context.startsWith(projectPath)) {
+            context = context.slice(projectPath.length).replace(/^\/+/, "") || ".";
+          }
+          let dockerfile = info?.dockerfile;
+          if (dockerfile && info?.context && dockerfile.startsWith(info.context)) {
+            dockerfile = dockerfile.slice(info.context.length).replace(/^\/+/, "");
+          }
           const script = buildSandboxBuildScript({
             repoUrl,
             commitSha,
             ref,
             username: ghcr.username,
-            context: info?.context,
-            dockerfile: info?.dockerfile,
+            context,
+            dockerfile,
           });
           const result = await execOnTargetStrict(
             buildSbxExecCommand(sandboxId, script),
