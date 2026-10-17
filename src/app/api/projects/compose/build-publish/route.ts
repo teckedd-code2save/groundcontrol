@@ -6,6 +6,7 @@ import { ensureGithubRegistryLogin, githubRegistryCredential } from "@/lib/githu
 import { sourceAccessForDeployment, syncGithubDeploymentSource } from "@/lib/github-source-deploy";
 import {
   buildSandboxBuildScript,
+  buildSandboxCloneScript,
   buildSbxCreateCommand,
   buildSbxExecCommand,
   buildSbxRmCommand,
@@ -187,6 +188,21 @@ export async function POST(req: NextRequest) {
 
         const buildInfo = buildableServiceBuildInfo(configCheck.stdout);
 
+        // Clone the repo once — the sandbox is reused across the image builds,
+        // so a single clone (not one per service) is what feeds every build.
+        const clone = await execOnTargetStrict(
+          buildSbxExecCommand(sandboxId, buildSandboxCloneScript({ repoUrl, commitSha })),
+          vps,
+          undefined,
+          `${source.token}\n`
+        );
+        if (clone.code !== 0) {
+          throw new HttpError(
+            `Sandbox clone failed: ${(clone.stderr || clone.stdout).trim().slice(0, 1500)}`,
+            400
+          );
+        }
+
         // Build each unique image ref once — multiple services can share one
         // image (e.g. an api + migrate + worker all build the same backend).
         const digestByRef = new Map<string, string | null>();
@@ -207,8 +223,6 @@ export async function POST(req: NextRequest) {
             dockerfile = dockerfile.slice(info.context.length).replace(/^\/+/, "");
           }
           const script = buildSandboxBuildScript({
-            repoUrl,
-            commitSha,
             ref,
             username: ghcr.username,
             context,
@@ -218,7 +232,7 @@ export async function POST(req: NextRequest) {
             buildSbxExecCommand(sandboxId, script),
             vps,
             undefined,
-            `${source.token}\n${ghcr.token}\n`
+            `${ghcr.token}\n`
           );
           if (result.code !== 0) {
             throw new HttpError(

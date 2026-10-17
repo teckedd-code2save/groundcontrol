@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSandboxBuildScript,
+  buildSandboxCloneScript,
   buildSbxCreateCommand,
   buildSbxExecCommand,
   buildSbxRmCommand,
@@ -28,21 +29,44 @@ describe("docker-sandbox", () => {
     expect(buildSbxRmCommand("sbx_abc")).toContain("sbx --cloud rm --force 'sbx_abc'");
   });
 
-  it("builds the login-clone-build-push-inspect script with both tokens", () => {
-    const script = buildSandboxBuildScript({
+  it("builds a clone script that reads the git token and checks out @SHA", () => {
+    const script = buildSandboxCloneScript({
       repoUrl: "https://github.com/org/app.git",
       commitSha: SHA,
-      ref: `ghcr.io/org/app:${SHA}`,
-      username: "teckedd-code2save",
     });
     expect(script).toContain("IFS= read -r GC_GIT_TOKEN");
+    expect(script).toContain("git clone \"https://x-access-token:$GC_GIT_TOKEN@github.com/org/app.git\" /tmp/repo");
+    expect(script).toContain("git checkout " + SHA);
+    expect(script).toContain('test "$(git rev-parse HEAD)" = "' + SHA + '"');
+    // clone phase must not build or push.
+    expect(script).not.toContain("docker build");
+    expect(script).not.toContain("docker push");
+  });
+
+  it("builds the login-build-push-inspect script from the repo root", () => {
+    const script = buildSandboxBuildScript({
+      ref: "ghcr.io/org/app:" + SHA,
+      username: "teckedd-code2save",
+    });
     expect(script).toContain("IFS= read -r GC_GHCR_TOKEN");
     expect(script).toContain("docker login 'ghcr.io' -u 'teckedd-code2save' --password-stdin");
-    expect(script).toContain('git clone "https://x-access-token:${GC_GIT_TOKEN}@github.com/org/app.git" /tmp/repo');
-    expect(script).toContain(`git checkout ${SHA}`);
-    expect(script).toContain(`docker build -t 'ghcr.io/org/app:${SHA}' '.'`);
-    expect(script).toContain(`docker push 'ghcr.io/org/app:${SHA}'`);
+    expect(script).toContain("docker build -t 'ghcr.io/org/app:" + SHA + "' '.'");
+    expect(script).toContain("docker push 'ghcr.io/org/app:" + SHA + "'");
     expect(script).toContain("RepoDigests");
+    // build phase must not clone.
+    expect(script).not.toContain("git clone");
+  });
+
+  it("anchors a non-default dockerfile to the build context", () => {
+    const script = buildSandboxBuildScript({
+      ref: "ghcr.io/org/app:" + SHA,
+      username: "u",
+      context: "rentweekend-backend",
+      dockerfile: "Dockerfile.prod",
+    });
+    expect(script).toContain(
+      "docker build -t 'ghcr.io/org/app:" + SHA + "' -f 'rentweekend-backend/Dockerfile.prod' 'rentweekend-backend'"
+    );
   });
 
   it("parses a sandbox id from create output", () => {
