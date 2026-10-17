@@ -21,6 +21,7 @@ import {
 } from "@/lib/vps";
 import { MANAGED_IMAGE_OVERRIDE_FILE } from "@/lib/compose-management";
 import {
+  buildableServiceBuildInfo,
   buildableServiceImages,
   buildBuildkitBuildPushCommand,
   buildEnsureBuildkitBuilderCommand,
@@ -184,10 +185,23 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        const images: { service: string; ref: string; digest: string | null }[] = [];
+        const buildInfo = buildableServiceBuildInfo(configCheck.stdout);
+
+        // Build each unique image ref once — multiple services can share one
+        // image (e.g. an api + migrate + worker all build the same backend).
+        const digestByRef = new Map<string, string | null>();
         for (const service of services) {
           const ref = refs[service];
-          const script = buildSandboxBuildScript({ repoUrl, commitSha, ref, username: ghcr.username });
+          if (digestByRef.has(ref)) continue;
+          const info = buildInfo[service];
+          const script = buildSandboxBuildScript({
+            repoUrl,
+            commitSha,
+            ref,
+            username: ghcr.username,
+            context: info?.context,
+            dockerfile: info?.dockerfile,
+          });
           const result = await execOnTargetStrict(
             buildSbxExecCommand(sandboxId, script),
             vps,
@@ -201,8 +215,14 @@ export async function POST(req: NextRequest) {
             );
           }
           const digest = result.stdout.trim().split("\n").filter(Boolean).pop() || null;
-          images.push({ service, ref, digest });
+          digestByRef.set(ref, digest);
         }
+
+        const images = services.map((service) => ({
+          service,
+          ref: refs[service],
+          digest: digestByRef.get(refs[service]) || null,
+        }));
 
         return NextResponse.json({
           success: true,

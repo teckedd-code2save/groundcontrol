@@ -7,6 +7,7 @@ import {
   buildReleaseBuildPushCommand,
   buildReleaseImageOverride,
   buildRunTestsCommand,
+  buildableServiceBuildInfo,
   buildableServiceImages,
   composeImageEnvKeys,
   normalizeReleaseSha,
@@ -79,6 +80,27 @@ describe("github-image-release", () => {
       "    image: postgres:16-alpine",
     ].join("\n");
     expect(composeImageEnvKeys(compose)).toEqual({ web: "API_IMAGE", worker: "WORKER_IMAGE" });
+  });
+
+  it("extracts build context and dockerfile for off-host builds", () => {
+    const compose = [
+      "services:",
+      "  api:",
+      "    build:",
+      "      context: ./backend",
+      "    image: ghcr.io/org/api:sha",
+      "  web:",
+      "    build:",
+      "      context: ./frontend",
+      "      dockerfile: Dockerfile.prod",
+      "    image: ghcr.io/org/web:sha",
+      "  db:",
+      "    image: postgres:16-alpine",
+    ].join("\n");
+    expect(buildableServiceBuildInfo(compose)).toEqual({
+      api: { image: "ghcr.io/org/api:sha", context: "./backend", dockerfile: undefined },
+      web: { image: "ghcr.io/org/web:sha", context: "./frontend", dockerfile: "Dockerfile.prod" },
+    });
   });
 
   it("builds the release override and resolves SHA-tagged refs", () => {

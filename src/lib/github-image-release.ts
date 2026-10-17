@@ -97,6 +97,42 @@ function parseComposeDocument(content: string): { services?: Record<string, Reco
   return parsed as { services?: Record<string, Record<string, unknown>> };
 }
 
+export type ServiceBuildInfo = {
+  image: string;
+  context?: string;
+  dockerfile?: string;
+};
+
+/**
+ * Like buildableServiceImages, but also captures each service's build context
+ * and dockerfile so an off-host builder can reproduce the same build without
+ * re-deriving it from the Compose file.
+ */
+export function buildableServiceBuildInfo(effectiveCompose: string): Record<string, ServiceBuildInfo> {
+  const parsed = parseComposeDocument(effectiveCompose);
+  const services = parsed?.services;
+  if (!services || typeof services !== "object" || Array.isArray(services)) return {};
+  const result: Record<string, ServiceBuildInfo> = {};
+  for (const [name, config] of Object.entries(services)) {
+    if (!config || typeof config !== "object") continue;
+    const record = config as Record<string, unknown>;
+    const build = record.build;
+    const image = typeof record.image === "string" ? record.image.trim() : "";
+    if (!build || !image) continue;
+    let context: string | undefined;
+    let dockerfile: string | undefined;
+    if (typeof build === "string") {
+      context = build;
+    } else if (build && typeof build === "object") {
+      const b = build as Record<string, unknown>;
+      if (typeof b.context === "string") context = b.context;
+      if (typeof b.dockerfile === "string") dockerfile = b.dockerfile;
+    }
+    result[name] = { image, context, dockerfile };
+  }
+  return result;
+}
+
 /**
  * Map each service to its canonical deployment-wide image env var, e.g.
  * `image: ${API_IMAGE}` → `{ web: "API_IMAGE" }`. This is the key that the
