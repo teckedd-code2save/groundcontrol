@@ -148,7 +148,9 @@ export function composeImageEnvKeys(rawCompose: string): Record<string, string> 
     if (!config || typeof config !== "object") continue;
     const image = (config as Record<string, unknown>).image;
     if (typeof image === "string") {
-      const match = image.trim().match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/);
+      // Defaults and required-value messages do not change which variable owns
+      // the image. Shared API/worker references must advance together.
+      const match = image.trim().match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-?][^${}]*)?\}$/);
       if (match) result[name] = match[1];
     }
   }

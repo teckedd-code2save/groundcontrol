@@ -186,3 +186,22 @@ describe("github-image-release", () => {
     expect(bake).toContain(`docker pull --platform linux/amd64 'ghcr.io/org/app:${SHA}'`);
   });
 });
+
+it("keeps shared image variables coupled when Compose declares defaults", () => {
+  expect(composeImageEnvKeys(`services:
+  api:
+    image: \${API_IMAGE:-rentaweekend-api:local}
+  research-worker:
+    image: \${API_IMAGE:-rentaweekend-api:local}
+  research-indexer:
+    image: \${API_IMAGE-rentaweekend-api:local}
+  web:
+    image: \${WEB_IMAGE:?required}
+  literal:
+    image: registry.example/\${APP}:latest
+  escaped:
+    image: $$\{NOT_AN_IMAGE_KEY}
+  nested:
+    image: \${IMAGE:-\${OTHER}}
+`)).toEqual({ api: "API_IMAGE", "research-worker": "API_IMAGE", "research-indexer": "API_IMAGE", web: "WEB_IMAGE" });
+});
