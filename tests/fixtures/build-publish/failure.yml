@@ -1,0 +1,7 @@
+services:
+  api:
+    build:
+      context: .
+      args:
+        PROOF_FAIL: "1"
+    image: ghcr.io/teckedd-code2save/groundcontrol-build-proof-failure:unreleased

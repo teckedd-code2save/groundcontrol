@@ -43,6 +43,19 @@ vi.mock("child_process", () => ({
   spawn: spawnMock,
 }));
 
+// The streaming runner is tested with real processes in build-publish-execution.test.ts.
+// Keep these VPS orchestration tests on their existing deterministic process double.
+vi.mock("./command-output", () => ({
+  captureCommand: (command: string, options: { timeout?: number; cwd?: string; stdin?: string }) =>
+    new Promise((resolve, reject) => {
+      const child = execMock(command, { timeout: options.timeout, cwd: options.cwd }, (error: unknown, stdout: string, stderr: string) => {
+        if (error) reject(Object.assign(error as object, { stdout, stderr }));
+        else resolve({ stdout, stderr });
+      });
+      if (options.stdin !== undefined) child.stdin.end(options.stdin);
+    }),
+}));
+
 // child_process.exec's real util.promisify resolves { stdout, stderr }. A plain
 // vi.fn falls back to the DEFAULT promisify (resolves an array), which would
 // break `const { stdout } = await execAsync(...)`. Provide the real shape.

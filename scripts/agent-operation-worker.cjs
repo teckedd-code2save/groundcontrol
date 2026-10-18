@@ -39,7 +39,7 @@ async function markFailed(prisma, operation, error, evidence) {
     data: {
       status: "failed",
       error: String(error || "Operation failed").slice(0, 4000),
-      evidenceJson: evidence ? JSON.stringify(evidence).slice(0, 20000) : operation.evidenceJson,
+      evidenceJson: evidence ? JSON.stringify(evidence) : operation.evidenceJson,
       finishedAt: new Date(),
       leaseUntil: null,
     },
@@ -55,7 +55,7 @@ async function markUncertain(prisma, operation, error, evidence) {
       evidenceJson: JSON.stringify({
         ...(evidence || {}),
         recovery: "inspect_before_retry",
-      }).slice(0, 20000),
+      }),
       finishedAt: new Date(),
       leaseUntil: null,
     },
@@ -127,12 +127,12 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
       where: { id: current.id },
       data: {
         status: "verifying",
-        resultJson: JSON.stringify(body).slice(0, 20000),
+        resultJson: JSON.stringify(body),
         evidenceJson: JSON.stringify({
           phase: sourceDeploy ? "source_deploy_started" : "redeploy_started",
           projectSlug,
           branch: sourceDeploy && typeof input.branch === "string" ? input.branch : undefined,
-        }).slice(0, 20000),
+        }),
         leaseUntil: new Date(Date.now() + LEASE_MS),
       },
     });
@@ -143,8 +143,8 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
     where: { id: current.id },
     data: {
       status: "success",
-      resultJson: JSON.stringify(body).slice(0, 20000),
-      evidenceJson: JSON.stringify({ phase: "verified", result: body }).slice(0, 20000),
+      resultJson: JSON.stringify(body),
+      evidenceJson: JSON.stringify({ phase: "verified", result: body }),
       finishedAt: new Date(),
       leaseUntil: null,
     },
@@ -207,8 +207,8 @@ async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
     where: { id: current.id },
     data: {
       status: "success",
-      resultJson: JSON.stringify({ images, tests, commitSha }).slice(0, 20000),
-      evidenceJson: JSON.stringify({ phase: "build_published", projectSlug, commitSha, images, tests }).slice(0, 20000),
+      resultJson: JSON.stringify({ images, tests, commitSha, logs: body.logs || [] }),
+      evidenceJson: JSON.stringify({ phase: "build_published", projectSlug, commitSha, images, tests, logs: body.logs || [] }),
       finishedAt: new Date(),
       leaseUntil: null,
     },
@@ -306,8 +306,8 @@ async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
       where: { id: current.id },
       data: {
         status: "verifying",
-        resultJson: JSON.stringify({ images, rollbackPair, ...body }).slice(0, 20000),
-        evidenceJson: JSON.stringify({ phase: "release_switching", projectSlug, buildOperationId, images, rollbackPair }).slice(0, 20000),
+        resultJson: JSON.stringify({ images, rollbackPair, ...body }),
+        evidenceJson: JSON.stringify({ phase: "release_switching", projectSlug, buildOperationId, images, rollbackPair }),
         leaseUntil: new Date(Date.now() + LEASE_MS),
       },
     });
@@ -318,8 +318,8 @@ async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
     where: { id: current.id },
     data: {
       status: "success",
-      resultJson: JSON.stringify({ images, rollbackPair, ...body }).slice(0, 20000),
-      evidenceJson: JSON.stringify({ phase: "release_verified", projectSlug, buildOperationId, images, rollbackPair, result: body }).slice(0, 20000),
+      resultJson: JSON.stringify({ images, rollbackPair, ...body }),
+      evidenceJson: JSON.stringify({ phase: "release_verified", projectSlug, buildOperationId, images, rollbackPair, result: body }),
       finishedAt: new Date(),
       leaseUntil: null,
     },
@@ -355,7 +355,7 @@ async function reconcileDetached({ prisma, operation, baseUrl, jwtSecret }) {
         data: {
           status: "uncertain",
           error: `Verification could not be reconciled: ${body.error || response.status}`,
-          evidenceJson: JSON.stringify(body).slice(0, 20000),
+          evidenceJson: JSON.stringify(body),
           finishedAt: new Date(),
           leaseUntil: null,
         },
@@ -369,7 +369,7 @@ async function reconcileDetached({ prisma, operation, baseUrl, jwtSecret }) {
       where: { id: current.id },
       data: {
         status: "success",
-        evidenceJson: JSON.stringify(body).slice(0, 20000),
+        evidenceJson: JSON.stringify(body),
         finishedAt: new Date(),
         leaseUntil: null,
       },
@@ -384,7 +384,7 @@ async function reconcileDetached({ prisma, operation, baseUrl, jwtSecret }) {
   await prisma.agentOperation.update({
     where: { id: current.id },
     data: {
-      evidenceJson: JSON.stringify(body).slice(0, 20000),
+      evidenceJson: JSON.stringify(body),
       leaseUntil: new Date(Date.now() + LEASE_MS),
     },
   });
@@ -422,7 +422,7 @@ async function recoverInterrupted(prisma) {
       data: {
         status: "uncertain",
         error: "GroundControl restarted or lost its worker while this mutation was running. It was not replayed automatically; inspect the deployment before retrying.",
-        evidenceJson: JSON.stringify({ ...evidence, recovery: "mutation_outcome_uncertain" }).slice(0, 20000),
+        evidenceJson: JSON.stringify({ ...evidence, recovery: "mutation_outcome_uncertain" }),
         finishedAt: new Date(),
         leaseUntil: null,
       },
@@ -493,4 +493,4 @@ function startAgentOperationWorker({ prisma, port, jwtSecret }) {
   };
 }
 
-module.exports = { startAgentOperationWorker };
+module.exports = { startAgentOperationWorker, executeBuildPublish };

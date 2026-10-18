@@ -181,7 +181,8 @@ describe("github-image-release", () => {
       refs: { web: `ghcr.io/org/app:${SHA}` },
     });
     expect(bake).toContain("docker buildx bake --builder 'gc-buildkit'");
-    expect(bake).toContain("--load");
-    expect(bake).toContain(`docker push 'ghcr.io/org/app:${SHA}'`);
+    expect(bake).toContain("--push 'web'");
+    expect(bake).not.toContain("--load");
+    expect(bake).toContain(`docker pull --platform linux/amd64 'ghcr.io/org/app:${SHA}'`);
   });
 });

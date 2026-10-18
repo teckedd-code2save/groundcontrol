@@ -1,3 +1,4 @@
+import { buildOutput, buildFailureSummary, type BuildOutput } from "@/lib/build-output";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
@@ -75,6 +76,12 @@ async function resolveTestCommand(
 }
 
 export async function POST(req: NextRequest) {
+  const logs: BuildOutput[] = [];
+  const run = async (phase: string, ...args: Parameters<typeof execOnTargetStrict>) => {
+    const result = await execOnTargetStrict(args[0], args[1], args[2], args[3], { timeout: 15 * 60 * 1000 });
+    logs.push(buildOutput(phase, result));
+    return result;
+  };
   try {
     requireAuth(req);
     const body = await req.json();
@@ -110,7 +117,7 @@ export async function POST(req: NextRequest) {
           { slug: projectSlug },
         ],
       },
-      select: { id: true, managementMode: true },
+      select: { id: true, managementMode: true, composePath: true },
     });
     if (!enrolled) {
       throw new HttpError("Build is not enrolled in GroundControl.", 409);
@@ -133,7 +140,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const composePath = await resolveComposeFile(projectPath, vps);
+    const composePath = await resolveComposeFile(projectPath, vps, enrolled.composePath);
     if (!composePath) {
       throw new HttpError("The synced source does not contain a Compose file.", 409);
     }
@@ -145,7 +152,7 @@ export async function POST(req: NextRequest) {
     );
     if (configCheck.code !== 0 || !configCheck.stdout.trim()) {
       throw new HttpError(
-        `Effective Compose configuration is invalid: ${(configCheck.stderr || configCheck.stdout).trim().slice(0, 500)}`,
+        `Effective Compose configuration is invalid: ${buildFailureSummary(buildOutput("compose configuration", configCheck))}`,
         400
       );
     }
@@ -165,6 +172,25 @@ export async function POST(req: NextRequest) {
     const { content: overrideContent, refs } = buildReleaseImageOverride(buildable, commitSha);
     const services = Object.keys(refs);
 
+    const testImages = async () => {
+      if (!runTests) return { status: "skipped", command: null, output: null };
+      const command = await resolveTestCommand(projectPath, body.testCommand, vps);
+      if (!command) throw new HttpError("runTests was requested but no test command is available. Provide testCommand or a package.json `test` script.", 400);
+      const registry = await ensureGithubRegistryLogin(vps);
+      if (!registry.configured) throw new HttpError("A registry credential is required to test published images.", 400);
+      const results: BuildOutput[] = [];
+      for (const image of new Set(Object.values(refs))) {
+        const result = await run(`tests ${image}`, buildRunTestsCommand(image, command), vps);
+        results.push(buildOutput(`tests ${image}`, result));
+      }
+      return {
+        status: results.every((result) => result.code === 0) ? "passed" : "failed",
+        command,
+        output: results.map((result) => `[${result.phase}]\n${result.stdout}\n${result.stderr}`).join("\n"),
+        results,
+      };
+    };
+
     if (builder === "docker-agentic") {
       const ghcr = await githubRegistryCredential();
       if (!ghcr) {
@@ -174,14 +200,14 @@ export async function POST(req: NextRequest) {
       const repoUrl = `https://github.com/${source.repository.fullName}.git`;
       let sandboxId: string | null = null;
       try {
-        const create = await execOnTargetStrict(
+        const create = await run("sandbox creation",
           buildSbxCreateCommand(`gc-build-${commitSha.slice(0, 8)}`),
           vps
         );
         sandboxId = parseSandboxId(create.stdout);
         if (!sandboxId) {
           throw new HttpError(
-            `Could not create a Docker sandbox: ${(create.stderr || create.stdout).trim().slice(0, 500)}`,
+            buildFailureSummary(logs[logs.length - 1]),
             500
           );
         }
@@ -190,7 +216,7 @@ export async function POST(req: NextRequest) {
 
         // Clone the repo once — the sandbox is reused across the image builds,
         // so a single clone (not one per service) is what feeds every build.
-        const clone = await execOnTargetStrict(
+        const clone = await run("source clone",
           buildSbxExecCommand(sandboxId, buildSandboxCloneScript({ repoUrl, commitSha })),
           vps,
           undefined,
@@ -198,7 +224,7 @@ export async function POST(req: NextRequest) {
         );
         if (clone.code !== 0) {
           throw new HttpError(
-            `Sandbox clone failed: ${(clone.stderr || clone.stdout).trim().slice(0, 1500)}`,
+            buildFailureSummary(logs[logs.length - 1]),
             400
           );
         }
@@ -228,7 +254,7 @@ export async function POST(req: NextRequest) {
             context,
             dockerfile,
           });
-          const result = await execOnTargetStrict(
+          const result = await run("sandbox build",
             buildSbxExecCommand(sandboxId, script),
             vps,
             undefined,
@@ -236,7 +262,7 @@ export async function POST(req: NextRequest) {
           );
           if (result.code !== 0) {
             throw new HttpError(
-              `Sandbox build failed for ${service}: ${(result.stderr || result.stdout).trim().slice(0, 1500)}`,
+              buildFailureSummary(logs[logs.length - 1]),
               400
             );
           }
@@ -254,7 +280,8 @@ export async function POST(req: NextRequest) {
           success: true,
           commitSha,
           images,
-          tests: { status: "skipped", command: null, output: null },
+          tests: await testImages(),
+          logs,
           builder,
           commit: sourceSync.commitSha,
         });
@@ -269,7 +296,7 @@ export async function POST(req: NextRequest) {
       `cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`,
       vps
     );
-    const write = await execOnTargetStrict(writeOverrideCommand(projectPath, overrideContent), vps);
+    const write = await run("write build image configuration", writeOverrideCommand(projectPath, overrideContent), vps);
     if (write.code !== 0) {
       throw new HttpError(write.stderr || "Could not write the build image override.", 500);
     }
@@ -281,86 +308,60 @@ export async function POST(req: NextRequest) {
       }
 
       if (builder === "buildkit") {
-        const ensureBuilder = await execOnTargetStrict(
+        const ensureBuilder = await run("builder preparation",
           buildEnsureBuildkitBuilderCommand("gc-buildkit", "2", "2g"),
           vps
         );
         if (ensureBuilder.code !== 0) {
           throw new HttpError(
-            `BuildKit builder could not be prepared: ${(ensureBuilder.stderr || ensureBuilder.stdout).trim().slice(0, 500)}`,
+            buildFailureSummary(logs[logs.length - 1]),
             400
           );
         }
       }
 
       const buildPushCommand = builder === "buildkit"
-        ? buildBuildkitBuildPushCommand({ projectPath, composeFile: composePath, builder: "gc-buildkit", refs })
+        ? buildBuildkitBuildPushCommand({ projectPath, composeFile: composePath, builder: "gc-buildkit", refs, buildInfo: buildableServiceBuildInfo(configCheck.stdout) })
         : buildReleaseBuildPushCommand({ projectPath, composeCommand: composeCmd, composeFile: composePath, services });
-      const buildPush = await execOnTargetStrict(buildPushCommand, vps);
+      const buildPush = await run("build and publish", buildPushCommand, vps);
       if (buildPush.code !== 0) {
         throw new HttpError(
-          `Build or push failed: ${(buildPush.stderr || buildPush.stdout).trim().slice(0, 1500)}`,
+          buildFailureSummary(logs[logs.length - 1]),
           400
         );
       }
 
-      const verify = await execOnTargetStrict(buildReleaseVerifyCommand(refs), vps);
+      const verify = await run("registry verification", buildReleaseVerifyCommand(refs), vps);
       if (verify.code !== 0) {
         throw new HttpError(
-          `Build verification failed: ${(verify.stderr || verify.stdout).trim().slice(0, 1500)}`,
+          buildFailureSummary(logs[logs.length - 1]),
           400
         );
       }
       const images = parseReleaseVerifyOutput(verify.stdout, refs);
 
-      // Optional tests: run against the freshly built image in a throwaway
-      // container. A non-zero exit marks the build as tests-failed so a later
-      // release refuses to promote it.
-      let tests: { status: "passed" | "failed" | "skipped"; command: string | null; output: string | null } = {
-        status: "skipped",
-        command: null,
-        output: null,
-      };
-      if (runTests) {
-        const testCommand = await resolveTestCommand(projectPath, body.testCommand, vps);
-        if (!testCommand) {
-          throw new HttpError(
-            "runTests was requested but no test command is available. Provide testCommand or a package.json `test` script.",
-            400
-          );
-        }
-        const firstImage = refs[services[0]];
-        const testRun = await execOnTargetStrict(buildRunTestsCommand(firstImage, testCommand), vps);
-        tests = {
-          status: testRun.code === 0 ? "passed" : "failed",
-          command: testCommand,
-          output: (testRun.stdout || testRun.stderr || "").trim().slice(0, 4000),
-        };
-      }
+      const tests = await testImages();
 
       return NextResponse.json({
         success: true,
         commitSha,
         images,
         tests,
+        logs,
         builder,
         commit: sourceSync.commitSha,
       });
-    } catch (error) {
-      await execOnTargetStrict(
-        writeOverrideCommand(projectPath, previousOverride.stdout || ""),
-        vps
-      ).catch(() => undefined);
-      throw error;
     } finally {
       // A build never leaves the running configuration changed: restore the
       // prior override regardless of the outcome.
-      await execOnTargetStrict(
-        writeOverrideCommand(projectPath, previousOverride.stdout || ""),
-        vps
-      ).catch(() => undefined);
+      const restored = await run("restore image configuration",
+        writeOverrideCommand(projectPath, previousOverride.stdout || ""), vps
+      );
+      if (restored.code !== 0) throw new HttpError(buildFailureSummary(logs[logs.length - 1]), 500);
     }
   } catch (error) {
-    return handleApiError(error);
+    const response = handleApiError(error);
+    const body = await response.json();
+    return NextResponse.json({ ...body, logs }, { status: response.status });
   }
 }

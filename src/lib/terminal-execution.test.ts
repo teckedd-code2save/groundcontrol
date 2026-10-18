@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,7 +15,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: {
 vi.mock('@/lib/host-exec', () => ({ execOnTargetStrict: mock.exec }));
 import { parseTerminalOutput, wrapTerminalCommand } from './terminal-execution';
 import { POST } from '@/app/api/terminal/route';
-const root = mkdtempSync(join(tmpdir(), 'gc-terminal-'));
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'gc-terminal-')));
 mkdirSync(join(root, 'quoted dir'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 beforeEach(() => { mock.role = 'admin'; mock.user = true; mock.targetExists = true; mock.exec.mockReset(); });
