@@ -321,7 +321,7 @@ export async function POST(req: NextRequest) {
       }
 
       const buildPushCommand = builder === "buildkit"
-        ? buildBuildkitBuildPushCommand({ projectPath, composeFile: composePath, builder: "gc-buildkit", refs })
+        ? buildBuildkitBuildPushCommand({ projectPath, composeFile: composePath, builder: "gc-buildkit", refs, buildInfo: buildableServiceBuildInfo(configCheck.stdout) })
         : buildReleaseBuildPushCommand({ projectPath, composeCommand: composeCmd, composeFile: composePath, services });
       const buildPush = await run("build and publish", buildPushCommand, vps);
       if (buildPush.code !== 0) {

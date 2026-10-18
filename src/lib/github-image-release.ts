@@ -340,16 +340,24 @@ export function buildBuildkitBuildPushCommand(input: {
   composeFile: string;
   builder: string;
   refs: Record<string, string>;
+  buildInfo?: Record<string, ServiceBuildInfo>;
 }): string {
   const override = `${input.projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`;
   const services = Object.keys(input.refs).map((service) => shQuote(assertComposeServiceName(service)));
   if (!services.length) throw new Error("No build services selected");
   const refs = [...new Set(Object.values(input.refs).map(assertDockerImageReference))];
+  // Bake resolves relative contexts from cwd, unlike Compose's file-relative
+  // resolution. Use Compose's already-resolved paths for the selected targets.
+  const paths = Object.keys(input.refs).flatMap((service) => {
+    const info = input.buildInfo?.[service];
+    return [info?.context ? `--set ${shQuote(`${service}.context=${info.context}`)}` : "",
+      info?.dockerfile ? `--set ${shQuote(`${service}.dockerfile=${info.dockerfile}`)}` : ""].filter(Boolean);
+  }).join(" ");
   return [
     "set -eu",
     'export DOCKER_CONFIG="${HOME}/.groundcontrol/docker"',
     `cd ${shQuote(input.projectPath)}`,
-    `docker buildx bake --builder ${shQuote(input.builder)} --progress plain -f ${shQuote(input.composeFile)} -f ${shQuote(override)} --set '*.platform=linux/amd64' --push ${services.join(" ")}`,
+    `docker buildx bake --builder ${shQuote(input.builder)} --progress plain -f ${shQuote(input.composeFile)} -f ${shQuote(override)} --set '*.platform=linux/amd64' ${paths} --push ${services.join(" ")}`,
     ...refs.map((ref) => `docker pull --platform linux/amd64 ${shQuote(ref)}`),
   ].join("\n");
 }

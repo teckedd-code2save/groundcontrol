@@ -31,7 +31,7 @@ esac
   const run = (command: string) => spawnSync("/bin/sh", ["-c", command], {
     env: { ...process.env, HOME: dir, PATH: `${dir}/bin:${process.env.PATH}` }, encoding: "utf8",
   });
-  const command = buildBuildkitBuildPushCommand({ projectPath: dir, composeFile: `${dir}/compose.yml`, builder: "gc-proof", refs: { api: `ghcr.io/org/api:${"a".repeat(40)}`, web: `ghcr.io/org/web:${"a".repeat(40)}` } });
+  const command = buildBuildkitBuildPushCommand({ projectPath: dir, composeFile: `${dir}/compose.yml`, builder: "gc-proof", buildInfo: { api: { image: "unused", context: "/repo/nested/api", dockerfile: "Dockerfile.custom" } }, refs: { api: `ghcr.io/org/api:${"a".repeat(40)}`, web: `ghcr.io/org/web:${"a".repeat(40)}` } });
   return { dir, run, command, calls: () => readFileSync(join(dir, "calls"), "utf8") };
 }
 
@@ -41,6 +41,7 @@ describe("build and publish execution", () => {
     expect(h.run(buildEnsureBuildkitBuilderCommand("gc-proof", "2", "2g")).status).toBe(0);
     expect(h.run(h.command).status).toBe(0);
     expect(h.calls()).toContain("--push api web");
+    expect(h.calls()).toContain("--set api.context=/repo/nested/api --set api.dockerfile=Dockerfile.custom");
     expect(h.calls()).not.toContain("worker");
     expect(h.calls().match(/pull --platform/g)).toHaveLength(2);
   });
