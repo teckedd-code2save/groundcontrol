@@ -1,3 +1,4 @@
+import { captureCommand } from "./command-output";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { NodeSSH } from "node-ssh";
@@ -27,6 +28,7 @@ export interface ExecOnHostOptions {
   cwd?: string;
   stdin?: string;
   requireHost?: boolean;
+  timeout?: number;
 }
 
 interface SshCredentials {
@@ -175,38 +177,14 @@ async function execSsh(
 async function execInContainer(
   command: string,
   cwd?: string,
-  stdin?: string
+  stdin?: string,
+  timeout = 30000
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  if (stdin !== undefined) {
-    return new Promise((resolve) => {
-      const child = exec(
-        withOsPath(command),
-        { timeout: 30000, cwd },
-        (error: (Error & { code?: number; stdout?: string; stderr?: string }) | null, stdout, stderr) => {
-          resolve({
-            stdout: stdout || error?.stdout || "",
-            stderr: stderr || error?.stderr || "",
-            code: error?.code || 0,
-          });
-        }
-      );
-      child.stdin?.end(stdin);
-    });
-  }
-
   try {
-    const { stdout, stderr } = await execAsync(withOsPath(command), {
-      timeout: 30000,
-      cwd,
-    });
-    return { stdout, stderr, code: 0 };
-  } catch (err) {
-    const execErr = err as { stdout?: string; stderr?: string; code?: number };
-    return {
-      stdout: execErr.stdout || "",
-      stderr: execErr.stderr || "",
-      code: execErr.code || 1,
-    };
+    return { ...await captureCommand(withOsPath(command), { timeout, cwd, stdin }), code: 0 };
+  } catch (error) {
+    const result = error as { stdout?: string; stderr?: string; code?: number };
+    return { stdout: result.stdout || "", stderr: result.stderr || String(error), code: result.code || 1 };
   }
 }
 
@@ -222,7 +200,7 @@ export async function execOnHost(
   opts: ExecOnHostOptions = {}
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   if (!isContainerized()) {
-    return execInContainer(command, opts.cwd, opts.stdin);
+    return execInContainer(command, opts.cwd, opts.stdin, opts.timeout);
   }
 
   // Strategy 0: use the mounted Docker socket to spawn a temporary privileged
@@ -249,7 +227,7 @@ export async function execOnHost(
       const nsenterCmd = `nsenter -t 1 -m -u -i -n -p -- sh -c ${shQuote(
         withOsPath(`${cwdPrefix}${command}`)
       )}`;
-      return await execInContainer(nsenterCmd, undefined, opts.stdin);
+      return await execInContainer(nsenterCmd, undefined, opts.stdin, opts.timeout);
     } catch {
       // nsenter present but failed; try SSH gateway
     }
@@ -277,7 +255,7 @@ export async function execOnHost(
   console.warn(
     "[host-exec] No host namespace access available; executing inside container"
   );
-  return execInContainer(command, opts.cwd, opts.stdin);
+  return execInContainer(command, opts.cwd, opts.stdin, opts.timeout);
 }
 
 /**
@@ -323,7 +301,8 @@ export async function execOnTargetStrict(
   command: string,
   vps?: VpsConnection | null,
   cwd?: string,
-  stdin?: string
+  stdin?: string,
+  options?: { timeout?: number }
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const conn = vps ?? null;
   if (isContainerized() && (!conn || conn.isLocal)) {
@@ -332,9 +311,10 @@ export async function execOnTargetStrict(
       cwd,
       stdin,
       requireHost: true,
+      timeout: options?.timeout,
     });
   }
-  return execOnVps(command, conn, cwd, stdin);
+  return execOnVps(command, conn, cwd, stdin, options);
 }
 
 /**

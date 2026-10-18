@@ -1,9 +1,6 @@
 import fs from "fs";
-import { exec } from "child_process";
-import { promisify } from "util";
+import { captureCommand } from "./command-output";
 import { shQuote } from "./vps";
-
-const defaultExecAsync = promisify(exec);
 
 const DOCKER_SOCK = "/var/run/docker.sock";
 const BRIDGE_IMAGE = "groundcontrol-host-bridge:latest";
@@ -20,27 +17,10 @@ export interface BridgeDeps {
   ) => Promise<{ stdout: string; stderr: string }>;
 }
 
-function execWithInput(
-  command: string,
-  input: string,
-  options?: { timeout?: number }
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = exec(command, { timeout: options?.timeout }, (error, stdout, stderr) => {
-      if (error) {
-        reject(Object.assign(error, { stdout, stderr }));
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-    child.stdin?.end(input);
-  });
-}
-
 const defaultDeps: BridgeDeps = {
   statSync: fs.statSync,
-  execAsync: defaultExecAsync,
-  execWithInput,
+  execAsync: captureCommand,
+  execWithInput: (command, stdin, options) => captureCommand(command, { ...options, stdin }),
 };
 
 function withOsPath(command: string): string {
@@ -155,7 +135,7 @@ export async function execViaDockerHostBridge(
 
   try {
     const { stdout, stderr } = opts?.stdin !== undefined
-      ? await (deps.execWithInput || execWithInput)(dockerCmd, opts.stdin, { timeout: HOST_COMMAND_TIMEOUT_MS })
+      ? await (deps.execWithInput || ((command, stdin, options) => captureCommand(command, { ...options, stdin })))(dockerCmd, opts.stdin, { timeout: HOST_COMMAND_TIMEOUT_MS })
       : await deps.execAsync(dockerCmd, { timeout: HOST_COMMAND_TIMEOUT_MS });
     return { stdout, stderr, code: 0 };
   } catch (err) {

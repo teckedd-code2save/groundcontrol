@@ -246,11 +246,17 @@ export function parseReleaseVerifyOutput(
     const match = line.match(/^service=(\S+) ref=(\S+) digest=(\S*) arch=(\S*)$/);
     if (!match) continue;
     const [, service, ref, digest, arch] = match;
+    if (byService.get(service) !== ref) {
+      throw new Error(`Unexpected release image evidence for ${service}: ${ref}`);
+    }
     if (arch !== "amd64") {
       throw new Error(`Release image ${service} has architecture "${arch}", expected amd64.`);
     }
     if (!digest || !/@sha256:[a-f0-9]{64}$/i.test(digest)) {
       throw new Error(`Release image ${service} was pushed without a verifiable digest.`);
+    }
+    if (releaseImageRepository(digest) !== releaseImageRepository(ref)) {
+      throw new Error(`Release image ${service} has a digest for a different repository.`);
     }
     images.push({ service, ref, digest });
     byService.delete(service);
@@ -302,7 +308,7 @@ export function normalizeTestCommand(value: unknown): string | null {
  * evidence. The test command must be self-contained inside the image.
  */
 export function buildRunTestsCommand(image: string, testCommand: string): string {
-  return `docker run --rm ${shQuote(image)} sh -lc ${shQuote(testCommand)}`;
+  return `DOCKER_CONFIG="\${HOME}/.groundcontrol/docker" docker run --rm --entrypoint sh ${shQuote(image)} -lc ${shQuote(testCommand)}`;
 }
 
 /**
@@ -316,18 +322,19 @@ export function buildEnsureBuildkitBuilderCommand(
   cpus: string,
   memory: string
 ): string {
-  const safeBuilder = builder.replace(/[^A-Za-z0-9_.-]/g, "");
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(builder)) throw new Error("Invalid BuildKit builder name");
   return [
-    `docker buildx inspect ${shQuote(safeBuilder)} >/dev/null 2>&1 || docker buildx create --name ${shQuote(safeBuilder)} --driver docker-container --bootstrap >/dev/null 2>&1`,
-    `docker update --cpus ${shQuote(cpus)} --memory ${shQuote(memory)} --memory-swap ${shQuote(memory)} buildx_buildkit_${safeBuilder}0 >/dev/null 2>&1 || true`,
+    "set -eu",
+    'export DOCKER_CONFIG="${HOME}/.groundcontrol/docker"',
+    `if ! docker buildx inspect ${shQuote(builder)} >/dev/null 2>&1; then`,
+    `  docker buildx create --name ${shQuote(builder)} --driver docker-container --driver-opt ${shQuote(`cpu-quota=${Number(cpus) * 100000}`)} --driver-opt ${shQuote(`memory=${memory}`)} --driver-opt ${shQuote(`memory-swap=${memory}`)}`,
+    "fi",
+    `docker buildx inspect --bootstrap ${shQuote(builder)}`,
+    `docker update --cpus ${shQuote(cpus)} --memory ${shQuote(memory)} --memory-swap ${shQuote(memory)} ${shQuote(`buildx_buildkit_${builder}0`)}`,
   ].join("\n");
 }
 
-/**
- * POSIX-sh command for the isolated BuildKit path: bake the compose file +
- * SHA-tagged override with the dedicated builder (loading the images into the
- * local daemon), then push each reference explicitly.
- */
+/** Publish directly from BuildKit, then pull the exact tags for verification/tests. */
 export function buildBuildkitBuildPushCommand(input: {
   projectPath: string;
   composeFile: string;
@@ -335,10 +342,14 @@ export function buildBuildkitBuildPushCommand(input: {
   refs: Record<string, string>;
 }): string {
   const override = `${input.projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`;
-  const pushLines = Object.values(input.refs).map((ref) => `docker push ${shQuote(ref)}`);
+  const services = Object.keys(input.refs).map((service) => shQuote(assertComposeServiceName(service)));
+  if (!services.length) throw new Error("No build services selected");
+  const refs = [...new Set(Object.values(input.refs).map(assertDockerImageReference))];
   return [
+    "set -eu",
+    'export DOCKER_CONFIG="${HOME}/.groundcontrol/docker"',
     `cd ${shQuote(input.projectPath)}`,
-    `DOCKER_CONFIG="\${HOME}/.groundcontrol/docker" docker buildx bake --builder ${shQuote(input.builder)} -f ${shQuote(input.composeFile)} -f ${shQuote(override)} --load`,
-    ...pushLines,
+    `docker buildx bake --builder ${shQuote(input.builder)} --progress plain -f ${shQuote(input.composeFile)} -f ${shQuote(override)} --set '*.platform=linux/amd64' --push ${services.join(" ")}`,
+    ...refs.map((ref) => `docker pull --platform linux/amd64 ${shQuote(ref)}`),
   ].join("\n");
 }
