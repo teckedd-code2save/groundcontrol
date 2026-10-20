@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { buildGithubSourceSyncCommand, normalizeSourceBranch } from "./github-source-deploy";
+import { buildGithubSourceSyncCommand, normalizeCommitSha, normalizeSourceBranch } from "./github-source-deploy";
 
 describe("GitHub source deploy", () => {
   it("accepts normal branch names and rejects unsafe refs", () => {
@@ -22,5 +22,23 @@ describe("GitHub source deploy", () => {
     expect(command).toContain("https://github.com/teckedd-code2save/RentAWeekend.git");
     expect(command).not.toContain("github_pat_");
     expect(command).not.toContain("git clean");
+  });
+
+  it("pins an exact commit SHA when provided", () => {
+    const sha = "a".repeat(40);
+    expect(normalizeCommitSha(sha)).toBe(sha);
+    expect(normalizeCommitSha(`  ${sha.toUpperCase()}  `)).toBe(sha);
+    expect(normalizeCommitSha("deadbeef")).toBeNull();
+
+    const command = buildGithubSourceSyncCommand({
+      projectPath: "/srv/groundcontrol/deployments/rentaweekend",
+      repository: "teckedd-code2save/RentAWeekend",
+      branch: "main",
+      sha,
+    });
+    expect(command).toContain(`git fetch --depth 1 origin '${sha}'`);
+    expect(command).toContain("git checkout --detach FETCH_HEAD");
+    expect(command).toContain(`test \"$(git rev-parse HEAD)\" = \"${sha}\"`);
+    expect(command).not.toContain(`git checkout -B 'main' --force FETCH_HEAD`);
   });
 });

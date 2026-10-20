@@ -1,3 +1,4 @@
+import { captureCommand } from "./command-output";
 import { NodeSSH } from "node-ssh";
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
@@ -80,7 +81,8 @@ export async function execOnVps(
   command: string,
   vps?: VpsConnection | null,
   cwd?: string,
-  stdin?: string
+  stdin?: string,
+  options?: { timeout?: number }
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const conn = vps || (await getActiveVps());
   if (!conn) {
@@ -88,31 +90,12 @@ export async function execOnVps(
   }
 
   if (conn.isLocal) {
-    if (stdin !== undefined) {
-      return new Promise((resolve) => {
-        const child = exec(
-          withOsPath(command),
-          { timeout: 30000, cwd },
-          (error: any, stdout, stderr) => {
-            resolve({
-              stdout: stdout || error?.stdout || "",
-              stderr: stderr || error?.stderr || "",
-              code: error?.code || 0,
-            });
-          }
-        );
-        child.stdin?.end(stdin);
-      });
-    }
     try {
-      const { stdout, stderr } = await execAsync(withOsPath(command), { timeout: 30000, cwd });
-      return { stdout, stderr, code: 0 };
-    } catch (err: any) {
-      return {
-        stdout: err.stdout || "",
-        stderr: err.stderr || "",
-        code: err.code || 1,
-      };
+      const output = await captureCommand(withOsPath(command), { timeout: options?.timeout ?? 30000, cwd, stdin });
+      return { ...output, code: 0 };
+    } catch (error) {
+      const result = error as { stdout?: string; stderr?: string; code?: number };
+      return { stdout: result.stdout || "", stderr: result.stderr || String(error), code: result.code || 1 };
     }
   }
 

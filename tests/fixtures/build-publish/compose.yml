@@ -1,0 +1,13 @@
+services:
+  api:
+    build: .
+    image: ghcr.io/teckedd-code2save/groundcontrol-build-proof-api:unreleased
+  web:
+    build: .
+    image: ghcr.io/teckedd-code2save/groundcontrol-build-proof-web:unreleased
+  unselected:
+    build:
+      context: .
+      args:
+        PROOF_FAIL: "1"
+    image: ghcr.io/teckedd-code2save/groundcontrol-build-proof-unselected:unreleased

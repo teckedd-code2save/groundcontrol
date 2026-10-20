@@ -13,6 +13,8 @@ describe("GroundControl MCP tool catalog", () => {
     expect(names).toContain("operation.get");
     expect(names).not.toContain("deployment.redeploy");
     expect(names).not.toContain("deployment.source.deploy");
+    expect(names).not.toContain("deployment.build_publish");
+    expect(names).not.toContain("deployment.release");
   });
 
   it("exposes redeploy only when explicitly granted and never exposes a shell tool", () => {
@@ -25,6 +27,8 @@ describe("GroundControl MCP tool catalog", () => {
     ])).map((tool) => tool.name);
     expect(names).toContain("deployment.redeploy");
     expect(names).toContain("deployment.source.deploy");
+    expect(names).toContain("deployment.build_publish");
+    expect(names).toContain("deployment.release");
     expect(names.some((name) => /shell|exec|terminal/i.test(name))).toBe(false);
   });
 
@@ -38,6 +42,8 @@ describe("GroundControl MCP tool catalog", () => {
       "deployment.config.check",
       "deployment.source.deploy",
       "deployment.redeploy",
+      "deployment.build_publish",
+      "deployment.release",
       "operation.get",
     ]);
 
