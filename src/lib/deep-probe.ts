@@ -9,6 +9,8 @@ import { getHostCapabilities } from "./host-capabilities";
 import { probeContainers, type DiscoveredContainer } from "./probe-containers";
 import { probeReverseProxy, type DiscoveredProxy } from "./probe-reverse-proxy";
 import { probeProjects, type DiscoveredProject } from "./probe-projects";
+import { getActiveVps } from "./vps";
+import { isDesktopMode } from "./runtime";
 
 export interface DiscoveryQuestion {
   id: string;
@@ -39,7 +41,9 @@ export async function deepProbe(): Promise<DeepProbeResult> {
     probeProjects().catch(() => [] as DiscoveredProject[]),
   ]);
 
-  const questions = generateQuestions(layout, reverseProxy, containers, projects);
+  const desktop = isDesktopMode() && (await getActiveVps())?.isLocal;
+  const questions = generateQuestions(layout, reverseProxy, containers, projects)
+    .filter((question) => !desktop || question.category !== "proxy");
 
   const summary = buildSummary(layout, reverseProxy, containers, projects, questions);
 

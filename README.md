@@ -94,7 +94,23 @@ Supervised verification on 28 September 2026: a read-only script displays saved 
 
 ## 🚀 Quick Start
 
-### Install on a VPS
+### Start from your computer
+
+Run this in Terminal on macOS/Linux, or in WSL on Windows:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/start -o groundcontrol-start
+bash groundcontrol-start
+```
+
+Choose **this computer** or **a remote Linux server**. Setup returns a working browser link where you choose your own administrator password, then configure GroundControl.
+
+- **This computer:** Docker Desktop/Engine must be running. GroundControl operates a local Docker workspace; native Mac/Windows services are outside this mode.
+- **Remote server:** use your normal SSH address or host alias and an AMD64 Linux server with root/passwordless sudo. Setup creates the private connection automatically; keep the terminal open while using its link.
+
+Already installed? Run the same command to receive a login link. See the [complete computer-to-login guide](./docs/start-from-your-computer.md), including SSH keys, reconnecting, platform support, and recovery.
+
+### Install directly on a VPS
 
 The canonical installer runs **on the VPS itself**. This is the path automation agents should use after the user has already authorized them to operate that host.
 
@@ -131,7 +147,7 @@ Useful installer flags:
 
 Rerunning the installer against a healthy instance is a no-op unless `--upgrade` is supplied.
 
-The older remote SSH bootstrap remains available at [`scripts/bootstrap`](./scripts/bootstrap) for compatibility, but new agent-assisted workflows should prefer the on-host installer so GroundControl never needs to ingest an SSH private key.
+The older [`scripts/bootstrap`](./scripts/bootstrap) is retained for compatibility. New users should use `scripts/start` from their computer or `scripts/install` on the authorized server; both preserve the one-time claim flow.
 
 See [`docs/agent-assisted-installation.md`](./docs/agent-assisted-installation.md) for the install/claim contract and [`DEPLOY.md`](./DEPLOY.md) for HTTPS/reverse-proxy hardening.
 

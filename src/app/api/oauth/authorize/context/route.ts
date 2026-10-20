@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
     const validated = await validateAuthorizationRequest(authRequest, requestOrigin(req), user.role);
     const [deployments, existingGrant] = await Promise.all([
       prisma.enrolledDeployment.findMany({
+        where: { kind: { not: "source" } },
         orderBy: [{ name: "asc" }, { id: "asc" }],
         select: {
           id: true,

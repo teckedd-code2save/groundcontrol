@@ -162,13 +162,29 @@ function emitOutput(socket, chunk) {
 }
 
 async function createLocalTerminal(socket, ctx) {
-  await ensureBridgeImage();
+  const desktop = process.env.GC_DESKTOP_MODE === "1";
+  if (!desktop) await ensureBridgeImage();
   const name = `gc-term-${ctx.user.id}-${randomUUID().slice(0, 8)}`;
-  const args = [
+  let args;
+  if (desktop) {
+    const { stdout } = await execFileAsync("docker", ["inspect", "--format", "{{.Config.Image}}", "groundcontrol-web"], { timeout: 5000 });
+    const image = stdout.trim();
+    const { stdout: architecture } = await execFileAsync("docker", ["image", "inspect", "--format", "{{.Architecture}}", image], { timeout: 5000 });
+    if (!/^(amd64|arm64)$/.test(architecture.trim())) throw new Error("Unsupported desktop terminal architecture");
+    args = [
+      "run", "--rm", "-i", "-t", "--name", name,
+      "--platform", `linux/${architecture.trim()}`,
+      "--label", "io.groundcontrol.internal=terminal",
+      "--volumes-from", "groundcontrol-web",
+      "--env", "TERM=xterm-256color", "--entrypoint", "sh",
+      image, "-lc", shellCommand(ctx.cwd),
+    ];
+  } else args = [
     "run", "--rm", "-i", "-t",
     "--privileged",
     "--pid=host",
     "--name", name,
+    "--label", "io.groundcontrol.internal=terminal",
     "--env", "TERM=xterm-256color",
     BRIDGE_IMAGE,
     "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
@@ -411,7 +427,7 @@ function installTerminalSockets(io) {
         await audit(socket, "terminal_session_open", {
           vpsId: vps.id,
           host: vps.host,
-          mode: vps.isLocal ? "local_host_pty" : "ssh_pty",
+          mode: vps.isLocal ? (process.env.GC_DESKTOP_MODE === "1" ? "local_docker_pty" : "local_host_pty") : "ssh_pty",
           cwd: cwd || "home",
         });
 

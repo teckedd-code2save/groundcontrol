@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+# Run from the visitor's computer. Server installation remains owned by scripts/install.
+set -euo pipefail
+
+MODE=""
+TARGET=""
+IDENTITY=""
+SSH_PORT=""
+VERSION="latest"
+IMAGE=""
+DATA_DIR="${HOME}/.groundcontrol-desktop"
+LOCAL_PORT=""
+CONTROL_DIR=""
+CONTROL_SOCKET=""
+SSH_ARGS=()
+
+fail() { printf '\nGroundControl: %s\n' "$*" >&2; exit 1; }
+quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+usage() {
+  cat <<'EOF'
+GroundControl setup — run this on your computer
+
+  bash start                            Choose this computer or a remote server
+  bash start --local                    Run locally with Docker
+  bash start --remote user@server        Install on a Linux server over SSH
+  bash start --remote my-ssh-alias       Use a host from your SSH configuration
+
+Options:
+  -i PATH          Use this SSH private key file (it stays on your computer)
+  -p PORT          SSH port (otherwise use your SSH configuration)
+  --local-port N   Use this port on your computer
+  --version TAG   Select the server image version
+  --dir PATH      Local configuration directory (default ~/.groundcontrol-desktop)
+  --image REF     Local image override for testing a release
+  -h, --help      Show help
+
+Clients: macOS, Linux, or Windows with WSL. Local mode needs a running Docker
+Engine/Desktop using Linux containers. Remote mode needs OpenSSH and an AMD64
+Linux server with root or passwordless sudo access.
+
+The first link lets you choose your administrator password. Later runs return
+a login link. Remote access stays open while this command is running; Ctrl+C
+closes that connection without stopping GroundControl on the server.
+EOF
+}
+
+value() { [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 needs a value."; }
+port() { [[ "$1" =~ ^[0-9]+$ ]] && [ "${#1}" -le 5 ] && [ "$((10#$1))" -ge 1024 ] && [ "$((10#$1))" -le 65535 ]; }
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --local) [ -z "$MODE" ] || fail "Choose one target."; MODE=local; shift ;;
+    --remote) value "$@"; [ -z "$MODE" ] || fail "Choose one target."; MODE=remote; TARGET="$2"; shift 2 ;;
+    -i) value "$@"; IDENTITY="$2"; shift 2 ;;
+    -p) value "$@"; SSH_PORT="$2"; shift 2 ;;
+    --local-port) value "$@"; LOCAL_PORT="$2"; shift 2 ;;
+    --version) value "$@"; VERSION="$2"; shift 2 ;;
+    --dir) value "$@"; DATA_DIR="$2"; shift 2 ;;
+    --image) value "$@"; IMAGE="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "Unknown option: $1. Run bash start --help." ;;
+  esac
+done
+
+prompt() {
+  local answer
+  printf '%s' "$1" >/dev/tty 2>/dev/null || fail "Use --local or --remote user@server when no terminal is available."
+  IFS= read -r answer </dev/tty || fail "No answer received."
+  printf '%s' "$answer"
+}
+
+if [ -z "$MODE" ]; then
+  printf 'Where should GroundControl run?\n  1) This computer\n  2) A remote Linux server\n'
+  case "$(prompt 'Choose 1 or 2: ')" in
+    1) MODE=local ;;
+    2) MODE=remote; TARGET="$(prompt 'SSH address or saved host alias (for example root@203.0.113.10): ')" ;;
+    *) fail "Choose 1 or 2, or run with --local / --remote." ;;
+  esac
+fi
+
+[[ "$VERSION" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "Invalid version tag."
+[ -z "$LOCAL_PORT" ] || port "$LOCAL_PORT" || fail "Local port must be between 1024 and 65535."
+command -v curl >/dev/null 2>&1 || fail "Install curl, then run this command again."
+
+cleanup() {
+  if [ -n "$CONTROL_SOCKET" ]; then
+    ssh -S "$CONTROL_SOCKET" -O exit "$TARGET" >/dev/null 2>&1 || true
+  fi
+  [ -z "$CONTROL_DIR" ] || rm -rf -- "$CONTROL_DIR"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Only consume the canonical installer's constrained output fields. Never eval JSON.
+field() { printf '%s\n' "$RESULT" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
+read_result() {
+  RESULT=$(printf '%s\n' "$RESULT" | tr -d '\r' | grep '^{' | tail -n 1 || true)
+  STAGE=$(field stage)
+  CLAIM=$(field claimToken)
+  case "$STAGE" in
+    claim_required) [[ "$CLAIM" =~ ^gc_claim_[A-Za-z0-9_-]+$ ]] || fail "The installer returned an invalid claim. Run setup again."; PAGE="/claim#token=$CLAIM" ;;
+    already_claimed) PAGE="/login" ;;
+    *) fail "Setup did not return a usable claim or login. Check the installer messages above." ;;
+  esac
+}
+
+verify_link() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if curl --noproxy '*' -fsS --max-time 5 "http://127.0.0.1:$LOCAL_PORT/api/auth/claim" >/dev/null; then return; fi
+    sleep 1
+  done
+  fail "GroundControl is installed, but the link is not reachable. Run this command again to reconnect."
+}
+
+print_link() {
+  printf '\nGroundControl is ready.\n\n'
+  if [ "$STAGE" = claim_required ]; then
+    printf 'Open this one-time setup link and choose your username and password:\n'
+  else
+    printf 'Open this link and sign in with your existing account:\n'
+  fi
+  printf '\n  http://127.0.0.1:%s%s\n\n' "$LOCAL_PORT" "$PAGE"
+}
+
+if [ "$MODE" = remote ]; then
+  [ -z "$IMAGE" ] || fail "--image is for local mode; use --version for a server."
+  [[ "$TARGET" =~ ^[A-Za-z0-9_][A-Za-z0-9_.@:-]*$ ]] || fail "Enter an SSH address such as root@server, or a saved SSH host alias."
+  command -v ssh >/dev/null 2>&1 || fail "Install OpenSSH, then run this command again."
+  if [ -n "$SSH_PORT" ]; then
+    [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && [ "${#SSH_PORT}" -le 5 ] && [ "$((10#$SSH_PORT))" -ge 1 ] && [ "$((10#$SSH_PORT))" -le 65535 ] || fail "Invalid SSH port."
+    SSH_ARGS+=(-p "$SSH_PORT")
+  fi
+  if [ -n "$IDENTITY" ]; then
+    [ -f "$IDENTITY" ] || fail "SSH key file not found: $IDENTITY"
+    SSH_ARGS+=(-i "$IDENTITY")
+  fi
+  CONTROL_DIR=$(mktemp -d /tmp/gc-connect.XXXXXX)
+  CONTROL_SOCKET="$CONTROL_DIR/ssh"
+  SSH_ARGS+=(-S "$CONTROL_SOCKET" -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+  printf 'Connecting to %s using your SSH settings…\n' "$TARGET"
+  ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address, account, and SSH key."
+  printf 'Installing GroundControl on %s…\n' "$TARGET"
+  cat > "$CONTROL_DIR/install.sh" <<'REMOTE'
+set -eu
+[ "$(uname -s)" = Linux ] || { echo 'The target must run Linux.' >&2; exit 1; }
+case "$(uname -m)" in x86_64|amd64) ;; *) echo 'This server image currently requires AMD64 (Intel/AMD x86-64). ARM server support is not available yet.' >&2; exit 1 ;; esac
+command -v bash >/dev/null || { echo 'Install bash on the server first.' >&2; exit 1; }
+if [ "$(id -u)" != 0 ]; then sudo -n true 2>/dev/null || { echo 'Use root or an account with passwordless sudo for installation.' >&2; exit 1; }; fi
+task_dir=$(mktemp -d)
+trap 'rm -rf "$task_dir"' EXIT HUP INT TERM
+fetch() {
+  if command -v curl >/dev/null; then curl -fsSL "$1" -o "$2";
+  elif command -v wget >/dev/null; then wget -qO "$2" "$1";
+  else echo 'Install curl or wget on the server first.' >&2; return 1; fi
+}
+base=https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts
+fetch "$base/install" "$task_dir/install"
+fetch "$base/install.sha256" "$task_dir/install.sha256"
+(cd "$task_dir" && sha256sum -c install.sha256) >&2
+if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" --version "$1" --json;
+else sudo -n bash "$task_dir/install" --version "$1" --json; fi
+REMOTE
+  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
+  read_result
+  REMOTE_PORT=$(printf '%s\n' "$RESULT" | sed -n 's/.*"hostPort":\([0-9][0-9]*\).*/\1/p')
+  port "$REMOTE_PORT" || fail "The server returned an invalid port."
+  if [ -n "$LOCAL_PORT" ]; then
+    ssh "${SSH_ARGS[@]}" -O forward -o ExitOnForwardFailure=yes -L "127.0.0.1:$LOCAL_PORT:127.0.0.1:$REMOTE_PORT" "$TARGET" || fail "Local port $LOCAL_PORT is busy. Retry with another --local-port."
+  else
+    for candidate in 3003 3004 3005 3006 3007 3008 3009 3010; do
+      if ssh "${SSH_ARGS[@]}" -O forward -o ExitOnForwardFailure=yes -L "127.0.0.1:$candidate:127.0.0.1:$REMOTE_PORT" "$TARGET" 2>/dev/null; then LOCAL_PORT="$candidate"; break; fi
+    done
+    [ -n "$LOCAL_PORT" ] || fail "No free local port found. Retry with --local-port and an unused port."
+  fi
+  verify_link
+  print_link
+  printf 'Keep this terminal open while using the link. Ctrl+C closes the connection.\nGroundControl will keep running on your server. Run this command again to reconnect.\n'
+  while ssh "${SSH_ARGS[@]}" -O check "$TARGET" >/dev/null 2>&1; do sleep 2; done
+  fail "The server connection closed. Run this command again to reconnect."
+fi
+
+[ -z "$IDENTITY$SSH_PORT" ] || fail "SSH options only apply to --remote."
+command -v docker >/dev/null 2>&1 || fail "Install and start Docker Desktop (Mac/Windows) or Docker Engine (Linux), then rerun with --local."
+docker info >/dev/null 2>&1 || fail "Start Docker Desktop/Engine, then run this command again."
+[ "$(docker info --format '{{.OSType}}')" = linux ] || fail "Switch Docker Desktop to Linux containers."
+endpoint="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}"
+case "$endpoint" in unix://*|npipe://*) ;; *) fail "Local mode requires a local Docker context. Switch contexts or choose --remote." ;; esac
+
+if docker inspect groundcontrol-web >/dev/null 2>&1; then
+  [ "$(docker inspect --format '{{index .Config.Labels "io.groundcontrol.install-mode"}}' groundcontrol-web)" = desktop ] || fail "A different GroundControl installation already uses this Docker engine. Use its existing login; setup has not changed it."
+  docker start groundcontrol-web >/dev/null
+else
+  if [ -z "$IMAGE" ]; then
+    IMAGE="ghcr.io/teckedd-code2save/groundcontrol:$VERSION"
+    PLATFORM=linux/amd64
+    printf 'Downloading GroundControl…\n'
+    docker pull --platform "$PLATFORM" "$IMAGE" >&2 || fail "Could not download GroundControl. Check your internet connection and try again."
+  else
+    docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "The --image override must already exist in your local Docker engine."
+    PLATFORM="linux/$(docker image inspect --format '{{.Architecture}}' "$IMAGE")"
+  fi
+  [ "$(docker image inspect --format '{{index .Config.Labels "io.groundcontrol.desktop"}}' "$IMAGE")" = 1 ] || fail "This image predates desktop setup. A desktop-capable GroundControl release must be published before this local path can run."
+  IMAGE=$(docker image inspect --format '{{.Id}}' "$IMAGE")
+  if docker volume inspect groundcontrol-desktop-db >/dev/null 2>&1 && [ ! -f "$DATA_DIR/.env" ]; then
+    fail "An existing desktop database has no matching .env at $DATA_DIR. Restore its configuration or pass its original --dir; setup will not replace its encryption keys."
+  fi
+  umask 077
+  mkdir -p "$DATA_DIR"
+  DATA_DIR=$(cd "$DATA_DIR" && pwd)
+  mkdir -p "$DATA_DIR/workspace"
+  if [ ! -f "$DATA_DIR/.env" ]; then
+    docker run --rm --platform "$PLATFORM" --entrypoint node "$IMAGE" -e 'const c=require("node:crypto");for(const k of ["JWT_SECRET","GROUNDCONTROL_SECRET"]) console.log(k+"="+c.randomBytes(32).toString("hex"))' > "$DATA_DIR/.env.tmp" || { rm -f "$DATA_DIR/.env.tmp"; fail "This computer could not run the image. On ARM, enable AMD64 emulation in Docker Desktop."; }
+    mv "$DATA_DIR/.env.tmp" "$DATA_DIR/.env"
+  fi
+  printf 'Starting your local GroundControl…\n'
+  DOCKER_SOCKET=/var/run/docker.sock
+  if [ "$(uname -s)" = Linux ] && [ "$(docker info --format '{{.OperatingSystem}}')" != 'Docker Desktop' ]; then
+    case "$endpoint" in unix://*) DOCKER_SOCKET="${endpoint#unix://}" ;; esac
+  fi
+  docker run -d --platform "$PLATFORM" --name groundcontrol-web --restart unless-stopped \
+    --label io.groundcontrol.install-mode=desktop \
+    --env-file "$DATA_DIR/.env" -e NODE_ENV=production -e GC_DESKTOP_MODE=1 \
+    -e "GC_WORKSPACE_ROOT=$DATA_DIR/workspace" \
+    -e GC_VPS_NAME='Local Docker workspace' -e DATABASE_URL=file:/app/prisma/prod.db \
+    -p "127.0.0.1:${LOCAL_PORT:-}:3000" \
+    -v groundcontrol-desktop-db:/app/prisma -v "$DOCKER_SOCKET:/var/run/docker.sock" \
+    -v "$DATA_DIR/workspace:$DATA_DIR/workspace" \
+    --health-cmd 'wget --spider -q http://127.0.0.1:3000/api/auth/claim' \
+    --health-interval 5s --health-timeout 5s --health-retries 24 --health-start-period 15s \
+    "$IMAGE" >/dev/null || fail "Docker could not start GroundControl. Check the message above. Your database and configuration were preserved."
+fi
+
+healthy=0
+for attempt in $(seq 1 90); do
+  if [ "$(docker inspect --format '{{.State.Health.Status}}' groundcontrol-web)" = healthy ]; then healthy=1; break; fi
+  sleep 2
+done
+[ "$healthy" = 1 ] || fail "GroundControl did not become ready. Run: docker logs groundcontrol-web"
+LOCAL_PORT=$(docker port groundcontrol-web 3000/tcp | sed -n 's/^127\.0\.0\.1:\([0-9]*\)$/\1/p' | head -n 1)
+port "$LOCAL_PORT" || fail "GroundControl is not bound to a private local port. Check its Docker configuration."
+RESULT=$(docker exec groundcontrol-web node /app/scripts/create-install-claim.cjs --ttl-minutes 30)
+read_result
+verify_link
+print_link
+printf 'You can close this terminal. Docker keeps GroundControl running.\nLocal mode manages Docker workloads, not native Mac/Windows services.\nKeep Docker running; rerun this command whenever you need the login link.\n'

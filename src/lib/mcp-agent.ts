@@ -406,7 +406,7 @@ async function allowedDeployment(context: AgentAccessContext, value: unknown) {
   const deployment = await prisma.enrolledDeployment.findFirst({
     where: {
       AND: [
-        { id: { in: context.resources } },
+        { id: { in: context.resources }, kind: { not: "source" } },
         identifier.id ? { id: identifier.id } : { slug: identifier.text },
       ],
     },
@@ -512,7 +512,7 @@ export async function executeAgentTool(
 
   if (name === "deployment.list") {
     const deployments = await prisma.enrolledDeployment.findMany({
-      where: { id: { in: context.resources } },
+      where: { id: { in: context.resources }, kind: { not: "source" } },
       orderBy: [{ name: "asc" }, { id: "asc" }],
       select: { id: true, name: true, slug: true, kind: true, managementMode: true, status: true, updatedAt: true },
     });

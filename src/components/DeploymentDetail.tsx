@@ -1,5 +1,7 @@
 "use client";
 
+import { SourceProjectDetail } from "./SourceProjectDetail";
+import type { SourceProject } from "@/lib/source-discovery";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -55,6 +57,7 @@ type ContainerInfo = {
   service?: string | null;
 };
 type DeploymentDetailRecord = {
+  sourceProject?: SourceProject | null;
   id: number;
   name: string;
   slug: string;
@@ -197,6 +200,7 @@ export default function DeploymentDetail({
         setMessage({ tone: "error", text: data.error || "Could not load deployment" });
         return;
       }
+      if (data.projectUrl) { window.location.assign(data.projectUrl); return; }
       setDeployment(data.deployment);
       setProjects(Array.isArray(data.projects) ? data.projects : []);
       setContainers(Array.isArray(data.deployment?.runtime?.containers) ? data.deployment.runtime.containers : []);
@@ -584,6 +588,8 @@ export default function DeploymentDetail({
       </div>
     );
   }
+
+  if (deployment.observedStatus === "source-only") return <SourceProjectDetail key={deployment.id} name={deployment.name} sourcePath={deployment.sourcePath || ""} initialSource={deployment.sourceProject} hostId={deployment.vpsConfigId} />;
 
   const tabs: { id: Tab; label: string; detail: string }[] = [
     { id: "manage", label: "Manage", detail: "Containers, sources, configuration" },

@@ -1,10 +1,10 @@
 import { exec } from "child_process";
 import { promisify } from "util";
 import { NodeSSH } from "node-ssh";
-import { isContainerized } from "./runtime";
+import { isContainerized, isDesktopMode } from "./runtime";
 import { prisma } from "./prisma";
 import { decryptMaybe } from "./crypto";
-import { execDetached, execOnVps, shQuote, type VpsConnection } from "./vps";
+import { execDetached, execOnVps, getActiveVps, shQuote, type VpsConnection } from "./vps";
 import {
   canUseDockerHostBridge,
   execDetachedViaDockerHostBridge,
@@ -221,6 +221,12 @@ export async function execOnHost(
   command: string,
   opts: ExecOnHostOptions = {}
 ): Promise<{ stdout: string; stderr: string; code: number }> {
+  if (isDesktopMode()) {
+    if (opts.requireHost) {
+      return { stdout: "", stderr: "Local Docker mode cannot manage the computer's operating system. Select a remote Linux server for host operations.", code: 1 };
+    }
+    return execInContainer(command, opts.cwd, opts.stdin);
+  }
   if (!isContainerized()) {
     return execInContainer(command, opts.cwd, opts.stdin);
   }
@@ -285,6 +291,7 @@ export async function execOnHost(
  * Returns false when GroundControl is not containerized.
  */
 export async function canExecOnHost(): Promise<boolean> {
+  if (isDesktopMode()) return false;
   if (!isContainerized()) return false;
   if (bridgeCache === null) {
     bridgeCache = await canUseDockerHostBridge();
@@ -308,8 +315,8 @@ export async function execOnTarget(
   cwd?: string,
   stdin?: string
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  const conn = vps ?? null;
-  if (isContainerized() && (!conn || conn.isLocal)) {
+  const conn = vps ?? await getActiveVps();
+  if ((isContainerized() || isDesktopMode()) && (!conn || conn.isLocal)) {
     return execOnHost(command, { vps: conn, cwd, stdin });
   }
   return execOnVps(command, conn, cwd, stdin);
@@ -325,8 +332,8 @@ export async function execOnTargetStrict(
   cwd?: string,
   stdin?: string
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  const conn = vps ?? null;
-  if (isContainerized() && (!conn || conn.isLocal)) {
+  const conn = vps ?? await getActiveVps();
+  if ((isContainerized() || isDesktopMode()) && (!conn || conn.isLocal)) {
     return execOnHost(command, {
       vps: conn,
       cwd,
@@ -348,7 +355,11 @@ export async function execDetachedOnTarget(
   vps?: VpsConnection | null,
   options?: { append?: boolean }
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  const conn = vps ?? null;
+  const conn = vps ?? await getActiveVps();
+
+  if (isDesktopMode() && (!conn || conn.isLocal)) {
+    return { stdout: "", stderr: "Detached host operations require a Linux server target, not the local Docker workspace.", code: 1 };
+  }
 
   if (isContainerized() && (!conn || conn.isLocal)) {
     if (bridgeCache === null) {

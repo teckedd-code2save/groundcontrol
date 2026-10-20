@@ -56,6 +56,7 @@ export function buildDetachedBridgeCommand(
   const grouped = `{ ${withOsPath(command)}; } ${redirect} ${shQuote(outputFile)} 2>&1`;
   return [
     "docker run -d --rm",
+    "--label io.groundcontrol.internal=host-bridge",
     "--privileged",
     "--pid=host",
     BRIDGE_IMAGE,
@@ -145,6 +146,7 @@ export async function execViaDockerHostBridge(
 
   const dockerCmd = [
     `docker run --rm${opts?.stdin !== undefined ? " -i" : ""}`,
+    "--label io.groundcontrol.internal=host-bridge",
     "--privileged",
     "--pid=host",
     BRIDGE_IMAGE,

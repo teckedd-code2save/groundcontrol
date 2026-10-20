@@ -4,13 +4,18 @@ import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { scanProjectsTree } from "@/lib/project-scan";
 import {
-  execOnVps,
   getActiveVps,
   getDockerContainerLabels,
   getDockerContainers,
   scanProjects,
-  shQuote,
 } from "@/lib/vps";
+import { isDesktopMode } from "@/lib/runtime";
+import { scanSourceFolder } from "@/lib/source-discovery";
+import { browseProjectFolders } from "@/lib/project-folder-browser";
+import { addSourceProject, discoverSourceProjects } from "@/lib/source-projects";
+import { buildInventoryCandidates, candidateIdentity, dismissedSuggestions, dismissalPrefix, setSuggestionHidden, untrackedProjectIds, untrackedProjectKey } from "@/lib/inventory-discovery";
+import { launchLocalProject } from "@/lib/local-project-launch";
+import { connectExistingDeployment } from "@/lib/project-deployments";
 import { resolveDeploymentEvidence } from "@/lib/deployment-evidence";
 
 function slugify(value: string) {
@@ -22,16 +27,18 @@ async function reconcileKnownDeployments(vpsConfigId: number | null) {
     where: { inventoryRecord: null },
     orderBy: { createdAt: "asc" },
   });
+  const [hidden, untracked] = await Promise.all([dismissedSuggestions(vpsConfigId), untrackedProjectIds(vpsConfigId)]);
   for (const project of projects) {
+    if (untracked.has(project.id)) continue;
     let saved: { source?: { sourcePath?: string }; composeProject?: string } = {};
     try { saved = JSON.parse(project.envVars || "{}"); } catch {}
     let slug = project.slug;
     const collision = await prisma.enrolledDeployment.findUnique({ where: { slug } });
     if (collision) slug = `${project.slug}-${project.id}`;
     const sourcePath = saved.source?.sourcePath || project.path;
-    const existingIdentity = await prisma.enrolledDeployment.findFirst({
-      where: { vpsConfigId, sourcePath },
-    });
+    if (hidden.has(candidateIdentity({ sourcePath }))) continue;
+    const siblings = await prisma.enrolledDeployment.findMany({ where: { vpsConfigId, sourcePath, kind: { not: "source" } } });
+    const existingIdentity = siblings.find((item) => saved.composeProject ? candidateIdentity(item) === `compose:${saved.composeProject}` : candidateIdentity(item) === `folder:${sourcePath}`);
     if (existingIdentity && !existingIdentity.legacyProjectId) {
       await prisma.enrolledDeployment.update({
         where: { id: existingIdentity.id },
@@ -72,13 +79,14 @@ export async function GET(req: NextRequest) {
     requireAuth(req);
     const vps = await getActiveVps();
     await reconcileKnownDeployments(vps?.id ?? null);
-    const [tree, containers, labels, projects, enrolled, hostProjects] = await Promise.all([
-      scanProjectsTree(vps),
+    const desktop = isDesktopMode() && vps?.isLocal;
+    const [tree, containers, labels, projects, enrolled, hostProjects, sources, hidden] = await Promise.all([
+      desktop ? Promise.resolve({ projects: [], error: undefined }) : scanProjectsTree(vps),
       getDockerContainers(vps),
       getDockerContainerLabels(vps),
       prisma.projectGroup.findMany({ orderBy: { name: "asc" } }),
       prisma.enrolledDeployment.findMany({
-        where: { vpsConfigId: vps?.id ?? null },
+        where: { vpsConfigId: vps?.id ?? null, kind: { not: "source" } },
         include: {
           projectGroup: true,
           legacyProject: {
@@ -89,46 +97,13 @@ export async function GET(req: NextRequest) {
         },
         orderBy: [{ projectGroupId: "asc" }, { name: "asc" }],
       }),
-      scanProjects(vps),
+      desktop ? Promise.resolve({ caddySites: [] }) : scanProjects(vps),
+      discoverSourceProjects(vps),
+      dismissedSuggestions(vps?.id ?? null),
     ]);
 
-    const enrolledPaths = new Set(enrolled.map((item) => item.sourcePath).filter(Boolean));
-    const enrolledContainers = new Set(enrolled.map((item) => item.containerName).filter(Boolean));
-    const discoveredProjectPaths = new Set(tree.projects.map((item) => item.path));
-    const labelsByName = new Map(labels.map((item) => [item.name, item]));
-
-    const folderCandidates = tree.projects
-      .filter((item) => !enrolledPaths.has(item.path))
-      .map((item) => ({
-        id: `folder:${item.path}`,
-        kind: "compose",
-        name: item.name,
-        sourcePath: item.path,
-        composePath: item.composePath,
-        components: item.services.length,
-        evidence: [item.hasGit ? "Git repository" : null, `${item.services.length} Compose components`, item.domain ? `Route ${item.domain}` : null].filter(Boolean),
-      }));
-
-    const containerCandidates = containers
-      .filter((item) => !enrolledContainers.has(item.name))
-      .filter((item) => {
-        const workingDir = labelsByName.get(item.name)?.workingDir;
-        return !workingDir || (!enrolledPaths.has(workingDir) && !discoveredProjectPaths.has(workingDir));
-      })
-      .map((item) => {
-        const label = labelsByName.get(item.name);
-        return {
-          id: `container:${item.name}`,
-          kind: label?.workingDir ? "compose" : "container",
-          name: label?.project || item.name,
-          containerName: item.name,
-          sourcePath: label?.workingDir || null,
-          composePath: label?.configFiles?.split(",")[0] || null,
-          state: item.state,
-          image: item.image,
-          evidence: [label?.workingDir ? `Compose source ${label.workingDir}` : "Standalone container", label?.service ? `Service ${label.service}` : null, `Image ${item.image}`].filter(Boolean),
-        };
-      });
+    const savedSources = await prisma.projectSource.findMany({ where: { vpsConfigId: vps?.id ?? undefined }, select: { path: true } });
+    const candidates = buildInventoryCandidates(tree.projects, sources.projects, containers, labels, enrolled).filter((item) => item.kind !== "source" || !savedSources.some((source) => source.path === item.sourcePath));
 
     return NextResponse.json({
       projects,
@@ -160,12 +135,16 @@ export async function GET(req: NextRequest) {
             commitSha: latestRelease.commitSha,
             createdAt: latestRelease.createdAt,
           } : null,
-          observedStatus: runtime.status === "present" || Boolean(scanned) || item.kind === "static" && Boolean(item.legacyProject)
+          observedStatus: item.kind === "source" && runtime.status !== "present" ? "source-only" : runtime.status === "present" || Boolean(scanned) || item.kind === "static" && Boolean(item.legacyProject)
             ? "present" : "missing",
         };
       }),
-      candidates: [...folderCandidates, ...containerCandidates],
-      discoveryError: tree.error || null,
+      candidates: candidates.filter((item) => !hidden.has(item.id) && !(item.sourcePath && hidden.has(`folder:${item.sourcePath}`))),
+      hiddenCount: hidden.size,
+      localDesktop: Boolean(desktop),
+      hostId: vps?.id ?? null,
+      hostName: vps?.host || "This computer",
+      discoveryError: tree.error || sources.error || null,
     });
   } catch (error) {
     return handleApiError(error);
@@ -179,6 +158,28 @@ export async function POST(req: NextRequest) {
     const action = String(body.action || "");
     const vps = await getActiveVps();
 
+    if (body.hostId !== undefined && body.hostId !== (vps?.id ?? null)) {
+      return NextResponse.json({ error: "The active connection changed. Refresh before continuing." }, { status: 409 });
+    }
+    if (action === "launch_local") return NextResponse.json({ deployment: await launchLocalProject(body, vps) }, { status: 201 });
+    if (action === "browse_folders") {
+      return NextResponse.json(await browseProjectFolders(body.sourcePath, vps, body.showHidden === true));
+    }
+    if (action === "inspect_folder") {
+      return NextResponse.json(await scanSourceFolder(body.sourcePath, vps));
+    }
+    if (action === "add_source" || action === "enroll" && body.kind === "source") {
+      return NextResponse.json(await addSourceProject(body.sourcePath, vps, body.projectId ? Number(body.projectId) : null, body.name, body.description), { status: 201 });
+    }
+    if (action === "dismiss" || action === "restore") {
+      await setSuggestionHidden(vps?.id ?? null, String(body.candidateId || ""), action === "dismiss");
+      return NextResponse.json({ ok: true });
+    }
+    if (action === "restore_all") {
+      await prisma.appConfig.deleteMany({ where: { key: { startsWith: dismissalPrefix(vps?.id ?? null) } } });
+      return NextResponse.json({ ok: true });
+    }
+
     if (action === "create_project") {
       const name = String(body.name || "").trim();
       if (!name) return NextResponse.json({ error: "Project name is required" }, { status: 400 });
@@ -191,6 +192,8 @@ export async function POST(req: NextRequest) {
     if (action === "assign_project") {
       const deploymentId = Number(body.deploymentId || 0);
       const projectId = body.projectId ? Number(body.projectId) : null;
+      const current = await prisma.enrolledDeployment.findFirst({ where: { id: deploymentId, vpsConfigId: vps?.id ?? null } });
+      if (!current) return NextResponse.json({ error: "Deployment not found on this connection" }, { status: 404 });
       const deployment = await prisma.enrolledDeployment.update({
         where: { id: deploymentId },
         data: { projectGroupId: projectId },
@@ -200,66 +203,24 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "unenroll") {
-      await prisma.enrolledDeployment.delete({ where: { id: Number(body.deploymentId || 0) } });
+      const item = await prisma.enrolledDeployment.findFirst({ where: { id: Number(body.deploymentId || 0), vpsConfigId: vps?.id ?? null } });
+      if (!item) return NextResponse.json({ error: "Deployment not found on this connection" }, { status: 404 });
+      // Keep the legacy project/history, but prevent reconciliation from re-adding it.
+      await setSuggestionHidden(vps?.id ?? null, candidateIdentity(item), true);
+      await prisma.$transaction(async (tx) => {
+        if (item.legacyProjectId) {
+          const key = untrackedProjectKey(vps?.id ?? null, item.legacyProjectId);
+          const value = String(item.legacyProjectId);
+          await tx.appConfig.upsert({ where: { key }, create: { key, value }, update: { value } });
+        }
+        await tx.enrolledDeployment.delete({ where: { id: item.id } });
+      });
       return NextResponse.json({ ok: true });
     }
 
     if (action !== "enroll") return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
 
-    const sourcePath = body.sourcePath ? String(body.sourcePath).replace(/\/+$/, "") : null;
-    const containerName = body.containerName ? String(body.containerName) : null;
-    if (!sourcePath && !containerName) return NextResponse.json({ error: "A folder or container is required" }, { status: 400 });
-
-    let kind = String(body.kind || (sourcePath ? "folder" : "container"));
-    const composePath = body.composePath ? String(body.composePath) : null;
-    let composeContent = "";
-    if (sourcePath) {
-      if (!sourcePath.startsWith("/")) return NextResponse.json({ error: "Deployment folder must be absolute" }, { status: 400 });
-      if (composePath) {
-        const result = await execOnVps(`cat ${shQuote(composePath)} 2>/dev/null || true`, vps);
-        composeContent = result.stdout || "";
-        if (composeContent.trim()) kind = "compose";
-      }
-    }
-
-    const baseName = String(body.name || sourcePath?.split("/").pop() || containerName || "deployment");
-    const slugBase = slugify(baseName);
-    let slug = slugBase;
-    let suffix = 1;
-    while (await prisma.enrolledDeployment.findUnique({ where: { slug } })) slug = `${slugBase}-${++suffix}`;
-
-    let legacyProjectId: number | null = null;
-    if (sourcePath) {
-      const existingLegacy = await prisma.project.findFirst({ where: { path: sourcePath } });
-      const legacy = existingLegacy
-        ? await prisma.project.update({
-            where: { id: existingLegacy.id },
-            data: { name: baseName, dockerCompose: composeContent || undefined },
-          })
-        : await prisma.project.create({
-            data: { slug, name: baseName, path: sourcePath, dockerCompose: composeContent || null, category: kind === "compose" ? "docker" : "app" },
-          });
-      legacyProjectId = legacy.id;
-    }
-
-    const deployment = await prisma.enrolledDeployment.create({
-      data: {
-        name: baseName,
-        slug,
-        kind,
-        managementMode: body.managementMode === "managed" ? "managed" : "track",
-        sourcePath,
-        composePath,
-        containerName,
-        projectGroupId: body.projectId ? Number(body.projectId) : null,
-        vpsConfigId: vps?.id ?? null,
-        legacyProjectId,
-        status: "observed",
-        lastSeenAt: new Date(),
-        metadataJson: JSON.stringify({ image: body.image || null, enrolledFrom: containerName ? "container" : "folder" }),
-      },
-      include: { projectGroup: true },
-    });
+    const deployment = await connectExistingDeployment(body, vps);
     return NextResponse.json({ deployment }, { status: 201 });
   } catch (error) {
     return handleApiError(error);

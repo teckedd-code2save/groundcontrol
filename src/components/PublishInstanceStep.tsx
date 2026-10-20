@@ -24,6 +24,7 @@ type Verification = {
 };
 
 type PublishStatus = {
+  localDesktop?: boolean;
   mode: "private" | "caddy" | "cloudflare" | "quick_tunnel";
   publicUrl: string | null;
   claimed: boolean;
@@ -60,6 +61,7 @@ export default function PublishInstanceStep({
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load publish status");
       setStatus(data);
+      if (data.localDesktop) setMethod("private");
       setVerification(data.lastVerification || null);
       if (data.publicUrl) {
         try {
@@ -151,7 +153,14 @@ export default function PublishInstanceStep({
 
   return (
     <div className="mt-6 space-y-4">
+      {status?.localDesktop && (
+        <div className="border border-border bg-card p-5 text-sm leading-relaxed text-muted">
+          <p className="font-medium text-foreground">GroundControl is running on this computer</p>
+          <p className="mt-2">Use your local login link while Docker is running. This workspace manages Docker workloads; it does not manage native Mac or Windows services. You can add a remote Linux server later in Connections.</p>
+        </div>
+      )}
       <div className="grid gap-2 sm:grid-cols-2">
+        {!status?.localDesktop && <>
         <MethodCard
           active={method === "caddy"}
           icon={<Globe2 className="h-4 w-4" />}
@@ -173,6 +182,7 @@ export default function PublishInstanceStep({
           detail="Create a temporary outbound HTTPS URL to finish setup."
           onClick={() => setMethod("quick_tunnel")}
         />
+        </>}
         <MethodCard
           active={method === "private"}
           icon={<LockKeyhole className="h-4 w-4" />}

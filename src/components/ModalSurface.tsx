@@ -58,7 +58,7 @@ export function ModalSurface({
     };
     document.addEventListener("keydown", onKeyDown);
     requestAnimationFrame(() => {
-      dialogRef.current?.querySelector<HTMLElement>("[data-autofocus], input, select, textarea, button")?.focus();
+      (dialogRef.current?.querySelector<HTMLElement>("[data-autofocus]") || dialogRef.current?.querySelector<HTMLElement>("input, select, textarea") || dialogRef.current?.querySelector<HTMLElement>("button"))?.focus();
     });
     return () => {
       document.removeEventListener("keydown", onKeyDown);
@@ -80,7 +80,7 @@ export function ModalSurface({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={cn(
-          "max-h-[min(90vh,900px)] w-full overflow-hidden border bg-background shadow-2xl shadow-black/35",
+          "flex max-h-[min(90vh,900px)] w-full flex-col overflow-hidden border bg-background shadow-2xl shadow-black/35",
           tone === "danger" ? "border-error/35" : "border-border",
           size === "sm" && "max-w-md",
           size === "md" && "max-w-lg",
@@ -88,7 +88,7 @@ export function ModalSurface({
           size === "xl" && "max-w-4xl"
         )}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div>
             <h2 id={titleId} className="text-base font-semibold tracking-tight">{title}</h2>
             {description && <p id={descriptionId} className="mt-1 text-xs leading-relaxed text-muted">{description}</p>}
@@ -97,8 +97,8 @@ export function ModalSurface({
             <X size={16} aria-hidden="true" />
           </button>
         </header>
-        <div className="max-h-[calc(90vh-130px)] overflow-y-auto p-5">{children}</div>
-        {footer && <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">{footer}</footer>}
+        <div className="min-h-0 overflow-y-auto p-5">{children}</div>
+        {footer && <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">{footer}</footer>}
       </section>
     </div>,
     document.body

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
+import { repositoryUrl } from "@/lib/project-settings";
 import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 
@@ -10,9 +11,12 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const projectId = Number(id);
     if (!Number.isFinite(projectId)) return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
     const body = await req.json();
+    const current = await prisma.projectGroup.findUnique({ where: { id: projectId }, select: { repositoryUrl: true } });
+    const nextUrl = body.repositoryUrl !== undefined ? repositoryUrl(body.repositoryUrl) : undefined;
     const project = await prisma.projectGroup.update({
       where: { id: projectId },
       data: {
+        ...(nextUrl !== undefined ? { repositoryUrl: nextUrl, ...(nextUrl !== current?.repositoryUrl ? { repositoryDefaultBranch: null } : {}) } : {}),
         ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
         ...(typeof body.description === "string" ? { description: body.description.trim() } : {}),
       },

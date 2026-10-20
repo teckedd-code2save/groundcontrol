@@ -8,29 +8,27 @@ GroundControl is designed to run **on the VPS it manages**, either in Docker or 
 
 ## What you need
 
-- A VPS with root or passwordless-sudo access (Ubuntu 22.04/24.04, Debian 12, or similar).
-- Docker + Docker Compose installed on the VPS.
-- A domain or subdomain you control (e.g. `groundcontrol.yourdomain.com`).
-- DNS `A` record pointing that subdomain to your VPS IP.
+- An AMD64 Linux VPS with root or passwordless-sudo access (Ubuntu 22.04/24.04, Debian 12, or similar).
+- SSH access from your computer. The canonical installer installs Docker if needed; Docker Compose must be available.
+- Optional: a domain/subdomain and matching DNS record, if you want permanent public HTTPS access.
 - (Optional) A Cloudflare account if you want Cloudflare DNS / tunnels from the UI.
 
 ---
 
-## 0. Fastest path: bootstrap installer
+## 0. Start from your computer
 
-From your laptop, install Docker (if needed) and start GroundControl on a remote VPS:
+Download the launcher on your computer and give it the same address you use for SSH:
 
 ```bash
-# With private key (recommended — mirrors `ssh -i`)
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
-  | bash -s -- -i ~/.ssh/id_ed25519 root@YOUR_VPS_IP
-
-# Interactive prompts for host / key / port
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/bootstrap \
-  | bash -s -- --interactive
+curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/start -o groundcontrol-start
+bash groundcontrol-start --remote root@YOUR_VPS_IP
 ```
 
-Then open `http://YOUR_VPS_IP:3737/onboarding` and complete first-run setup. Skip to [§4 Put it behind Caddy](#4-put-it-behind-caddy-reverse-proxy--ssl) if you already have the container running.
+Open the setup link it prints, choose your administrator credentials, and configure GroundControl in the browser. The launcher establishes the SSH tunnel automatically; keep its terminal open while using the link. Management remains bound to loopback on the server.
+
+For a specific SSH key, add `-i ~/.ssh/id_ed25519`. For a local Docker workspace instead of a VPS, use `--local`. See [Start from your computer](./docs/start-from-your-computer.md).
+
+You can choose permanent HTTPS publishing after claim, or continue using private SSH access. The manual steps below are for administrators who want to manage the deployment themselves.
 
 ---
 

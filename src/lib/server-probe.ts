@@ -1,5 +1,6 @@
-import { VpsConnection, shQuote } from "./vps";
+import { VpsConnection, getActiveVps, shQuote } from "./vps";
 import { execOnTarget } from "./host-exec";
+import { isDesktopMode } from "./runtime";
 
 
 export interface ServerLayout {
@@ -92,6 +93,9 @@ async function detectComposeCommand(vps?: VpsConnection | null): Promise<string>
 }
 
 async function detectProjectRoot(vps?: VpsConnection | null): Promise<string> {
+  if (isDesktopMode() && process.env.GC_WORKSPACE_ROOT && (vps ?? await getActiveVps())?.isLocal) {
+    return process.env.GC_WORKSPACE_ROOT;
+  }
   const candidates = ["/opt", "/var/www", "/home"];
   for (const dir of candidates) {
     const result = await execOnTarget(`test -d ${shQuote(dir)} && echo ${shQuote(dir)} || echo ""`, vps);

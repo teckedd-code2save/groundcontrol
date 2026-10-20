@@ -39,6 +39,9 @@ export function linkDeploymentRuntime(
 
   const matches = containers.flatMap((container) => {
     const label = labels.find((candidate) => candidate.name === container.name);
+    // Explicit instance identities take priority over a shared source directory.
+    if (composeProject && label?.project !== composeProject) return [];
+    if (!composeProject && deployment.containerName && deployment.containerName !== container.name) return [];
     const exactContainer = deployment.containerName === container.name;
     const exactWorkingDir = Boolean(deployment.sourcePath && label?.workingDir === deployment.sourcePath);
     const configUnderSource = Boolean(deployment.sourcePath && label?.configFiles
