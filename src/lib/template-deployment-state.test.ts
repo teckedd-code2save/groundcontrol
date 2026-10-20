@@ -53,6 +53,14 @@ function createClient(existingTarget: { id: number; configJson?: string } | null
 }
 
 describe("persistTemplateDeployment", () => {
+  it("retains the user project when a template creates or updates an instance", async () => {
+    const client = createClient();
+    await persistTemplateDeployment({ ...baseInput(), projectGroupId: 19 }, client);
+    expect(client.project.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ projectGroupId: 19 }),
+      update: expect.objectContaining({ projectGroupId: 19 }),
+    }));
+  });
   it("persists template deployments into project and deployment rows using a compose target", async () => {
     const client = createClient();
     const result = await persistTemplateDeployment(baseInput(), client);

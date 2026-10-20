@@ -5,7 +5,8 @@
 // because it searches multiple root paths and tags projects with tech hints.
 
 import { execOnTarget } from "./host-exec";
-import { shQuote } from "./vps";
+import { getActiveVps, shQuote } from "./vps";
+import { isDesktopMode } from "./runtime";
 
 export interface DiscoveredProject {
   path: string;
@@ -19,9 +20,13 @@ export interface DiscoveredProject {
 }
 
 export async function probeProjects(): Promise<DiscoveredProject[]> {
+  const desktop = isDesktopMode() && (await getActiveVps())?.isLocal;
+  const roots = desktop && process.env.GC_WORKSPACE_ROOT
+    ? shQuote(process.env.GC_WORKSPACE_ROOT)
+    : "/opt /srv /var/www /home /data /apps";
   // Find all compose files across common project directories
   const composeFiles = await execOnTarget(
-    `find /opt /srv /var/www /home /data /apps -maxdepth 4 -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' -o -name 'compose*.yml' -o -name 'compose*.yaml' 2>/dev/null | head -40 || echo ""`
+    `find ${roots} -maxdepth 4 -type f \\( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' -o -name 'compose*.yml' -o -name 'compose*.yaml' \\) 2>/dev/null | head -40 || echo ""`
   );
 
   if (!composeFiles.stdout.trim()) return [];
@@ -31,7 +36,9 @@ export async function probeProjects(): Promise<DiscoveredProject[]> {
 
   for (const line of composeFiles.stdout.split("\n")) {
     if (!line.trim()) continue;
+    if (/\/groundcontrol\/backups\//.test(line)) continue;
     const dir = line.replace(/\/[^/]+$/, ""); // parent dir
+    if (dir === "/opt/groundcontrol") continue;
     if (seen.has(dir)) continue;
     seen.add(dir);
 
@@ -61,21 +68,9 @@ export async function probeProjects(): Promise<DiscoveredProject[]> {
 
 async function parseComposeServiceNames(composePath: string): Promise<string[]> {
   const result = await execOnTarget(
-    `grep -E '^  [a-zA-Z0-9_.-]+:' ${shQuote(composePath)} 2>/dev/null | head -20 || echo ""`
+    `docker compose -f ${shQuote(composePath)} config --services 2>/dev/null || docker-compose -f ${shQuote(composePath)} config --services 2>/dev/null || true`
   );
-  // Filter out property keys (image:, ports:, etc.) to keep only service names
-  const propertyKeys = new Set(["image", "build", "ports", "volumes", "environment", "env_file", 
-    "depends_on", "restart", "networks", "labels", "container_name", "command", "entrypoint",
-    "healthcheck", "deploy", "logging", "dns", "extra_hosts", "cap_add", "security_opt"]);
-  
-  const services: string[] = [];
-  for (const line of result.stdout.split("\n")) {
-    const match = line.match(/^  ([a-zA-Z0-9_.-]+):/);
-    if (match && !propertyKeys.has(match[1])) {
-      services.push(match[1]);
-    }
-  }
-  return services;
+  return [...new Set(result.stdout.split("\n").map((name) => name.trim()).filter((name) => /^[a-zA-Z0-9_.-]+$/.test(name)))];
 }
 
 async function detectTechStack(dir: string): Promise<string[]> {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { HttpError, handleApiError } from "@/lib/errors";
 import { createAuditLog } from "@/lib/audit";
+import { isDesktopMode } from "@/lib/runtime";
 import {
   instancePublishStatus,
   keepInstancePrivate,
@@ -37,6 +38,10 @@ export async function POST(req: NextRequest) {
       apiToken?: string;
       accountId?: string;
     };
+
+    if (isDesktopMode() && body.action !== "private" && body.action !== "verify") {
+      return NextResponse.json({ error: "This installation uses a local login link. Install on a Linux server to configure public instance access." }, { status: 400 });
+    }
 
     if (body.action === "private") {
       const result = await keepInstancePrivate();

@@ -32,37 +32,26 @@ jobs:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 2
 
-      - name: Decide whether distribution changed
+      # Every published revision is checked before it becomes the public default.
+      - name: Enable release acceptance
         id: scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          changed="$(git diff-tree --no-commit-id --name-only -r HEAD)"
-          printf '%s\n' "$changed"
-
-          if printf '%s\n' "$changed" | grep -Eq '^(scripts/install|scripts/install\.sha256|scripts/create-install-claim\.cjs|docker-entrypoint\.sh|scripts/ensure-local-vps\.cjs|Dockerfile|docker-compose\.yml|src/lib/install-claim\.ts|src/app/api/auth/claim/route\.ts|src/lib/instance-publish\.ts|src/app/api/instance/publish/route\.ts|\.github/workflows/distribution-acceptance\.yml)$'; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "run=true" >> "$GITHUB_OUTPUT"
 
       - name: Select image
         if: steps.scope.outputs.run == 'true'
         id: image
         shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             tag="$(git rev-parse --short=7 HEAD)"
           else
-            tag="${{ inputs.image_tag }}"
+            tag="$REQUESTED_TAG"
             tag="${tag:-latest}"
           fi
+          [[ "$tag" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "Invalid image tag" >&2; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Testing image tag: $tag"
 
@@ -231,3 +220,90 @@ jobs:
       - name: Skip note
         if: steps.scope.outputs.run != 'true'
         run: echo "Distribution surface unchanged in this deployment; clean-host acceptance skipped."
+
+  desktop:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      REQUESTED_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - name: Test anonymous desktop installation and reconnect
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG:-latest}"
+          if [ "${{ github.event_name }}" = workflow_run ]; then tag="$(git rev-parse --short=7 HEAD)"; fi
+          [[ "$tag" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 1
+          # No registry login: visitors must be able to download the public image.
+          export DOCKER_CONFIG="$(mktemp -d)"
+          evidence="$RUNNER_TEMP/desktop-evidence"
+          mkdir -p "$evidence"
+          chmod 700 "$evidence"
+          bash scripts/start --local --version "$tag" --dir "$RUNNER_TEMP/gc-desktop" > "$RUNNER_TEMP/desktop-setup.log"
+          token="$(sed -n 's/.*#token=\(gc_claim_[A-Za-z0-9_-]*\).*/\1/p' "$RUNNER_TEMP/desktop-setup.log")"
+          test -n "$token"
+          echo "::add-mask::$token"
+          export GC_TEST_CLAIM_TOKEN="$token"
+          docker exec -i -e GC_TEST_CLAIM_TOKEN groundcontrol-web node < scripts/check-desktop.cjs > "$evidence/desktop.json"
+          unset GC_TEST_CLAIM_TOKEN token
+          bash scripts/start --local --version "$tag" --dir "$RUNNER_TEMP/gc-desktop" > "$RUNNER_TEMP/desktop-reconnect.log"
+          grep -Eq 'http://127\.0\.0\.1:[0-9]+/login' "$RUNNER_TEMP/desktop-reconnect.log"
+          ! grep -q '#token=' "$RUNNER_TEMP/desktop-reconnect.log"
+          docker port groundcontrol-web 3000/tcp | grep -Eq '^127\.0\.0\.1:[0-9]+$'
+          echo '{"anonymousDownload":"passed","launcher":"passed","reconnect":"passed","loopbackOnly":"passed"}' > "$evidence/launcher.json"
+      - name: Upload desktop acceptance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-acceptance-${{ env.TARGET_SHA }}
+          path: ${{ runner.temp }}/desktop-evidence
+          retention-days: 30
+      - name: Remove disposable desktop instance
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f groundcontrol-web >/dev/null 2>&1 || true
+          docker volume rm groundcontrol-desktop-db >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/desktop-setup.log" "$RUNNER_TEMP/desktop-reconnect.log"
+
+  promote-latest:
+    needs: [clean-host, desktop]
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: distribution-promote-latest
+      cancel-in-progress: false
+    env:
+      TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote only the tested current main image
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$current" != "$TARGET_SHA" ]; then
+            echo "Main advanced; leave latest for the newer acceptance run."
+            exit 0
+          fi
+          image="ghcr.io/${{ github.repository }}"
+          tag="$(git rev-parse --short=7 HEAD)"
+          docker buildx imagetools create --tag "$image:latest" "$image:$tag"
+          echo "Published tested image $image:$tag as latest" >> "$GITHUB_STEP_SUMMARY"

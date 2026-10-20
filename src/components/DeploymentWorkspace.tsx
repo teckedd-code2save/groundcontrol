@@ -19,6 +19,7 @@ import {
   ContextMenuLabel,
 } from "@/components/ContextActionMenu";
 import { ModalSurface } from "@/components/ModalSurface";
+import { AddProjectFlow } from "./AddProjectFlow";
 import { Notice } from "@/components/ui";
 
 type Group = { id: number; name: string; slug: string; description: string };
@@ -32,6 +33,7 @@ type Candidate = {
   state?: string;
   image?: string;
   components?: number;
+  services?: { name: string; containerName: string; state: string; image: string }[];
   evidence: string[];
 };
 type Enrolled = {
@@ -40,6 +42,7 @@ type Enrolled = {
   slug: string;
   kind: string;
   managementMode: string;
+  environmentName?: string;
   sourcePath?: string | null;
   containerName?: string | null;
   projectId?: number | null;
@@ -80,6 +83,11 @@ export function DeploymentWorkspace() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null);
+  const [addFolderOpen, setAddFolderOpen] = useState(false);
+  const [hiddenCount, setHiddenCount] = useState(0);
+  const [localDesktop, setLocalDesktop] = useState(false);
+  const [hostId, setHostId] = useState<number | null>(null);
+  const [dismissed, setDismissed] = useState<Candidate | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
 
   const load = useCallback(async (announce = false) => {
@@ -91,6 +99,9 @@ export function DeploymentWorkspace() {
       setGroups(data.projects || []);
       setDeployments(data.deployments || []);
       setCandidates(data.candidates || []);
+      setHiddenCount(data.hiddenCount || 0);
+      setLocalDesktop(Boolean(data.localDesktop));
+      setHostId(data.hostId ?? null);
       if (data.discoveryError) setMessage({ tone: "error", text: data.discoveryError });
       else if (announce) setMessage({ tone: "success", text: "Host scan complete. Nothing was enrolled automatically." });
     } catch (error) {
@@ -108,7 +119,7 @@ export function DeploymentWorkspace() {
     const response = await fetch("/api/deployment-inventory", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, hostId }),
     });
     const data = await readJson(response);
     if (!response.ok || data.error) throw new Error(data.error || "Action failed");
@@ -212,6 +223,8 @@ export function DeploymentWorkspace() {
             Open a deployment to manage its environment, releases, source and endpoint.
           </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => setAddFolderOpen(true)} disabled={loading || !!busy} className="gc-button gc-button-primary"><Plus size={14} />Add project</button>
         <button
           type="button"
           onClick={() => load(true)}
@@ -219,8 +232,9 @@ export function DeploymentWorkspace() {
           className="gc-button gc-button-secondary"
         >
           <ScanLine size={14} aria-hidden="true" />
-          {loading ? "Scanning…" : "Scan host"}
+          {loading ? "Scanning…" : "Refresh discovery"}
         </button>
+        </div>
       </div>
 
       {message && (
@@ -232,7 +246,7 @@ export function DeploymentWorkspace() {
       <section className="space-y-3">
         <div className="flex items-end justify-between gap-4">
           <div>
-            <h3 className="text-sm font-medium">Enrolled deployments</h3>
+            <h3 className="text-sm font-medium">Your deployments</h3>
             <p className="mt-1 text-[11px] text-muted">Organized by project.</p>
           </div>
           <Link href="/projects" className="gc-button gc-button-quiet hidden sm:inline-flex">
@@ -245,12 +259,12 @@ export function DeploymentWorkspace() {
           <div className="border border-border bg-card p-8 text-center text-sm text-muted">Reconciling host inventory…</div>
         ) : grouped.length === 0 ? (
           <div className="border border-dashed border-border p-8 text-center text-sm text-muted">
-            No deployments enrolled. Choose one of the discovered workloads below.
+            No deployments yet. Open a project to connect an existing app or launch a new instance.
           </div>
         ) : grouped.map(({ group, items }) => (
           <div key={group?.id || "ungrouped"} className="border border-border bg-card">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <Link href={group ? `/projects#${group.slug}` : "/projects"} className="text-sm font-medium hover:text-accent">
+              <Link href={group ? `/projects/${group.slug}` : "/projects"} className="text-sm font-medium hover:text-accent">
                 {group?.name || "Ungrouped"}
               </Link>
               <span className="font-mono text-[10px] text-muted">{items.length} deployment{items.length === 1 ? "" : "s"}</span>
@@ -262,7 +276,9 @@ export function DeploymentWorkspace() {
                   <article key={item.id} className="grid gap-3 px-4 py-3 transition-colors hover:bg-background/35 md:grid-cols-[minmax(190px,1fr)_auto] md:items-center">
                     <Link href={`/deployments/${item.slug}`} className="group min-w-0">
                       <div className="truncate text-sm font-medium group-hover:text-accent">{item.name}</div>
-                      {item.observedStatus !== "present" && (
+                      <div className="mt-1 text-xs text-muted">{item.environmentName || "Unspecified"} · {item.kind === "compose" ? "Docker Compose" : item.kind}</div>
+                      {item.observedStatus === "source-only" && <div className="mt-1 text-[11px] text-muted">Source added · not deployed</div>}
+                      {item.observedStatus === "missing" && (
                         <div className="mt-1 text-[10px] text-warning">Needs attention</div>
                       )}
                     </Link>
@@ -351,13 +367,17 @@ export function DeploymentWorkspace() {
       </section>
 
       <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Discovered on this host</h3>
-          <p className="mt-1 text-[11px] text-muted">Candidates remain read-only until you explicitly enrol them.</p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium">Suggested from {localDesktop ? "this computer" : "this host"}</h3>
+            <p className="mt-1 text-xs text-muted">Add what you want to manage. Dismissing a suggestion leaves its files and apps untouched.</p>
+          </div>
+          {hiddenCount > 0 && <button type="button" disabled={!!busy} onClick={() => void mutate({ action: "restore_all" }, "Restoring suggestions…", "Hidden suggestions restored.", "restore")} className="gc-button gc-button-quiet">Restore hidden ({hiddenCount})</button>}
         </div>
+        {dismissed && <div role="status" className="flex flex-wrap items-center gap-3 text-xs text-muted"><span>{dismissed.name} dismissed.</span><button type="button" disabled={!!busy} className="gc-button gc-button-quiet" onClick={async () => { if (await mutate({ action: "restore", candidateId: dismissed.id }, "Restoring…", "Suggestion restored.", "undo")) setDismissed(null); }}>Undo</button></div>}
         {!loading && candidates.length === 0 ? (
           <div className="border border-dashed border-border p-6 text-center text-xs text-muted">
-            No un-enrolled folders or containers found in the configured discovery locations.
+            No new suggestions. Use “Add project” to find projects in another folder.
           </div>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
@@ -366,18 +386,20 @@ export function DeploymentWorkspace() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium">{candidate.name}</div>
-                    <div className="mt-1 truncate font-mono text-[10px] text-muted">
-                      {candidate.kind} · {candidate.sourcePath || candidate.containerName}
+                    <div className="mt-1 break-all font-mono text-[10px] text-muted">
+                      {candidate.sourcePath || candidate.containerName}
                     </div>
                   </div>
-                  <span className="border border-border bg-background px-2 py-1 font-mono text-[9px] uppercase text-muted">candidate</span>
+                  <span className="border border-border bg-background px-2 py-1 font-mono text-[9px] text-muted">{candidate.kind === "source" ? "Source folder" : candidate.kind === "compose" ? "Compose app" : "Container"}</span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {candidate.evidence.map((entry) => (
                     <span key={entry} className="bg-background px-2 py-1 text-[10px] text-muted">{entry}</span>
                   ))}
                 </div>
-                <div className="mt-4 flex items-center justify-end gap-2 border-t border-border pt-3">
+                {Boolean(candidate.services?.length) && <details className="mt-3 text-xs text-muted"><summary className="cursor-pointer py-1">View {candidate.services!.length} service{candidate.services!.length === 1 ? "" : "s"}</summary><ul className="mt-2 space-y-2">{candidate.services!.map((service) => <li key={service.containerName} className="flex justify-between gap-2"><span className="min-w-0"><span className="block text-foreground">{service.name}</span><span className="block break-all text-[10px]">{service.image}</span></span><span>{service.state}</span></li>)}</ul></details>}
+                <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+                  <button type="button" disabled={!!busy} aria-label={`Dismiss ${candidate.name}`} className="gc-button gc-button-quiet mr-auto" onClick={async () => { if (await mutate({ action: "dismiss", candidateId: candidate.id }, `Dismissing ${candidate.name}…`, "Suggestion dismissed. Your files and apps are unchanged.", `dismiss-${candidate.id}`)) setDismissed(candidate); }}>Dismiss</button>
                   <button
                     type="button"
                     disabled={!!busy}
@@ -387,9 +409,9 @@ export function DeploymentWorkspace() {
                       `${candidate.name} enrolled. Its current location and runtime were preserved.`,
                       candidate.id
                     )}
-                    className="gc-button gc-button-primary"
+                    className="gc-button gc-button-secondary"
                   >
-                    {busy === candidate.id ? "Enrolling…" : "Enrol deployment"}
+                    {busy === candidate.id ? "Adding…" : candidate.kind === "source" ? "Add project" : "Track app"}
                   </button>
                   <ContextActionMenu label={`Enrollment options for ${candidate.name}`}>
                     {(close) => (
@@ -420,6 +442,7 @@ export function DeploymentWorkspace() {
         )}
       </section>
 
+      {addFolderOpen && <AddProjectFlow localDesktop={localDesktop} hostId={hostId} onClose={() => setAddFolderOpen(false)} onAdded={async (name) => { await load(); setMessage({ tone: "success", text: `${name} added to Projects. Its source is saved; no deployment has been started.` }); }} />}
       <ModalSurface
         open={Boolean(linkTarget)}
         onClose={() => {

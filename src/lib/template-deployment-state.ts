@@ -10,6 +10,7 @@ export interface TemplateDnsRecord {
 
 export interface PersistTemplateDeploymentInput {
   slug: string;
+  projectGroupId?: number;
   templateName: string;
   deployPath: string;
   composeProject: string;
@@ -66,6 +67,7 @@ export async function persistTemplateDeployment(
     create: {
       slug: input.slug,
       name: humanizeSlug(input.slug),
+      ...(input.projectGroupId ? { projectGroupId: input.projectGroupId } : {}),
       domain: primaryDomain,
       path: input.staticDir || input.deployPath,
       repoUrl: input.source.repoUrl || null,
@@ -83,6 +85,7 @@ export async function persistTemplateDeployment(
     },
     update: {
       name: humanizeSlug(input.slug),
+      ...(input.projectGroupId ? { projectGroupId: input.projectGroupId } : {}),
       domain: primaryDomain,
       path: input.staticDir || input.deployPath,
       repoUrl: input.source.repoUrl || null,

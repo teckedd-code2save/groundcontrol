@@ -2,6 +2,8 @@
 
 GroundControl's canonical installer is designed to be run **on the authorized target host**. An agent may perform the mechanical installation, but a fresh instance remains unclaimed until a human completes the one-time claim.
 
+For a person starting on their own computer, [`scripts/start`](../scripts/start) provides the local/remote chooser and browser handoff. Remote mode calls this same canonical installer over SSH and creates the local tunnel automatically. Local mode uses the desktop-capable Docker image. See [Start from your computer](./start-from-your-computer.md).
+
 ## Why the claim boundary exists
 
 An installer that silently creates an administrator account gives the installer permanent control-plane authority. GroundControl instead separates:

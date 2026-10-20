@@ -329,6 +329,8 @@ export interface DockerContainerLabelInfo {
   workingDir: string;
   configFiles: string;
   projectSlug: string;
+  internal?: string;
+  installMode?: string;
   createdAt?: string;
   startedAt?: string;
   restartCount?: number;
@@ -378,37 +380,28 @@ export async function getDockerContainerLabels(vps?: VpsConnection | null): Prom
   const names = namesResult.stdout.trim().split("\n").filter(Boolean);
   if (names.length === 0) return [];
 
+  const inspect = await execOnVps(
+    `docker inspect --format '{{.Name}}\t{{json .Config.Labels}}\t{{.Created}}\t{{.State.StartedAt}}\t{{.RestartCount}}' ${names.map(shQuote).join(" ")}`,
+    conn
+  );
   const results: DockerContainerLabelInfo[] = [];
-  for (const name of names) {
+  for (const line of inspect.stdout.split("\n")) {
     try {
-      const inspect = await execOnVps(
-        `docker inspect --format "{{.Name}}	{{index .Config.Labels \\"com.docker.compose.project\\"}}	{{index .Config.Labels \\"com.docker.compose.service\\"}}	{{index .Config.Labels \\"com.docker.compose.project.working_dir\\"}}	{{index .Config.Labels \\"com.docker.compose.project.config_files\\"}}" ${shQuote(name)} 2>/dev/null || echo ""`,
-        conn
-      );
-      const stateInspect = await execOnVps(
-        `docker inspect --format "{{.Created}}\t{{.State.StartedAt}}\t{{.RestartCount}}" ${shQuote(name)} 2>/dev/null || echo ""`,
-        conn
-      );
-      const [n, project, service, workingDir, configFiles] = inspect.stdout.trim().split("\t");
-      const [createdAt, startedAt, restartCount] = stateInspect.stdout.trim().split("\t");
-      const resolvedWorkingDir = cleanDockerTemplateValue(workingDir);
-      const resolvedProject = cleanDockerTemplateValue(project);
-      if (n) {
-        results.push({
-          name: n.replace(/^\//, ""),
-          project: resolvedProject,
-          service: cleanDockerTemplateValue(service),
-          workingDir: resolvedWorkingDir,
-          configFiles: cleanDockerTemplateValue(configFiles),
-          projectSlug: resolvedWorkingDir.split("/").filter(Boolean).pop() || resolvedProject,
-          createdAt: createdAt || "",
-          startedAt: startedAt || "",
-          restartCount: Number(restartCount || 0),
-        });
-      }
-    } catch {
-      // skip containers we can't inspect
-    }
+      const [name, rawLabels, createdAt, startedAt, restartCount] = line.split("\t");
+      if (!name || !rawLabels) continue;
+      const labels = JSON.parse(rawLabels) || {};
+      const workingDir = cleanDockerTemplateValue(labels["com.docker.compose.project.working_dir"]);
+      const project = cleanDockerTemplateValue(labels["com.docker.compose.project"]);
+      results.push({
+        name: name.replace(/^\//, ""), project, workingDir,
+        service: cleanDockerTemplateValue(labels["com.docker.compose.service"]),
+        configFiles: cleanDockerTemplateValue(labels["com.docker.compose.project.config_files"]),
+        projectSlug: workingDir.split("/").filter(Boolean).pop() || project,
+        internal: labels["io.groundcontrol.internal"] || "",
+        installMode: labels["io.groundcontrol.install-mode"] || "",
+        createdAt, startedAt, restartCount: Number(restartCount || 0),
+      });
+    } catch { /* A removed container or malformed record does not hide the others. */ }
   }
   return results;
 }
