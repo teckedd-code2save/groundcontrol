@@ -25,8 +25,11 @@ export async function GET(req: NextRequest) {
     requireAuth(req);
     const owner = req.nextUrl.searchParams.get("owner")?.trim() || "";
 
+    const publicOnly = req.nextUrl.searchParams.get("access") === "public";
+    const page = Number(req.nextUrl.searchParams.get("page") || "1");
+    if (!Number.isInteger(page) || page < 1 || page > 100) return NextResponse.json({ error: "Invalid repository page." }, { status: 400 });
     const installationCount = await prisma.githubInstallation.count();
-    if (installationCount > 0) {
+    if (installationCount > 0 && !publicOnly) {
       if (owner && !validOwner(owner)) {
         return NextResponse.json({ error: "Enter a valid GitHub username or organization." }, { status: 400 });
       }
@@ -70,14 +73,15 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    if (!owner || !validOwner(owner)) {
+    if (!owner) return NextResponse.json({ repositories: [], access: "public_fallback", needsOwner: true, hasMore: false });
+    if (!validOwner(owner)) {
       return NextResponse.json({
         error: "Connect the GitHub App for private repositories, or provide a public GitHub owner.",
       }, { status: 400 });
     }
 
     const response = await fetch(
-      `https://api.github.com/users/${encodeURIComponent(owner)}/repos?per_page=100&sort=updated&type=owner`,
+      `https://api.github.com/users/${encodeURIComponent(owner)}/repos?per_page=100&sort=updated&type=owner&page=${page}`,
       {
         headers: {
           Accept: "application/vnd.github+json",
@@ -93,7 +97,8 @@ export async function GET(req: NextRequest) {
       }, { status: response.status === 404 ? 404 : 502 });
     }
 
-    const repositories = (await response.json() as PublicGithubRepository[])
+    const rawRepositories = await response.json() as PublicGithubRepository[];
+    const repositories = rawRepositories
       .filter((item) => item.private !== true && item.archived !== true)
       .map((item) => ({
         id: Number(item.id || 0),
@@ -108,7 +113,7 @@ export async function GET(req: NextRequest) {
       }))
       .filter((item) => item.name && item.url);
 
-    return NextResponse.json({ owner, repositories, access: "public_fallback" });
+    return NextResponse.json({ owner, repositories, access: "public_fallback", page, hasMore: rawRepositories.length === 100 && page < 100 });
   } catch (error) {
     return handleApiError(error);
   }

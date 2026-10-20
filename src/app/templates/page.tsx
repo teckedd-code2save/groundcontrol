@@ -104,6 +104,8 @@ function isStaticTpl(t: TemplateWithId): boolean {
 
 export default function TemplatesPage() {
   const router = useRouter();
+  const [projectContext, setProjectContext] = useState<{ id: number; name: string; environment: string; hostId: number; hostName: string } | null>(null);
+  const [projectContextError, setProjectContextError] = useState("");
   const [templates, setTemplates] = useState<TemplateWithId[]>([]);
   const [selected, setSelected] = useState<TemplateWithId | null>(null);
   const [step, setStep] = useState<Step>("browse");
@@ -141,6 +143,16 @@ export default function TemplatesPage() {
   const [deployStatus, setDeployStatus] = useState("");
 
   useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("projectId")) {
+      fetch("/api/project-groups").then((r) => r.json()).then((data) => {
+        const project = data.projects?.find((p: { id: number }) => p.id === Number(query.get("projectId")));
+        if (!project || data.hostId !== Number(query.get("hostId"))) { setProjectContextError("The project or selected host changed. Return to Projects and start again."); return; }
+        setProjectContext({ id: project.id, name: project.name, environment: query.get("environment") || "Production", hostId: data.hostId, hostName: data.hostName });
+        if (project.repositoryUrl) setRepoUrl(project.repositoryUrl);
+        if (project.repositoryDefaultBranch) setBranch(project.repositoryDefaultBranch);
+      }).catch(() => setProjectContextError("Could not load the project. Return to Projects and try again."));
+    }
     fetch("/api/templates").then(r => r.json())
       .then(d => setTemplates(d.templates || [])).catch(() => {});
     fetch("/api/cloudflare/tunnels").then(r => r.json())
@@ -217,6 +229,9 @@ export default function TemplatesPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          projectGroupId: projectContext?.id,
+          environmentName: projectContext?.environment,
+          hostId: projectContext?.hostId,
           templateName: selected._filename,
           sourceType,
           repoUrl: sourceType === "github" ? repoUrl : undefined,
@@ -379,6 +394,7 @@ export default function TemplatesPage() {
 
   async function handlePreview() {
     if (!selected) return;
+    if (new URLSearchParams(window.location.search).has("projectId") && !projectContext) { setResult({ ok: false, msg: projectContextError || "Wait for project details to load." }); return; }
     if (!validateDnsConfiguration()) return;
     setLoading(true); setResult(null); setDeployStatus("Validating source and required inputs…");
     // Re-validate source before generating preview (catches wrong template + repo combo)
@@ -518,9 +534,11 @@ export default function TemplatesPage() {
       <PageHeader
         eyebrow="Build"
         title="Templates"
-        description="Production-shaped workflows that validate, create, and enrol a deployment—not loose boilerplate files."
+        description="Choose how to run your app, configure it, and review before deploying."
       />
 
+      {projectContext && <div className="mb-6 border border-border bg-card p-4"><p className="text-sm font-medium">{projectContext.name} / {projectContext.environment}</p><p className="mt-1 text-xs text-muted">New deployment on {projectContext.hostName}. It will appear inside this project.</p></div>}
+      {projectContextError && <Notice tone="danger">{projectContextError} <a href="/projects" className="underline">Back to Projects</a></Notice>}
       <ProgressSteps label="Deployment template workflow" steps={steps} current={step} onSelect={setStep} className="mb-8" />
 
       {result && step !== "source" && (

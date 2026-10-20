@@ -4,6 +4,7 @@ import { handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { getActiveVps, getDockerContainerLabels, getDockerContainers } from "@/lib/vps";
 import { scanProjects } from "@/lib/vps";
+import { isDesktopMode } from "@/lib/runtime";
 import { scanProjectsTree } from "@/lib/project-scan";
 import {
   readDeploymentOverrides,
@@ -53,14 +54,15 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
       getDockerContainers(vps),
       getDockerContainerLabels(vps),
       prisma.projectGroup.findMany({ orderBy: { name: "asc" } }),
-      scanProjectsTree(vps),
-      scanProjects(vps),
+      isDesktopMode() && vps?.isLocal ? Promise.resolve({ projects: [] }) : scanProjectsTree(vps),
+      isDesktopMode() && vps?.isLocal ? Promise.resolve({ caddySites: [] }) : scanProjects(vps),
     ]);
 
-    if (!deployment) {
+    if (!deployment || deployment.vpsConfigId !== (vps?.id ?? null)) {
       return NextResponse.json({ error: "Deployment not found" }, { status: 404 });
     }
 
+    if (deployment.kind === "source") return NextResponse.json({ projectUrl: deployment.projectGroup ? `/projects/${deployment.projectGroup.slug}` : "/projects" });
     const releases = deployment.legacyProject?.deployments || [];
     const latestRelease = releases[0] || null;
     const evidence = resolveDeploymentEvidence({
@@ -89,10 +91,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
       orderBy: { createdAt: "desc" },
       take: 20,
     });
+    let sourceProject = null;
+    try { sourceProject = JSON.parse(deployment.metadataJson).sourceProject || null; } catch {}
     return NextResponse.json({
       deployment: {
         ...deployment,
-        sourcePath: execution.sourcePath,
+        sourceProject,
+        sourcePath: deployment.kind === "source" ? deployment.sourcePath : execution.sourcePath,
         composePath: execution.composePath,
         composeProject: execution.composeProject,
         executionSource: execution.source,
@@ -116,7 +121,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         runtimeEvents,
         releases,
         envProfile: deployment.legacyProject?.envProfiles[0] || null,
-        observedStatus: evidence.runtime.status === "present" || evidence.route || deployment.kind === "static" && Boolean(deployment.legacyProject)
+        observedStatus: deployment.kind === "source" && evidence.runtime.status !== "present" ? "source-only" : evidence.runtime.status === "present" || evidence.route || deployment.kind === "static" && Boolean(deployment.legacyProject)
           ? "present" : "missing",
       },
       projects,

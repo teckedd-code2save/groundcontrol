@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Select at least one deployment for this agent." }, { status: 400 });
     }
     const allowed = await prisma.enrolledDeployment.findMany({
-      where: { id: { in: requestedIds } },
+      where: { id: { in: requestedIds }, kind: { not: "source" } },
       select: { id: true },
     });
     if (allowed.length !== requestedIds.length) {

@@ -4,6 +4,8 @@ import { isRepositoryComposeTemplate, isStaticTemplate, loadTemplate, resolveTem
 import { getActiveVps, getSystemConfig, shQuote } from "@/lib/vps";
 import { execOnTarget } from "@/lib/host-exec";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
+import { deploymentEnvironment } from "@/lib/project-deployments";
+import { HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { resolveTemplateSource } from "@/lib/template-source";
 import { persistTemplateDeployment } from "@/lib/template-deployment-state";
@@ -55,6 +57,9 @@ async function enrolTemplateDeployment(args: {
   composePath?: string;
   vpsConfigId: number;
   templateName: string;
+  projectGroupId?: number;
+  environmentName?: string;
+  composeProject?: string;
 }) {
   return prisma.enrolledDeployment.upsert({
     where: { legacyProjectId: args.projectId },
@@ -62,6 +67,8 @@ async function enrolTemplateDeployment(args: {
       name: args.name,
       slug: args.slug,
       kind: args.kind,
+      projectGroupId: args.projectGroupId,
+      environmentName: args.environmentName,
       managementMode: "managed",
       sourcePath: args.sourcePath,
       composePath: args.composePath,
@@ -69,17 +76,19 @@ async function enrolTemplateDeployment(args: {
       lastSeenAt: new Date(),
       vpsConfigId: args.vpsConfigId,
       legacyProjectId: args.projectId,
-      metadataJson: JSON.stringify({ source: "template", templateName: args.templateName }),
+      metadataJson: JSON.stringify({ source: "template", templateName: args.templateName, composeProject: args.composeProject }),
     },
     update: {
       name: args.name,
       kind: args.kind,
+      projectGroupId: args.projectGroupId,
+      environmentName: args.environmentName,
       sourcePath: args.sourcePath,
       composePath: args.composePath,
       managementMode: "managed",
       status: "active",
       lastSeenAt: new Date(),
-      metadataJson: JSON.stringify({ source: "template", templateName: args.templateName }),
+      metadataJson: JSON.stringify({ source: "template", templateName: args.templateName, composeProject: args.composeProject }),
     },
   });
 }
@@ -205,6 +214,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    const projectGroupId = body.projectGroupId ? Number(body.projectGroupId) : undefined;
+    const environmentName = body.environmentName === undefined ? undefined : deploymentEnvironment(body.environmentName);
+    const project = projectGroupId ? await prisma.projectGroup.findUnique({ where: { id: projectGroupId } }) : null;
+    if (projectGroupId && !project) throw new HttpError("Project not found.", 404);
     const { templateName, deploymentName, inputs = {}, envVars = [], repoUrl, branch, ghcrImage, localPath, domain, createDns, zoneId, proxied, tunnelId } = body;
 
     if (!templateName) {
@@ -257,7 +270,10 @@ export async function POST(req: NextRequest) {
       domain: domain || allInputs.domain,
       templateName,
     });
-    const slug = slugifyDeploymentName(inferredName);
+    const slug = slugifyDeploymentName(project ? `${project.slug.slice(0, 35)}-${environmentName || "production"}-${inferredName}` : inferredName);
+    const existing = await prisma.enrolledDeployment.findUnique({ where: { slug } });
+    const previousRecord = projectGroupId ? await prisma.project.findUnique({ where: { slug } }) : null;
+    if (projectGroupId && (existing || previousRecord)) throw new HttpError("A deployment with this name already exists. Choose another name, or open that deployment to release an update.", 409);
     const composeProject = staticMode ? "" : `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
     const deployPath = `${templateRoot}/${slug}`;
     const staticDir = `${staticRoot}/${slug}`;
@@ -276,6 +292,7 @@ export async function POST(req: NextRequest) {
 
     // Deploy to VPS
     const vps = await getActiveVps();
+    if (body.hostId !== undefined && body.hostId !== vps?.id) throw new HttpError("The selected connection changed. Return to the project and choose the host again.", 409);
     const startTime = Date.now();
 
     if (!vps) {
@@ -533,6 +550,7 @@ export async function POST(req: NextRequest) {
       const verification = deploymentVerificationStatus(domains, dnsResult, healthResults);
 
       const persisted = await persistTemplateDeployment({
+      projectGroupId,
         slug,
         templateName,
         deployPath,
@@ -555,6 +573,7 @@ export async function POST(req: NextRequest) {
         staticDir,
       });
       await enrolTemplateDeployment({
+      projectGroupId, environmentName, composeProject,
         projectId: persisted.projectId,
         name: slug,
         slug,
@@ -758,6 +777,7 @@ export async function POST(req: NextRequest) {
     const deploymentOutput = runtimeVerification ? { compose: upResult, runtime: runtimeVerification } : upResult;
 
     const persisted = await persistTemplateDeployment({
+      projectGroupId,
       slug,
       templateName,
       deployPath: runtimePath,
@@ -808,6 +828,7 @@ export async function POST(req: NextRequest) {
       },
     });
     await enrolTemplateDeployment({
+      projectGroupId, environmentName, composeProject,
       projectId: persisted.projectId,
       name: slug,
       slug,
@@ -851,6 +872,6 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     return NextResponse.json({
       success: false, error: err instanceof Error ? err.message : "Deploy failed",
-    }, { status: 500 });
+    }, { status: err instanceof HttpError ? err.status : 500 });
   }
 }

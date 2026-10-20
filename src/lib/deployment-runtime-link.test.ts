@@ -47,3 +47,11 @@ describe("deployment runtime reconciliation", () => {
     expect(result.containers.map((item) => item.service)).toEqual(["api"]);
   });
 });
+
+it("does not merge staging and production instances sharing source", () => {
+  const containers = ["prod", "stage"].map((name) => ({ name, image: "app:1", status: "Up", ports: "", state: "running" }));
+  const labels = containers.map((c) => ({ name: c.name, project: c.name, service: "web", workingDir: "/opt/app", configFiles: "/opt/app/compose.yml", projectSlug: "app" }));
+  const linked = linkDeploymentRuntime({ sourcePath: "/opt/app", metadataJson: JSON.stringify({ composeProject: "stage" }) }, containers, labels);
+  expect(linked.containers.map((c) => c.name)).toEqual(["stage"]);
+  expect(linkDeploymentRuntime({ sourcePath: "/opt/app", metadataJson: JSON.stringify({ composeProject: "missing" }) }, containers, labels).status).toBe("missing");
+});

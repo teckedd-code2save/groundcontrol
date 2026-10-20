@@ -64,6 +64,7 @@ model VpsConfig {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  projectSources      ProjectSource[]
   systemConfig        SystemConfig?
   deploymentTargets   DeploymentTarget[]
   enrolledDeployments EnrolledDeployment[]
@@ -97,7 +98,7 @@ model Project {
   @@index([projectGroupId])
 }
 
-// A Project is intentionally only an operator-created group of deployments.
+// A user-facing project represents an application/product, its sources and instances.
 // The legacy Project model above remains the deployed workload record until the
 // deployment/revision table rename is completed in a backwards-compatible step.
 model ProjectGroup {
@@ -105,11 +106,29 @@ model ProjectGroup {
   slug        String   @unique
   name        String
   description String   @default("")
+  repositoryUrl String?
+  repositoryDefaultBranch String?
+  sources     ProjectSource[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   deployments         Project[]
   enrolledDeployments EnrolledDeployment[]
+}
+
+// A source folder belongs to a project, independent of its running instances.
+model ProjectSource {
+  id Int @id @default(autoincrement())
+  projectGroupId Int
+  vpsConfigId Int
+  path String
+  metadataJson String @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  projectGroup ProjectGroup @relation(fields: [projectGroupId], references: [id], onDelete: Cascade)
+  vpsConfig VpsConfig @relation(fields: [vpsConfigId], references: [id], onDelete: Cascade)
+  @@unique([vpsConfigId, path])
+  @@index([projectGroupId])
 }
 
 // Stable operator-owned identity for a workload discovered on a host. This is
@@ -119,6 +138,7 @@ model EnrolledDeployment {
   name            String
   slug            String    @unique
   kind            String
+  environmentName String    @default("Unspecified")
   managementMode  String    @default("track") // track | managed
   sourcePath      String?
   composePath     String?
@@ -141,7 +161,7 @@ model EnrolledDeployment {
   qaRuns             ComponentQARun[]
   agentOperations    AgentOperation[]
 
-  @@unique([vpsConfigId, sourcePath])
+  @@index([vpsConfigId, sourcePath])
   @@unique([vpsConfigId, containerName])
   @@index([projectGroupId, updatedAt])
   @@index([vpsConfigId, status])

@@ -35,6 +35,7 @@ export async function probeContainers(): Promise<DiscoveredContainer[]> {
       const raw = JSON.parse(line);
       
       const labels = parseDockerLabels(raw.Labels || "");
+      if (labels["io.groundcontrol.internal"] || /^groundcontrol-host-bridge(?::|@|$)/.test(raw.Image || "") || raw.Names === "groundcontrol-web") continue;
       const ports = raw.Ports 
         ? raw.Ports.split(", ")
             .filter(Boolean)

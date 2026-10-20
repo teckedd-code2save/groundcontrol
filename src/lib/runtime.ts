@@ -1,5 +1,10 @@
 import fs from "fs";
 
+/** Desktop installs operate a Docker workspace, never the Docker VM's host OS. */
+export function isDesktopMode(): boolean {
+  return process.env.GC_DESKTOP_MODE === "1";
+}
+
 let cachedContainerized: boolean | null = null;
 let cachedRuntime: string | undefined;
 

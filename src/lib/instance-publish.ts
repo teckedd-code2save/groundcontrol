@@ -17,7 +17,8 @@ import {
 import { execOnHost } from "@/lib/host-exec";
 import { installClaimStatus } from "@/lib/install-claim";
 import { prisma } from "@/lib/prisma";
-import { shQuote } from "@/lib/vps";
+import { execOnVps, shQuote } from "@/lib/vps";
+import { isDesktopMode } from "@/lib/runtime";
 
 const execFileAsync = promisify(execFile);
 
@@ -562,9 +563,11 @@ export async function publishQuickTunnel() {
 }
 
 export async function keepInstancePrivate() {
-  await stopQuickTunnel();
-  await stopNamedManagementTunnel();
-  await disableCaddyExposure();
+  if (!isDesktopMode()) {
+    await stopQuickTunnel();
+    await stopNamedManagementTunnel();
+    await disableCaddyExposure();
+  }
   await setConfig(PUBLIC_URL_KEY, "");
   await setConfig(PUBLISH_MODE_KEY, "private");
   return {
@@ -610,17 +613,21 @@ export async function verifyGroundControlInstance(
 ): Promise<InstanceVerification> {
   const publicUrl = String(explicitPublicUrl ?? await getConfig(PUBLIC_URL_KEY)).replace(/\/$/, "") || null;
   const checkedAt = new Date().toISOString();
+  const desktop = isDesktopMode();
+  // The control plane's Docker socket is reachable from its app container.
+  // Desktop checks must not enter the Docker Desktop VM's host namespaces.
+  const inspectRuntime = (command: string) => desktop
+    ? execOnVps(command, { id: 0, host: "127.0.0.1", port: 22, username: "root", isLocal: true })
+    : execOnHost(command, { requireHost: true });
 
   const [containerResult, storageResult, hostResult, claim] = await Promise.all([
-    execOnHost(
-      `test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null)" = healthy && echo ready || echo failed`,
-      { requireHost: true }
+    inspectRuntime(
+      `test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null)" = healthy && echo ready || echo failed`
     ),
-    execOnHost(
-      `docker inspect groundcontrol-web --format '{{range .Mounts}}{{if eq .Destination "/app/prisma"}}{{.Type}}:{{.Name}}{{end}}{{end}}' 2>/dev/null`,
-      { requireHost: true }
+    inspectRuntime(
+      `docker inspect groundcontrol-web --format '{{range .Mounts}}{{if eq .Destination "/app/prisma"}}{{.Type}}:{{.Name}}{{end}}{{end}}' 2>/dev/null`
     ),
-    execOnHost("printf groundcontrol-host-ok", { requireHost: true }),
+    desktop ? Promise.resolve({ stdout: "", stderr: "", code: 0 }) : execOnHost("printf groundcontrol-host-ok", { requireHost: true }),
     installClaimStatus(),
   ]);
 
@@ -741,7 +748,10 @@ export async function verifyGroundControlInstance(
         "Database is mounted on a persistent Docker volume.",
         "Persistent /app/prisma volume was not detected."
       ),
-      hostExecution: check(
+      hostExecution: desktop ? {
+        status: "skipped",
+        detail: "Local Docker workspace: native computer services are outside this installation. Add a Linux server for host management.",
+      } : check(
         hostResult.code === 0 && hostResult.stdout === "groundcontrol-host-ok",
         "Strict host execution plane is available.",
         hostResult.stderr || "Strict host execution plane failed."
@@ -789,6 +799,7 @@ export async function instancePublishStatus() {
   } catch {}
 
   return {
+    localDesktop: isDesktopMode(),
     mode: (mode || "private") as PublishMode,
     publicUrl: publicUrl || null,
     claimed: claim.claimed,

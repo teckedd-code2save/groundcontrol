@@ -2,7 +2,11 @@
 
 GroundControl is single-tenant. Each installation owns its own control plane, credentials and operator login.
 
-## Canonical flow
+## Start from the visitor’s computer
+
+`scripts/start` asks whether to use local Docker or a remote Linux server and prints a reachable claim/login link. Remote mode calls the canonical installer and holds an SSH tunnel open. Local mode runs a desktop-capable image with a persistent database and private port. [Commands and platform limits](./start-from-your-computer.md).
+
+## Canonical server flow
 
 ```
 authorized VPS
@@ -120,7 +124,7 @@ An automatic rollback that restores health exits non-zero because the requested 
 
 ## Clean-host acceptance
 
-`.github/workflows/distribution-acceptance.yml` provides a disposable-host acceptance run after relevant production deployments and on manual dispatch.
+`.github/workflows/distribution-acceptance.yml` provides a disposable-host acceptance run after each image build and on manual dispatch. A separate desktop job proves anonymous image download, launcher setup, private verification, terminal access and reconnect. Only successful server and desktop acceptance promotes the current main image to `latest`.
 
 The workflow proves the canonical distribution contract on a fresh GitHub-hosted Linux machine:
 
@@ -138,3 +142,9 @@ The workflow proves the canonical distribution contract on a fresh GitHub-hosted
 Only redacted evidence is uploaded. Claim tokens and claim URLs are removed before artifacts are created.
 
 External HTTPS/Cloudflare paths remain provider-dependent integration checks; the deterministic clean-host job validates all local trust boundaries without relying on a third-party tunnel during CI.
+
+## Publishing a release without upgrading the operator instance
+
+A merge to main publishes a revision-tagged image. Distribution Acceptance checks the server and desktop paths, then promotes that same image to `latest` if main still points to the tested revision. The production VPS job does not run on a push. Its explicit manual `deploy_vps` input defaults to false; an operator upgrade requires its own backup and migration rehearsal. Publishing an image does not authorize updating existing instances.
+
+Desktop setup is not an upgrade command. Server upgrades continue to use `scripts/install --preview` and `--upgrade`, with the existing backup and rollback contract.

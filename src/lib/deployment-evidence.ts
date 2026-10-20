@@ -56,6 +56,7 @@ export function resolveDeploymentExecutionIdentity(
   ].map(normalizedIdentity).filter(Boolean));
   const linked = new Set(linkedContainerNames);
   const ranked = labels
+    .filter((label) => metadataComposeProject ? label.project === metadataComposeProject : !deployment.containerName || label.name === deployment.containerName)
     .map((label) => {
       let score = 0;
       if (linked.has(label.name) || deployment.containerName === label.name) score += 120;

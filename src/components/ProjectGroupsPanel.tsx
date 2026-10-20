@@ -1,365 +1,97 @@
 "use client";
-
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ExternalLink,
-  FolderGit2,
-  Link2,
-  Plus,
-  Trash2,
-  Unlink,
-} from "lucide-react";
-import {
-  ContextActionMenu,
-  ContextMenuAction,
-  ContextMenuDivider,
-  ContextMenuLabel,
-} from "@/components/ContextActionMenu";
-import { ModalSurface } from "@/components/ModalSurface";
-import { Notice } from "@/components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, ArrowUpRight, FolderGit2, Plus, Settings2, Unlink } from "lucide-react";
+import { ModalSurface } from "./ModalSurface";
+import { AddProjectFlow } from "./AddProjectFlow";
+import { AddProjectFolder } from "./AddProjectFolder";
+import { AddProjectDeployment, type ProjectDeployment } from "./AddProjectDeployment";
+import { Notice } from "./ui";
 
-type DeploymentSummary = {
-  id: number;
-  slug: string;
-  name: string;
-  path: string;
-  domain: string | null;
-  publicUrl?: string | null;
-  repoUrl?: string | null;
-  status: string;
-  lastDeploy: string | null;
-};
-
-type ProjectGroup = {
-  id: number;
-  slug: string;
-  name: string;
-  description: string;
-  deployments: DeploymentSummary[];
-};
-
-async function readJson(response: Response) {
-  const text = await response.text();
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return { error: text || "Invalid response" };
-  }
+type ProjectSource = { id: number; path: string; hostName: string; technologies: string[] };
+type Project = { id: number; slug: string; name: string; description: string; repositoryUrl?: string | null; sources: ProjectSource[]; deployments: ProjectDeployment[] };
+async function request(url: string, options?: RequestInit) {
+  const response = await fetch(url, options); const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not save this change."); return data;
 }
-
-export function ProjectGroupsPanel() {
-  const [projects, setProjects] = useState<ProjectGroup[]>([]);
-  const [ungrouped, setUngrouped] = useState<DeploymentSummary[]>([]);
+export function ProjectGroupsPanel({ projectSlug }: { projectSlug?: string }) {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [ungrouped, setUngrouped] = useState<ProjectDeployment[]>([]);
+  const [connection, setConnection] = useState<{ localDesktop?: boolean; hostId?: number | null; hostName?: string }>({});
   const [loading, setLoading] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [linkProject, setLinkProject] = useState<ProjectGroup | null>(null);
-  const [moveDeployment, setMoveDeployment] = useState<DeploymentSummary | null>(null);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [folder, setFolder] = useState<Project | "new" | null>(null);
+  const [addDeployment, setAddDeployment] = useState<Project | null>(null);
+  const [edit, setEdit] = useState<Project | "new" | null>(null);
+  const [move, setMove] = useState<ProjectDeployment | null>(null);
+  const [moveProjectId, setMoveProjectId] = useState("");
+  const [environment, setEnvironment] = useState("");
+  const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [message, setMessage] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const response = await fetch("/api/project-groups", { cache: "no-store" });
-    const data = await readJson(response);
-    if (!response.ok || data.error) throw new Error(data.error || "Failed to load projects");
-    setProjects(Array.isArray(data.projects) ? data.projects : []);
-    setUngrouped(Array.isArray(data.ungrouped) ? data.ungrouped : []);
+    const data = await request("/api/project-groups", { cache: "no-store" });
+    setProjects(data.projects || []); setUngrouped(data.ungrouped || []); setConnection({ localDesktop: data.localDesktop, hostId: data.hostId, hostName: data.hostName });
   }, []);
-
-  useEffect(() => {
-    void load()
-      .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
-      .finally(() => setLoading(false));
-  }, [load]);
-
-  const allDeployments = useMemo(
-    () => [...ungrouped, ...projects.flatMap((project) => project.deployments)],
-    [projects, ungrouped]
-  );
-
-  async function createProject() {
-    if (!name.trim()) return;
-    setBusy(true);
-    try {
-      const response = await fetch("/api/project-groups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description }),
-      });
-      const data = await readJson(response);
-      if (!response.ok || data.error) throw new Error(data.error || "Could not create project");
-      setName("");
-      setDescription("");
-      setCreateOpen(false);
-      setMessage("Project created.");
-      await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  useEffect(() => { void load().catch((error) => setError(error.message)).finally(() => setLoading(false)); }, [load]);
+  const active = projects.find((project) => project.slug === projectSlug);
+  function openEdit(project: Project | "new") {
+    setEdit(project); setName(project === "new" ? "" : project.name); setDescription(project === "new" ? "" : project.description); setRepositoryUrl(project === "new" ? "" : project.repositoryUrl || ""); setError("");
   }
-
-  async function assignDeployment(deploymentId: number, projectGroupId: number | null) {
-    setBusy(true);
-    try {
-      const response = await fetch(`/api/projects/${deploymentId}/group`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectGroupId }),
-      });
-      const data = await readJson(response);
-      if (!response.ok || data.error) throw new Error(data.error || "Could not move deployment");
-      setMessage(projectGroupId ? "Deployment linked to project." : "Deployment moved to Ungrouped.");
-      setLinkProject(null);
-      setMoveDeployment(null);
-      await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  async function mutate(action: () => Promise<unknown>, success: string) {
+    setBusy(true); setError("");
+    try { await action(); await load(); setMessage(success); return true; }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); return false; }
+    finally { setBusy(false); }
   }
-
-  async function deleteProject(projectId: number) {
-    setBusy(true);
-    try {
-      const response = await fetch(`/api/project-groups/${projectId}`, { method: "DELETE" });
-      const data = await readJson(response);
-      if (!response.ok || data.error) throw new Error(data.error || "Could not delete project");
-      setMessage("Project removed; its deployments are now ungrouped.");
-      await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  async function saveProject() {
+    const ok = await mutate(() => request(edit === "new" ? "/api/project-groups" : `/api/project-groups/${(edit as Project).id}`, { method: edit === "new" ? "POST" : "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, description, repositoryUrl }) }), edit === "new" ? "Project created. Add its source and deployments when you’re ready." : "Project updated.");
+    if (ok) setEdit(null);
   }
-
-  if (loading) {
-    return <div className="border border-border bg-card p-6 text-sm text-muted">Loading projects…</div>;
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 border-b border-border pb-5 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="gc-eyebrow">Organization</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em]">Projects</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted">
-            Group deployments that belong together. Each deployment keeps its own runtime, source, environment, and release history.
-          </p>
-        </div>
-        <button type="button" onClick={() => setCreateOpen(true)} className="gc-button gc-button-primary">
-          <Plus size={14} aria-hidden="true" />
-          New project
-        </button>
-      </div>
-
-      {message && <Notice>{message}</Notice>}
-
-      <div className="space-y-4">
-        {projects.map((project) => (
-          <section id={project.slug} key={project.id} className="scroll-mt-6 border border-border bg-card">
-            <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
-              <div>
-                <h2 className="text-base font-medium tracking-tight">{project.name}</h2>
-                <p className="mt-1 text-xs text-muted">
-                  {project.description || `${project.deployments.length} deployment${project.deployments.length === 1 ? "" : "s"}`}
-                </p>
-              </div>
-              <ContextActionMenu label={`Actions for ${project.name}`}>
-                {(close) => (
-                  <>
-                    <ContextMenuLabel>Project</ContextMenuLabel>
-                    <ContextMenuAction onClick={() => {
-                      close();
-                      setLinkProject(project);
-                    }}>
-                      <Link2 size={14} aria-hidden="true" />
-                      Add deployment
-                    </ContextMenuAction>
-                    <ContextMenuDivider />
-                    <ContextMenuAction
-                      tone="danger"
-                      disabled={busy}
-                      onClick={() => {
-                        close();
-                        void deleteProject(project.id);
-                      }}
-                    >
-                      <Trash2 size={14} aria-hidden="true" />
-                      Delete project
-                    </ContextMenuAction>
-                  </>
-                )}
-              </ContextActionMenu>
-            </div>
-            <DeploymentRows
-              deployments={project.deployments}
-              activeProjectId={project.id}
-              onMove={setMoveDeployment}
-              onAssign={assignDeployment}
-            />
-          </section>
-        ))}
-
-        <section className="border border-dashed border-border bg-card/60">
-          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
-            <div>
-              <h2 className="text-sm font-medium">Ungrouped deployments</h2>
-              <p className="mt-1 text-xs text-muted">Deployments that have not been linked to a project.</p>
-            </div>
-          </div>
-          <DeploymentRows
-            deployments={ungrouped}
-            activeProjectId={null}
-            onMove={setMoveDeployment}
-            onAssign={assignDeployment}
-          />
-        </section>
-      </div>
-
-      <ModalSurface
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title="Create project"
-        description="A project is an organizational group. You can link deployments after creating it."
-      >
-        <form onSubmit={(event) => {
-          event.preventDefault();
-          void createProject();
-        }} className="space-y-4">
-          <label className="block">
-            <span className="gc-label">Project name</span>
-            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Customer platform" className="gc-field mt-2 w-full" />
-          </label>
-          <label className="block">
-            <span className="gc-label">Description <span className="normal-case tracking-normal text-muted/70">optional</span></span>
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What these deployments deliver together" rows={3} className="gc-field mt-2 w-full resize-none" />
-          </label>
-          <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <button type="button" onClick={() => setCreateOpen(false)} className="gc-button gc-button-quiet">Cancel</button>
-            <button type="submit" disabled={!name.trim() || busy} className="gc-button gc-button-primary">{busy ? "Creating…" : "Create project"}</button>
-          </div>
-        </form>
-      </ModalSurface>
-
-      <ModalSurface
-        open={Boolean(linkProject)}
-        onClose={() => setLinkProject(null)}
-        title={linkProject ? `Add deployment to ${linkProject.name}` : "Add deployment"}
-        description="Choose an existing deployment. Its runtime and configuration will not move."
-      >
-        <div className="space-y-1">
-          {allDeployments.filter((deployment) => !linkProject?.deployments.some((item) => item.id === deployment.id)).length === 0 ? (
-            <p className="border border-dashed border-border p-4 text-sm text-muted">Every deployment is already in this project.</p>
-          ) : allDeployments
-            .filter((deployment) => !linkProject?.deployments.some((item) => item.id === deployment.id))
-            .map((deployment) => (
-              <button
-                key={deployment.id}
-                type="button"
-                disabled={busy}
-                onClick={() => void assignDeployment(deployment.id, linkProject?.id || null)}
-                className="flex w-full items-center justify-between gap-3 border border-border px-3 py-2.5 text-left hover:border-accent/50 hover:bg-card"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm">{deployment.name}</span>
-                </span>
-                <Plus size={14} className="shrink-0 text-muted" aria-hidden="true" />
-              </button>
-            ))}
-        </div>
-      </ModalSurface>
-
-      <ModalSurface
-        open={Boolean(moveDeployment)}
-        onClose={() => setMoveDeployment(null)}
-        title={moveDeployment ? `Move ${moveDeployment.name}` : "Move deployment"}
-        description="Choose a project or leave the deployment ungrouped."
-      >
-        <div className="space-y-1">
-          <button type="button" disabled={busy} onClick={() => moveDeployment && void assignDeployment(moveDeployment.id, null)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
-            <span>Ungrouped</span><span className="font-mono text-[10px] text-muted">No project</span>
-          </button>
-          {projects.map((project) => (
-            <button key={project.id} type="button" disabled={busy} onClick={() => moveDeployment && void assignDeployment(moveDeployment.id, project.id)} className="flex w-full items-center justify-between border border-border px-3 py-2.5 text-left text-sm hover:border-accent/50 hover:bg-card">
-              <span>{project.name}</span>
-            </button>
-          ))}
-        </div>
-      </ModalSurface>
-    </div>
-  );
-}
-
-function DeploymentRows({
-  deployments,
-  activeProjectId,
-  onMove,
-  onAssign,
-}: {
-  deployments: DeploymentSummary[];
-  activeProjectId: number | null;
-  onMove: (deployment: DeploymentSummary) => void;
-  onAssign: (deploymentId: number, projectGroupId: number | null) => Promise<void>;
-}) {
-  if (deployments.length === 0) {
-    return <div className="px-4 py-5 text-xs text-muted">No deployments in this project.</div>;
-  }
-  return (
-    <div className="divide-y divide-border">
-      {deployments.map((deployment) => {
-        const liveUrl = deployment.publicUrl || (deployment.domain ? `https://${deployment.domain}` : null);
-        return (
-          <article key={deployment.id} className="grid gap-3 px-4 py-3 transition-colors hover:bg-background/35 md:grid-cols-[1fr_auto] md:items-center">
-            <Link href={`/deployments/${deployment.slug}`} className="group min-w-0">
-              <div className="truncate text-sm font-medium group-hover:text-accent">{deployment.name}</div>
-              {liveUrl && <p className="mt-1 truncate text-[10px] text-muted">{deployment.domain || liveUrl}</p>}
-            </Link>
-            <div className="flex items-center justify-end gap-1.5">
-              {liveUrl && (
-                <a href={liveUrl} target="_blank" rel="noreferrer" className="gc-icon-button" aria-label={`Open ${deployment.name} live site`}>
-                  <ExternalLink size={14} aria-hidden="true" />
-                </a>
-              )}
-              {deployment.repoUrl && (
-                <a href={deployment.repoUrl} target="_blank" rel="noreferrer" className="gc-icon-button" aria-label={`Open ${deployment.name} repository`}>
-                  <FolderGit2 size={14} aria-hidden="true" />
-                </a>
-              )}
-              <ContextActionMenu label={`Actions for ${deployment.name}`}>
-                {(close) => (
-                  <>
-                    <ContextMenuAction href={`/deployments/${deployment.slug}`}>
-                      Open deployment
-                    </ContextMenuAction>
-                    <ContextMenuAction onClick={() => {
-                      close();
-                      onMove(deployment);
-                    }}>
-                      <Link2 size={14} aria-hidden="true" />
-                      Move to project
-                    </ContextMenuAction>
-                    {activeProjectId !== null && (
-                      <ContextMenuAction onClick={() => {
-                        close();
-                        void onAssign(deployment.id, null);
-                      }}>
-                        <Unlink size={14} aria-hidden="true" />
-                        Remove from project
-                      </ContextMenuAction>
-                    )}
-                  </>
-                )}
-              </ContextActionMenu>
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
+  function editDeployment(deployment: ProjectDeployment, projectId?: number) { setMove(deployment); setMoveProjectId(projectId ? String(projectId) : ""); setEnvironment(deployment.environmentName); }
+  const closeAddProject = useCallback(() => setAddProjectOpen(false), []);
+  const closeFolder = useCallback(() => setFolder(null), []);
+  const closeDeployment = useCallback(() => setAddDeployment(null), []);
+  const closeEdit = useCallback(() => { if (!busy) setEdit(null); }, [busy]);
+  const closeMove = useCallback(() => { if (!busy) setMove(null); }, [busy]);
+  const renderDeployments = (items: ProjectDeployment[], projectId?: number) => <div className="divide-y divide-border">{items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-4">
+    <Link href={`/deployments/${item.slug}`} className="min-w-0 flex-1"><span className="block text-sm font-medium hover:text-accent">{item.name}</span><span className="mt-1 block text-xs text-muted">{item.environmentName} · {item.hostName} · {item.method === "compose" ? "Docker Compose" : item.method}</span>{item.publicUrl && <span className="mt-1 block truncate text-xs text-muted">{item.publicUrl}</span>}</Link>
+    <button className="gc-icon-button" aria-label={`Settings for ${item.name}`} onClick={() => editDeployment(item, projectId)}><Settings2 size={15} /></button><Link href={`/deployments/${item.slug}`} className="gc-icon-button" aria-label={`Open ${item.name}`}><ArrowUpRight size={17} /></Link>
+  </div>)}</div>;
+  if (loading) return <p className="p-6 text-sm text-muted">Loading projects…</p>;
+  return <div className="space-y-6">
+    <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-6"><div>
+      {projectSlug ? <Link href="/projects" className="gc-button gc-button-quiet mb-3"><ArrowLeft size={14} />All projects</Link> : <p className="gc-eyebrow">Your workspace</p>}
+      <h1 className="mt-2 text-3xl font-semibold tracking-tight">{projectSlug ? active?.name || "Project not found" : "Projects"}</h1>
+      <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{active ? active.description || "Your project’s source and running environments, together." : "A home for each app or product. Keep its source, purpose, and deployments together."}</p>
+    </div><div className="flex flex-wrap gap-2">{active ? <><button className="gc-button gc-button-secondary" onClick={() => openEdit(active)}><Settings2 size={14} />Project settings</button><button className="gc-button gc-button-primary" onClick={() => setAddDeployment(active)}><Plus size={14} />Add deployment</button></> : !projectSlug && <button className="gc-button gc-button-primary" onClick={() => setAddProjectOpen(true)}><Plus size={14} />Add project</button>}</div></header>
+    {message && <Notice tone="success">{message}</Notice>}{error && !edit && !move && <div role="alert"><Notice tone="danger">{error}</Notice></div>}
+    {!projectSlug && <>
+      {!projects.length && <div className="border border-dashed border-border p-8"><h2 className="text-lg font-medium">Start with the project you’re building</h2><p className="mt-2 max-w-xl text-sm text-muted">Choose a folder or a GitHub repository to start your project. Add Local, Staging, and Production deployments as you need them.</p></div>}
+      <div className="grid gap-4 lg:grid-cols-2">{projects.map((project) => <section key={project.id} id={project.slug} className="flex flex-col border border-border bg-card p-5"><Link href={`/projects/${project.slug}`} className="group flex-1"><div className="flex items-start justify-between gap-4"><h2 className="text-lg font-medium group-hover:text-accent">{project.name}</h2><ArrowUpRight size={18} className="text-muted" /></div><p className="mt-2 min-h-10 text-sm leading-relaxed text-muted">{project.description || "Add a purpose in project settings."}</p><p className="mt-4 text-xs text-muted">{project.sources?.length || 0} source folder(s){project.repositoryUrl ? " · Repository connected" : ""}</p></Link><div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"><span className="text-xs text-muted">{project.deployments.length ? `${project.deployments.length} deployment(s) · ${[...new Set(project.deployments.map((d) => d.environmentName))].join(", ")}` : "No deployments yet"}</span><button onClick={() => setAddDeployment(project)} className="gc-button gc-button-secondary"><Plus size={14} />Add deployment</button></div></section>)}</div>
+      {ungrouped.length > 0 && <section className="border border-dashed border-border p-5"><h2 className="text-base font-medium">Deployments without a project</h2><p className="mt-1 text-xs text-muted">Use deployment settings to assign these to a project.</p>{renderDeployments(ungrouped)}</section>}
+    </>}
+    {active && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+      <section className="min-w-0 border border-border bg-card p-5"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-medium">Source</h2><button className="gc-button gc-button-quiet" onClick={() => setFolder(active)}><Plus size={14} />Choose folder</button></div><p className="mt-2 text-xs leading-relaxed text-muted">The code for this project. A source folder can be used by several deployments.</p>
+        {active.repositoryUrl && <a className="mt-5 flex items-center gap-2 break-all text-sm text-accent" href={active.repositoryUrl} target="_blank" rel="noreferrer"><FolderGit2 size={16} className="shrink-0" />{active.repositoryUrl}<ArrowUpRight size={14} className="shrink-0" /></a>}
+        {(active.sources || []).map((source) => <div key={source.id} className="mt-4 border-t border-border pt-4"><div className="flex items-start justify-between gap-2"><p className="break-all text-sm">{source.path.split("/").pop()}</p><button disabled={busy} className="gc-icon-button shrink-0" aria-label={`Remove source ${source.path}`} onClick={() => void mutate(() => request(`/api/project-sources/${source.id}`, { method: "DELETE" }), "Source link removed. Your files are unchanged.")}><Unlink size={14} /></button></div><p className="mt-1 break-all text-xs text-muted">{source.path}</p><p className="mt-2 text-xs text-muted">{source.hostName} · {source.technologies.join(" · ") || "Source folder"}</p></div>)}
+        {!active.sources?.length && !active.repositoryUrl && <div className="mt-5 border border-dashed border-border p-4 text-sm text-muted">Choose a folder or add a repository in project settings.</div>}
+      </section>
+      <section className="min-w-0 border border-border bg-card p-5"><h2 className="text-base font-medium">Deployments</h2><p className="mt-2 text-xs leading-relaxed text-muted">Instances of {active.name}, each with its own environment, host, configuration, and release history.</p>{active.deployments.length ? renderDeployments(active.deployments, active.id) : <div className="mt-5 border border-dashed border-border p-6"><h3 className="text-sm font-medium">Your project is ready for its first deployment</h3><p className="mt-2 text-xs leading-relaxed text-muted">Connect an app that’s already running, or launch a new instance.</p><button className="gc-button gc-button-primary mt-4" onClick={() => setAddDeployment(active)}><Plus size={14} />Add deployment</button></div>}</section>
+    </div>}
+    {addProjectOpen && <AddProjectFlow {...connection} onClose={closeAddProject} onEmpty={() => { setAddProjectOpen(false); openEdit("new"); }} onAdded={async (name) => { await load(); setMessage(`${name} added. Open the project to add a deployment.`); }} />}
+    {folder && <AddProjectFolder {...connection} projectId={folder === "new" ? undefined : folder.id} projectName={folder === "new" ? undefined : folder.name} onClose={closeFolder} onAdded={async (name) => { await load(); setMessage(`${name} source saved. No deployment has been started.`); }} />}
+    {addDeployment && <AddProjectDeployment project={addDeployment} connection={connection} deployments={[...ungrouped, ...projects.filter((p) => p.id !== addDeployment.id).flatMap((p) => p.deployments.map((d) => ({ ...d, projectName: p.name })))]} onClose={closeDeployment} onAdded={async () => { await load(); setMessage("Deployment connected to project."); }} />}
+    <ModalSurface open={!!edit} onClose={closeEdit} title={edit === "new" ? "New project" : "Project settings"} description="Name the app or product, then add its purpose and source repository.">
+      <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void saveProject(); }}>
+        {error && <div role="alert"><Notice tone="danger">{error}</Notice></div>}
+        <label className="block"><span className="gc-label">Project name</span><input className="gc-field mt-2 w-full" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder="Customer Portal" required /></label>
+        <label className="block"><span className="gc-label">Purpose · optional</span><textarea className="gc-field mt-2 w-full" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this project is for" /></label>
+        <label className="block"><span className="gc-label">Repository link · optional</span><input type="url" className="gc-field mt-2 w-full" value={repositoryUrl} onChange={(e) => setRepositoryUrl(e.target.value)} placeholder="https://github.com/your-team/customer-portal" /></label>
+        <div className="flex justify-end gap-2 border-t border-border pt-4"><button type="button" disabled={busy} className="gc-button gc-button-quiet" onClick={closeEdit}>Cancel</button><button disabled={busy || !name.trim()} className="gc-button gc-button-primary">{busy ? "Saving…" : edit === "new" ? "Create project" : "Save project"}</button></div>
+      </form>
+    </ModalSurface>
+    <ModalSurface open={!!move} onClose={closeMove} title={`Settings for ${move?.name || "deployment"}`} description="Organize this deployment without moving its running services.">
+      {error && <Notice tone="danger">{error}</Notice>}<div className="space-y-4"><label className="block"><span className="gc-label">Project</span><select className="gc-field mt-2 w-full" value={moveProjectId} onChange={(e) => setMoveProjectId(e.target.value)}><option value="">No project</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label className="block"><span className="gc-label">Environment</span><input className="gc-field mt-2 w-full" value={environment} maxLength={60} onChange={(e) => setEnvironment(e.target.value)} /></label><button disabled={busy || !environment.trim()} className="gc-button gc-button-primary" onClick={async () => { if (await mutate(() => request(`/api/projects/${move!.id}/group`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectGroupId: moveProjectId ? Number(moveProjectId) : null, environmentName: environment }) }), "Deployment updated.")) setMove(null); }}>Save deployment</button></div>
+    </ModalSurface>
+  </div>;
 }
