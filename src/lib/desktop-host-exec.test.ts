@@ -36,6 +36,10 @@ describe("local Docker execution boundaries", () => {
     expect(mocks.bridge).not.toHaveBeenCalled();
   });
 
+  it("preserves the caller's command timeout in desktop mode", async () => {
+    expect((await execOnHost("sleep 2", { timeout: 50 })).code).not.toBe(0);
+  });
+
   it("honours a selected remote target instead of silently using the workspace", async () => {
     const remote = { id: 2, host: "example.test", port: 22, username: "operator", isLocal: false };
     mocks.active.mockResolvedValue(remote);

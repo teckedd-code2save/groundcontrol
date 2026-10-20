@@ -2,9 +2,9 @@
 
 # 🛰️ GroundControl
 
-### Operational intelligence for applications running on infrastructure you own.
+### Put your agents to work on infrastructure you own.
 
-**See every container, proxy, deployment, domain, and service relationship across your servers today — with a proposed intelligence layer that tests meaningful host changes and safely guides recovery when customer journeys break.**
+**Connect ChatGPT and compatible MCP agents to your applications. Deploy changes, inspect workloads, and verify results with access you define. Start on your computer or a Linux server.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
@@ -19,7 +19,7 @@
 
 ---
 
-GroundControl is a self-hosted infrastructure dashboard and deployment control plane: a single pane of glass for the servers you actually run. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and Kubernetes, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
+GroundControl is a self-hosted deployment control plane for operators and software agents. Projects organize your application sources and running instances; MCP and OAuth give agents scoped access to real application state and supported operations. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and Kubernetes, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
 
 The next product direction deepens that existing advantage rather than replacing it. GroundControl Loop is the proposed intelligence and recovery engine: it correlates meaningful host changes, maps their likely blast radius, runs targeted customer-facing journeys, investigates regressions with evidence, and prepares the least disruptive reversible recovery. See the [implementation and evaluation contract](./docs/LOOP.md).
 
@@ -63,7 +63,7 @@ Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
 |---|---|---|
 | 🗺️ | **Live Topology** | Visual React Flow graph of hosts → projects → sites → services → containers → Kubernetes pods. Click any node to inspect or act. |
 | 📦 | **Container Ops** | Start, stop, restart, remove, and tail logs. Bulk actions with blast-radius confirmation. |
-| 🗂️ | **Projects** | Folder-first view of `/opt`, cross-referenced with Caddy sites and running compose stacks. |
+| 🗂️ | **Projects** | An application or product with GitHub repositories, source folders, and separately named deployment instances. Browse folders or import a repository. |
 | 🚀 | **Multi-Target Deployments** | Deploy to Docker Compose, static sites, k3s Kubernetes, Google Cloud Run, or Terraform-provisioned infrastructure from one UI. |
 | 🌐 | **Auto-Generated Deploy Links** | Provision custom Cloudflare domains or get ephemeral `trycloudflare.com` preview URLs at deploy time. |
 | 📜 | **Terraform Control Plane** | Generate HCL for Hetzner/GCP, run `plan`/`apply`/`destroy`, and use outputs to drive the deploy pipeline. |

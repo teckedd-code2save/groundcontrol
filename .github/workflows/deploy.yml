@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_vps:
+        description: "Also upgrade the operator VPS (requires a separately rehearsed backup and upgrade)"
+        type: boolean
+        default: false
 
 concurrency:
   group: production-deploy
@@ -39,9 +44,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Distribution Acceptance promotes this exact image to latest.
           tags: |
             type=sha,prefix=,suffix=,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -55,6 +60,8 @@ jobs:
 
   deploy:
     needs: build
+    # Publishing a release must not mutate an existing operator's database or runtime.
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_vps
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

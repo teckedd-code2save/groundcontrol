@@ -65,11 +65,15 @@ After claiming the instance, the browser can guide you through a permanent HTTPS
 
 ## Add projects already on your computer
 
-In **Projects** or **Deployments**, choose **Add existing project**. Paste a full folder path such as `/Users/you/Projects/my-app`, or a parent folder such as `/Users/you/Projects`. Choose **Find projects**, review the results, select a project, and choose **Add project**.
+Open **Projects → Add project → Choose a folder**. Select a location, browse its folders, and choose your project. Review its detected technology, name, and purpose, then add it. You do not need to paste a path. With a remote connection selected, the picker browses that server instead of your computer.
 
-Discovery recognizes common JavaScript/TypeScript, Python, .NET, Go, Rust, Java/Kotlin, PHP, Ruby, static-site, Docker, and Git markers. Compose is optional. The scan checks filenames up to three directories below the selected folder, skips dependency/build directories, and does not follow nested symlinks or execute project code. With a remote connection selected, the path belongs to that server; use its absolute Linux path. Native Windows drive-letter paths are not supported by this folder picker yet.
+For GitHub, choose **Import from GitHub**. Select a repository from your connected GitHub App, browse a public user or organization, or use a repository URL. Private repositories require a connection with access. Importing records the repository and default branch; it does not clone or execute the project.
 
-Desktop scans use a temporary, read-only Docker mount for the exact folder selected. If Docker cannot access it, add that folder in Docker Desktop’s file-sharing settings and retry. Source files remain in place. An added source folder is shown as **Source added · not deployed**; automatic deployment from arbitrary local source folders is not available yet.
+A project is the home for an application or product. It can have several source folders and deployments, or no deployment yet. Open the project and choose **Add deployment** to connect an existing app or launch a new instance. See [Projects and deployments](./projects-and-deployments.md).
+
+Discovery recognizes common JavaScript/TypeScript, Python, .NET, Go, Rust, Java/Kotlin, PHP, Ruby, static-site, Docker, and Git markers. Compose is optional. The scan checks filenames up to three directories below the selected folder, skips dependency/build directories, and does not follow nested symlinks or execute project code. Native Windows drive-letter paths are not supported by this folder picker yet; use the locations available through WSL/Docker.
+
+Desktop scans use a temporary, read-only Docker mount for the exact folder selected. If Docker cannot access it, add that folder in Docker Desktop’s file-sharing settings and retry. Source files remain in place. Adding a source does not deploy it. Local launches accept a ready-to-use Docker image and app port. Builds from source, multi-service applications and custom environment configuration use the Linux-server template workflow.
 
 Suggestions group Compose services into one app. **Dismiss** hides an unwanted suggestion on that connection without deleting or stopping anything. **Undo** and **Restore hidden** bring suggestions back. Dismissals persist after refresh and restart. GroundControl’s own containers and helpers are excluded.
 

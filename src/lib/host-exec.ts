@@ -203,7 +203,7 @@ export async function execOnHost(
     if (opts.requireHost) {
       return { stdout: "", stderr: "Local Docker mode cannot manage the computer's operating system. Select a remote Linux server for host operations.", code: 1 };
     }
-    return execInContainer(command, opts.cwd, opts.stdin);
+    return execInContainer(command, opts.cwd, opts.stdin, opts.timeout);
   }
   if (!isContainerized()) {
     return execInContainer(command, opts.cwd, opts.stdin, opts.timeout);

@@ -12,6 +12,10 @@
 
 ## 🚀 Run it
 
+- **[start-from-your-computer.md](./start-from-your-computer.md)** — choose local Docker or a remote Linux server, then open your personal setup link.
+- **[projects-and-deployments.md](./projects-and-deployments.md)** — pick a source folder or GitHub repository, then connect or launch deployments.
+- **[releases/2026-10-20-distribution.md](./releases/2026-10-20-distribution.md)** — this distribution update, compatibility and release checks.
+
 - **[ADOPTION.md](./ADOPTION.md)** — install privately, run a safe first pilot, connect an agent, enable merge-triggered delivery, and operate upgrades.
 - **[acceptance/distribution-2026-09-21.md](./acceptance/distribution-2026-09-21.md)** — redacted evidence from the successful clean-host distribution acceptance.
 - **[LAUNCH-PLAYBOOK.md](./LAUNCH-PLAYBOOK.md)** — evidence-led Product Hunt, Show HN, LinkedIn, community, and pilot plan.
