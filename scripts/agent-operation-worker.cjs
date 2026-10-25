@@ -273,7 +273,7 @@ async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
     },
     body: JSON.stringify({
       projectSlug,
-      images: images.map((img) => ({ service: img.service, digest: img.digest })),
+      images: images.map((img) => ({ service: img.service, digest: img.digest, ref: img.ref })),
     }),
   });
   if (!pinResp.response.ok || pinResp.body.success === false || pinResp.body.error) {

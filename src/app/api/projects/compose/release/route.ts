@@ -39,20 +39,25 @@ export async function POST(req: NextRequest) {
     if (!isValidProjectSlug(projectSlug)) {
       throw new HttpError("A valid projectSlug is required", 400);
     }
-    const images = Array.isArray(body.images) ? body.images : [];
+    const images: unknown[] = Array.isArray(body.images) ? body.images : [];
     if (images.length === 0) {
       throw new HttpError("At least one image digest is required to release.", 400);
     }
+    const parsedImages = images.map((entry: unknown) => {
+      const record = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+      return {
+        service: String(record.service || ""),
+        digest: String(record.digest || ""),
+        ref: String(record.ref || ""),
+      };
+    });
 
     const vps = await getActiveVps();
     const resolved = await resolveComposeProjectPath(projectSlug, undefined, vps);
     const projectPath = resolved.projectPath;
 
     const { content, refs } = buildDigestImageOverride(
-      images.map((entry: unknown) => {
-        const record = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
-        return { service: String(record.service || ""), digest: String(record.digest || "") };
-      })
+      parsedImages.map((entry) => ({ service: entry.service, digest: entry.digest }))
     );
 
     // Capture the prior running digests so the caller can record a rollback pair.
@@ -88,7 +93,11 @@ export async function POST(req: NextRequest) {
       const envKeys = composeImageEnvKeys(rawCompose.stdout);
       for (const [service, digest] of Object.entries(refs)) {
         const envKey = envKeys[service];
-        if (envKey) imageEnv[envKey] = digest;
+        // Pin the runtime env var to the SHA tag, not the digest: a digest cannot
+        // be used as a build tag, so writing it into the `*_IMAGE` env would break
+        // the next build_publish. The managed override still pins the exact digest.
+        const tag = parsedImages.find((entry) => entry.service === service)?.ref || digest;
+        if (envKey) imageEnv[envKey] = tag;
       }
       if (Object.keys(imageEnv).length > 0) {
         const project = await prisma.project.findFirst({ where: { slug: projectSlug } });
