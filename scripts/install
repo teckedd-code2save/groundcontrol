@@ -388,7 +388,16 @@ else
     printf 'JWT_SECRET=%s\n' "$(random_hex 32)" >> "$INSTALL_DIR/.env"
   fi
   if ! grep -q '^GROUNDCONTROL_SECRET=' "$INSTALL_DIR/.env"; then
-    printf 'GROUNDCONTROL_SECRET=%s\n' "$(random_hex 32)" >> "$INSTALL_DIR/.env"
+    # Prefer migrating an existing encryption key over generating a fresh one:
+    # secrets already at rest are encrypted with prisma/.groundcontrol-key, and
+    # a newly-generated GROUNDCONTROL_SECRET would override that key and orphan
+    # those secrets (their AES-GCM auth tags would no longer verify).
+    existing_key="$(docker exec groundcontrol-web cat /app/prisma/.groundcontrol-key 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ -n "$existing_key" ] && [ "${#existing_key}" -eq 64 ]; then
+      printf 'GROUNDCONTROL_SECRET=%s\n' "$existing_key" >> "$INSTALL_DIR/.env"
+    else
+      printf 'GROUNDCONTROL_SECRET=%s\n' "$(random_hex 32)" >> "$INSTALL_DIR/.env"
+    fi
   fi
   if ! grep -q '^HOST_PORT=' "$INSTALL_DIR/.env"; then
     printf 'HOST_PORT=%s\n' "$HOST_PORT" >> "$INSTALL_DIR/.env"
