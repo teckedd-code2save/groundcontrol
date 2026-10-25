@@ -103,27 +103,20 @@ export async function POST(req: NextRequest) {
     const resolved = await resolveComposeProjectPath(projectSlug, undefined, vps);
     const projectPath = resolved.projectPath;
 
-    const project = await prisma.project.findFirst({
-      where: { OR: [{ slug: projectSlug }, { path: projectPath }] },
-    });
-    if (!project) {
-      throw new HttpError("Build requires a managed GroundControl project.", 409);
-    }
+    // Any enrolled deployment with a linked GitHub repository and a compose
+    // path is buildable. The legacy Project / managementMode gate was removed
+    // so new deployments are MCP-drivable without a manual "manage" step.
     const enrolled = await prisma.enrolledDeployment.findFirst({
       where: {
         OR: [
-          { legacyProjectId: project.id },
           { sourcePath: projectPath },
           { slug: projectSlug },
         ],
       },
-      select: { id: true, managementMode: true, composePath: true },
+      select: { id: true, composePath: true },
     });
     if (!enrolled) {
       throw new HttpError("Build is not enrolled in GroundControl.", 409);
-    }
-    if (enrolled.managementMode !== "managed") {
-      throw new HttpError("Build requires managementMode=managed.", 409);
     }
 
     const sourceSync = await syncGithubDeploymentSource({
