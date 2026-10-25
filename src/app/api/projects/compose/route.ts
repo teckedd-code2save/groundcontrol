@@ -418,24 +418,20 @@ export async function POST(req: NextRequest) {
 
     let sourceSync: Awaited<ReturnType<typeof syncGithubDeploymentSource>> | null = null;
     if (isSourceDeploy) {
-      if (!project) {
-        throw new HttpError("Source deployment requires a managed GroundControl project.", 409);
-      }
+      // Any enrolled deployment with a linked GitHub repository and a compose
+      // path is source-deployable. The legacy Project / managementMode gate was
+      // removed so new deployments are MCP-drivable without a manual "manage" step.
       const enrolled = await prisma.enrolledDeployment.findFirst({
         where: {
           OR: [
-            { legacyProjectId: project.id },
             { sourcePath: target.projectPath },
             { slug: projectSlug },
           ],
         },
-        select: { id: true, managementMode: true },
+        select: { id: true },
       });
       if (!enrolled) {
         throw new HttpError("Source deployment is not enrolled in GroundControl.", 409);
-      }
-      if (enrolled.managementMode !== "managed") {
-        throw new HttpError("Source deployment requires managementMode=managed.", 409);
       }
 
       redeployPhase = "source";

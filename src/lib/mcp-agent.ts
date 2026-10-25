@@ -659,12 +659,9 @@ export async function executeAgentTool(
 
   if (name === "deployment.source.deploy") {
     const deployment = await allowedDeployment(context, args.deployment);
-    if (deployment.managementMode !== "managed") {
-      throw new Error("Source deployment requires a GroundControl-managed deployment.");
-    }
-    if (!deployment.legacyProject) {
-      throw new Error("This deployment does not have a managed GroundControl project.");
-    }
+    // Any enrolled deployment with a linked GitHub repository and a compose
+    // path is source-deployable. The legacy Project / managementMode gate was
+    // removed so new deployments are MCP-drivable without a manual "manage" step.
     const idempotencyKey = String(args.idempotencyKey || "").trim();
     if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
       throw new Error("idempotencyKey must be between 8 and 160 characters");
