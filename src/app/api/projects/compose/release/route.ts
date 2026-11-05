@@ -1,3 +1,5 @@
+import { agentComposeCommand } from "@/lib/agent-health";
+import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
@@ -52,8 +54,10 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    const vps = await getActiveVps();
-    const resolved = await resolveComposeProjectPath(projectSlug, undefined, vps);
+    const agentTarget = await agentOperationTarget(req, ["deployment.release"]);
+    assertAgentProject(agentTarget, projectSlug);
+    const vps = agentTarget ? agentTarget.vps : await getActiveVps();
+    const resolved = agentTarget ? { projectPath: agentTarget.projectPath! } : await resolveComposeProjectPath(projectSlug, undefined, vps);
     const projectPath = resolved.projectPath;
 
     const { content, refs } = buildDigestImageOverride(
@@ -61,9 +65,21 @@ export async function POST(req: NextRequest) {
     );
 
     // Capture the prior running digests so the caller can record a rollback pair.
-    const containers = await getDockerContainers(vps);
+    const containers = agentTarget ? [] : await getDockerContainers(vps);
     const previous: Record<string, string> = {};
     for (const service of Object.keys(refs)) {
+      if (agentTarget) {
+        const scoped = await execOnTargetStrict(await agentComposeCommand(agentTarget.deployment, agentTarget.vps, `ps -a -q ${shQuote(service)}`), agentTarget.vps);
+        if (scoped.code !== 0) throw new HttpError("Could not inspect the approved Compose service before release.", 409);
+        const ids = scoped.stdout.trim().split(/\s+/).filter(Boolean);
+        if (ids.some((id) => !/^[a-f0-9]{12,64}$/.test(id))) throw new HttpError("Invalid runtime identity before release.", 409);
+        if (ids.length) {
+          const digest = await execOnTargetStrict(`docker inspect --format '{{.Image}}' ${shQuote(ids[0])}`, agentTarget.vps);
+          if (digest.code !== 0) throw new HttpError("Could not record the previous image before release.", 409);
+          previous[service] = digest.stdout.trim();
+        }
+        continue;
+      }
       const container = containers.find(
         (c) => c.name === service || c.name.startsWith(`${service}-`) || c.name.includes(`-${service}-`)
       );
@@ -86,7 +102,7 @@ export async function POST(req: NextRequest) {
     // same digests, so the `.env`, the managed override, and the running
     // container never diverge. Only services that reference `${IMAGE_KEY}`
     // in the compose file have a canonical env key to update.
-    const composePath = await resolveComposeFile(projectPath, vps);
+    const composePath = await resolveComposeFile(projectPath, vps, agentTarget?.deployment.composePath || undefined);
     const imageEnv: Record<string, string> = {};
     if (composePath) {
       const rawCompose = await execOnTargetStrict(`cat ${shQuote(composePath)}`, vps);
@@ -100,7 +116,7 @@ export async function POST(req: NextRequest) {
         if (envKey) imageEnv[envKey] = tag;
       }
       if (Object.keys(imageEnv).length > 0) {
-        const project = await prisma.project.findFirst({ where: { slug: projectSlug } });
+        const project = agentTarget ? agentTarget.deployment.legacyProject : await prisma.project.findFirst({ where: { slug: projectSlug } });
         const profile = project
           ? await prisma.deploymentEnvProfile.findFirst({
               where: { projectId: project.id },

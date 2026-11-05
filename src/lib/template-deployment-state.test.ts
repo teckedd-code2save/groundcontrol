@@ -53,6 +53,14 @@ function createClient(existingTarget: { id: number; configJson?: string } | null
 }
 
 describe("persistTemplateDeployment", () => {
+  it("retains the static build recipe for later MCP publication", async () => {
+    const client = createClient();
+    await persistTemplateDeployment({ ...baseInput(), category: "static", targetType: "static", staticDir: "/www/demo-app", buildCommand: "npm run build", outputDir: "dist" }, client);
+    expect(client.project.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ path: "/www/demo-app", buildCommand: "npm run build", outputDir: "dist" }),
+      update: expect.objectContaining({ path: "/www/demo-app", buildCommand: "npm run build", outputDir: "dist" }),
+    }));
+  });
   it("retains the user project when a template creates or updates an instance", async () => {
     const client = createClient();
     await persistTemplateDeployment({ ...baseInput(), projectGroupId: 19 }, client);

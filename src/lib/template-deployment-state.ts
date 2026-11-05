@@ -34,6 +34,8 @@ export interface PersistTemplateDeploymentInput {
   /** Deployment target type used for this template run. */
   targetType?: "compose" | "static";
   staticDir?: string | null;
+  buildCommand?: string;
+  outputDir?: string;
 }
 
 export interface PersistTemplateDeploymentResult {
@@ -74,6 +76,7 @@ export async function persistTemplateDeployment(
       dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
       category,
+      ...(category === "static" ? { buildCommand: input.buildCommand || null, outputDir: input.outputDir || "." } : {}),
       status,
       lastDeploy: new Date(),
       envVars: JSON.stringify({
@@ -92,6 +95,7 @@ export async function persistTemplateDeployment(
       dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
       category,
+      ...(category === "static" ? { buildCommand: input.buildCommand || null, outputDir: input.outputDir || "." } : {}),
       status,
       lastDeploy: new Date(),
       envVars: JSON.stringify({

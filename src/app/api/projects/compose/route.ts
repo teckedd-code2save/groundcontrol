@@ -1,3 +1,5 @@
+import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
+import { jsonObject } from "@/lib/agent-runtime-capabilities";
 import { NextRequest, NextResponse } from "next/server";
 import {
   resolveComposeProjectPath, shQuote,
@@ -303,11 +305,14 @@ export async function POST(req: NextRequest) {
     if (requestedComposePathError) {
       return NextResponse.json({ error: requestedComposePathError }, { status: 400 });
     }
-    const vps = await getActiveVps();
+    const agentTarget = await agentOperationTarget(req, ["deployment.redeploy", "deployment.source.deploy", "deployment.release"]);
+    assertAgentProject(agentTarget, projectSlug);
+    if (agentTarget && action !== (agentTarget.operation.type === "deployment.source.deploy" ? "source-deploy" : "redeploy")) throw new HttpError("Action does not match the approved operation.", 403);
+    const vps = agentTarget ? agentTarget.vps : await getActiveVps();
     const isRedeploy = action === "redeploy" || action === "source-deploy";
     const isSourceDeploy = action === "source-deploy";
     if (isRedeploy) {
-      redeployLogFile = `/tmp/gc-redeploy-${projectSlug}.log`;
+      redeployLogFile = agentTarget?.logFile || `/tmp/gc-redeploy-${projectSlug}.log`;
       redeployVps = vps;
       await recordRedeployEvidence(
         redeployLogFile,
@@ -316,13 +321,15 @@ export async function POST(req: NextRequest) {
         true
       );
     }
-    const resolvedTarget = await resolveComposeProjectPath(projectSlug, undefined, vps);
-    const targetCandidates = composeProjectCandidates(resolvedTarget, explicitPath);
+    const resolvedTarget = agentTarget
+      ? { projectPath: agentTarget.projectPath!, projectSlug, source: "config" as const }
+      : await resolveComposeProjectPath(projectSlug, undefined, vps);
+    const targetCandidates = agentTarget ? [resolvedTarget] : composeProjectCandidates(resolvedTarget, explicitPath);
     let target: ComposeProjectTarget | null = null;
     let composeFile: string | null = null;
     for (const candidate of targetCandidates) {
       const candidateComposePath = requestedComposePathForCandidate(
-        requestedComposePath,
+        agentTarget ? agentTarget.deployment.composePath : requestedComposePath,
         candidate.projectPath
       );
       const found = await resolveComposeFile(
@@ -331,6 +338,9 @@ export async function POST(req: NextRequest) {
         candidateComposePath
       );
       if (!found) continue;
+      if (agentTarget?.deployment.composePath && found !== agentTarget.deployment.composePath) {
+        throw new HttpError("The enrolled Compose file is missing. Inspect the deployment before retrying.", 409);
+      }
       target = candidate;
       composeFile = found;
       break;
@@ -351,7 +361,7 @@ export async function POST(req: NextRequest) {
     const serviceArgs = Array.isArray(services) && services.length > 0
       ? services.map((s: string) => shQuote(s)).join(" ")
       : "";
-    const project = await prisma.project.findFirst({
+    const project = agentTarget ? agentTarget.deployment.legacyProject : await prisma.project.findFirst({
       where: {
         OR: [
           { slug: projectSlug },
@@ -391,7 +401,9 @@ export async function POST(req: NextRequest) {
             : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
 
       let result: { stdout: string; stderr: string; code: number };
-      const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+      const baseComposeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+      const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
+      const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
       const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`;
 
       if ((action === "recreate" || action === "start") && vps?.isLocal) {
@@ -421,7 +433,7 @@ export async function POST(req: NextRequest) {
       // Any enrolled deployment with a linked GitHub repository and a compose
       // path is source-deployable. The legacy Project / managementMode gate was
       // removed so new deployments are MCP-drivable without a manual "manage" step.
-      const enrolled = await prisma.enrolledDeployment.findFirst({
+      const enrolled = agentTarget ? agentTarget.deployment : await prisma.enrolledDeployment.findFirst({
         where: {
           OR: [
             { sourcePath: target.projectPath },
@@ -443,7 +455,7 @@ export async function POST(req: NextRequest) {
       sourceSync = await syncGithubDeploymentSource({
         deploymentId: enrolled.id,
         projectPath: target.projectPath,
-        branch,
+        branch: agentTarget ? agentTarget.input.branch : branch,
         vps,
       });
       await recordRedeployEvidence(
@@ -504,7 +516,9 @@ export async function POST(req: NextRequest) {
       "[compose] Validating the effective Compose configuration",
       vps
     );
-    const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+    const baseComposeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+    const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
+    const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
     let configCheck = await execOnTargetStrict(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
       vps

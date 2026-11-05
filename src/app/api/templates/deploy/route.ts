@@ -571,6 +571,8 @@ export async function POST(req: NextRequest) {
         category: "static",
         targetType: "static",
         staticDir,
+        buildCommand,
+        outputDir,
       });
       await enrolTemplateDeployment({
       projectGroupId, environmentName, composeProject,

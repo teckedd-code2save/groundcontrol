@@ -42,6 +42,7 @@ describe("GroundControl MCP tool catalog", () => {
       "deployment.config.check",
       "deployment.source.deploy",
       "deployment.redeploy",
+      "deployment.restart",
       "deployment.build_publish",
       "deployment.release",
       "operation.get",

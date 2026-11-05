@@ -1,3 +1,5 @@
+import { jsonObject } from "@/lib/agent-runtime-capabilities";
+import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
 import { buildOutput, buildFailureSummary, type BuildOutput } from "@/lib/build-output";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
@@ -99,14 +101,16 @@ export async function POST(req: NextRequest) {
       ? body.services.map((s: unknown) => String(s)).filter(Boolean)
       : undefined;
 
-    const vps = await getActiveVps();
-    const resolved = await resolveComposeProjectPath(projectSlug, undefined, vps);
+    const agentTarget = await agentOperationTarget(req, ["deployment.build_publish"]);
+    assertAgentProject(agentTarget, projectSlug);
+    const vps = agentTarget ? agentTarget.vps : await getActiveVps();
+    const resolved = agentTarget ? { projectPath: agentTarget.projectPath! } : await resolveComposeProjectPath(projectSlug, undefined, vps);
     const projectPath = resolved.projectPath;
 
     // Any enrolled deployment with a linked GitHub repository and a compose
     // path is buildable. The legacy Project / managementMode gate was removed
     // so new deployments are MCP-drivable without a manual "manage" step.
-    const enrolled = await prisma.enrolledDeployment.findFirst({
+    const enrolled = agentTarget ? agentTarget.deployment : await prisma.enrolledDeployment.findFirst({
       where: {
         OR: [
           { sourcePath: projectPath },
@@ -137,7 +141,9 @@ export async function POST(req: NextRequest) {
     if (!composePath) {
       throw new HttpError("The synced source does not contain a Compose file.", 409);
     }
-    const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+    const baseComposeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+    const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
+    const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
 
     const configCheck = await execOnTargetStrict(
       `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composePath, { includeEnvironment: false })}`,

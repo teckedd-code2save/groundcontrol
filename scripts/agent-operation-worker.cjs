@@ -77,6 +77,7 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
     },
   });
   if (!current) return;
+  if (!String(current.grant.scope || "").split(/\s+/).includes("deployment:redeploy")) return markFailed(prisma, current, "The grant no longer authorizes deployment mutations");
   if (current.grant.revokedAt) return markFailed(prisma, current, "Agent grant was revoked before execution");
   if (current.grant.user.forcePasswordChange || current.grant.user.role !== "admin") {
     return markFailed(prisma, current, "The approving GroundControl user no longer has administrator deployment access");
@@ -84,43 +85,31 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
   if (!parseResources(current.grant.resources).includes(current.deploymentId)) {
     return markFailed(prisma, current, "The grant no longer authorizes this deployment");
   }
-  if (!["deployment.redeploy", "deployment.source.deploy"].includes(current.type)) {
+  if (!["deployment.redeploy", "deployment.source.deploy", "deployment.restart"].includes(current.type)) {
     return markFailed(prisma, current, `Unsupported operation type: ${current.type}`);
   }
 
   const input = parseJson(current.inputJson) || {};
   const sourceDeploy = current.type === "deployment.source.deploy";
   const projectSlug = current.deployment.legacyProject?.slug || current.deployment.slug;
-  const latestRelease = current.deployment.legacyProjectId
-    ? await prisma.deployment.findFirst({
-        where: { projectId: current.deployment.legacyProjectId },
-        orderBy: { createdAt: "desc" },
-        select: { publicUrl: true, previewUrl: true },
-      })
-    : null;
-  const publicUrl = latestRelease?.publicUrl || latestRelease?.previewUrl ||
-    (current.deployment.legacyProject?.domain ? `https://${current.deployment.legacyProject.domain}` : undefined);
-
-  const { response, body } = await fetchJson(`${baseUrl}/api/projects/compose`, {
+  const { response, body } = await fetchJson(`${baseUrl}/api/agent-operations/runtime`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Cookie: sessionCookie(current.grant.user, jwtSecret),
       "X-GroundControl-Agent-Operation": current.id,
     },
-    body: JSON.stringify({
-      projectSlug,
-      projectPath: current.deployment.sourcePath || undefined,
-      composePath: current.deployment.composePath || undefined,
-      publicUrl,
-      action: sourceDeploy ? "source-deploy" : "redeploy",
-      branch: sourceDeploy && typeof input.branch === "string" ? input.branch : undefined,
-    }),
+    body: JSON.stringify({}),
   });
+  if (body.uncertain) return markUncertain(prisma, current, body.error, body);
+  if (response.status >= 500 && body.success !== false) {
+    return markUncertain(prisma, current, body.error || "Runtime response did not confirm the mutation outcome", body);
+  }
 
   if (!response.ok || body.success === false || body.error) {
     return markFailed(prisma, current, body.error || `Redeploy request failed with HTTP ${response.status}`, body);
   }
+  if (body.success !== true) return markUncertain(prisma, current, "Runtime returned no explicit completion evidence", body);
 
   if (body.detached) {
     await prisma.agentOperation.update({
@@ -144,7 +133,7 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
     data: {
       status: "success",
       resultJson: JSON.stringify(body),
-      evidenceJson: JSON.stringify({ phase: "verified", result: body }),
+      evidenceJson: JSON.stringify({ phase: "completed", result: body }),
       finishedAt: new Date(),
       leaseUntil: null,
     },
@@ -164,6 +153,7 @@ async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
     },
   });
   if (!current) return;
+  if (!String(current.grant.scope || "").split(/\s+/).includes("deployment:redeploy")) return markFailed(prisma, current, "The grant no longer authorizes deployment mutations");
   if (current.grant.revokedAt) return markFailed(prisma, current, "Agent grant was revoked before execution");
   if (current.grant.user.forcePasswordChange || current.grant.user.role !== "admin") {
     return markFailed(prisma, current, "The approving GroundControl user no longer has administrator deployment access");
@@ -228,6 +218,7 @@ async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
     },
   });
   if (!current) return;
+  if (!String(current.grant.scope || "").split(/\s+/).includes("deployment:redeploy")) return markFailed(prisma, current, "The grant no longer authorizes deployment mutations");
   if (current.grant.revokedAt) return markFailed(prisma, current, "Agent grant was revoked before execution");
   if (current.grant.user.forcePasswordChange || current.grant.user.role !== "admin") {
     return markFailed(prisma, current, "The approving GroundControl user no longer has administrator deployment access");
@@ -346,7 +337,7 @@ async function reconcileDetached({ prisma, operation, baseUrl, jwtSecret }) {
   const projectSlug = current.deployment.legacyProject?.slug || current.deployment.slug;
   const { response, body } = await fetchJson(
     `${baseUrl}/api/projects/compose/log?slug=${encodeURIComponent(projectSlug)}`,
-    { headers: { Cookie: sessionCookie(current.grant.user, jwtSecret) } }
+    { headers: { Cookie: sessionCookie(current.grant.user, jwtSecret), "X-GroundControl-Agent-Operation": current.id } }
   );
   if (!response.ok) {
     if (current.leaseUntil && current.leaseUntil <= new Date()) {
@@ -493,4 +484,4 @@ function startAgentOperationWorker({ prisma, port, jwtSecret }) {
   };
 }
 
-module.exports = { startAgentOperationWorker, executeBuildPublish };
+module.exports = { startAgentOperationWorker, executeBuildPublish, executeRedeploy, executeRelease, reconcileDetached, recoverInterrupted };
