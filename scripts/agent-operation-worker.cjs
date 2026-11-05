@@ -47,12 +47,15 @@ async function markFailed(prisma, operation, error, evidence) {
 }
 
 async function markUncertain(prisma, operation, error, evidence) {
+  const latest = await prisma.agentOperation.findUnique({ where: { id: operation.id }, select: { evidenceJson: true } });
+  const persistedEvidence = parseJson(latest?.evidenceJson) || {};
   await prisma.agentOperation.update({
     where: { id: operation.id },
     data: {
       status: "uncertain",
       error: String(error || "The mutation outcome could not be confirmed").slice(0, 4000),
       evidenceJson: JSON.stringify({
+        ...persistedEvidence,
         ...(evidence || {}),
         recovery: "inspect_before_retry",
       }),

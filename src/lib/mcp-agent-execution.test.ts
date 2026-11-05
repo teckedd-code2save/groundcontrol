@@ -23,6 +23,24 @@ it("queues supported tracked standalone restarts and rejects unsupported actions
   await expect(executeAgentTool(context, "deployment.redeploy", { deployment: "app", idempotencyKey: "redeploy-001" })).rejects.toThrow(/No recreate specification/);
   expect(db.agentOperation.create).toHaveBeenCalledTimes(1);
 });
+it("queues captured standalone redeploy and reuses its key after the instance is replaced", async () => {
+  const recipe = { version: 1, kind: "local-image", deploymentId: 7, projectId: 2, containerId: "a".repeat(64), imageId: `sha256:${"c".repeat(64)}`, hostname: "app-host", hostPort: 49152, containerPort: 8080, configHash: "d".repeat(64) };
+  db.enrolledDeployment.findFirst.mockResolvedValue({ ...deployment, projectGroupId: 2, metadataJson: JSON.stringify({ source: "local-image", recreateRecipe: recipe }) });
+  const args = { deployment: "app", idempotencyKey: "redeploy-captured-001" };
+  expect(await executeAgentTool(context, "deployment.redeploy", args)).toMatchObject({ reused: false, operation: { type: "deployment.redeploy" } });
+  db.agentOperation.findUnique.mockResolvedValue({ id: "operation-1", ...db.agentOperation.create.mock.calls[0][0].data, status: "success" });
+  db.enrolledDeployment.findFirst.mockResolvedValue({ ...deployment, projectGroupId: 2, metadataJson: JSON.stringify({ source: "local-image", recreateRecipe: { ...recipe, containerId: "b".repeat(64) } }) });
+  expect(await executeAgentTool(context, "deployment.redeploy", args)).toMatchObject({ reused: true, operation: { status: "success" } });
+  expect(db.agentOperation.create).toHaveBeenCalledTimes(1);
+});
+it("returns a standalone endpoint without exposing metadata or embedded credentials", async () => {
+  for (const [url, expected] of [["http://127.0.0.1:49152", "http://127.0.0.1:49152/"], ["https://operator:PRIVATE_PASSWORD@example.com", null]]) {
+    db.enrolledDeployment.findFirst.mockResolvedValue({ ...deployment, metadataJson: JSON.stringify({ manualPublicUrl: url, secret: "PRIVATE_SECRET" }) });
+    const result = await executeAgentTool(context, "deployment.inspect", { deployment: "app" });
+    expect(result).toMatchObject({ deployment: { publicUrl: expected } });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_");
+  }
+});
 it("reuses the same operation including uncertain outcomes but rejects key collisions", async () => {
   const args = { deployment: "app", idempotencyKey: "restart-001", reason: "recover" };
   await executeAgentTool(context, "deployment.restart", args);

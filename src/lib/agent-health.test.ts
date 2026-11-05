@@ -3,7 +3,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ exec: vi.fn(), dns: vi.fn() }));
 vi.mock("@/lib/vps", async (original) => ({ ...await original<typeof import("./vps")>(), execOnVps: mocks.exec, getDockerComposeCommand: vi.fn().mockResolvedValue("docker compose") }));
 vi.mock("node:dns/promises", () => ({ lookup: mocks.dns }));
-vi.mock("./host-exec", () => ({ execOnTargetStrict: mocks.exec }));
+vi.mock("./host-exec", () => ({ execOnTargetStrict: mocks.exec, execOnWorkloadTarget: mocks.exec }));
 import { overallHealth, probePublicUrl, runtimeHealth } from "./agent-health";
 import type { VpsConnection } from "./vps";
 const vps = { id: 7 } as VpsConnection;

@@ -1,8 +1,9 @@
+import { redeployStandalone } from "./standalone-redeploy";
 import type { agentOperationTarget } from "./agent-operation-target";
 import { deploymentRuntime, staticRecipe } from "./agent-runtime-capabilities";
 import { agentComposeCommand, runtimeHealth, probePublicUrl, overallHealth } from "./agent-health";
 import { shQuote } from "./vps";
-import { execOnTargetStrict } from "./host-exec";
+import { execOnTargetStrict, execOnWorkloadTarget } from "./host-exec";
 import { prisma } from "./prisma";
 import { syncGithubDeploymentSource } from "./github-source-deploy";
 import { HttpError } from "./errors";
@@ -16,12 +17,14 @@ export async function executeRuntimeOperation(target: Target) {
     const command = runtime === "container"
       ? `docker restart ${shQuote(deployment.containerName!)}`
       : await agentComposeCommand(deployment, vps, "restart");
-    const result = await execOnTargetStrict(command, vps, undefined, undefined, { timeout: 120_000 });
+    const result = await execOnWorkloadTarget(command, vps, undefined, undefined, { timeout: 120_000 });
     if (result.code !== 0) throw new HttpError("Container restart failed; inspect the runtime before retrying.", 500);
     const health = await runtimeHealth(deployment, vps);
     if (health.healthy !== true) return { success: false, error: "Restart was applied but runtime health was not confirmed.", applied: true, runtime: health };
     return { success: true, applied: true, runtime: health };
   }
+
+  if (runtime === "container" && operation.type === "deployment.redeploy") return redeployStandalone(target);
 
   if (runtime !== "static") throw new HttpError("Unsupported runtime operation.", 409);
   const recipe = staticRecipe(deployment);

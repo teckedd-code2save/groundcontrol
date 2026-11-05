@@ -4,7 +4,7 @@ import { buildOutput, buildFailureSummary, type BuildOutput } from "@/lib/build-
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
-import { execOnTargetStrict } from "@/lib/host-exec";
+import { execOnWorkloadTarget } from "@/lib/host-exec";
 import { ensureGithubRegistryLogin, githubRegistryCredential } from "@/lib/github-registry";
 import { sourceAccessForDeployment, syncGithubDeploymentSource } from "@/lib/github-source-deploy";
 import {
@@ -70,7 +70,7 @@ async function resolveTestCommand(
 ): Promise<string | null> {
   const fromExplicit = normalizeTestCommand(explicit);
   if (fromExplicit) return fromExplicit;
-  const read = await execOnTargetStrict(
+  const read = await execOnWorkloadTarget(
     `cd ${shQuote(projectPath)} && node -p "try{require('./package.json').scripts&&require('./package.json').scripts.test||''}catch(e){''}" 2>/dev/null || true`,
     vps
   );
@@ -79,8 +79,8 @@ async function resolveTestCommand(
 
 export async function POST(req: NextRequest) {
   const logs: BuildOutput[] = [];
-  const run = async (phase: string, ...args: Parameters<typeof execOnTargetStrict>) => {
-    const result = await execOnTargetStrict(args[0], args[1], args[2], args[3], { timeout: 15 * 60 * 1000 });
+  const run = async (phase: string, ...args: Parameters<typeof execOnWorkloadTarget>) => {
+    const result = await execOnWorkloadTarget(args[0], args[1], args[2], args[3], { timeout: 15 * 60 * 1000 });
     logs.push(buildOutput(phase, result));
     return result;
   };
@@ -141,11 +141,11 @@ export async function POST(req: NextRequest) {
     if (!composePath) {
       throw new HttpError("The synced source does not contain a Compose file.", 409);
     }
-    const baseComposeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+    const baseComposeCmd = await getDockerComposeCommand(vps, execOnWorkloadTarget);
     const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
     const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
 
-    const configCheck = await execOnTargetStrict(
+    const configCheck = await execOnWorkloadTarget(
       `cd ${shQuote(projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composePath, { includeEnvironment: false })}`,
       vps
     );
@@ -286,12 +286,12 @@ export async function POST(req: NextRequest) {
         });
       } finally {
         if (sandboxId) {
-          await execOnTargetStrict(buildSbxRmCommand(sandboxId), vps).catch(() => undefined);
+          await execOnWorkloadTarget(buildSbxRmCommand(sandboxId), vps).catch(() => undefined);
         }
       }
     }
 
-    const previousOverride = await execOnTargetStrict(
+    const previousOverride = await execOnWorkloadTarget(
       `cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`,
       vps
     );

@@ -130,4 +130,3 @@ export function shouldBlockIncidentSourceTool(
   }
   return null;
 }
-

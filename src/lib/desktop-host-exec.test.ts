@@ -14,7 +14,7 @@ vi.mock("./docker-host-bridge", () => ({
   execDetachedViaDockerHostBridge: vi.fn(),
 }));
 vi.mock("./prisma", () => ({ prisma: {} }));
-import { canExecOnHost, execOnHost, execOnTarget, execOnTargetStrict, execDetachedOnTarget } from "./host-exec";
+import { canExecOnHost, execOnHost, execOnTarget, execOnTargetStrict, execOnWorkloadTarget, execDetachedOnTarget } from "./host-exec";
 
 describe("local Docker execution boundaries", () => {
   beforeEach(() => {
@@ -38,6 +38,23 @@ describe("local Docker execution boundaries", () => {
 
   it("preserves the caller's command timeout in desktop mode", async () => {
     expect((await execOnHost("sleep 2", { timeout: 50 })).code).not.toBe(0);
+  });
+
+  it("uses the mounted Docker socket for a pinned Desktop workload without native host access", async () => {
+    const local = await mocks.active(); mocks.active.mockClear();
+    await execOnWorkloadTarget("docker inspect approved-id", local, undefined, undefined, { timeout: 120000 });
+    expect(mocks.remote).toHaveBeenCalledWith("docker inspect approved-id", local, undefined, undefined, { timeout: 120000 });
+    expect(mocks.bridge).not.toHaveBeenCalled();
+    expect(mocks.active).not.toHaveBeenCalled();
+  });
+
+  it("never substitutes the active host for a missing or selected remote workload", async () => {
+    await expect(execOnWorkloadTarget("docker inspect approved-id", null)).rejects.toThrow(/No workload host/);
+    const remote = { id: 2, host: "approved.test", port: 22, username: "operator", isLocal: false };
+    await execOnWorkloadTarget("docker inspect approved-id", remote);
+    expect(mocks.remote).toHaveBeenCalledWith("docker inspect approved-id", remote, undefined, undefined, undefined);
+    expect(mocks.active).not.toHaveBeenCalled();
+    expect(mocks.bridge).not.toHaveBeenCalled();
   });
 
   it("honours a selected remote target instead of silently using the workspace", async () => {

@@ -1,4 +1,4 @@
-import { runtimeCapabilities, runtimeIdentity, requireRuntimeOperation } from "./agent-runtime-capabilities";
+import { runtimeCapabilities, runtimeIdentity, requireRuntimeOperation, jsonObject } from "./agent-runtime-capabilities";
 import { runtimeHealth, probePublicUrl, overallHealth } from "./agent-health";
 import { prisma } from "@/lib/prisma";
 import type { VpsConnection } from "@/lib/vps";
@@ -331,7 +331,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.redeploy",
     title: "Redeploy deployment",
-    description: "Queue a durable redeploy for a supported Compose deployment or static site with a saved publish recipe. Inspect capabilities first. Returns an operation id immediately; use operation.get to follow verification and evidence.",
+    description: "Queue a durable redeploy for a supported deployment with its saved Compose, static publish, or standalone recreate recipe. Inspect capabilities first. Returns an operation id immediately; use operation.get to follow verification and evidence.",
     requiredScope: "deployment:redeploy",
     inputSchema: {
       type: "object",
@@ -533,6 +533,12 @@ async function allowedDeployment(context: AgentAccessContext, value: unknown) {
 
 function safeDeployment(deployment: Awaited<ReturnType<typeof allowedDeployment>>, context: AgentAccessContext) {
   const latest = deployment.legacyProject?.deployments?.[0] || null;
+  const metadata = jsonObject(deployment.metadataJson);
+  let manualPublicUrl: string | null = null;
+  try {
+    const url = new URL(String(metadata.manualPublicUrl || ""));
+    if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) manualPublicUrl = url.toString();
+  } catch { /* Missing or invalid recorded endpoint. */ }
   return {
     capabilities: authorizedCapabilities(deployment, context),
     id: deployment.id,
@@ -556,7 +562,7 @@ function safeDeployment(deployment: Awaited<ReturnType<typeof allowedDeployment>
       branch: latest?.branch || null,
       revision: latest?.commitSha || null,
     },
-    publicUrl: latest?.publicUrl || latest?.previewUrl || (deployment.legacyProject?.domain ? `https://${deployment.legacyProject.domain}` : null),
+    publicUrl: latest?.publicUrl || latest?.previewUrl || manualPublicUrl || (deployment.legacyProject?.domain ? `https://${deployment.legacyProject.domain}` : null),
     recentReleases: deployment.legacyProject?.deployments || [],
     updatedAt: deployment.updatedAt,
   };

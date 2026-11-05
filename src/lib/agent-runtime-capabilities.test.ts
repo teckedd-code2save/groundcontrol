@@ -33,6 +33,16 @@ describe("runtime capabilities", () => {
     expect(staticRecipe({ ...site, sourcePath: "/www/site" })).toBeNull();
     expect(staticRecipe({ ...site, legacyProject: { ...site.legacyProject, outputDir: "../../other" } })).toBeNull();
   });
+  it("recovers an older static record only from exact saved choices bound to its paths", () => {
+    const publishRecipe = { version: 1, sourcePath: "/src/site", staticDir: "/www/site", outputDir: "dist", buildCommand: "npm run build" };
+    const older = (backup: object, buildCommand: string | null = null) => ({ ...site, legacyProject: { ...site.legacyProject, outputDir: null, buildCommand, envVars: JSON.stringify({ templateName: "static-site", publishRecipe: backup }) } });
+    expect(staticRecipe(older(publishRecipe))).toEqual({ sourcePath: "/src/site", staticDir: "/www/site", outputPath: "/src/site/dist", buildCommand: "npm run build" });
+    expect(staticRecipe(older({ ...publishRecipe, buildCommand: "" }))?.buildCommand).toBeNull();
+    for (const patch of [{ sourcePath: "/other" }, { staticDir: "/other" }, { version: 2 }, { buildCommand: undefined }, { outputDir: undefined }]) {
+      expect(staticRecipe(older({ ...publishRecipe, ...patch }))).toBeNull();
+    }
+    expect(staticRecipe(older(publishRecipe, "different-build"))).toBeNull();
+  });
   it("detects host, container and recipe changes in queued identities", () => {
     expect(runtimeIdentity(compose)).not.toBe(runtimeIdentity({ ...compose, vpsConfigId: 8 }));
     expect(runtimeIdentity(site)).not.toBe(runtimeIdentity({ ...site, sourcePath: "/src/other" }));

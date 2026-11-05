@@ -2,12 +2,12 @@ import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 import { shQuote, getDockerComposeCommand, buildManagedComposeInvocation, type VpsConnection } from "@/lib/vps";
 import { composeDirectory, deploymentRuntime, jsonObject, type AgentRuntimeDeployment } from "./agent-runtime-capabilities";
-import { execOnTargetStrict } from "./host-exec";
+import { execOnWorkloadTarget } from "./host-exec";
 
 export async function agentComposeCommand(deployment: AgentRuntimeDeployment, vps: VpsConnection, args: string) {
   const directory = composeDirectory(deployment);
   if (!directory) throw new Error("No Compose directory is recorded.");
-  const command = await getDockerComposeCommand(vps, execOnTargetStrict);
+  const command = await getDockerComposeCommand(vps, execOnWorkloadTarget);
   const project = jsonObject(deployment.metadataJson).composeProject;
   const namedCommand = typeof project === "string" && project ? `${command} -p ${shQuote(project)}` : command;
   return `cd ${shQuote(directory)} && ${buildManagedComposeInvocation(namedCommand, args, deployment.composePath || undefined)}`;
@@ -23,14 +23,14 @@ export async function runtimeHealth(deployment: AgentRuntimeDeployment, vps: Vps
     let names: string[];
     if (kind === "container") names = [deployment.containerName!];
     else {
-      const ids = await execOnTargetStrict(await agentComposeCommand(deployment, vps, "ps -a -q"), vps);
+      const ids = await execOnWorkloadTarget(await agentComposeCommand(deployment, vps, "ps -a -q"), vps);
       if (ids.code !== 0) return unknown("Compose runtime could not be inspected.");
       names = ids.stdout.trim().split(/\s+/).filter(Boolean);
       if (names.some((id) => !/^[a-f0-9]{12,64}$/.test(id))) return unknown("Compose returned invalid container identifiers.");
     }
     if (!names.length) return { kind, checked: true, healthy: false, containers: [], reason: "No runtime containers were found." };
     // Request only health evidence, never container environment or host secrets.
-    const inspected = await execOnTargetStrict(`docker inspect --format '{{json .Name}}|{{json .Config.Image}}|{{json .State.Status}}|{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}' ${names.map(shQuote).join(" ")}`, vps);
+    const inspected = await execOnWorkloadTarget(`docker inspect --format '{{json .Name}}|{{json .Config.Image}}|{{json .State.Status}}|{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}' ${names.map(shQuote).join(" ")}`, vps);
     if (inspected.code !== 0) return unknown("The enrolled container runtime could not be inspected.");
     const containers = inspected.stdout.trim().split("\n").filter(Boolean).map((line) => {
       const [name, image, state, health] = line.split("|").map((part) => JSON.parse(part));
@@ -83,4 +83,3 @@ export async function probePublicUrl(value: string | null) {
     return { checked: true, healthy: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
-

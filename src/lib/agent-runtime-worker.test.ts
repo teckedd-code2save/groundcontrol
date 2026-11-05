@@ -35,6 +35,13 @@ it("marks interrupted work uncertain without replaying any mutation", async () =
   expect(fetch).not.toHaveBeenCalled();
   expect(h.update.mock.calls[0][0].data).toMatchObject({ status: "uncertain", leaseUntil: null });
 });
+it("preserves exact container recovery identities when a runtime reply is uncertain", async () => {
+  const h = harness();
+  h.prisma.agentOperation.findUnique.mockResolvedValueOnce(h.operation).mockResolvedValueOnce({ evidenceJson: JSON.stringify({ previousContainerId: "old-id", candidateId: "new-id", phase: "standalone_switching" }) });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ uncertain: true, error: "Connection lost" }), { status: 500 })));
+  await executeRedeploy(h);
+  expect(JSON.parse(h.update.mock.calls[0][0].data.evidenceJson)).toMatchObject({ previousContainerId: "old-id", candidateId: "new-id", phase: "standalone_switching", recovery: "inspect_before_retry" });
+});
 it("reconciles detached evidence using the exact operation header", async () => {
   const h = harness({ ...operation(), type: "deployment.redeploy", status: "verifying" });
   const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "success" }))); vi.stubGlobal("fetch", fetch);

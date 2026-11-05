@@ -3,7 +3,7 @@ import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
-import { execOnTargetStrict } from "@/lib/host-exec";
+import { execOnWorkloadTarget } from "@/lib/host-exec";
 import { getActiveVps, getDockerContainers, resolveComposeFile, resolveComposeProjectPath, shQuote } from "@/lib/vps";
 import { MANAGED_IMAGE_OVERRIDE_FILE } from "@/lib/compose-management";
 import { buildDigestImageOverride, composeImageEnvKeys } from "@/lib/github-image-release";
@@ -69,12 +69,12 @@ export async function POST(req: NextRequest) {
     const previous: Record<string, string> = {};
     for (const service of Object.keys(refs)) {
       if (agentTarget) {
-        const scoped = await execOnTargetStrict(await agentComposeCommand(agentTarget.deployment, agentTarget.vps, `ps -a -q ${shQuote(service)}`), agentTarget.vps);
+        const scoped = await execOnWorkloadTarget(await agentComposeCommand(agentTarget.deployment, agentTarget.vps, `ps -a -q ${shQuote(service)}`), agentTarget.vps);
         if (scoped.code !== 0) throw new HttpError("Could not inspect the approved Compose service before release.", 409);
         const ids = scoped.stdout.trim().split(/\s+/).filter(Boolean);
         if (ids.some((id) => !/^[a-f0-9]{12,64}$/.test(id))) throw new HttpError("Invalid runtime identity before release.", 409);
         if (ids.length) {
-          const digest = await execOnTargetStrict(`docker inspect --format '{{.Image}}' ${shQuote(ids[0])}`, agentTarget.vps);
+          const digest = await execOnWorkloadTarget(`docker inspect --format '{{.Image}}' ${shQuote(ids[0])}`, agentTarget.vps);
           if (digest.code !== 0) throw new HttpError("Could not record the previous image before release.", 409);
           previous[service] = digest.stdout.trim();
         }
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
         (c) => c.name === service || c.name.startsWith(`${service}-`) || c.name.includes(`-${service}-`)
       );
       if (container) {
-        const digest = await execOnTargetStrict(
+        const digest = await execOnWorkloadTarget(
           `docker inspect --format '{{index .RepoDigests 0}}' ${shQuote(container.name)} 2>/dev/null || true`,
           vps
         );
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const write = await execOnTargetStrict(writeOverrideCommand(projectPath, content), vps);
+    const write = await execOnWorkloadTarget(writeOverrideCommand(projectPath, content), vps);
     if (write.code !== 0) {
       throw new HttpError(write.stderr || "Could not write the release image override.", 500);
     }
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
     const composePath = await resolveComposeFile(projectPath, vps, agentTarget?.deployment.composePath || undefined);
     const imageEnv: Record<string, string> = {};
     if (composePath) {
-      const rawCompose = await execOnTargetStrict(`cat ${shQuote(composePath)}`, vps);
+      const rawCompose = await execOnWorkloadTarget(`cat ${shQuote(composePath)}`, vps);
       const envKeys = composeImageEnvKeys(rawCompose.stdout);
       for (const [service, digest] of Object.entries(refs)) {
         const envKey = envKeys[service];

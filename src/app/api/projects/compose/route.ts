@@ -7,7 +7,7 @@ import {
   buildManagedComposeInvocation, getImageDigest,
   getPreviousDeploymentDigest, computeChangedFields, resolveComposeFile,
 } from "@/lib/vps";
-import { execDetachedOnTarget, execOnTargetStrict } from "@/lib/host-exec";
+import { execDetachedOnTarget, execOnWorkloadTarget } from "@/lib/host-exec";
 import { ensureGithubRegistryLogin } from "@/lib/github-registry";
 import { parseComposeServices } from "@/lib/project-scan";
 import {
@@ -110,7 +110,7 @@ async function resolveComposeSourceFingerprint(input: {
   imageDigest: string | null;
   vps: Awaited<ReturnType<typeof getActiveVps>>;
 }) {
-  const git = await execOnTargetStrict(
+  const git = await execOnWorkloadTarget(
     [
       `cd ${shQuote(input.projectPath)}`,
       `printf 'remote=%s\\n' "$(git config --get remote.origin.url 2>/dev/null || true)"`,
@@ -126,7 +126,7 @@ async function resolveComposeSourceFingerprint(input: {
 
   const firstImage = Object.values(input.expectedImages).find(Boolean);
   if ((!repoUrl || !commitSha) && firstImage) {
-    const labels = await execOnTargetStrict(
+    const labels = await execOnWorkloadTarget(
       `docker image inspect --format 'revision={{ index .Config.Labels "org.opencontainers.image.revision" }}\nsource={{ index .Config.Labels "org.opencontainers.image.source" }}' ${shQuote(firstImage)} 2>/dev/null || true`,
       input.vps
     ).catch(() => ({ stdout: "", stderr: "", code: 1 }));
@@ -202,7 +202,7 @@ async function recordRedeployEvidence(
   const command = reset
     ? `: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)} && printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`
     : `printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`;
-  const result = await execOnTargetStrict(command, vps);
+  const result = await execOnWorkloadTarget(command, vps);
   if (result.code !== 0) {
     throw new HttpError(result.stderr || "GroundControl could not record deployment progress.", 500);
   }
@@ -242,8 +242,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "No compose file found", projectPath }, { status: 404 });
     }
     const [result, imageOverride] = await Promise.all([
-      execOnTargetStrict(`cat ${shQuote(composePath)}`, vps),
-      execOnTargetStrict(`cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, vps),
+      execOnWorkloadTarget(`cat ${shQuote(composePath)}`, vps),
+      execOnWorkloadTarget(`cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, vps),
     ]);
 
     if (!result.stdout.trim()) {
@@ -401,7 +401,7 @@ export async function POST(req: NextRequest) {
             : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
 
       let result: { stdout: string; stderr: string; code: number };
-      const baseComposeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+      const baseComposeCmd = await getDockerComposeCommand(vps, execOnWorkloadTarget);
       const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
       const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
       const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`;
@@ -414,7 +414,7 @@ export async function POST(req: NextRequest) {
         }
         result = { stdout: `${action} initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
       } else {
-        result = await execOnTargetStrict(command, vps);
+        result = await execOnWorkloadTarget(command, vps);
       }
 
       return NextResponse.json({
@@ -516,10 +516,10 @@ export async function POST(req: NextRequest) {
       "[compose] Validating the effective Compose configuration",
       vps
     );
-    const baseComposeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+    const baseComposeCmd = await getDockerComposeCommand(vps, execOnWorkloadTarget);
     const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
     const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
-    let configCheck = await execOnTargetStrict(
+    let configCheck = await execOnWorkloadTarget(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
       vps
     );
@@ -538,7 +538,7 @@ export async function POST(req: NextRequest) {
           vps,
         }
       );
-      configCheck = await execOnTargetStrict(
+      configCheck = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
         vps
       );
@@ -562,7 +562,7 @@ export async function POST(req: NextRequest) {
         "[build] Building Compose services on the deployment host",
         vps
       );
-      const buildResult = await execOnTargetStrict(
+      const buildResult = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `build${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
         vps
       );
@@ -596,7 +596,7 @@ export async function POST(req: NextRequest) {
         "[pull] Pulling images from the effective Compose configuration",
         vps
       );
-      pullResult = await execOnTargetStrict(
+      pullResult = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
         vps
       );
@@ -644,12 +644,12 @@ export async function POST(req: NextRequest) {
         "[deploy] Starting Docker Compose recreation",
         vps
       );
-      result = await execOnTargetStrict(
+      result = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, deployArgs, composeFile)}`,
         vps
       );
       if (result.code === 0) {
-        const verification = await execOnTargetStrict(`cd ${shQuote(target.projectPath)} && ${verifyImages}`, vps);
+        const verification = await execOnWorkloadTarget(`cd ${shQuote(target.projectPath)} && ${verifyImages}`, vps);
         result = {
           stdout: [result.stdout, verification.stdout].filter(Boolean).join("\n"),
           stderr: verification.code === 0 ? result.stderr : verification.stderr || verification.stdout,
@@ -657,7 +657,7 @@ export async function POST(req: NextRequest) {
         };
       }
       if (result.code === 0) {
-        const publicVerification = await execOnTargetStrict(
+        const publicVerification = await execOnWorkloadTarget(
           `cd ${shQuote(target.projectPath)} && ${buildDeploymentVerificationCommand(verificationChecks)}`,
           vps
         );

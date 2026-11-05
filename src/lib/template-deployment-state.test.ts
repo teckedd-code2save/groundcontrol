@@ -61,6 +61,18 @@ describe("persistTemplateDeployment", () => {
       update: expect.objectContaining({ path: "/www/demo-app", buildCommand: "npm run build", outputDir: "dist" }),
     }));
   });
+  it("backs up exact static choices without leaking private commands into release evidence", async () => {
+    const client = createClient();
+    const publishRecipe = { version: 1, sourcePath: baseInput().source.sourcePath, staticDir: "/www/demo-app", buildCommand: "TOKEN=operator-secret npm run build", outputDir: "dist" };
+    await persistTemplateDeployment({ ...baseInput(), category: "static", targetType: "static", ...publishRecipe, manifest: JSON.stringify({ publishRecipe }) }, client);
+    const project = vi.mocked(client.project.upsert).mock.calls[0][0];
+    for (const data of [project.create, project.update]) {
+      expect(JSON.parse(data.envVars as string).publishRecipe).toEqual(publishRecipe);
+    }
+    const output = vi.mocked(client.deployment.create).mock.calls[0][0].data.output as string;
+    expect(output).not.toContain("operator-secret");
+    expect(JSON.parse(output)).toMatchObject({ publishRecipe: { buildCommandConfigured: true }, manifest: { publishRecipe: { buildCommandConfigured: true } } });
+  });
   it("retains the user project when a template creates or updates an instance", async () => {
     const client = createClient();
     await persistTemplateDeployment({ ...baseInput(), projectGroupId: 19 }, client);

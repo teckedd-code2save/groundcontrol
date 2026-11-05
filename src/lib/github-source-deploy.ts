@@ -1,7 +1,7 @@
 import { decryptMaybe } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 import { createGithubInstallationToken } from "@/lib/github-app";
-import { execOnTargetStrict } from "@/lib/host-exec";
+import { execOnWorkloadTarget } from "@/lib/host-exec";
 import { shQuote, type VpsConnection } from "@/lib/vps";
 
 export type GithubSourceSyncResult = {
@@ -163,7 +163,7 @@ export async function syncGithubDeploymentSource(input: {
     branch,
     sha,
   });
-  const result = await execOnTargetStrict(command, input.vps, undefined, `${access.token}\n`);
+  const result = await execOnWorkloadTarget(command, input.vps, undefined, `${access.token}\n`);
   if (result.code !== 0) {
     const detail = redactCredential(result.stderr || result.stdout || "git source sync failed", access.token)
       .trim()

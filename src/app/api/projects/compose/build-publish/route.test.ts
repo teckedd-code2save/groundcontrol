@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 const { execute, auth } = vi.hoisted(() => ({ execute: vi.fn(), auth: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ requireAuth: auth }));
-vi.mock("@/lib/host-exec", () => ({ execOnTargetStrict: execute }));
+vi.mock("@/lib/host-exec", () => ({ execOnWorkloadTarget: execute }));
 vi.mock("@/lib/prisma", () => ({ prisma: { project: { findFirst: async () => ({ id: 1 }) }, enrolledDeployment: { findFirst: async () => ({ id: 2, managementMode: "managed" }) } } }));
 vi.mock("@/lib/github-registry", () => ({ ensureGithubRegistryLogin: async () => ({ configured: true }) }));
 vi.mock("@/lib/github-source-deploy", () => ({ syncGithubDeploymentSource: async () => ({ commitSha: "a".repeat(40) }) }));

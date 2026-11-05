@@ -10,7 +10,7 @@ vi.mock("./vps", async (original) => ({ ...await original<typeof import("./vps")
 vi.mock("./agent-health", async (original) => ({ ...await original<typeof import("./agent-health")>(), runtimeHealth: mocks.health, probePublicUrl: mocks.probe }));
 vi.mock("./github-source-deploy", () => ({ syncGithubDeploymentSource: mocks.sync }));
 vi.mock("./prisma", () => ({ prisma: { deployment: { findFirst: mocks.find, create: mocks.create, update: mocks.update } } }));
-vi.mock("./host-exec", () => ({ execOnTargetStrict: mocks.exec }));
+vi.mock("./host-exec", () => ({ execOnTargetStrict: mocks.exec, execOnWorkloadTarget: mocks.exec }));
 import { executeRuntimeOperation } from "./agent-runtime-execution";
 type Target = Parameters<typeof executeRuntimeOperation>[0];
 function target(type = "deployment.redeploy"): Target {
