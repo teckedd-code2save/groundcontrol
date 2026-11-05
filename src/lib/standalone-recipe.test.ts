@@ -42,6 +42,19 @@ it("compares a not-yet-started candidate with the exact known configuration", ()
   candidate.HostConfig.PortBindings = { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "49152" }] };
   expect(standaloneConfigHash(candidate, recipe())).toBe(recipe().configHash);
 });
+it("normalizes observed Docker run/create defaults while still rejecting OOM, stdin and TTY changes", () => {
+  const running = snapshot();
+  Object.assign(running.Config, { AttachStdout: false, AttachStderr: false, OpenStdin: false, Tty: false });
+  running.HostConfig.OomKillDisable = null;
+  const created = structuredClone(running);
+  Object.assign(created.Config, { AttachStdout: true, AttachStderr: true });
+  created.HostConfig.OomKillDisable = false;
+  expect(standaloneConfigHash(created, recipe())).toBe(standaloneConfigHash(running, recipe()));
+  for (const change of [(s: ContainerSnapshot) => { s.HostConfig.OomKillDisable = true; }, (s: ContainerSnapshot) => { s.Config.OpenStdin = true; }, (s: ContainerSnapshot) => { s.Config.Tty = true; }]) {
+    const drifted = structuredClone(created); change(drifted);
+    expect(standaloneConfigHash(drifted, recipe())).not.toBe(standaloneConfigHash(running, recipe()));
+  }
+});
 it("enables redeploy only for a validated, owner-bound captured recipe", () => {
   const deployment = { id: 7, projectGroupId: 2, kind: "container", containerName: "gc-app-demo", vpsConfigId: 9, metadataJson: JSON.stringify({ source: "local-image", recreateRecipe: recipe() }) };
   expect(runtimeCapabilities(deployment).operations["deployment.redeploy"].supported).toBe(true);

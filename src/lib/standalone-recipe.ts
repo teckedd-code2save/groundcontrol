@@ -57,8 +57,12 @@ export function standaloneConfigHash(snapshot: ContainerSnapshot, recipe: Pick<S
   if (bound !== String(recipe.hostPort)) throw new Error("A fixed private port binding is required for safe recreation and rollback.");
   if (active?.length && (active.length !== 1 || active[0].HostIp !== "127.0.0.1" || active[0].HostPort !== String(recipe.hostPort))) throw new Error("The active private port changed.");
   if (snapshot.State.Running && !active?.length) throw new Error("No assigned private port was observed.");
-  const config = { ...snapshot.Config, Image: snapshot.Image };
-  const host = { ...snapshot.HostConfig, PortBindings: { [key]: [{ HostIp: "127.0.0.1", HostPort: String(recipe.hostPort) }] } };
+  // `run -d` and `create` differ in client attachment flags, not workload
+  // behavior when started without --attach. Docker also reports the default
+  // OOM setting as null after start and false before start. Compare effective
+  // configuration while retaining stdin/TTY and non-default OOM checks.
+  const config = { ...snapshot.Config, Image: snapshot.Image, AttachStdout: false, AttachStderr: false };
+  const host = { ...snapshot.HostConfig, OomKillDisable: snapshot.HostConfig.OomKillDisable ?? false, PortBindings: { [key]: [{ HostIp: "127.0.0.1", HostPort: String(recipe.hostPort) }] } };
   return createHash("sha256").update(JSON.stringify(canonical({ config, host }))).digest("hex");
 }
 
