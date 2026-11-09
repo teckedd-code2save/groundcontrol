@@ -1,4 +1,4 @@
-name: GroundControl guarded service recovery
+name: GroundControl independent supervised upgrade
 on:
   workflow_dispatch:
 permissions:
@@ -7,55 +7,49 @@ concurrency:
   group: gc-upgrade-diagnosis-20261109
   cancel-in-progress: false
 jobs:
-  recover:
+  upgrade:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
-      - name: Restore verified original container
+      - name: Upgrade through host systemd with verified rollback
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           timeout: 30s
-          command_timeout: 5m
+          command_timeout: 12m
           script: |
             set -eu
             test "$(hostname -s)" = serendepify-vps
-            python3 - <<'PY'
-            import json,pathlib,subprocess,hashlib,fcntl,time,sqlite3,os
-            P=pathlib.Path("/opt/groundcontrol")
-            D=pathlib.Path("/opt/gc-upgrade-staging/25202bc-20261109-public-followup")
-            B=P/"backups/supervised-20261109T140350Z"
-            def run(args):
-             r=subprocess.run(args,capture_output=True,timeout=300)
-             if r.returncode: raise RuntimeError("Command failed: "+args[0]+" exit "+str(r.returncode))
-             return r.stdout
-            def check(x,m):
-             if not x: raise RuntimeError(m)
-            def inspect(): return json.loads(run(["docker","inspect","groundcontrol-web"]))[0]
-            lock=open("/run/groundcontrol-upgrade.lock","a"); fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            x=inspect(); original=json.loads((B/"original-inspect.json").read_text())
-            check(x["Id"]=="8ae125c4aff9a8f096b24eba29eb4542cf70ccb4a52899fe356d6ddf394656bc","Container changed")
-            check(x["Image"]==original["Image"] and x["Config"]==original["Config"] and x["HostConfig"]==original["HostConfig"],"Original container configuration changed")
-            check(json.loads((B/"result.json").read_text())["status"]=="stopping","Upgrade moved beyond stopping")
-            check(hashlib.sha256((P/"docker-compose.yml").read_bytes()).hexdigest()=="582e0b04f02f24d614383ad5b9c3d297fb7e07b553f853ac88c65b2c1c2ff0ad","Compose changed")
-            base=["docker","compose","--project-name","groundcontrol","--project-directory",str(P),"--env-file",str(P/".env"),"-f",str(P/"docker-compose.yml")]
-            check(json.loads(run(base+["config","--format","json"]))==json.loads((B/"original-resolved.json").read_text()),"Resolved deployment changed")
-            db=pathlib.Path("/var/lib/docker/volumes/groundcontrol_groundcontrol-db/_data/prod.db")
-            con=sqlite3.connect(db.as_uri()+"?mode=ro",uri=True)
-            try: check(con.execute("PRAGMA integrity_check").fetchall()==[("ok",)],"Database integrity check failed")
-            finally: con.close()
-            if not x["State"]["Running"]: run(["docker","start","groundcontrol-web"])
-            until=time.monotonic()+180
-            while time.monotonic()<until:
-             y=inspect(); check(y["Id"]==x["Id"] and y["Image"]==x["Image"],"Container changed during recovery")
-             if y["State"].get("Health",{}).get("Status")=="healthy": break
-             time.sleep(3)
-            else: raise RuntimeError("Original container did not become healthy")
-            run(["curl","--fail","--silent","--show-error","--max-time","20","https://groundcontrol.serendepify.com/"])
-            result={"status":"recovered_previous_version","containerId":y["Id"],"image":y["Config"]["Image"],"health":"healthy","public":"passed","revision":"575da5ca8edc866847d74d426eac367683dfbc70"}
-            os.umask(0o077); (D/"recovery-result.json").write_text(json.dumps(result))
-            print(json.dumps(result))
-            
+            test "$(id -u)" = 0
+            test "$(cat /proc/1/comm)" = systemd
+            gc_dir=/opt/gc-upgrade-staging/25202bc-20261109-systemd
+            gc_unit=gc-upgrade-25202bc-20261109-systemd
+            umask 077
+            mkdir "$gc_dir"
+            mkdir "$gc_dir/docker"
+            cp -p /opt/gc-upgrade-staging/25202bc-20261109-r2/supervise-upgrade.py "$gc_dir/supervise-upgrade.py"
+            test "$(sha256sum "$gc_dir/supervise-upgrade.py" | cut -d ' ' -f 1)" = f0a1f03dcd4b08dd1176d12ca968f50b5df1c3b3c017993a168463101ca5ac06
+            cat > "$gc_dir/launch.py" <<'PY'
+            import os,pathlib,sys,json
+            unit="gc-upgrade-25202bc-20261109-systemd.service"
+            group=pathlib.Path("/proc/self/cgroup").read_text()
+            if os.getppid()!=1 or ("/system.slice/"+unit) not in group:
+             raise RuntimeError("Refusing upgrade outside independently owned systemd service")
+            print(json.dumps({"supervisorParent":os.getppid(),"supervisorCgroup":group.strip()}),flush=True)
+            os.execv("/usr/bin/python3",["/usr/bin/python3","/opt/gc-upgrade-staging/25202bc-20261109-systemd/supervise-upgrade.py",sys.argv[1]])
             PY
+            systemd-run --unit="$gc_unit" --property=Type=exec --property=UMask=0077 --property="StandardOutput=append:$gc_dir/upgrade.log" --property="StandardError=append:$gc_dir/upgrade.log" --setenv="DOCKER_CONFIG=$gc_dir/docker" /usr/bin/python3 "$gc_dir/launch.py" ghcr.io/teckedd-code2save/groundcontrol@sha256:839199545a59aaae397e78819a51ff0e8437b7b45da8412d9a4a9fac087a0e1c
+            for gc_i in $(seq 1 180); do
+             gc_state=$(systemctl show "$gc_unit" --property=ActiveState --value)
+             case "$gc_state" in inactive|failed) break;; esac
+             sleep 3
+            done
+            systemctl show "$gc_unit" --property=ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,ControlGroup
+            cat "$gc_dir/upgrade.log"
+            test "$(systemctl show "$gc_unit" --property=Result --value)" = success
+            test "$(systemctl show "$gc_unit" --property=ExecMainStatus --value)" = 0
+            docker inspect groundcontrol-web --format 'IMAGE={{.Config.Image}} HEALTH={{.State.Health.Status}}'
+            python3 -c 'import json,pathlib; p=sorted(pathlib.Path("/opt/groundcontrol/backups").glob("supervised-*"),reverse=True)[0]; r=json.loads((p/"result.json").read_text()); print(str(p)); print(json.dumps(r)); assert r["status"]=="upgrade_complete"; assert r["revision"]=="25202bc11fc09b41c6d8a88c5b22721ca0e9a38c"'
+            
