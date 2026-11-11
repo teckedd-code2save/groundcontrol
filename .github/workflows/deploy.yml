@@ -1,142 +1,63 @@
-name: Build & Deploy
-
+name: GroundControl OAuth upgrade preflight
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-    inputs:
-      deploy_vps:
-        description: "Also upgrade the operator VPS (requires a separately rehearsed backup and upgrade)"
-        type: boolean
-        default: false
-
+permissions:
+  contents: read
 concurrency:
-  group: production-deploy
-  cancel-in-progress: true
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
+  group: gc-oauth-upgrade-20261111
+  cancel-in-progress: false
 jobs:
-  build:
+  preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # Distribution Acceptance promotes this exact image to latest.
-          tags: |
-            type=sha,prefix=,suffix=,format=short
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    needs: build
-    # Publishing a release must not mutate an existing operator's database or runtime.
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy_vps
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Deploy to VPS
+      - name: Inspect only the approved GroundControl instance
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           timeout: 30s
-          command_timeout: 10m
+          command_timeout: 3m
           script: |
             set -eu
-            cd /opt/groundcontrol || exit 1
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-              git fetch --depth=1 origin main
-              git reset --hard origin/main
+            test "$(hostname -s)" = serendepify-vps
+            test "$(id -u)" = 0
+            test "$(cat /proc/1/comm)" = systemd
+            python3 - <<'PY'
+            import subprocess,json,pathlib,hashlib,sqlite3,shutil
+            def run(args): return subprocess.check_output(args,text=True).strip()
+            d=json.loads(run(['docker','inspect','groundcontrol-web']))[0]
+            labels=d['Config'].get('Labels') or {}
+            files=[p for p in labels.get('com.docker.compose.project.config_files','').split(',') if p]
+            image=json.loads(run(['docker','image','inspect',d['Image']]))[0]
+            mounts=[{'type':m['Type'],'source':m['Source'],'destination':m['Destination']} for m in d['Mounts'] if m['Destination'].startswith('/app/prisma')]
+            report={'container':d['Name'],'running':d['State']['Running'],'health':d['State'].get('Health',{}).get('Status'),'image':d['Config']['Image'],'imageId':d['Image'],'revision':(image.get('Config',{}).get('Labels') or {}).get('org.opencontainers.image.revision'),'composeProject':labels.get('com.docker.compose.project'),'composeService':labels.get('com.docker.compose.service'),'composeWorkingDir':labels.get('com.docker.compose.project.working_dir'),'composeFiles':[],'persistentMounts':mounts,'diskFreeBytes':shutil.disk_usage('/opt').free}
+            for raw in files:
+             p=pathlib.Path(raw)
+             report['composeFiles'].append({'path':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+            wd=pathlib.Path(labels.get('com.docker.compose.project.working_dir') or '/opt/groundcontrol')
+            env=wd/'.env'
+            report['envFile']={'exists':env.exists(),'sha256':hashlib.sha256(env.read_bytes()).hexdigest() if env.exists() else None}
+            report['operationStates']={}
+            for mount in mounts:
+             root=pathlib.Path(mount['source'])
+             for db in root.glob('*.db') if root.is_dir() else []:
+              conn=sqlite3.connect(db.as_uri()+'?mode=ro',uri=True)
+              exists=conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='AgentOperation'").fetchone()[0]
+              if exists:
+               report['operationStates'][db.name]=dict(conn.execute('SELECT status,count(*) FROM AgentOperation GROUP BY status').fetchall())
+              conn.close()
+            print(json.dumps(report,indent=2))
+            assert report['running'] and report['health']=='healthy','Current container is not healthy'
+            assert report['revision']=='25202bc11fc09b41c6d8a88c5b22721ca0e9a38c','Revision drift: stop for review'
+            assert report['composeService']=='web' and len(mounts)==1,'Unexpected service/storage layout'
+            assert report['diskFreeBytes']>3*1024**3,'Insufficient disk space'
+            assert all(not states.get(s,0) for states in report['operationStates'].values() for s in ['pending','running','verifying']),'Active agent operation: stop for review'
+            PY
+            systemctl list-units --all 'gc-upgrade-*.service' --no-pager --plain
+            if pgrep -f '[s]upervise-upgrade.py' >/dev/null; then
+              echo 'An existing upgrade supervisor is still active; refusing overlap.' >&2
+              exit 1
             fi
-            # Sync docker-compose.yml from repo so infra changes (ports, env, volumes) propagate
-            curl -sfL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml" \
-              -o docker-compose.yml || echo "docker-compose.yml sync skipped (using existing)"
-            docker compose pull || {
-              echo "Image pull failed; building web image from synced source on the VPS." >&2
-              docker compose build web
-            }
-            docker compose run --rm --no-deps web npx prisma migrate deploy --schema /app/db/schema.prisma
-            docker compose up -d --remove-orphans
-            for i in $(seq 1 30); do
-              if docker compose ps web | grep -q healthy; then
-                break
-              fi
-              sleep 2
-            done
-            docker compose ps web | grep -q healthy
-            LOCAL_ENDPOINT="$(docker compose port web 3000 | head -n 1)"
-            curl -fsS --max-time 10 "http://${LOCAL_ENDPOINT}/api/vps/stats" >/dev/null
-            PUBLIC_URL="${{ vars.GC_PUBLIC_URL }}"
-            PUBLIC_URL="${PUBLIC_URL:-https://groundcontrol.serendepify.com/login}"
-            for i in $(seq 1 12); do
-              if curl -k -fsS --max-time 15 "$PUBLIC_URL" >/dev/null; then
-                echo "Public smoke passed: $PUBLIC_URL"
-                break
-              fi
-              if [ "$i" -eq 12 ]; then
-                echo "Public smoke failed: $PUBLIC_URL" >&2
-                docker compose ps >&2 || true
-                docker compose logs --tail=120 web >&2 || true
-                exit 1
-              fi
-              sleep 5
-            done
-
-            # ChatGPT MCP discovery smoke: OAuth may protect tool invocation,
-            # but action discovery itself must remain readable and complete.
-            MCP_URL="${GC_MCP_URL:-https://groundcontrol.serendepify.com/mcp}"
-            MCP_TOOLS="$(curl -k -fsS --max-time 15 -X POST "$MCP_URL" \
-              -H 'Content-Type: application/json' \
-              --data '{"jsonrpc":"2.0","id":"tools-smoke","method":"tools/list","params":{}}')"
-            printf '%s' "$MCP_TOOLS" | grep -q '"deployment.list"'
-            printf '%s' "$MCP_TOOLS" | grep -q '"deployment.config.check"'
-            printf '%s' "$MCP_TOOLS" | grep -q '"outputSchema"'
-            printf '%s' "$MCP_TOOLS" | grep -q '"securitySchemes"'
-
-            MCP_DISCOVER="$(curl -k -fsS --max-time 15 -X POST "$MCP_URL" \
-              -H 'Content-Type: application/json' \
-              -H 'MCP-Protocol-Version: 2026-07-28' \
-              -H 'Mcp-Method: server/discover' \
-              --data '{"jsonrpc":"2.0","id":"discover-smoke","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}')"
-            printf '%s' "$MCP_DISCOVER" | grep -q '"supportedVersions"'
-            printf '%s' "$MCP_DISCOVER" | grep -q '"2026-07-28"'
-            echo "MCP discovery smoke passed: $MCP_URL"
-
-            docker compose ps
-            docker compose logs --tail=80 web
-            docker logout ghcr.io
-            docker system prune -f || echo "Docker prune skipped; another prune may already be running"
+            echo 'PREFLIGHT_READ_ONLY_COMPLETE'
