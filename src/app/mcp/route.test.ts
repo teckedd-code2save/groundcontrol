@@ -26,6 +26,7 @@ vi.mock("@/lib/mcp-agent", () => ({
 }));
 
 import { POST } from "./route";
+import { OAuthBearerError } from "@/lib/oauth";
 
 function request(body: Record<string, unknown>, headers: Record<string, string> = {}) {
   return new NextRequest("https://groundcontrol.example/mcp", {
@@ -105,7 +106,7 @@ describe("GroundControl MCP transport", () => {
       name: "GroundControl",
       version: "0.1.0",
     });
-    expect(data.result._meta["io.groundcontrol/toolsetRevision"]).toBe("2026-09-20.1");
+    expect(data.result._meta["io.groundcontrol/toolsetRevision"]).toBe("2026-11-11.1");
     expect(response.headers.get("MCP-Protocol-Version")).toBe("2026-07-28");
     expect(mock.authenticateAccessToken).not.toHaveBeenCalled();
   });
@@ -127,5 +128,69 @@ describe("GroundControl MCP transport", () => {
     expect(data.result.serverInfo.name).toBe("GroundControl");
     expect(response.headers.get("MCP-Protocol-Version")).toBeNull();
     expect(mock.authenticateAccessToken).not.toHaveBeenCalled();
+  });
+
+  it.each(["2025-11-25", "2026-07-28"])(
+    "challenges unauthenticated %s tool calls at HTTP and tool level without executing them",
+    async (version) => {
+      mock.authenticateAccessToken.mockRejectedValue(new OAuthBearerError("Missing Bearer token", 401));
+      const response = await POST(request({
+        jsonrpc: "2.0", id: 3, method: "tools/call",
+        params: { name: "deployment.list", arguments: {} },
+      }, { "MCP-Protocol-Version": version }));
+      const data = await response.json();
+      expect(response.status).toBe(401);
+      const challenge = response.headers.get("WWW-Authenticate");
+      expect(challenge).toContain('error="invalid_token"');
+      expect(challenge).toContain('resource_metadata="https://groundcontrol.example/.well-known/oauth-protected-resource"');
+      expect(data.result.isError).toBe(true);
+      expect(data.result._meta["mcp/www_authenticate"]).toEqual([challenge]);
+      expect(mock.executeAgentTool).not.toHaveBeenCalled();
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+    }
+  );
+
+  it("returns 403 with an exact scope challenge without weakening authorization", async () => {
+    const context = { resources: [1] };
+    mock.authenticateAccessToken.mockResolvedValue(context);
+    mock.executeAgentTool.mockRejectedValue(new OAuthBearerError("Missing required scope: deployment:redeploy", 403, "deployment:redeploy"));
+    const response = await POST(request({
+      jsonrpc: "2.0", id: 4, method: "tools/call",
+      params: { name: "deployment.restart", arguments: { deployment: "1", idempotencyKey: "test-key" } },
+    }));
+    const data = await response.json();
+    expect(response.status).toBe(403);
+    expect(response.headers.get("WWW-Authenticate")).toContain('scope="deployment:redeploy"');
+    expect(response.headers.get("WWW-Authenticate")).toContain('error="insufficient_scope"');
+    expect(data.result._meta["mcp/www_authenticate"]).toEqual([response.headers.get("WWW-Authenticate")]);
+    expect(mock.executeAgentTool).toHaveBeenCalledOnce();
+    expect(mock.executeAgentTool).toHaveBeenCalledWith(context, "deployment.restart", { deployment: "1", idempotencyKey: "test-key" });
+  });
+
+  it("accepts a freshly authenticated retry and returns actual tool evidence", async () => {
+    const context = { resources: [1] };
+    mock.authenticateAccessToken
+      .mockRejectedValueOnce(new OAuthBearerError("Expired access token", 401))
+      .mockResolvedValueOnce(context);
+    mock.executeAgentTool.mockResolvedValue({ deployments: [{ id: 1 }] });
+    const call = { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "deployment.list", arguments: {} } };
+    expect((await POST(request(call))).status).toBe(401);
+    const retried = await POST(request(call, { Authorization: "Bearer test-fresh-token" }));
+    expect(retried.status).toBe(200);
+    expect((await retried.json()).result).toMatchObject({ isError: false, structuredContent: { deployments: [{ id: 1 }] } });
+    expect(mock.executeAgentTool).toHaveBeenCalledOnce();
+  });
+
+  it("keeps ordinary tool failures distinct from authentication challenges", async () => {
+    mock.authenticateAccessToken.mockResolvedValue({ resources: [1] });
+    mock.executeAgentTool.mockRejectedValue(new Error("Runtime operation is unsupported"));
+    const response = await POST(request({
+      jsonrpc: "2.0", id: 6, method: "tools/call",
+      params: { name: "deployment.restart", arguments: { deployment: "1" } },
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("WWW-Authenticate")).toBeNull();
+    expect((await response.json()).result).toMatchObject({ isError: true, content: [{ type: "text", text: "Runtime operation is unsupported" }] });
+    expect(mock.executeAgentTool).toHaveBeenCalledOnce();
   });
 });
