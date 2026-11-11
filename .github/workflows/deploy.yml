@@ -1,4 +1,4 @@
-name: GroundControl OAuth upgrade preflight
+name: GroundControl private OAuth upgrade preflight
 on:
   workflow_dispatch:
 permissions:
@@ -25,39 +25,43 @@ jobs:
             test "$(id -u)" = 0
             test "$(cat /proc/1/comm)" = systemd
             python3 - <<'PY'
-            import subprocess,json,pathlib,hashlib,sqlite3,shutil
+            import subprocess,json,pathlib,hashlib,sqlite3,shutil,os,sys
             def run(args): return subprocess.check_output(args,text=True).strip()
-            d=json.loads(run(['docker','inspect','groundcontrol-web']))[0]
-            labels=d['Config'].get('Labels') or {}
-            files=[p for p in labels.get('com.docker.compose.project.config_files','').split(',') if p]
-            image=json.loads(run(['docker','image','inspect',d['Image']]))[0]
-            mounts=[{'type':m['Type'],'source':m['Source'],'destination':m['Destination']} for m in d['Mounts'] if m['Destination'].startswith('/app/prisma')]
-            report={'container':d['Name'],'running':d['State']['Running'],'health':d['State'].get('Health',{}).get('Status'),'image':d['Config']['Image'],'imageId':d['Image'],'revision':(image.get('Config',{}).get('Labels') or {}).get('org.opencontainers.image.revision'),'composeProject':labels.get('com.docker.compose.project'),'composeService':labels.get('com.docker.compose.service'),'composeWorkingDir':labels.get('com.docker.compose.project.working_dir'),'composeFiles':[],'persistentMounts':mounts,'diskFreeBytes':shutil.disk_usage('/opt').free}
-            for raw in files:
-             p=pathlib.Path(raw)
-             report['composeFiles'].append({'path':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
-            wd=pathlib.Path(labels.get('com.docker.compose.project.working_dir') or '/opt/groundcontrol')
-            env=wd/'.env'
-            report['envFile']={'exists':env.exists(),'sha256':hashlib.sha256(env.read_bytes()).hexdigest() if env.exists() else None}
-            report['operationStates']={}
-            for mount in mounts:
-             root=pathlib.Path(mount['source'])
-             for db in root.glob('*.db') if root.is_dir() else []:
-              conn=sqlite3.connect(db.as_uri()+'?mode=ro',uri=True)
-              exists=conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='AgentOperation'").fetchone()[0]
-              if exists:
-               report['operationStates'][db.name]=dict(conn.execute('SELECT status,count(*) FROM AgentOperation GROUP BY status').fetchall())
-              conn.close()
-            print(json.dumps(report,indent=2))
-            assert report['running'] and report['health']=='healthy','Current container is not healthy'
-            assert report['revision']=='25202bc11fc09b41c6d8a88c5b22721ca0e9a38c','Revision drift: stop for review'
-            assert report['composeService']=='web' and len(mounts)==1,'Unexpected service/storage layout'
-            assert report['diskFreeBytes']>3*1024**3,'Insufficient disk space'
-            assert all(not states.get(s,0) for states in report['operationStates'].values() for s in ['pending','running','verifying']),'Active agent operation: stop for review'
+            try:
+             d=json.loads(run(['docker','inspect','groundcontrol-web']))[0]
+             labels=d['Config'].get('Labels') or {}
+             files=[p for p in labels.get('com.docker.compose.project.config_files','').split(',') if p]
+             image=json.loads(run(['docker','image','inspect',d['Image']]))[0]
+             mounts=[{'type':m['Type'],'source':m['Source'],'destination':m['Destination']} for m in d['Mounts'] if m['Destination'].startswith('/app/prisma')]
+             report={'container':d['Name'],'running':d['State']['Running'],'health':d['State'].get('Health',{}).get('Status'),'image':d['Config']['Image'],'imageId':d['Image'],'revision':(image.get('Config',{}).get('Labels') or {}).get('org.opencontainers.image.revision'),'composeProject':labels.get('com.docker.compose.project'),'composeService':labels.get('com.docker.compose.service'),'composeWorkingDir':labels.get('com.docker.compose.project.working_dir'),'composeFiles':[],'persistentMounts':mounts,'diskFreeBytes':shutil.disk_usage('/opt').free}
+             for raw in files:
+              p=pathlib.Path(raw)
+              report['composeFiles'].append({'path':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+             wd=pathlib.Path(labels.get('com.docker.compose.project.working_dir') or '/opt/groundcontrol')
+             env=wd/'.env'
+             report['envFile']={'exists':env.exists(),'sha256':hashlib.sha256(env.read_bytes()).hexdigest() if env.exists() else None}
+             report['operationStates']={}
+             for mount in mounts:
+              root=pathlib.Path(mount['source'])
+              for db in root.glob('*.db') if root.is_dir() else []:
+               conn=sqlite3.connect(db.as_uri()+'?mode=ro',uri=True)
+               exists=conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='AgentOperation'").fetchone()[0]
+               if exists:
+                report['operationStates'][db.name]=dict(conn.execute('SELECT status,count(*) FROM AgentOperation GROUP BY status').fetchall())
+               conn.close()
+             assert report['running'] and report['health']=='healthy','Current container is not healthy'
+             assert report['revision']=='25202bc11fc09b41c6d8a88c5b22721ca0e9a38c','Revision drift: stop for review'
+             assert report['composeService']=='web' and len(mounts)==1,'Unexpected service/storage layout'
+             assert report['diskFreeBytes']>3*1024**3,'Insufficient disk space'
+             assert all(not states.get(s,0) for states in report['operationStates'].values() for s in ['pending','running','verifying']),'Active agent operation: stop for review'
+             active=subprocess.run(['pgrep','-f','[s]upervise-upgrade.py|[s]upervise-oauth-upgrade.py'],capture_output=True,text=True)
+             assert active.returncode==1,'Existing supervisor requires review'
+             stage=pathlib.Path('/opt/gc-upgrade-staging/e57f9bd-20261111-systemd')
+             stage.mkdir(mode=0o700)
+             fd=os.open(stage/'preflight.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+             with os.fdopen(fd,'w') as f: json.dump(report,f); f.flush(); os.fsync(f.fileno())
+             print('PREFLIGHT_PRIVATE_READY')
+            except Exception:
+             print('PREFLIGHT_BLOCKED; details remain on the host')
+             sys.exit(1)
             PY
-            systemctl list-units --all 'gc-upgrade-*.service' --no-pager --plain
-            if pgrep -f '[s]upervise-upgrade.py' >/dev/null; then
-              echo 'An existing upgrade supervisor is still active; refusing overlap.' >&2
-              exit 1
-            fi
-            echo 'PREFLIGHT_READ_ONLY_COMPLETE'
