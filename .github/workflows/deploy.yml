@@ -51,6 +51,8 @@ jobs:
                conn.close()
              assert report['running'] and report['health']=='healthy','Current container is not healthy'
              assert report['revision']=='25202bc11fc09b41c6d8a88c5b22721ca0e9a38c','Revision drift: stop for review'
+             assert report['image']=='ghcr.io/teckedd-code2save/groundcontrol@sha256:839199545a59aaae397e78819a51ff0e8437b7b45da8412d9a4a9fac087a0e1c','Image drift requires review'
+             assert report['operationStates'],'Operation state could not be verified'
              assert report['composeService']=='web' and len(mounts)==1,'Unexpected service/storage layout'
              assert report['diskFreeBytes']>3*1024**3,'Insufficient disk space'
              assert all(not states.get(s,0) for states in report['operationStates'].values() for s in ['pending','running','verifying']),'Active agent operation: stop for review'
