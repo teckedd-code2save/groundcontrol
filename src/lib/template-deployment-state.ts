@@ -34,6 +34,8 @@ export interface PersistTemplateDeploymentInput {
   /** Deployment target type used for this template run. */
   targetType?: "compose" | "static";
   staticDir?: string | null;
+  buildCommand?: string;
+  outputDir?: string;
 }
 
 export interface PersistTemplateDeploymentResult {
@@ -62,6 +64,10 @@ export async function persistTemplateDeployment(
   const status = input.status || "success";
 
   const category = input.category || "docker";
+  const publishRecipe = category === "static" ? {
+    version: 1, sourcePath: input.source.sourcePath, staticDir: input.staticDir || input.deployPath,
+    buildCommand: input.buildCommand || "", outputDir: input.outputDir || ".",
+  } : undefined;
   const project = await client.project.upsert({
     where: { slug: input.slug },
     create: {
@@ -74,6 +80,7 @@ export async function persistTemplateDeployment(
       dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
       category,
+      ...(category === "static" ? { buildCommand: input.buildCommand || null, outputDir: input.outputDir || "." } : {}),
       status,
       lastDeploy: new Date(),
       envVars: JSON.stringify({
@@ -81,6 +88,7 @@ export async function persistTemplateDeployment(
         composeProject: input.composeProject,
         source: input.source,
         staticDir: input.staticDir || null,
+        ...(publishRecipe ? { publishRecipe } : {}),
       }),
     },
     update: {
@@ -92,6 +100,7 @@ export async function persistTemplateDeployment(
       dockerCompose: category === "static" ? null : input.composeYml,
       caddyFile: input.proxyConfig || null,
       category,
+      ...(category === "static" ? { buildCommand: input.buildCommand || null, outputDir: input.outputDir || "." } : {}),
       status,
       lastDeploy: new Date(),
       envVars: JSON.stringify({
@@ -99,6 +108,7 @@ export async function persistTemplateDeployment(
         composeProject: input.composeProject,
         source: input.source,
         staticDir: input.staticDir || null,
+        ...(publishRecipe ? { publishRecipe } : {}),
       }),
     },
   });
@@ -122,6 +132,7 @@ export async function persistTemplateDeployment(
         deployPath: input.deployPath,
         composeProject: input.composeProject,
         staticDir: input.staticDir || null,
+        ...(publishRecipe ? { publishRecipe: { ...publishRecipe, buildCommand: undefined, buildCommandConfigured: Boolean(publishRecipe.buildCommand) } } : {}),
         source: input.source,
         tunnelId: input.tunnelId || null,
         tunnelConfig: input.tunnelConfigResult ?? null,
@@ -129,7 +140,7 @@ export async function persistTemplateDeployment(
         proxy: input.proxyOutput,
         health: input.healthResults,
         upOutput: input.upOutput,
-        manifest: safeJson(input.manifest),
+        manifest: safeManifest(input.manifest),
       }),
       durationMs: input.durationMs ?? null,
     },
@@ -229,9 +240,16 @@ function humanizeSlug(slug: string): string {
     .join(" ") || "Template Deployment";
 }
 
-function safeJson(value: string): unknown {
+function safeManifest(value: string): unknown {
   try {
-    return JSON.parse(value);
+    const manifest = JSON.parse(value);
+    if (manifest?.publishRecipe && typeof manifest.publishRecipe === "object") {
+      // Commands can contain operator secrets. Keep exact choices in the
+      // project/host recipe, never in release evidence exposed through MCP.
+      const { buildCommand, ...recipe } = manifest.publishRecipe;
+      manifest.publishRecipe = { ...recipe, buildCommandConfigured: Boolean(buildCommand) };
+    }
+    return manifest;
   } catch {
     return value;
   }

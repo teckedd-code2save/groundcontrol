@@ -324,6 +324,19 @@ export async function execOnTargetStrict(
   return execOnVps(command, conn, cwd, stdin, options);
 }
 
+/** Docker and mounted source-workspace operations, without native OS access in Desktop mode. */
+export async function execOnWorkloadTarget(
+  command: string,
+  vps?: VpsConnection | null,
+  cwd?: string,
+  stdin?: string,
+  options?: { timeout?: number }
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  if (!vps) throw new Error("No workload host was provided.");
+  if (isDesktopMode() && vps.isLocal) return execOnVps(command, vps, cwd, stdin, options);
+  return execOnTargetStrict(command, vps, cwd, stdin, options);
+}
+
 /**
  * Start a detached command on the same execution plane used by execOnTarget.
  * A containerized local GroundControl must use the Docker host bridge so a

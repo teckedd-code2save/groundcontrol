@@ -1,3 +1,5 @@
+import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
+import { jsonObject } from "@/lib/agent-runtime-capabilities";
 import { NextRequest, NextResponse } from "next/server";
 import {
   resolveComposeProjectPath, shQuote,
@@ -5,7 +7,7 @@ import {
   buildManagedComposeInvocation, getImageDigest,
   getPreviousDeploymentDigest, computeChangedFields, resolveComposeFile,
 } from "@/lib/vps";
-import { execDetachedOnTarget, execOnTargetStrict } from "@/lib/host-exec";
+import { execDetachedOnTarget, execOnWorkloadTarget } from "@/lib/host-exec";
 import { ensureGithubRegistryLogin } from "@/lib/github-registry";
 import { parseComposeServices } from "@/lib/project-scan";
 import {
@@ -108,7 +110,7 @@ async function resolveComposeSourceFingerprint(input: {
   imageDigest: string | null;
   vps: Awaited<ReturnType<typeof getActiveVps>>;
 }) {
-  const git = await execOnTargetStrict(
+  const git = await execOnWorkloadTarget(
     [
       `cd ${shQuote(input.projectPath)}`,
       `printf 'remote=%s\\n' "$(git config --get remote.origin.url 2>/dev/null || true)"`,
@@ -124,7 +126,7 @@ async function resolveComposeSourceFingerprint(input: {
 
   const firstImage = Object.values(input.expectedImages).find(Boolean);
   if ((!repoUrl || !commitSha) && firstImage) {
-    const labels = await execOnTargetStrict(
+    const labels = await execOnWorkloadTarget(
       `docker image inspect --format 'revision={{ index .Config.Labels "org.opencontainers.image.revision" }}\nsource={{ index .Config.Labels "org.opencontainers.image.source" }}' ${shQuote(firstImage)} 2>/dev/null || true`,
       input.vps
     ).catch(() => ({ stdout: "", stderr: "", code: 1 }));
@@ -200,7 +202,7 @@ async function recordRedeployEvidence(
   const command = reset
     ? `: > ${shQuote(logFile)} && chmod 600 ${shQuote(logFile)} && printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`
     : `printf '%s\\n' ${shQuote(line)} >> ${shQuote(logFile)}`;
-  const result = await execOnTargetStrict(command, vps);
+  const result = await execOnWorkloadTarget(command, vps);
   if (result.code !== 0) {
     throw new HttpError(result.stderr || "GroundControl could not record deployment progress.", 500);
   }
@@ -240,8 +242,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "No compose file found", projectPath }, { status: 404 });
     }
     const [result, imageOverride] = await Promise.all([
-      execOnTargetStrict(`cat ${shQuote(composePath)}`, vps),
-      execOnTargetStrict(`cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, vps),
+      execOnWorkloadTarget(`cat ${shQuote(composePath)}`, vps),
+      execOnWorkloadTarget(`cat ${shQuote(`${projectPath}/${MANAGED_IMAGE_OVERRIDE_FILE}`)} 2>/dev/null || true`, vps),
     ]);
 
     if (!result.stdout.trim()) {
@@ -303,11 +305,14 @@ export async function POST(req: NextRequest) {
     if (requestedComposePathError) {
       return NextResponse.json({ error: requestedComposePathError }, { status: 400 });
     }
-    const vps = await getActiveVps();
+    const agentTarget = await agentOperationTarget(req, ["deployment.redeploy", "deployment.source.deploy", "deployment.release"]);
+    assertAgentProject(agentTarget, projectSlug);
+    if (agentTarget && action !== (agentTarget.operation.type === "deployment.source.deploy" ? "source-deploy" : "redeploy")) throw new HttpError("Action does not match the approved operation.", 403);
+    const vps = agentTarget ? agentTarget.vps : await getActiveVps();
     const isRedeploy = action === "redeploy" || action === "source-deploy";
     const isSourceDeploy = action === "source-deploy";
     if (isRedeploy) {
-      redeployLogFile = `/tmp/gc-redeploy-${projectSlug}.log`;
+      redeployLogFile = agentTarget?.logFile || `/tmp/gc-redeploy-${projectSlug}.log`;
       redeployVps = vps;
       await recordRedeployEvidence(
         redeployLogFile,
@@ -316,13 +321,15 @@ export async function POST(req: NextRequest) {
         true
       );
     }
-    const resolvedTarget = await resolveComposeProjectPath(projectSlug, undefined, vps);
-    const targetCandidates = composeProjectCandidates(resolvedTarget, explicitPath);
+    const resolvedTarget = agentTarget
+      ? { projectPath: agentTarget.projectPath!, projectSlug, source: "config" as const }
+      : await resolveComposeProjectPath(projectSlug, undefined, vps);
+    const targetCandidates = agentTarget ? [resolvedTarget] : composeProjectCandidates(resolvedTarget, explicitPath);
     let target: ComposeProjectTarget | null = null;
     let composeFile: string | null = null;
     for (const candidate of targetCandidates) {
       const candidateComposePath = requestedComposePathForCandidate(
-        requestedComposePath,
+        agentTarget ? agentTarget.deployment.composePath : requestedComposePath,
         candidate.projectPath
       );
       const found = await resolveComposeFile(
@@ -331,6 +338,9 @@ export async function POST(req: NextRequest) {
         candidateComposePath
       );
       if (!found) continue;
+      if (agentTarget?.deployment.composePath && found !== agentTarget.deployment.composePath) {
+        throw new HttpError("The enrolled Compose file is missing. Inspect the deployment before retrying.", 409);
+      }
       target = candidate;
       composeFile = found;
       break;
@@ -351,7 +361,7 @@ export async function POST(req: NextRequest) {
     const serviceArgs = Array.isArray(services) && services.length > 0
       ? services.map((s: string) => shQuote(s)).join(" ")
       : "";
-    const project = await prisma.project.findFirst({
+    const project = agentTarget ? agentTarget.deployment.legacyProject : await prisma.project.findFirst({
       where: {
         OR: [
           { slug: projectSlug },
@@ -391,7 +401,9 @@ export async function POST(req: NextRequest) {
             : `up -d${serviceArgs ? ` ${serviceArgs}` : ""}`;
 
       let result: { stdout: string; stderr: string; code: number };
-      const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
+      const baseComposeCmd = await getDockerComposeCommand(vps, execOnWorkloadTarget);
+      const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
+      const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
       const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`;
 
       if ((action === "recreate" || action === "start") && vps?.isLocal) {
@@ -402,7 +414,7 @@ export async function POST(req: NextRequest) {
         }
         result = { stdout: `${action} initiated — running in background (log: ${logFile})`, stderr: "", code: 0 };
       } else {
-        result = await execOnTargetStrict(command, vps);
+        result = await execOnWorkloadTarget(command, vps);
       }
 
       return NextResponse.json({
@@ -421,7 +433,7 @@ export async function POST(req: NextRequest) {
       // Any enrolled deployment with a linked GitHub repository and a compose
       // path is source-deployable. The legacy Project / managementMode gate was
       // removed so new deployments are MCP-drivable without a manual "manage" step.
-      const enrolled = await prisma.enrolledDeployment.findFirst({
+      const enrolled = agentTarget ? agentTarget.deployment : await prisma.enrolledDeployment.findFirst({
         where: {
           OR: [
             { sourcePath: target.projectPath },
@@ -443,7 +455,7 @@ export async function POST(req: NextRequest) {
       sourceSync = await syncGithubDeploymentSource({
         deploymentId: enrolled.id,
         projectPath: target.projectPath,
-        branch,
+        branch: agentTarget ? agentTarget.input.branch : branch,
         vps,
       });
       await recordRedeployEvidence(
@@ -504,8 +516,10 @@ export async function POST(req: NextRequest) {
       "[compose] Validating the effective Compose configuration",
       vps
     );
-    const composeCmd = await getDockerComposeCommand(vps, execOnTargetStrict);
-    let configCheck = await execOnTargetStrict(
+    const baseComposeCmd = await getDockerComposeCommand(vps, execOnWorkloadTarget);
+    const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
+    const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
+    let configCheck = await execOnWorkloadTarget(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
       vps
     );
@@ -524,7 +538,7 @@ export async function POST(req: NextRequest) {
           vps,
         }
       );
-      configCheck = await execOnTargetStrict(
+      configCheck = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,
         vps
       );
@@ -548,7 +562,7 @@ export async function POST(req: NextRequest) {
         "[build] Building Compose services on the deployment host",
         vps
       );
-      const buildResult = await execOnTargetStrict(
+      const buildResult = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `build${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
         vps
       );
@@ -582,7 +596,7 @@ export async function POST(req: NextRequest) {
         "[pull] Pulling images from the effective Compose configuration",
         vps
       );
-      pullResult = await execOnTargetStrict(
+      pullResult = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
         vps
       );
@@ -630,12 +644,12 @@ export async function POST(req: NextRequest) {
         "[deploy] Starting Docker Compose recreation",
         vps
       );
-      result = await execOnTargetStrict(
+      result = await execOnWorkloadTarget(
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, deployArgs, composeFile)}`,
         vps
       );
       if (result.code === 0) {
-        const verification = await execOnTargetStrict(`cd ${shQuote(target.projectPath)} && ${verifyImages}`, vps);
+        const verification = await execOnWorkloadTarget(`cd ${shQuote(target.projectPath)} && ${verifyImages}`, vps);
         result = {
           stdout: [result.stdout, verification.stdout].filter(Boolean).join("\n"),
           stderr: verification.code === 0 ? result.stderr : verification.stderr || verification.stdout,
@@ -643,7 +657,7 @@ export async function POST(req: NextRequest) {
         };
       }
       if (result.code === 0) {
-        const publicVerification = await execOnTargetStrict(
+        const publicVerification = await execOnWorkloadTarget(
           `cd ${shQuote(target.projectPath)} && ${buildDeploymentVerificationCommand(verificationChecks)}`,
           vps
         );

@@ -16,7 +16,7 @@ import {
 import {
   shouldBlockIncidentConfirmation,
   shouldBlockIncidentSourceTool,
-} from "@/app/api/ai/chat/route";
+} from "./ai-incident-guards";
 
 describe("AI incident integrity", () => {
   it("does not display failed tools as successful", () => {

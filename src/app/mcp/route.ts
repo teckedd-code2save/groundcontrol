@@ -10,7 +10,7 @@ import { executeAgentTool, toolDefinitionsForScopes } from "@/lib/mcp-agent";
 
 const LEGACY_PROTOCOL_VERSION = "2025-11-25";
 const LEGACY_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
-const TOOLSET_REVISION = "2026-09-20.1";
+const TOOLSET_REVISION = "2026-11-11.1";
 const SERVER_INFO = {
   name: "GroundControl",
   title: "GroundControl",
@@ -123,13 +123,16 @@ function authToolResult(
 ) {
   const kind = error.status === 403 ? "insufficient_scope" : "invalid_token";
   const challenge = bearerChallenge(req, kind, error.message, error.requiredScope);
+  // HTTP clients drive OAuth recovery from 401/403, not from an MCP isError
+  // payload. Keep the tool-level challenge for ChatGPT while also returning
+  // the transport status required by native MCP OAuth clients such as Hermes.
   return rpc(body.id, {
     content: [{ type: "text", text: error.message }],
     isError: true,
     _meta: {
       "mcp/www_authenticate": [challenge],
     },
-  }, modern, 200, {
+  }, modern, error.status, {
     "WWW-Authenticate": challenge,
   });
 }

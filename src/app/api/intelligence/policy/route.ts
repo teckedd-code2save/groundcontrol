@@ -17,11 +17,11 @@ function errorResponse(err: unknown, status = 500) {
 
 const g = globalThis as unknown as { __gcLoopPolicy?: AutopilotPolicy };
 
-export function getLoopPolicy(): AutopilotPolicy {
+function getLoopPolicy(): AutopilotPolicy {
   return g.__gcLoopPolicy || { ...DEFAULT_AUTOPILOT_POLICY };
 }
 
-export function setLoopPolicy(policy: AutopilotPolicy): void {
+function setLoopPolicy(policy: AutopilotPolicy): void {
   g.__gcLoopPolicy = policy;
 }
 

@@ -1,3 +1,4 @@
+import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/errors";
@@ -20,8 +21,10 @@ export async function GET(req: NextRequest) {
     if (!slug || !/^[A-Za-z0-9_.-]+$/.test(slug)) {
       return NextResponse.json({ error: "Invalid slug" }, { status: 400 });
     }
-    const logFile = `/tmp/gc-redeploy-${slug}.log`;
-    const vps = await getActiveVps();
+    const agentTarget = await agentOperationTarget(req, ["deployment.redeploy", "deployment.source.deploy", "deployment.release"], true);
+    assertAgentProject(agentTarget, slug);
+    const logFile = agentTarget?.logFile || `/tmp/gc-redeploy-${slug}.log`;
+    const vps = agentTarget ? agentTarget.vps : await getActiveVps();
     const [result, modified] = await Promise.all([
       execOnTargetStrict(`tail -n 200 ${shQuote(logFile)} 2>/dev/null || echo ""`, vps),
       execOnTargetStrict(`stat -c %Y ${shQuote(logFile)} 2>/dev/null || echo 0`, vps),

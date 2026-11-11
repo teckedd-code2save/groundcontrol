@@ -1,7 +1,7 @@
-import { isIP } from "node:net";
-import { lookup } from "node:dns/promises";
+import { runtimeCapabilities, runtimeIdentity, requireRuntimeOperation, jsonObject } from "./agent-runtime-capabilities";
+import { runtimeHealth, probePublicUrl, overallHealth } from "./agent-health";
 import { prisma } from "@/lib/prisma";
-import { getDockerContainers, type VpsConnection } from "@/lib/vps";
+import type { VpsConnection } from "@/lib/vps";
 import { inspectDeploymentEnvKeyPresence } from "@/lib/env-management";
 import { normalizeReleaseSha } from "@/lib/github-image-release";
 import {
@@ -37,6 +37,7 @@ const DEPLOYMENT_SUMMARY_SCHEMA = {
     kind: { type: "string" },
     managementMode: { type: "string" },
     status: { type: "string" },
+    capabilities: { type: "object", additionalProperties: true },
     updatedAt: { type: "string" },
   },
   required: ["id", "name", "slug", "kind", "managementMode", "status", "updatedAt"],
@@ -82,7 +83,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.list",
     title: "List deployments",
-    description: "List only the GroundControl deployments this agent has been granted access to.",
+    description: "List only the GroundControl deployments this agent has been granted access to, including supported and authorized runtime operations.",
     requiredScope: "deployment:read",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     outputSchema: {
@@ -96,7 +97,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.inspect",
     title: "Inspect deployment",
-    description: "Inspect deployment identity, source, runtime target, recent releases, and recorded public endpoint without exposing secrets.",
+    description: "Inspect deployment identity, runtime capabilities, source, target, recent releases, and recorded public endpoint without exposing secrets.",
     requiredScope: "deployment:read",
     inputSchema: {
       type: "object",
@@ -123,6 +124,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
             target: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
             source: { type: "object", additionalProperties: true },
             publicUrl: { anyOf: [{ type: "string" }, { type: "null" }] },
+            capabilities: { type: "object", additionalProperties: true },
             recentReleases: { type: "array", items: { type: "object", additionalProperties: true } },
             updatedAt: { type: "string" },
           },
@@ -182,7 +184,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.health",
     title: "Check deployment health",
-    description: "Check approved deployment containers and, when safe, its recorded public HTTP endpoint.",
+    description: "Check runtime-specific health and, when safe, the recorded public HTTP endpoint. Unchecked or unavailable evidence is unknown (null), including container health for static sites.",
     requiredScope: "deployment:health",
     inputSchema: {
       type: "object",
@@ -197,14 +199,17 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
         runtime: {
           type: "object",
           properties: {
-            healthy: { type: "boolean" },
+            kind: { type: "string" },
+            checked: { type: "boolean" },
+            reason: { type: "string" },
+            healthy: { type: ["boolean", "null"] },
             containers: { type: "array", items: { type: "object", additionalProperties: true } },
           },
           required: ["healthy", "containers"],
           additionalProperties: false,
         },
         public: { type: "object", additionalProperties: true },
-        healthy: { type: "boolean" },
+        healthy: { type: ["boolean", "null"] },
       },
       required: ["deployment", "runtime", "public", "healthy"],
       additionalProperties: false,
@@ -299,7 +304,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.source.deploy",
     title: "Build and deploy linked source",
-    description: "Queue a durable deployment that syncs a linked GitHub source branch through the GroundControl GitHub App, builds on the target host, recreates the Compose workload, and verifies it without relying on GitHub Actions.",
+    description: "Queue a durable deployment that syncs a linked GitHub source branch through the GroundControl GitHub App, builds on the enrolled host and deploys supported Compose or static workloads without relying on GitHub Actions.",
     requiredScope: "deployment:redeploy",
     inputSchema: {
       type: "object",
@@ -326,7 +331,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.redeploy",
     title: "Redeploy deployment",
-    description: "Queue a durable GroundControl redeploy for an approved workload. Returns an operation id immediately; use operation.get to follow verification and evidence.",
+    description: "Queue a durable redeploy for a supported deployment with its saved Compose, static publish, or standalone recreate recipe. Inspect capabilities first. Returns an operation id immediately; use operation.get to follow verification and evidence.",
     requiredScope: "deployment:redeploy",
     inputSchema: {
       type: "object",
@@ -348,6 +353,32 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "deployment.restart",
+    title: "Restart deployment",
+    description: "Restart the existing containers of an approved Compose or standalone deployment without pulling or replacing its image. Returns an operation id immediately; use operation.get to follow verification and evidence.",
+    requiredScope: "deployment:redeploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deployment: { type: "string", description: "Deployment slug or numeric id." },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 160, description: "Stable unique key. Reusing it returns the original operation instead of restarting twice." },
+        reason: { type: "string", maxLength: 500, description: "Short operational reason for the restart." },
+      },
+      required: ["deployment", "idempotencyKey"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        operation: OPERATION_SCHEMA,
+        reused: { type: "boolean" },
+      },
+      required: ["operation", "reused"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "deployment.build_publish",
@@ -472,6 +503,7 @@ async function allowedDeployment(context: AgentAccessContext, value: unknown) {
       ],
     },
     include: {
+      githubRepositories: { select: { githubRepositoryId: true } },
       projectGroup: { select: { id: true, name: true, slug: true } },
       vpsConfig: { select: { id: true, name: true, host: true, port: true, username: true, isLocal: true, authType: true, privateKey: true, password: true } },
       legacyProject: {
@@ -499,9 +531,16 @@ async function allowedDeployment(context: AgentAccessContext, value: unknown) {
   return deployment;
 }
 
-function safeDeployment(deployment: Awaited<ReturnType<typeof allowedDeployment>>) {
+function safeDeployment(deployment: Awaited<ReturnType<typeof allowedDeployment>>, context: AgentAccessContext) {
   const latest = deployment.legacyProject?.deployments?.[0] || null;
+  const metadata = jsonObject(deployment.metadataJson);
+  let manualPublicUrl: string | null = null;
+  try {
+    const url = new URL(String(metadata.manualPublicUrl || ""));
+    if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) manualPublicUrl = url.toString();
+  } catch { /* Missing or invalid recorded endpoint. */ }
   return {
+    capabilities: authorizedCapabilities(deployment, context),
     id: deployment.id,
     name: deployment.name,
     slug: deployment.slug,
@@ -523,44 +562,12 @@ function safeDeployment(deployment: Awaited<ReturnType<typeof allowedDeployment>
       branch: latest?.branch || null,
       revision: latest?.commitSha || null,
     },
-    publicUrl: latest?.publicUrl || latest?.previewUrl || (deployment.legacyProject?.domain ? `https://${deployment.legacyProject.domain}` : null),
+    publicUrl: latest?.publicUrl || latest?.previewUrl || manualPublicUrl || (deployment.legacyProject?.domain ? `https://${deployment.legacyProject.domain}` : null),
     recentReleases: deployment.legacyProject?.deployments || [],
     updatedAt: deployment.updatedAt,
   };
 }
 
-function isPrivateAddress(address: string): boolean {
-  const normalized = address.replace(/^::ffff:/, "");
-  if (normalized === "::1") return true;
-  if (isIP(normalized) === 4) {
-    const [a, b] = normalized.split(".").map(Number);
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-  }
-  return /^(?:fc|fd|fe8|fe9|fea|feb)/i.test(normalized);
-}
-
-async function probePublicUrl(value: string | null) {
-  if (!value) return { checked: false, reason: "No public URL recorded" };
-  try {
-    const url = new URL(value);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || isPrivateAddress(url.hostname) || url.hostname === "localhost") {
-      return { checked: false, reason: "Public verification URL is not eligible for external probing" };
-    }
-    const addresses = await lookup(url.hostname, { all: true });
-    if (!addresses.length || addresses.some((address) => isPrivateAddress(address.address))) {
-      return { checked: false, reason: "Public verification URL resolves to a private address" };
-    }
-    const response = await fetch(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(8000) });
-    return {
-      checked: true,
-      url: url.toString(),
-      status: response.status,
-      healthy: response.status >= 200 && response.status < 400,
-    };
-  } catch (error) {
-    return { checked: true, healthy: false, error: error instanceof Error ? error.message : String(error) };
-  }
-}
 
 export async function executeAgentTool(
   context: AgentAccessContext,
@@ -575,20 +582,25 @@ export async function executeAgentTool(
     const deployments = await prisma.enrolledDeployment.findMany({
       where: { id: { in: context.resources }, kind: { not: "source" } },
       orderBy: [{ name: "asc" }, { id: "asc" }],
-      select: { id: true, name: true, slug: true, kind: true, managementMode: true, status: true, updatedAt: true },
+      include: { legacyProject: true, githubRepositories: { select: { githubRepositoryId: true } } },
     });
-    return { deployments };
+    return { deployments: deployments.map((d) => ({ id: d.id, name: d.name, slug: d.slug, kind: d.kind, managementMode: d.managementMode, status: d.status, updatedAt: d.updatedAt, capabilities: authorizedCapabilities(d, context) })) };
   }
 
   if (name === "deployment.inspect") {
-    return { deployment: safeDeployment(await allowedDeployment(context, args.deployment)) };
+    return { deployment: safeDeployment(await allowedDeployment(context, args.deployment), context) };
   }
 
   if (name === "deployment.logs") {
     const deployment = await allowedDeployment(context, args.deployment);
     const limit = Math.min(20, Math.max(1, Number(args.limit) || 5));
     const slugs = Array.from(new Set([deployment.slug, deployment.legacyProject?.slug].filter((item): item is string => Boolean(item))));
-    const logs = await prisma.deploymentLog.findMany({
+    const logs = deployment.kind === "static" && deployment.legacyProject
+      ? (await prisma.deployment.findMany({
+          where: { projectId: deployment.legacyProject.id }, orderBy: { createdAt: "desc" }, take: limit,
+          select: { id: true, status: true, branch: true, commitSha: true, output: true, error: true, durationMs: true, createdAt: true, updatedAt: true },
+        })).map((release) => ({ ...release, projectSlug: deployment.legacyProject!.slug }))
+      : await prisma.deploymentLog.findMany({
       where: { projectSlug: { in: slugs } },
       orderBy: { createdAt: "desc" },
       take: limit,
@@ -606,22 +618,9 @@ export async function executeAgentTool(
 
   if (name === "deployment.health") {
     const deployment = await allowedDeployment(context, args.deployment);
-    const vps = deployment.vpsConfig as VpsConnection | null;
-    const containers = vps ? await getDockerContainers(vps) : [];
-    const prefixes = [deployment.containerName, deployment.legacyProject?.slug, deployment.slug].filter((item): item is string => Boolean(item));
-    const matched = containers.filter((container) => prefixes.some((prefix) => container.name === prefix || container.name.startsWith(`${prefix}-`)));
-    const publicUrl = safeDeployment(deployment).publicUrl;
-    const publicProbe = await probePublicUrl(publicUrl);
-    const runtimeHealthy = matched.length > 0 && matched.every((container) => container.state === "running");
-    return {
-      deployment: deployment.slug,
-      runtime: {
-        healthy: runtimeHealthy,
-        containers: matched.map((container) => ({ name: container.name, image: container.image, state: container.state, status: container.status })),
-      },
-      public: publicProbe,
-      healthy: runtimeHealthy && (publicProbe.checked ? Boolean(publicProbe.healthy) : true),
-    };
+    const runtime = await runtimeHealth(deployment, deployment.vpsConfig as VpsConnection | null);
+    const publicProbe = await probePublicUrl(safeDeployment(deployment, context).publicUrl);
+    return { deployment: deployment.slug, runtime, public: publicProbe, healthy: overallHealth(runtime, publicProbe) };
   }
 
   if (name === "deployment.config.check") {
@@ -659,56 +658,25 @@ export async function executeAgentTool(
 
   if (name === "deployment.source.deploy") {
     const deployment = await allowedDeployment(context, args.deployment);
-    // Any enrolled deployment with a linked GitHub repository and a compose
-    // path is source-deployable. The legacy Project / managementMode gate was
-    // removed so new deployments are MCP-drivable without a manual "manage" step.
     const idempotencyKey = String(args.idempotencyKey || "").trim();
     if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
       throw new Error("idempotencyKey must be between 8 and 160 characters");
     }
     const branch = typeof args.branch === "string" ? args.branch.trim() : "";
     if (branch.length > 200) throw new Error("branch must be 200 characters or fewer");
-    const existing = await prisma.agentOperation.findUnique({
-      where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } },
+    return enqueueOperation(context, deployment, name, idempotencyKey, {
+      branch: branch || undefined,
+      reason: String(args.reason || "").trim().slice(0, 500),
     });
-    if (existing) return { operation: serializeOperation(existing), reused: true };
-
-    const operation = await prisma.agentOperation.create({
-      data: {
-        grantId: context.grant.id,
-        deploymentId: deployment.id,
-        type: "deployment.source.deploy",
-        idempotencyKey,
-        inputJson: JSON.stringify({
-          branch: branch || undefined,
-          reason: String(args.reason || "").trim().slice(0, 500),
-        }),
-      },
-    });
-    return { operation: serializeOperation(operation), reused: false };
   }
 
-  if (name === "deployment.redeploy") {
+  if (name === "deployment.redeploy" || name === "deployment.restart") {
     const deployment = await allowedDeployment(context, args.deployment);
     const idempotencyKey = String(args.idempotencyKey || "").trim();
     if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
       throw new Error("idempotencyKey must be between 8 and 160 characters");
     }
-    const existing = await prisma.agentOperation.findUnique({
-      where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } },
-    });
-    if (existing) return { operation: serializeOperation(existing), reused: true };
-
-    const operation = await prisma.agentOperation.create({
-      data: {
-        grantId: context.grant.id,
-        deploymentId: deployment.id,
-        type: "deployment.redeploy",
-        idempotencyKey,
-        inputJson: JSON.stringify({ reason: String(args.reason || "").trim().slice(0, 500) }),
-      },
-    });
-    return { operation: serializeOperation(operation), reused: false };
+    return enqueueOperation(context, deployment, name, idempotencyKey, { reason: String(args.reason || "").trim().slice(0, 500) });
   }
 
   if (name === "deployment.build_publish") {
@@ -723,33 +691,19 @@ export async function executeAgentTool(
     const services = Array.isArray(args.services)
       ? args.services.map((service: unknown) => String(service)).filter(Boolean)
       : undefined;
-    const existing = await prisma.agentOperation.findUnique({
-      where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } },
+    return enqueueOperation(context, deployment, name, idempotencyKey, {
+      commitSha,
+      branch: branch || undefined,
+      services,
+      builder: args.builder === "docker-agentic"
+        ? "docker-agentic"
+        : args.builder === "local"
+          ? "local"
+          : "buildkit",
+      runTests: args.runTests === true,
+      testCommand: typeof args.testCommand === "string" ? args.testCommand.trim() : undefined,
+      reason: String(args.reason || "").trim().slice(0, 500),
     });
-    if (existing) return { operation: serializeOperation(existing), reused: true };
-
-    const operation = await prisma.agentOperation.create({
-      data: {
-        grantId: context.grant.id,
-        deploymentId: deployment.id,
-        type: "deployment.build_publish",
-        idempotencyKey,
-        inputJson: JSON.stringify({
-          commitSha,
-          branch: branch || undefined,
-          services,
-          builder: args.builder === "docker-agentic"
-            ? "docker-agentic"
-            : args.builder === "local"
-              ? "local"
-              : "buildkit",
-          runTests: args.runTests === true,
-          testCommand: typeof args.testCommand === "string" ? args.testCommand.trim() : undefined,
-          reason: String(args.reason || "").trim().slice(0, 500),
-        }),
-      },
-    });
-    return { operation: serializeOperation(operation), reused: false };
   }
 
   if (name === "deployment.release") {
@@ -762,40 +716,58 @@ export async function executeAgentTool(
     if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
       throw new Error("idempotencyKey must be between 8 and 160 characters");
     }
-    const existing = await prisma.agentOperation.findUnique({
-      where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } },
+    return enqueueOperation(context, deployment, name, idempotencyKey, {
+      buildOperationId,
+      expectedCurrentRevision:
+        typeof args.expectedCurrentRevision === "string"
+          ? args.expectedCurrentRevision.trim()
+          : undefined,
+      reason: String(args.reason || "").trim().slice(0, 500),
     });
-    if (existing) return { operation: serializeOperation(existing), reused: true };
-
-    const operation = await prisma.agentOperation.create({
-      data: {
-        grantId: context.grant.id,
-        deploymentId: deployment.id,
-        type: "deployment.release",
-        idempotencyKey,
-        inputJson: JSON.stringify({
-          buildOperationId,
-          expectedCurrentRevision:
-            typeof args.expectedCurrentRevision === "string"
-              ? args.expectedCurrentRevision.trim()
-              : undefined,
-          reason: String(args.reason || "").trim().slice(0, 500),
-        }),
-      },
-    });
-    return { operation: serializeOperation(operation), reused: false };
   }
 
   if (name === "operation.get") {
     const operationId = String(args.operationId || "").trim();
     const operation = await prisma.agentOperation.findFirst({
-      where: { id: operationId, grantId: context.grant.id },
+      where: { id: operationId, grantId: context.grant.id, deploymentId: { in: context.resources } },
     });
     if (!operation) throw new Error("Operation not found for this agent grant");
     return { operation: serializeOperation(operation) };
   }
 
   throw new Error(`Tool not implemented: ${name}`);
+}
+
+function authorizedCapabilities(deployment: Parameters<typeof runtimeCapabilities>[0], context: AgentAccessContext) {
+  const capabilities = runtimeCapabilities(deployment);
+  return { ...capabilities, operations: Object.fromEntries(Object.entries(capabilities.operations).map(([name, operation]) => [name, {
+    ...operation, authorized: context.scopes.has("deployment:redeploy"),
+    available: operation.supported && context.scopes.has("deployment:redeploy"),
+  }])) };
+}
+
+async function enqueueOperation(context: AgentAccessContext, deployment: Awaited<ReturnType<typeof allowedDeployment>>, type: string, idempotencyKey: string, input: Record<string, unknown>) {
+  const inputJson = JSON.stringify({ ...input, runtimeIdentity: runtimeIdentity(deployment) });
+  const lookup = () => prisma.agentOperation.findUnique({ where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } } });
+  const reuse = (existing: NonNullable<Awaited<ReturnType<typeof lookup>>>) => {
+    if (existing.deploymentId !== deployment.id || existing.type !== type || existing.inputJson !== inputJson) {
+      throw new Error("idempotencyKey is already bound to a different deployment, operation, input or runtime identity.");
+    }
+    return { operation: serializeOperation(existing), reused: true };
+  };
+  const existing = await lookup();
+  if (existing) return reuse(existing);
+  requireRuntimeOperation(deployment, type);
+  try {
+    const operation = await prisma.agentOperation.create({ data: { grantId: context.grant.id, deploymentId: deployment.id, type, idempotencyKey, inputJson } });
+    return { operation: serializeOperation(operation), reused: false };
+  } catch (error) {
+    // A concurrent identical request may have won the unique-key insert.
+    if ((error as { code?: string }).code !== "P2002") throw error;
+    const winner = await lookup();
+    if (!winner) throw error;
+    return reuse(winner);
+  }
 }
 
 function parseJson(value: string | null) {

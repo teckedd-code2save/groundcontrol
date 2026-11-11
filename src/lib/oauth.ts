@@ -21,7 +21,7 @@ export const OAUTH_SCOPE_LABELS: Record<OAuthScope, string> = {
   "deployment:read": "Inspect deployments and their recorded configuration",
   "deployment:logs": "Read deployment execution evidence and logs",
   "deployment:health": "Check runtime and public endpoint health",
-  "deployment:redeploy": "Redeploy an approved workload",
+  "deployment:redeploy": "Redeploy or restart an approved workload",
   "operation:read": "Read durable operation progress and evidence",
   offline_access: "Stay connected using rotating refresh tokens",
 };
