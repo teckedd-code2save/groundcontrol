@@ -31,3 +31,26 @@ it("connects a running app to the chosen project and environment, excluding sour
   await click("Connect deployment");
   expect(mutations).toEqual([{ action: "enroll", candidateId: "compose:portal", projectId: 7, environmentName: "Production", hostId: 3 }]);
 });
+
+it("keeps Docker discovery failure actionable instead of showing no available deployments", async () => {
+  const original = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url, init) => {
+    if (url === "/api/deployment-inventory") return new Response(JSON.stringify({ hostId: 3, candidates: [], dockerDiscoveryError: "Start Docker on the selected host, then retry." }));
+    return original(url, init);
+  }));
+  await act(async () => root.render(<ProjectGroupsPanel projectSlug="portal" />));
+  await click("Add deployment"); await click("Connect an existing deployment");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Start Docker on the selected host");
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("No available deployments");
+});
+
+it("offers enrollment without requiring source from an empty workspace", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ projects: [], ungrouped: [], hostName: "GroundControl server", hostId: 3 }))));
+  await act(async () => root.render(<ProjectGroupsPanel />));
+  expect(container.textContent).toContain("Add a project without source");
+  await click("Add project");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Organize an existing app");
+  await click("Start without source code");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("creating a project does not start or change an app");
+  expect(mutations).toEqual([]);
+});

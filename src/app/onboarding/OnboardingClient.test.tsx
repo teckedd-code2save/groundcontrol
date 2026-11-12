@@ -12,7 +12,7 @@ let container: HTMLDivElement;
 const verify = vi.fn();
 const probe = vi.fn();
 const scan = {
-  layout: { dockerAvailable: true, osName: "Alpine Linux", osFamily: "alpine" },
+  layout: { dockerAvailable: true, dockerReady: true, dockerStatus: "ready", osName: "Alpine Linux", osFamily: "alpine" },
   containers: [{ name: "my-web-app", image: "example/web:1", status: "Up 2 minutes" }, { name: "my-database", image: "postgres:17" }],
   projects: [], reverseProxy: { type: "none" }, questions: [],
 };
@@ -90,4 +90,32 @@ it("retains explicit remote connection setup on a desktop installation", async (
   await render();
   expect(container.textContent).toContain("Add another server");
   expect(container.textContent).not.toContain("Scan my Docker apps");
+});
+
+it("shows the failed discovery reason without treating installed Docker as ready", async () => {
+  probe.mockResolvedValueOnce(json({ ...scan, layout: { ...scan.layout, dockerReady: false, dockerStatus: "unreachable" }, error: "Docker daemon is unreachable on this host. Start it and retry." }));
+  await render(); await click("Scan my Docker apps");
+  expect(container.textContent).toContain("Docker daemon is unreachable on this host");
+  expect(container.textContent).not.toContain("Found 2 running");
+  expect(container.textContent).not.toContain("Open dashboard");
+});
+
+it("shows elapsed scan time without inventing completed stages, then resets on retry", async () => {
+  vi.useFakeTimers();
+  try {
+    let finish!: (value: unknown) => void;
+    probe.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    await render(); await click("Scan my Docker apps");
+    expect(container.textContent).toContain("Elapsed: 0s");
+    await act(async () => { vi.advanceTimersByTime(21000); });
+    expect(container.textContent).toContain("Elapsed: 21s");
+    expect(container.textContent).toContain("Still waiting for the host checks");
+    expect(container.textContent).not.toContain("You’re ready to explore");
+    await act(async () => finish(json({ error: "Scan failed" }, false)));
+    expect(container.textContent).toContain("Scan failed");
+    probe.mockReturnValueOnce(new Promise(() => {}));
+    await click("Try the scan again");
+    expect(container.textContent).toContain("Elapsed: 0s");
+    expect(container.textContent).not.toContain("Still waiting");
+  } finally { vi.useRealTimers(); }
 });

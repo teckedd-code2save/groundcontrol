@@ -47,7 +47,7 @@ Windows currently uses WSL for the launcher; a native PowerShell launcher is not
 
 Use an AMD64 Linux server, such as an Intel/AMD Ubuntu or Debian VPS. Connect as root or an account with passwordless sudo. The server needs Bash and either curl or wget; the server installer handles Docker installation if required.
 
-The launcher uses your normal SSH configuration. Existing host aliases, SSH-agent keys, and default keys work. Your SSH private key stays on your computer.
+The launcher uses your normal SSH configuration. Existing host aliases, SSH-agent keys, and default keys work. Interactive remote setup asks for an optional SSH private-key file path. Press Enter to keep your existing SSH settings, or enter the path to the key for that server (for example `~/.ssh/server_key`). Do not paste the key contents. Your SSH private key stays on your computer.
 
 ```bash
 # Saved SSH host
@@ -98,3 +98,26 @@ bash scripts/start --local --image groundcontrol-desktop:test --dir /path/to/tes
 ```
 
 The launcher and the desktop-capable image must be released together. Do not advertise the new public download command before `scripts/start` exists on `main` and the published image has passed the desktop acceptance checks.
+
+## Testing a candidate remote release
+
+The normal command above uses the installer from `main`. `--version` selects only
+the container image; it does not select the installer source. To test an unreleased
+installer from your computer, download the launcher from the reviewed commit and
+pin its installer explicitly:
+
+```bash
+# Replace these with a reviewed full commit and its published image tag.
+COMMIT=FULL_40_CHARACTER_COMMIT_SHA
+IMAGE_TAG=PUBLISHED_IMAGE_TAG
+curl -fSL "https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$COMMIT/scripts/start" -o groundcontrol-start
+bash groundcontrol-start --remote YOUR_SSH_ALIAS \
+  --version "$IMAGE_TAG" --installer-ref "$COMMIT"
+```
+
+`--installer-ref` accepts `main` or a full commit SHA, not a branch name or short SHA.
+Setup downloads the installer and its SHA256 sidecar from that same revision and
+checks the checksum before running it. It does not upgrade an existing healthy
+instance. Use a disposable host or an explicitly reset test instance for fresh-install
+acceptance; retaining Docker means this is not an absent-Docker prerequisite test.
+Keep the one-time owner setup link, passwords and SSH key contents out of recordings.

@@ -17,7 +17,7 @@ export function AddProjectFlow(props: AddProps) {
   const back = useCallback(() => setSource("choose"), []);
   if (source === "folder") return <AddProjectFolder {...props} onBack={back} />;
   if (source === "github") return <GithubProjectPicker onClose={props.onClose} onBack={back} onAdded={props.onAdded} />;
-  return <ModalSurface open onClose={props.onClose} title="Add project" description="Start with the code you already have." size="lg" footer={<button type="button" onClick={props.onClose} className="gc-button gc-button-quiet">Cancel</button>}>
+  return <ModalSurface open onClose={props.onClose} title="Add project" description="Organize an existing app or start with source code." size="lg" footer={<button type="button" onClick={props.onClose} className="gc-button gc-button-quiet">Cancel</button>}>
     <div className="grid gap-3 sm:grid-cols-2">
       <button type="button" onClick={() => setSource("folder")} className="group flex min-h-44 flex-col items-start border border-border bg-card p-5 text-left transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-accent">
         <Folder size={24} className="mb-5 text-accent" aria-hidden="true" /><span className="flex w-full items-center justify-between gap-3 text-base font-medium">Choose a folder<ArrowRight size={16} aria-hidden="true" /></span>
@@ -28,8 +28,8 @@ export function AddProjectFlow(props: AddProps) {
         <span className="mt-2 text-xs leading-relaxed text-muted">Choose a repository from your connected account, or browse public repositories.</span>
       </button>
     </div>
-    <p className="mt-5 text-xs leading-relaxed text-muted">Review the name and source, then add your project. Deployments come next.</p>
-    {props.onEmpty && <button type="button" onClick={props.onEmpty} className="gc-button gc-button-quiet mt-3">Start without source code</button>}
+    <p className="mt-5 text-xs leading-relaxed text-muted">To connect an app that is already running, start without source code. This creates its project only; choose Add deployment next.</p>
+    {props.onEmpty && <button type="button" onClick={props.onEmpty} className="gc-button gc-button-secondary mt-3">Start without source code</button>}
   </ModalSurface>;
 }
 

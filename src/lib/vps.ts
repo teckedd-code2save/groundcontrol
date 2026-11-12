@@ -1,3 +1,4 @@
+import { assertDockerDiscovery } from "./docker-discovery-error";
 import { captureCommand } from "./command-output";
 import { NodeSSH } from "node-ssh";
 import { exec, spawn } from "child_process";
@@ -336,12 +337,13 @@ export interface DockerContainerLabelInfo {
   restartCount?: number;
 }
 
-export async function getDockerContainers(vps?: VpsConnection | null) {
+export async function getDockerContainers(vps?: VpsConnection | null, options: { requireSuccess?: boolean } = {}) {
   const conn = vps || (await getActiveVps());
   const result = await execOnVps(
     `docker ps -a --format "{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.ID}}|{{.State}}"`,
     conn
   );
+  if (options.requireSuccess) assertDockerDiscovery(result);
   if (!result.stdout.trim()) return [];
 
   return result.stdout

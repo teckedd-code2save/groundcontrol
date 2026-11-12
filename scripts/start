@@ -7,6 +7,7 @@ TARGET=""
 IDENTITY=""
 SSH_PORT=""
 VERSION="latest"
+INSTALLER_REF="main"
 IMAGE=""
 DATA_DIR="${HOME}/.groundcontrol-desktop"
 LOCAL_PORT=""
@@ -30,6 +31,7 @@ Options:
   -p PORT          SSH port (otherwise use your SSH configuration)
   --local-port N   Use this port on your computer
   --version TAG   Select the server image version
+  --installer-ref SHA  Pin remote installer to a full commit (testing; default main)
   --dir PATH      Local configuration directory (default ~/.groundcontrol-desktop)
   --image REF     Local image override for testing a release
   -h, --help      Show help
@@ -54,6 +56,7 @@ while [ "$#" -gt 0 ]; do
     -p) value "$@"; SSH_PORT="$2"; shift 2 ;;
     --local-port) value "$@"; LOCAL_PORT="$2"; shift 2 ;;
     --version) value "$@"; VERSION="$2"; shift 2 ;;
+    --installer-ref) value "$@"; INSTALLER_REF="$2"; shift 2 ;;
     --dir) value "$@"; DATA_DIR="$2"; shift 2 ;;
     --image) value "$@"; IMAGE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -68,14 +71,27 @@ prompt() {
   printf '%s' "$answer"
 }
 
+choose_remote_identity() {
+  [ -z "$IDENTITY" ] || return 0
+  printf 'If this server uses a specific SSH key, enter its file path. The key stays on this computer.\n'
+  printf 'Press Enter to use your SSH agent, default keys, or saved host settings. Do not paste the key contents.\n'
+  IDENTITY="$(prompt 'SSH private key path (optional): ')"
+  case "$IDENTITY" in
+    '~/'*) IDENTITY="$HOME/${IDENTITY#\~/}" ;;
+  esac
+}
+
 if [ -z "$MODE" ]; then
   printf 'Where should GroundControl run?\n  1) This computer\n  2) A remote Linux server\n'
   case "$(prompt 'Choose 1 or 2: ')" in
     1) MODE=local ;;
-    2) MODE=remote; TARGET="$(prompt 'SSH address or saved host alias (for example root@203.0.113.10): ')" ;;
+    2) MODE=remote; TARGET="$(prompt 'SSH address or saved host alias (for example root@203.0.113.10): ')"; choose_remote_identity ;;
     *) fail "Choose 1 or 2, or run with --local / --remote." ;;
   esac
 fi
+
+[ "$INSTALLER_REF" = main ] || [[ "$INSTALLER_REF" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Installer ref must be a full 40-character commit SHA."
+[ "$MODE" = remote ] || [ "$INSTALLER_REF" = main ] || fail "--installer-ref only applies to a remote server."
 
 [[ "$VERSION" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "Invalid version tag."
 [ -z "$LOCAL_PORT" ] || port "$LOCAL_PORT" || fail "Local port must be between 1024 and 65535."
@@ -114,13 +130,21 @@ verify_link() {
 }
 
 print_link() {
-  printf '\nGroundControl is ready.\n\n'
+  printf '\nGroundControl is reachable. Finish setup in the browser.\n\n'
   if [ "$STAGE" = claim_required ]; then
     printf 'Open this one-time setup link and choose your username and password:\n'
   else
     printf 'Open this link and sign in with your existing account:\n'
   fi
   printf '\n  http://127.0.0.1:%s%s\n\n' "$LOCAL_PORT" "$PAGE"
+  if [ "$MODE" = local ]; then
+    printf 'Next: finish the workspace check in onboarding, then connect an existing Docker app in Projects. Keep Docker running.\n'
+    printf 'Server-only tools (such as Caddy) belong on a Linux server connection, not inside Docker Desktop.\n'
+  else
+    printf 'Next: finish the server scan in onboarding. Open Services → Install on that server to check and finish required tooling.\n'
+    printf 'Git sources need Git; routed templates need their proxy (for example Caddy); static builds need their build tools. Install only what your workload needs.\n'
+  fi
+  printf 'This checks GroundControl access, not that an application is ready to deploy. Review the selected workload requirements before launching.\n\n'
 }
 
 if [ "$MODE" = remote ]; then
@@ -132,14 +156,14 @@ if [ "$MODE" = remote ]; then
     SSH_ARGS+=(-p "$SSH_PORT")
   fi
   if [ -n "$IDENTITY" ]; then
-    [ -f "$IDENTITY" ] || fail "SSH key file not found: $IDENTITY"
+    [ -f "$IDENTITY" ] || fail "SSH key file not found. Enter a file path, not key contents; or omit the key to use your SSH settings."
     SSH_ARGS+=(-i "$IDENTITY")
   fi
   CONTROL_DIR=$(mktemp -d /tmp/gc-connect.XXXXXX)
   CONTROL_SOCKET="$CONTROL_DIR/ssh"
   SSH_ARGS+=(-S "$CONTROL_SOCKET" -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
   printf 'Connecting to %s using your SSH settings…\n' "$TARGET"
-  ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address, account, and SSH key."
+  ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address and account. If this server uses a specific key, rerun setup and enter its path, or use --remote user@server -i /path/to/key. Saved SSH aliases and agent keys remain supported."
   printf 'Installing GroundControl on %s…\n' "$TARGET"
   cat > "$CONTROL_DIR/install.sh" <<'REMOTE'
 set -eu
@@ -154,14 +178,14 @@ fetch() {
   elif command -v wget >/dev/null; then wget -qO "$2" "$1";
   else echo 'Install curl or wget on the server first.' >&2; return 1; fi
 }
-base=https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts
+base="https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$2/scripts"
 fetch "$base/install" "$task_dir/install"
 fetch "$base/install.sha256" "$task_dir/install.sha256"
 (cd "$task_dir" && sha256sum -c install.sha256) >&2
 if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" --version "$1" --json;
 else sudo -n bash "$task_dir/install" --version "$1" --json; fi
 REMOTE
-  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
+  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
   read_result
   REMOTE_PORT=$(printf '%s\n' "$RESULT" | sed -n 's/.*"hostPort":\([0-9][0-9]*\).*/\1/p')
   port "$REMOTE_PORT" || fail "The server returned an invalid port."

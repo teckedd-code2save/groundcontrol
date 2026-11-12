@@ -7,7 +7,10 @@ export interface ServerLayout {
   osFamily: "alpine" | "debian" | "other";
   osName: string;
   osVersion: string;
+  /** CLI availability retained for existing consumers; daemon readiness is separate. */
   dockerAvailable: boolean;
+  dockerReady?: boolean;
+  dockerStatus?: "ready" | "missing" | "unreachable" | "unknown";
   caddyAvailable: boolean;
   nodeAvailable: boolean;
   hasK3s: boolean;
@@ -29,6 +32,8 @@ const DEFAULT_LAYOUT: ServerLayout = {
   osName: "unknown",
   osVersion: "",
   dockerAvailable: false,
+  dockerReady: false,
+  dockerStatus: "unknown",
   caddyAvailable: false,
   nodeAvailable: false,
   hasK3s: false,
@@ -136,9 +141,12 @@ async function detectSshDefaultCwd(vps?: VpsConnection | null): Promise<string> 
   return result.stdout.trim() || "/root";
 }
 
-async function detectDockerAvailable(vps?: VpsConnection | null): Promise<boolean> {
-  const result = await execOnTarget(`docker --version 2>/dev/null >/dev/null && echo yes || echo no`, vps);
-  return result.stdout.trim() === "yes";
+async function detectDocker(vps?: VpsConnection | null) {
+  const installed = await execOnTarget(`docker --version >/dev/null 2>&1 && echo yes || echo no`, vps);
+  if (installed.code !== 0) return { dockerAvailable: false, dockerReady: false, dockerStatus: "unknown" as const };
+  if (installed.stdout.trim() !== "yes") return { dockerAvailable: false, dockerReady: false, dockerStatus: "missing" as const };
+  const daemon = await execOnTarget(`docker info >/dev/null 2>&1`, vps);
+  return { dockerAvailable: true, dockerReady: daemon.code === 0, dockerStatus: daemon.code === 0 ? "ready" as const : "unreachable" as const };
 }
 
 async function detectCaddyAvailable(vps?: VpsConnection | null): Promise<boolean> {
@@ -184,7 +192,7 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
   try {
     const os = await readOsRelease(vps);
     const [
-      dockerAvailable,
+      docker,
       caddyAvailable,
       nodeAvailable,
       hasK3s,
@@ -198,7 +206,7 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       staticRoot,
       sshDefaultCwd,
     ] = await Promise.all([
-      detectDockerAvailable(vps),
+      detectDocker(vps),
       detectCaddyAvailable(vps),
       detectNodeAvailable(vps),
       detectK3sAvailable(vps),
@@ -217,7 +225,7 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       osFamily: normalizeOsId(os.id),
       osName: os.name || os.id,
       osVersion: os.version,
-      dockerAvailable,
+      ...docker,
       caddyAvailable,
       nodeAvailable,
       hasK3s,
@@ -233,8 +241,8 @@ export async function probeServerLayout(vps?: VpsConnection | null): Promise<Ser
       staticRoot,
       sshDefaultCwd,
     };
-  } catch (err) {
-    // Degrade gracefully: callers decide whether to surface the error.
-    return { ...DEFAULT_LAYOUT, osName: `probe error: ${err instanceof Error ? err.message : String(err)}` };
+  } catch {
+    // An unavailable probe is unknown, not evidence that packages are missing.
+    return { ...DEFAULT_LAYOUT, osName: "probe unavailable; check the selected host connection" };
   }
 }

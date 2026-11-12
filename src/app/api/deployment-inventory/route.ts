@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { handleApiError } from "@/lib/errors";
+import { HttpError, handleApiError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { scanProjectsTree } from "@/lib/project-scan";
 import {
@@ -9,6 +9,7 @@ import {
   getDockerContainers,
   scanProjects,
 } from "@/lib/vps";
+import { hostDisplayName } from "@/lib/host-display-name";
 import { isDesktopMode } from "@/lib/runtime";
 import { scanSourceFolder } from "@/lib/source-discovery";
 import { browseProjectFolders } from "@/lib/project-folder-browser";
@@ -79,10 +80,15 @@ export async function GET(req: NextRequest) {
     requireAuth(req);
     const vps = await getActiveVps();
     await reconcileKnownDeployments(vps?.id ?? null);
+    const displayHost = vps ? await prisma.vpsConfig.findUnique({ where: { id: vps.id }, select: { name: true, host: true, isLocal: true } }) : null;
     const desktop = isDesktopMode() && vps?.isLocal;
+    let dockerDiscoveryError: string | null = null;
     const [tree, containers, labels, projects, enrolled, hostProjects, sources, hidden] = await Promise.all([
       desktop ? Promise.resolve({ projects: [], error: undefined }) : scanProjectsTree(vps),
-      getDockerContainers(vps),
+      getDockerContainers(vps, { requireSuccess: true }).catch((error) => {
+        dockerDiscoveryError = error instanceof HttpError ? error.message : "Docker discovery failed. Check the selected host connection and Docker access, then retry.";
+        return [];
+      }),
       getDockerContainerLabels(vps),
       prisma.projectGroup.findMany({ orderBy: { name: "asc" } }),
       prisma.enrolledDeployment.findMany({
@@ -135,7 +141,7 @@ export async function GET(req: NextRequest) {
             commitSha: latestRelease.commitSha,
             createdAt: latestRelease.createdAt,
           } : null,
-          observedStatus: item.kind === "source" && runtime.status !== "present" ? "source-only" : runtime.status === "present" || Boolean(scanned) || item.kind === "static" && Boolean(item.legacyProject)
+          observedStatus: dockerDiscoveryError && item.kind !== "static" ? "unknown" : item.kind === "source" && runtime.status !== "present" ? "source-only" : runtime.status === "present" || Boolean(scanned) || item.kind === "static" && Boolean(item.legacyProject)
             ? "present" : "missing",
         };
       }),
@@ -143,8 +149,9 @@ export async function GET(req: NextRequest) {
       hiddenCount: hidden.size,
       localDesktop: Boolean(desktop),
       hostId: vps?.id ?? null,
-      hostName: vps?.host || "This computer",
-      discoveryError: tree.error || sources.error || null,
+      hostName: vps ? hostDisplayName(displayHost || vps) : "No connection",
+      dockerDiscoveryError,
+      discoveryError: dockerDiscoveryError || tree.error || sources.error || null,
     });
   } catch (error) {
     return handleApiError(error);

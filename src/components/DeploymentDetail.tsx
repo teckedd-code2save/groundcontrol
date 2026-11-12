@@ -1,5 +1,6 @@
 "use client";
 
+import { DeploymentDomainPanel } from "./DeploymentDomainPanel";
 import { SourceProjectDetail } from "./SourceProjectDetail";
 import type { SourceProject } from "@/lib/source-discovery";
 import Link from "next/link";
@@ -728,48 +729,19 @@ export default function DeploymentDetail({
                     <div>
                       <p className="gc-eyebrow">Access</p>
                       <h2 className="mt-2 text-base font-medium">Endpoints and source</h2>
-                      <p className="mt-1 text-xs leading-relaxed text-muted">Customer-facing route and repository.</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted">Optional public endpoint and source repository.</p>
                     </div>
                     <ExternalLink size={18} className="text-muted" aria-hidden="true" />
                   </div>
                   <div className="mt-5 flex flex-wrap gap-2">
-                    {liveUrl ? <a href={liveUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-secondary">Open live</a> : <span className="text-xs text-muted">No public endpoint recorded.</span>}
+                    {liveUrl ? <a href={liveUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-secondary">Open live</a> : <span className="text-xs text-muted">No public endpoint recorded. Private services and workers do not need one.</span>}
                     {deployment.repoUrl && <a href={deployment.repoUrl} target="_blank" rel="noreferrer" className="gc-button gc-button-quiet">Repository</a>}
                     <button type="button" onClick={() => setTab("source")} className="gc-button gc-button-quiet">Configure</button>
                   </div>
                 </div>
               </section>
 
-              {/* Domain switch */}
-              <section className="border border-border bg-card p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="gc-eyebrow">Domain</p>
-                    <h2 className="mt-2 text-base font-medium">
-                      {deployment.domain || "No public domain"}
-                    </h2>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">
-                      Point a Cloudflare domain at this deployment. GroundControl updates the DNS record and the reverse proxy.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <input
-                    value={newDomainInput}
-                    onChange={(event) => setNewDomainInput(event.target.value)}
-                    placeholder="app.example.com"
-                    className="gc-field min-w-0 flex-1 font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void switchDomain()}
-                    disabled={domainBusy || !newDomainInput.trim()}
-                    className="gc-button gc-button-primary"
-                  >
-                    {domainBusy ? "Applying…" : "Apply domain"}
-                  </button>
-                </div>
-              </section>
+              <DeploymentDomainPanel domain={deployment.domain} value={newDomainInput} onChange={setNewDomainInput} busy={domainBusy} onApply={() => void switchDomain()} />
 
               {/* Management quick-actions — fixed titles */}
               <section className="border border-border bg-card p-5">

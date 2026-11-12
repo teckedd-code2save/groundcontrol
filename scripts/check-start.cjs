@@ -29,7 +29,7 @@ if(name==='ssh') {
 if(name==='docker') {
  const state=fs.existsSync(e.GC_TEST_STATE)?JSON.parse(fs.readFileSync(e.GC_TEST_STATE)):{};
  const format=args.includes('--format')?args[args.indexOf('--format')+1]:'';
- if(args[0]==='info'){say(format?'linux':'Docker ready');process.exit(0);}
+ if(args[0]==='info'){if(e.GC_TEST_DOCKER_DOWN)process.exit(1);say(format?'linux':'Docker ready');process.exit(0);}
  if(args[0]==='context'){say(e.GC_TEST_ENDPOINT||'unix:///var/run/docker.sock');process.exit(0);}
  if(args[0]==='inspect'){
   if(!state.exists)process.exit(1);
@@ -131,4 +131,98 @@ test('local setup refuses another installation, a remote engine and an incompati
 test('unavailable emulation leaves no generated keys and reports the next action',()=>{
   const r=run(['--local'],{GC_TEST_EMULATION_FAIL:'1'});
   assert.notEqual(r.status,0);assert.equal(r.envCreated,false);assert.match(r.stderr,/enable AMD64 emulation/);
+});
+
+
+test('setup directs users to finish workload prerequisites without claiming deployment readiness',()=>{
+  const local=run(['--local']);
+  assert.equal(local.status,0,local.stderr);
+  assert.match(local.stdout,/finish the workspace check in onboarding/);
+  assert.match(local.stdout,/Server-only tools.*Linux server connection/);
+  assert.match(local.stdout,/not that an application is ready to deploy/);
+  const remote=run(['--remote','test-server']);
+  assert.match(remote.stdout,/Services → Install/);
+  assert.match(remote.stdout,/Git sources need Git/);
+  assert.match(remote.stdout,/Install only what your workload needs/);
+  assert.doesNotMatch(remote.stdout,/GroundControl is ready/);
+});
+
+test('stopped local Docker reports recovery before credentials or launch',()=>{
+  const r=run(['--local'],{GC_TEST_DOCKER_DOWN:'1'});
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/Start Docker Desktop\/Engine/);
+  assert.equal(r.envCreated,false);
+  assert.ok(!r.commands.some(c=>c.name==='docker'&&c.args[0]==='run'));
+});
+
+test('installer next steps preserve machine-readable stdout in JSON mode',()=>{
+  const source=readFileSync(join(__dirname,'install'),'utf8');
+  const log=source.match(/^log\(\) \{[\s\S]*?^\}/m)[0];
+  const guidance=source.match(/^finish_setup_guidance\(\) \{[\s\S]*?^\}/m)[0];
+  const r=spawnSync('bash',['-c',`JSON_MODE=1\n${log}\n${guidance}\nfinish_setup_guidance\nprintf '{"stage":"claim_required"}\\n'`],{encoding:'utf8'});
+  assert.equal(r.status,0,r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout),{stage:'claim_required'});
+  assert.match(r.stderr,/Services → Install/);
+  assert.match(r.stderr,/No optional workload tools were installed/);
+  assert.match(source,/Install the Docker Compose plugin.*verify docker compose version/);
+  assert.equal((source.match(/^ +finish_setup_guidance$|^finish_setup_guidance$/gm)||[]).length,4);
+});
+
+
+test('remote installer defaults to main independently of image version',()=>{
+  const r=run(['--remote','test-server','--version','candidate']);
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes("sh -s -- 'candidate' 'main'")));
+  assert.match(r.remoteScript,/groundcontrol\/\$2\/scripts/);
+  assert.match(r.remoteScript,/fetch "\$base\/install"/);
+  assert.match(r.remoteScript,/fetch "\$base\/install.sha256"/);
+  assert.match(r.remoteScript,/sha256sum -c install.sha256/);
+});
+
+test('candidate launcher pins installer source and checksum to immutable commit',()=>{
+  const sha='8443d4e02a38898175dd0c38cd1e1975af3640c5';
+  const r=run(['--remote','test-server','--version','8443d4e','--installer-ref',sha]);
+  assert.match(r.stdout,/GroundControl is reachable/);
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes(`sh -s -- '8443d4e' '${sha}'`)));
+});
+
+test('invalid installer refs and local use are rejected before connection or launch',()=>{
+  for(const ref of ['branch/name','../main','8443d4e',';touch /tmp/unsafe','']) {
+    const r=run(['--remote','test-server','--installer-ref',ref]);
+    assert.notEqual(r.status,0); assert.equal(r.commands.length,0);
+  }
+  const local=run(['--local','--installer-ref','a'.repeat(40)]);
+  assert.notEqual(local.status,0); assert.match(local.stderr,/only applies to a remote server/);
+  assert.equal(local.commands.length,0);
+});
+
+
+test('interactive remote key selection preserves defaults and explicit identity',()=>{
+  const source=readFileSync(launcher,'utf8');
+  const helper=source.match(/^choose_remote_identity\(\) \{[\s\S]*?^\}/m)[0];
+  for(const [initial,answer,expected] of [
+    ['', '', ''], ['', '~/my keys/server', '/test-home/my keys/server'],
+    ['', '/tmp/test-key', '/tmp/test-key'], ['/given/key', '/ignored/key', '/given/key'],
+  ]) {
+    const r=spawnSync('bash',['-c',`${helper}\nprompt() { printf '%s' "$ANSWER"; }\nchoose_remote_identity\nprintf '\\nSELECTED=%s\\n' "$IDENTITY"`],{
+      encoding:'utf8',env:{...process.env,HOME:'/test-home',IDENTITY:initial,ANSWER:answer},
+    });
+    assert.equal(r.status,0,r.stderr);
+    assert.ok(r.stdout.endsWith(`SELECTED=${expected}\n`));
+    if(!initial) assert.match(r.stdout,/Do not paste the key contents/);
+  }
+  assert.match(source,/TARGET="\$\(prompt[^\n]+; choose_remote_identity ;;/);
+});
+
+test('explicit SSH key path is passed as one argument without changing SSH settings',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'gc-key-test-'));
+  const key=join(dir,'key with spaces');writeFileSync(key,'not a real key');
+  try {
+    const r=run(['--remote','saved-alias','-i',key]);
+    const connect=r.commands.find(c=>c.name==='ssh'&&c.args.includes('-M'));
+    assert.equal(connect.args[connect.args.indexOf('-i')+1],key);
+    assert.doesNotMatch(r.stdout,/SSH private key path/);
+    assert.ok(!connect.args.includes('IdentitiesOnly=yes'));
+    const failed=run(['--remote','saved-alias'],{GC_TEST_SSH_FAIL:'1'});
+    assert.match(failed.stderr,/enter its path.*-i \/path\/to\/key/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
 });

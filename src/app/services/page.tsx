@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ContainersPanel } from "@/components/ContainersPanel";
 import { DeploymentWorkspace } from "@/components/DeploymentWorkspace";
 import { BootstrapPanel } from "@/components/BootstrapPanel";
@@ -17,7 +18,19 @@ const tabs: { key: TabKey; label: string; description: string }[] = [
 ];
 
 export default function ServicesPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>("containers");
+  return <Suspense fallback={<p>Loading services…</p>}><ServicesContent /></Suspense>;
+}
+
+function ServicesContent() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const requested = params.get("tab");
+  const activeTab = tabs.find((tab) => tab.key === requested)?.key || "containers";
+  function setActiveTab(tab: TabKey) {
+    const next = new URLSearchParams(params.toString());
+    next.set("tab", tab);
+    router.replace(`/services?${next}`, { scroll: false });
+  }
   const activeTabMeta = tabs.find((tab) => tab.key === activeTab) || tabs[0];
 
   return (

@@ -78,3 +78,11 @@ it("allows retry after a folder access failure without adding anything", async (
   expect(document.body.textContent).toContain("Project found");
   expect(mutations.some((body) => body.action === "add_source")).toBe(false);
 });
+
+it("does not claim no suggestions after a failed Docker discovery", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ projects: [], deployments: [], candidates: [], hostId: 7, discoveryError: "Docker is not reachable" }))));
+  await act(async () => root.render(<DeploymentWorkspace />));
+  expect(container.textContent).toContain("Docker is not reachable");
+  expect(container.textContent).toContain("Discovery is incomplete");
+  expect(container.textContent).not.toContain("No new suggestions");
+});

@@ -321,6 +321,19 @@ describe("Docker helpers — output parsing", () => {
     expect(containers[1].state).toBe("exited");
   });
 
+  it.each([
+    [127, "sh: docker: not found", "Docker is missing"],
+    [1, "Cannot connect to the Docker daemon", "Docker is not reachable"],
+    [1, "permission denied while connecting to socket", "Docker permissions"],
+    [1, "unexpected failure", "empty app list has not been verified"],
+  ])("reports discovery failure instead of a false empty inventory (%s)", async (code, stderr, message) => {
+    execMock.mockImplementation((_command: string, _opts: unknown, cb: ExecCallback) => {
+      cb(Object.assign(new Error(String(stderr)), { code }), "", String(stderr));
+      return { stdin: { end: () => {} } };
+    });
+    await expect(getDockerContainers(LOCAL_CONN, { requireSuccess: true })).rejects.toThrow(String(message));
+  });
+
   it("returns an empty list when docker ps produces no output", async () => {
     stubExec({ "docker ps -a --format": "" });
     expect(await getDockerContainers(LOCAL_CONN)).toEqual([]);

@@ -51,6 +51,7 @@ export default function PublishInstanceStep({
   const [requiredRecord, setRequiredRecord] = useState<Record<string, string> | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [workingLabel, setWorkingLabel] = useState("Verifying…");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -82,6 +83,7 @@ export default function PublishInstanceStep({
   }, []);
 
   async function publish() {
+    setWorkingLabel(method === "private" ? "Verifying private access…" : "Publishing & verifying…");
     setWorking(true);
     setError("");
     setRequiredRecord(null);
@@ -118,6 +120,7 @@ export default function PublishInstanceStep({
   }
 
   async function verifyAgain() {
+    setWorkingLabel("Verifying…");
     setWorking(true);
     setError("");
     try {
@@ -271,7 +274,7 @@ export default function PublishInstanceStep({
           className="gc-button gc-button-primary flex-1"
         >
           {working
-            ? "Publishing & verifying…"
+            ? workingLabel
             : method === "private"
               ? "Keep private & verify"
               : method === "quick_tunnel"
