@@ -12,6 +12,8 @@
 
 ## 🚀 Run it
 
+- **[Deploy an application](./current-deployment-help.md)** — choose a supported workload path, follow local-image/Compose/Dockerfile/static examples, configure it, and verify or troubleshoot the result.
+
 - **[start-from-your-computer.md](./start-from-your-computer.md)** — choose local Docker or a remote Linux server, then open your personal setup link.
 - **[projects-and-deployments.md](./projects-and-deployments.md)** — pick a source folder or GitHub repository, then connect or launch deployments.
 - **[releases/2026-10-20-distribution.md](./releases/2026-10-20-distribution.md)** — this distribution update, compatibility and release checks.
