@@ -27,7 +27,7 @@ export function AddProjectDeployment({ project, deployments, connection, onClose
   useEffect(() => {
     if (mode !== "connect") return;
     let cancelled = false; setLoading(true); setError("");
-    fetch("/api/deployment-inventory").then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); if (data.hostId !== connection.hostId) throw new Error("Connection changed. Close this dialog and refresh Projects."); if (!cancelled) setCandidates((data.candidates || []).filter((item: Candidate) => item.kind !== "source")); })
+    fetch("/api/deployment-inventory").then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); if (data.hostId !== connection.hostId) throw new Error("Connection changed. Close this dialog and refresh Projects."); if (!cancelled) { setCandidates((data.candidates || []).filter((item: Candidate) => item.kind !== "source")); if (data.dockerDiscoveryError) setError(data.dockerDiscoveryError); } })
       .catch((error) => { if (!cancelled) setError(error.message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [mode, connection.hostId]);
@@ -76,7 +76,7 @@ export function AddProjectDeployment({ project, deployments, connection, onClose
         <fieldset disabled={busy || loading} className="max-h-64 space-y-2 overflow-auto"><legend className="sr-only">Choose deployment</legend>
           {deployments.map((item) => <label key={item.id} className="flex gap-3 border border-border p-3"><input type="radio" name="deployment" checked={selected === `tracked:${item.id}`} onChange={() => { setSelected(`tracked:${item.id}`); if (item.environmentName !== "Unspecified") setEnvironment(item.environmentName); }} /><span className="text-sm">{item.name}<span className="mt-1 block text-xs text-muted">{item.environmentName} · {item.hostName} · {item.projectName ? `Move from ${item.projectName}` : "No project yet"}</span></span></label>)}
           {candidates.map((item) => <label key={item.id} className="flex gap-3 border border-border p-3"><input type="radio" name="deployment" checked={selected === item.id} onChange={() => setSelected(item.id)} /><span className="text-sm">{item.name}<span className="mt-1 block text-xs text-muted">{item.kind === "compose" ? "Docker Compose" : "Container"} · {item.services?.length || 1} service(s) · Discovered</span></span></label>)}
-          {!loading && !deployments.length && !candidates.length && <p className="border border-dashed border-border p-4 text-sm text-muted">No available deployments. You can launch a new instance or switch connections.</p>}
+          {!loading && !error && !deployments.length && !candidates.length && <p className="border border-dashed border-border p-4 text-sm text-muted">No available deployments. You can launch a new instance or switch connections.</p>}
         </fieldset>
       </>}
     </div>}

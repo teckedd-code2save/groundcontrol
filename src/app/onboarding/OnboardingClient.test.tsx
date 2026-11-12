@@ -12,7 +12,7 @@ let container: HTMLDivElement;
 const verify = vi.fn();
 const probe = vi.fn();
 const scan = {
-  layout: { dockerAvailable: true, osName: "Alpine Linux", osFamily: "alpine" },
+  layout: { dockerAvailable: true, dockerReady: true, dockerStatus: "ready", osName: "Alpine Linux", osFamily: "alpine" },
   containers: [{ name: "my-web-app", image: "example/web:1", status: "Up 2 minutes" }, { name: "my-database", image: "postgres:17" }],
   projects: [], reverseProxy: { type: "none" }, questions: [],
 };
@@ -90,4 +90,12 @@ it("retains explicit remote connection setup on a desktop installation", async (
   await render();
   expect(container.textContent).toContain("Add another server");
   expect(container.textContent).not.toContain("Scan my Docker apps");
+});
+
+it("shows the failed discovery reason without treating installed Docker as ready", async () => {
+  probe.mockResolvedValueOnce(json({ ...scan, layout: { ...scan.layout, dockerReady: false, dockerStatus: "unreachable" }, error: "Docker daemon is unreachable on this host. Start it and retry." }));
+  await render(); await click("Scan my Docker apps");
+  expect(container.textContent).toContain("Docker daemon is unreachable on this host");
+  expect(container.textContent).not.toContain("Found 2 running");
+  expect(container.textContent).not.toContain("Open dashboard");
 });

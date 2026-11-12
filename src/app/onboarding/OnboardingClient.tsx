@@ -49,6 +49,7 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   /** true when user clicked Add Server or ?add=1 — never auto-probe existing */
   const [addMode, setAddMode] = useState(false);
   const [existingServers, setExistingServers] = useState<ExistingVps[]>([]);
+  const [scanError, setScanError] = useState<string | undefined>();
   const [scanResult, setScanResult] = useState<WorkspaceScan | null>(null);
   const localWorkspace = localDesktop && !addMode && existingServers.some((server) => server.isActive && server.isLocal);
 
@@ -214,17 +215,19 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   async function runProbe() {
     setStep("probing");
     setScanResult(null);
+    setScanError(undefined);
     try {
       const res = await fetch("/api/onboarding/probe");
-      if (!res.ok) throw new Error("Probe failed");
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Probe failed. Check the selected host connection.");
       if (localWorkspace) {
-        if (!data.layout?.dockerAvailable || !Array.isArray(data.containers) || !Array.isArray(data.projects)) throw new Error("Docker scan incomplete");
+        if (data.error) throw new Error(data.error);
+        if (!data.layout?.dockerReady || !Array.isArray(data.containers) || !Array.isArray(data.projects)) throw new Error("Docker discovery is unavailable. Start Docker Desktop/Engine and check access, then retry the scan.");
         setScanResult({ containers: data.containers, projects: data.projects });
         setStep("ready");
         return;
       }
-      const findings = summarizeFindings(data);
+      const findings = summarizeFindings(data) + (data.error ? `\n\nDiscovery needs attention: ${data.error}` : "");
       setMessages([
         {
           role: "system",
@@ -235,12 +238,13 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
       ]);
       setActiveQuestions(data.questions || []);
       setStep("ready");
-    } catch {
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : "Could not inspect Docker on the selected host.");
       setMessages([
         {
           role: "system",
           content:
-            "I couldn't probe your server. Is the VPS reachable? Check your connection details.",
+            error instanceof Error ? error.message : "I could not inspect the selected host. Check its connection and retry.",
           actions: [{ label: "Try a different server", action: "reconnect" }],
         },
       ]);
@@ -249,10 +253,13 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   }
 
   function summarizeFindings(data: {
+    error?: string;
     layout?: {
       osName?: string;
       osFamily?: string;
       dockerAvailable?: boolean;
+      dockerReady?: boolean;
+      dockerStatus?: string;
     };
     reverseProxy?: { type?: string; configPaths?: string[] };
     containers?: { composeProject?: string }[];
@@ -267,8 +274,8 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
     const lines = [
       "I've scanned your server. Here's what I found:\n",
       `**OS:** ${l.osName || "unknown"} (${l.osFamily})`,
-      `**Docker:** ${l.dockerAvailable ? "✓ running" : "✗ not installed — install from Services → Install"}`,
-      `**Containers:** ${c.length} found\n`,
+      `**Docker:** ${l.dockerReady ? "✓ daemon reachable" : l.dockerStatus === "missing" ? "not installed — open Services → Install to finish setup" : l.dockerAvailable ? "installed, but daemon is unreachable — start Docker and check access on this host" : "not verified — check the selected connection and retry"}`,
+      data.error ? "**Containers:** discovery failed; count not verified\n" : l.dockerReady ? `**Containers:** ${c.length} found\n` : "**Containers:** not verified until Docker is reachable\n",
     ];
     if (c.length > 0) {
       const manual = c.filter((x) => !x.composeProject).length;
@@ -279,7 +286,7 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
         `**Reverse Proxy:** ${p.type}${p.configPaths?.length ? " at " + p.configPaths[0] : ""}`
       );
     } else {
-      lines.push("**Reverse Proxy:** None detected — templates can install Caddy/Nginx as needed");
+      lines.push("**Reverse Proxy:** None detected. For a public web deployment, choose the required proxy and finish its setup in Services → Install. Private container enrollment does not require one.");
     }
     if (pr.length > 0) {
       const names = pr
@@ -299,15 +306,17 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   }
 
   function generateFollowUpActions(data: {
-    layout?: { dockerAvailable?: boolean };
+    layout?: { dockerAvailable?: boolean; dockerReady?: boolean; dockerStatus?: string };
     reverseProxy?: { type?: string };
   }): { label: string; action: string }[] {
     const a: { label: string; action: string }[] = [];
-    if (data.layout && !data.layout.dockerAvailable) {
-      a.push({ label: "Install Docker", action: "install-docker" });
+    if (data.layout && !data.layout.dockerReady) {
+      a.push({ label: "Check Docker setup", action: "goto-install" });
+    } else {
+      a.push({ label: "Finish required installations", action: "goto-install" });
     }
     if (data.reverseProxy?.type === "none") {
-      a.push({ label: "Set up Caddy reverse proxy", action: "install-caddy" });
+      a.push({ label: "Review optional proxy setup", action: "goto-install" });
     }
     a.push({ label: "Connect ChatGPT / agent", action: "goto-agents" });
     a.push({ label: "Deploy a template", action: "goto-templates" });
@@ -364,6 +373,7 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   function handleActionClick(action: string) {
     if (action === "goto-dashboard") router.push("/dashboard");
     else if (action === "goto-agents") router.push("/agents");
+    else if (action === "goto-install") router.push("/services?tab=bootstrap");
     else if (action === "goto-templates") router.push("/templates");
     else if (action === "reconnect") {
       setStep("connect");
@@ -378,8 +388,9 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
       {
         role: "system",
         content:
-          "All clear! Deploy a template, open the dashboard, or ask me to install tooling. Click Finish when you're ready.",
+          "Your setup answers are saved. Before launching an app, open Services → Install to finish any tools its deployment needs: Docker/Compose for containers, Git for repository sources, and the selected proxy for public routing. App-specific build tools may also be needed. Existing apps can be connected without reinstalling their stack.",
         actions: [
+          { label: "Finish required installations", action: "goto-install" },
           { label: "Connect ChatGPT / agent", action: "goto-agents" },
           { label: "Deploy a template", action: "goto-templates" },
           { label: "Open dashboard", action: "goto-dashboard" },
@@ -781,7 +792,7 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   if (localWorkspace) {
     return (
       <WizardChrome step={step} localWorkspace>
-        <LocalWorkspaceReview result={scanResult} onRetry={() => void runProbe()} onComplete={() => router.push("/dashboard")} onConnect={() => router.push("/onboarding?add=1")} />
+        <LocalWorkspaceReview result={scanResult} error={scanError} onRetry={() => void runProbe()} onComplete={() => router.push("/dashboard")} onConnect={() => router.push("/onboarding?add=1")} />
       </WizardChrome>
     );
   }

@@ -79,6 +79,7 @@ export function DeploymentWorkspace() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [deployments, setDeployments] = useState<Enrolled[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
@@ -99,12 +100,14 @@ export function DeploymentWorkspace() {
       setGroups(data.projects || []);
       setDeployments(data.deployments || []);
       setCandidates(data.candidates || []);
+      setDiscoveryError(data.discoveryError || null);
       setHiddenCount(data.hiddenCount || 0);
       setLocalDesktop(Boolean(data.localDesktop));
       setHostId(data.hostId ?? null);
       if (data.discoveryError) setMessage({ tone: "error", text: data.discoveryError });
       else if (announce) setMessage({ tone: "success", text: "Host scan complete. Nothing was enrolled automatically." });
     } catch (error) {
+      setDiscoveryError(error instanceof Error ? error.message : String(error));
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
       setLoading(false);
@@ -277,6 +280,7 @@ export function DeploymentWorkspace() {
                     <Link href={`/deployments/${item.slug}`} className="group min-w-0">
                       <div className="truncate text-sm font-medium group-hover:text-accent">{item.name}</div>
                       <div className="mt-1 text-xs text-muted">{item.environmentName || "Unspecified"} · {item.kind === "compose" ? "Docker Compose" : item.kind}</div>
+                      {item.observedStatus === "unknown" && <div className="mt-1 text-[11px] text-warning">Runtime not verified · discovery needs attention</div>}
                       {item.observedStatus === "source-only" && <div className="mt-1 text-[11px] text-muted">Source added · not deployed</div>}
                       {item.observedStatus === "missing" && (
                         <div className="mt-1 text-[10px] text-warning">Needs attention</div>
@@ -377,7 +381,7 @@ export function DeploymentWorkspace() {
         {dismissed && <div role="status" className="flex flex-wrap items-center gap-3 text-xs text-muted"><span>{dismissed.name} dismissed.</span><button type="button" disabled={!!busy} className="gc-button gc-button-quiet" onClick={async () => { if (await mutate({ action: "restore", candidateId: dismissed.id }, "Restoring…", "Suggestion restored.", "undo")) setDismissed(null); }}>Undo</button></div>}
         {!loading && candidates.length === 0 ? (
           <div className="border border-dashed border-border p-6 text-center text-xs text-muted">
-            No new suggestions. Use “Add project” to find projects in another folder.
+            {discoveryError ? "Discovery is incomplete. Resolve the reported connection or Docker issue, then refresh discovery." : "No new suggestions. Use “Add project” to find projects in another folder."}
           </div>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">

@@ -1,0 +1,22 @@
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterEach, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ query: 'tab=bootstrap', replace: vi.fn() }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(mocks.query), useRouter: () => ({ replace: mocks.replace }) }));
+vi.mock('@/components/ContainersPanel', () => ({ ContainersPanel: () => <p>Container view</p> }));
+vi.mock('@/components/DeploymentWorkspace', () => ({ DeploymentWorkspace: () => <p>Deployment view</p> }));
+vi.mock('@/components/BootstrapPanel', () => ({ BootstrapPanel: () => <p>Installation assistance</p> }));
+vi.mock('@/components/TerraformStacksTab', () => ({ default: () => <p>Infrastructure view</p> }));
+import ServicesPage from './page';
+vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+afterEach(() => { mocks.replace.mockClear(); });
+it('opens the linked Install tab and navigates explicitly to another tab', async () => {
+ const el = document.createElement('div'); const root = createRoot(el);
+ mocks.query = 'tab=bootstrap'; await act(async () => root.render(<ServicesPage />));
+ expect(el.textContent).toContain('Installation assistance');
+ await act(async () => [...el.querySelectorAll('button')].find(b => b.textContent === 'Containers')!.click());
+ expect(mocks.replace).toHaveBeenCalledWith('/services?tab=containers', { scroll: false });
+ mocks.query = 'tab=bogus'; await act(async () => root.render(<ServicesPage />));
+ expect(el.textContent).toContain('Container view');
+ await act(async () => root.unmount());
+});

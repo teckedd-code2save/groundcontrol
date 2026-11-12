@@ -1,3 +1,5 @@
+import { assertDockerDiscovery } from "./docker-discovery-error";
+import { HttpError } from "./errors";
 // src/lib/probe-containers.ts
 //
 // Discover every running Docker container on the target VPS.
@@ -23,9 +25,10 @@ export interface DiscoveredContainer {
 
 export async function probeContainers(): Promise<DiscoveredContainer[]> {
   const result = await execOnTarget(
-    `docker ps --format '{{json .}}' 2>/dev/null || echo ""`
+    `docker ps --format '{{json .}}'`
   );
 
+  assertDockerDiscovery(result);
   if (!result.stdout.trim()) return [];
 
   try {
@@ -57,7 +60,7 @@ export async function probeContainers(): Promise<DiscoveredContainer[]> {
     }
     return containers;
   } catch {
-    return [];
+    throw new HttpError("Docker returned unreadable discovery results. Check the selected host and retry; an empty app list has not been verified.", 503);
   }
 }
 

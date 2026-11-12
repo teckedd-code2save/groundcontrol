@@ -31,3 +31,15 @@ it("connects a running app to the chosen project and environment, excluding sour
   await click("Connect deployment");
   expect(mutations).toEqual([{ action: "enroll", candidateId: "compose:portal", projectId: 7, environmentName: "Production", hostId: 3 }]);
 });
+
+it("keeps Docker discovery failure actionable instead of showing no available deployments", async () => {
+  const original = globalThis.fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url, init) => {
+    if (url === "/api/deployment-inventory") return new Response(JSON.stringify({ hostId: 3, candidates: [], dockerDiscoveryError: "Start Docker on the selected host, then retry." }));
+    return original(url, init);
+  }));
+  await act(async () => root.render(<ProjectGroupsPanel projectSlug="portal" />));
+  await click("Add deployment"); await click("Connect an existing deployment");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Start Docker on the selected host");
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("No available deployments");
+});

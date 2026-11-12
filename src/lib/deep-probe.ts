@@ -11,6 +11,7 @@ import { probeReverseProxy, type DiscoveredProxy } from "./probe-reverse-proxy";
 import { probeProjects, type DiscoveredProject } from "./probe-projects";
 import { getActiveVps } from "./vps";
 import { isDesktopMode } from "./runtime";
+import { HttpError, redactSensitive } from "./errors";
 
 export interface DiscoveryQuestion {
   id: string;
@@ -31,10 +32,14 @@ export interface DeepProbeResult {
 }
 
 export async function deepProbe(): Promise<DeepProbeResult> {
+  let containerError: string | undefined;
   const [layout, host, containers, reverseProxy, projects] = await Promise.all([
     probeServerLayout().catch(() => null),
     getHostCapabilities().catch(() => null),
-    probeContainers().catch(() => [] as DiscoveredContainer[]),
+    probeContainers().catch((error) => {
+      containerError = error instanceof HttpError ? redactSensitive(error.message) : "Docker discovery failed. Check the selected host connection and Docker access, then retry.";
+      return [] as DiscoveredContainer[];
+    }),
     probeReverseProxy().catch(() => ({ 
       type: "none" as const, configPaths: [], listening: { port80: false, port443: false } 
     })),
@@ -42,12 +47,12 @@ export async function deepProbe(): Promise<DeepProbeResult> {
   ]);
 
   const desktop = isDesktopMode() && (await getActiveVps())?.isLocal;
-  const questions = generateQuestions(layout, reverseProxy, containers, projects)
+  const questions = generateQuestions(layout, reverseProxy, containers, layout?.dockerReady && !containerError ? projects : [])
     .filter((question) => !desktop || question.category !== "proxy");
 
-  const summary = buildSummary(layout, reverseProxy, containers, projects, questions);
+  const summary = buildSummary(layout, reverseProxy, containers, projects, questions, containerError) + (containerError ? `\nDiscovery needs attention: ${containerError}` : "");
 
-  return { layout, reverseProxy, containers, projects, questions, summary };
+  return { layout, reverseProxy, containers, projects, questions, summary, ...(containerError ? { error: containerError } : {}) };
 }
 
 function generateQuestions(
@@ -132,17 +137,18 @@ function buildSummary(
   proxy: DiscoveredProxy,
   containers: DiscoveredContainer[],
   projects: DiscoveredProject[],
-  questions: DiscoveryQuestion[]
+  questions: DiscoveryQuestion[],
+  containerError?: string
 ): string {
   const lines: string[] = [];
 
   if (layout) {
     lines.push(`OS: ${layout.osName || "unknown"} (${layout.osFamily})`);
-    lines.push(`Docker: ${layout.dockerAvailable ? "installed" : "not installed"}`);
+    lines.push(`Docker: ${layout.dockerReady ? "daemon reachable" : layout.dockerAvailable ? "installed; daemon unreachable" : layout.dockerStatus === "missing" ? "not installed" : "not verified"}`);
   }
   
   lines.push(`Reverse proxy: ${proxy.type === "none" ? "none" : proxy.type + (proxy.configPaths.length ? ` at ${proxy.configPaths[0]}` : "")}`);
-  lines.push(`Containers: ${containers.length} running`);
+  lines.push(containerError ? "Containers: discovery failed; count not verified" : layout?.dockerReady ? `Containers: ${containers.length} running` : "Containers: not verified until Docker is reachable");
   
   if (projects.length > 0) {
     const projectNames = projects.map(p => p.path.split("/").pop()).join(", ");

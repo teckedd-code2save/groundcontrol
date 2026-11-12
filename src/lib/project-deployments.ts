@@ -14,7 +14,7 @@ export async function connectExistingDeployment(body: Record<string, unknown>, v
   const environmentName = deploymentEnvironment(body.environmentName);
   const projectGroupId = body.projectId ? Number(body.projectId) : null;
   if (projectGroupId && !await prisma.projectGroup.findUnique({ where: { id: projectGroupId } })) throw new HttpError("Project not found.", 404);
-  const [containers, labels] = await Promise.all([getDockerContainers(vps), getDockerContainerLabels(vps)]);
+  const [containers, labels] = await Promise.all([getDockerContainers(vps, { requireSuccess: true }), getDockerContainerLabels(vps)]);
   const candidates = buildInventoryCandidates([], [], containers, labels, []);
   const id = String(body.candidateId || body.id || candidateIdentity(body as { sourcePath?: string; containerName?: string; composeProject?: string }));
   const candidate = candidates.find((item) => item.id === id);

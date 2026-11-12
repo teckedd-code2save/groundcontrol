@@ -114,13 +114,21 @@ verify_link() {
 }
 
 print_link() {
-  printf '\nGroundControl is ready.\n\n'
+  printf '\nGroundControl is reachable. Finish setup in the browser.\n\n'
   if [ "$STAGE" = claim_required ]; then
     printf 'Open this one-time setup link and choose your username and password:\n'
   else
     printf 'Open this link and sign in with your existing account:\n'
   fi
   printf '\n  http://127.0.0.1:%s%s\n\n' "$LOCAL_PORT" "$PAGE"
+  if [ "$MODE" = local ]; then
+    printf 'Next: finish the workspace check in onboarding, then connect an existing Docker app in Projects. Keep Docker running.\n'
+    printf 'Server-only tools (such as Caddy) belong on a Linux server connection, not inside Docker Desktop.\n'
+  else
+    printf 'Next: finish the server scan in onboarding. Open Services → Install on that server to check and finish required tooling.\n'
+    printf 'Git sources need Git; routed templates need their proxy (for example Caddy); static builds need their build tools. Install only what your workload needs.\n'
+  fi
+  printf 'This checks GroundControl access, not that an application is ready to deploy. Review the selected workload requirements before launching.\n\n'
 }
 
 if [ "$MODE" = remote ]; then

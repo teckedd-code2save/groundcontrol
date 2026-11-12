@@ -29,7 +29,7 @@ if(name==='ssh') {
 if(name==='docker') {
  const state=fs.existsSync(e.GC_TEST_STATE)?JSON.parse(fs.readFileSync(e.GC_TEST_STATE)):{};
  const format=args.includes('--format')?args[args.indexOf('--format')+1]:'';
- if(args[0]==='info'){say(format?'linux':'Docker ready');process.exit(0);}
+ if(args[0]==='info'){if(e.GC_TEST_DOCKER_DOWN)process.exit(1);say(format?'linux':'Docker ready');process.exit(0);}
  if(args[0]==='context'){say(e.GC_TEST_ENDPOINT||'unix:///var/run/docker.sock');process.exit(0);}
  if(args[0]==='inspect'){
   if(!state.exists)process.exit(1);
@@ -131,4 +131,39 @@ test('local setup refuses another installation, a remote engine and an incompati
 test('unavailable emulation leaves no generated keys and reports the next action',()=>{
   const r=run(['--local'],{GC_TEST_EMULATION_FAIL:'1'});
   assert.notEqual(r.status,0);assert.equal(r.envCreated,false);assert.match(r.stderr,/enable AMD64 emulation/);
+});
+
+
+test('setup directs users to finish workload prerequisites without claiming deployment readiness',()=>{
+  const local=run(['--local']);
+  assert.equal(local.status,0,local.stderr);
+  assert.match(local.stdout,/finish the workspace check in onboarding/);
+  assert.match(local.stdout,/Server-only tools.*Linux server connection/);
+  assert.match(local.stdout,/not that an application is ready to deploy/);
+  const remote=run(['--remote','test-server']);
+  assert.match(remote.stdout,/Services → Install/);
+  assert.match(remote.stdout,/Git sources need Git/);
+  assert.match(remote.stdout,/Install only what your workload needs/);
+  assert.doesNotMatch(remote.stdout,/GroundControl is ready/);
+});
+
+test('stopped local Docker reports recovery before credentials or launch',()=>{
+  const r=run(['--local'],{GC_TEST_DOCKER_DOWN:'1'});
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/Start Docker Desktop\/Engine/);
+  assert.equal(r.envCreated,false);
+  assert.ok(!r.commands.some(c=>c.name==='docker'&&c.args[0]==='run'));
+});
+
+test('installer next steps preserve machine-readable stdout in JSON mode',()=>{
+  const source=readFileSync(join(__dirname,'install'),'utf8');
+  const log=source.match(/^log\(\) \{[\s\S]*?^\}/m)[0];
+  const guidance=source.match(/^finish_setup_guidance\(\) \{[\s\S]*?^\}/m)[0];
+  const r=spawnSync('bash',['-c',`JSON_MODE=1\n${log}\n${guidance}\nfinish_setup_guidance\nprintf '{"stage":"claim_required"}\\n'`],{encoding:'utf8'});
+  assert.equal(r.status,0,r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout),{stage:'claim_required'});
+  assert.match(r.stderr,/Services → Install/);
+  assert.match(r.stderr,/No optional workload tools were installed/);
+  assert.match(source,/Install the Docker Compose plugin.*verify docker compose version/);
+  assert.equal((source.match(/^ +finish_setup_guidance$|^finish_setup_guidance$/gm)||[]).length,4);
 });

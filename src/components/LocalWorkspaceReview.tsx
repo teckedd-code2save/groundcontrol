@@ -8,8 +8,9 @@ export type WorkspaceScan = {
   projects: { path: string }[];
 };
 
-export default function LocalWorkspaceReview({ result, onRetry, onComplete, onConnect }: {
+export default function LocalWorkspaceReview({ result, error, onRetry, onComplete, onConnect }: {
   result: WorkspaceScan | null;
+  error?: string;
   onRetry: () => void;
   onComplete: () => void;
   onConnect: () => void;
@@ -17,7 +18,7 @@ export default function LocalWorkspaceReview({ result, onRetry, onComplete, onCo
   if (!result) return (
     <section>
       <h1 className="text-3xl font-semibold tracking-tight">We couldn’t finish the scan</h1>
-      <Notice tone="warning" className="my-6">Check that Docker is running, then scan again. Your apps haven’t been changed.</Notice>
+      <Notice tone="warning" className="my-6">{error || "Check that Docker is running, then scan again."} Your apps haven’t been changed.</Notice>
       <Button variant="primary" className="min-h-12! text-sm! w-full" onClick={onRetry}>Try the scan again</Button>
     </section>
   );
