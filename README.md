@@ -21,7 +21,7 @@
 
 GroundControl is a self-hosted deployment control plane for operators and software agents. Projects organize your application sources and running instances; MCP and OAuth give agents scoped access to real application state and supported operations. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and Kubernetes, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
 
-See [Connect an existing deployment](docs/current-deployment-help.md) to enroll a running app without redeploying it and give an agent scoped access.
+See [Connect an existing deployment](docs/projects-and-deployments.md#connect-an-existing-deployment) to bring a running app into GroundControl without redeploying it.
 
 The next product direction deepens that existing advantage rather than replacing it. GroundControl Loop is the proposed intelligence and recovery engine: it correlates meaningful host changes, maps their likely blast radius, runs targeted customer-facing journeys, investigates regressions with evidence, and prepares the least disruptive reversible recovery. See the [implementation and evaluation contract](./docs/LOOP.md).
 

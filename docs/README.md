@@ -12,7 +12,6 @@
 
 ## 🚀 Run it
 
-- **[Connect an existing deployment](./current-deployment-help.md)** — enroll a running app without redeploying it, resolve discovery issues, and give an agent scoped access.
 
 - **[start-from-your-computer.md](./start-from-your-computer.md)** — choose local Docker or a remote Linux server, then open your personal setup link.
 - **[projects-and-deployments.md](./projects-and-deployments.md)** — pick a source folder or GitHub repository, then connect or launch deployments.
