@@ -71,7 +71,7 @@ This is a small smoke test of the released local launch path. It requires no rep
    | App port inside the container | `80` |
 
 4. Choose **Review deployment**, confirm the target, then **Launch deployment**.
-5. Open the returned local address. Expect the Nginx welcome page. Docker chooses the host port; use the displayed address rather than assuming port 80 on your computer.
+5. Open the returned local address. Expect the Nginx welcome page. Use the displayed local address rather than assuming port 80 on your computer.
 
 The address is private to that computer. The image's default command is used. This example deliberately needs no extra environment values or persistent storage. For your own image, choose a versioned tag or digest and verify its architecture and startup requirements. Registering a Dockerfile folder does not make this form build it.
 
