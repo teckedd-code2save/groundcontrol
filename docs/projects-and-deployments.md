@@ -17,9 +17,24 @@ A deployment is an instance of a project, identified independently of its source
 Open a project and choose **Add deployment**:
 
 - **Connect an existing deployment**: select a discovered running app on the active host, or move a tracked deployment from another project. Pick its environment. This does not restart or move the app.
-- **Launch a new deployment**: on this computer, configure a ready-to-use Docker image and its app port, review, and launch. Docker assigns a private localhost port. On a Linux server, choose an existing template workflow; the project, environment, and selected-host check carry through to deployment persistence. New template launches must use a new instance name; existing instances are updated from their deployment page.
+- **Launch a new deployment**: on this computer, configure a ready-to-use Docker image and its app port, review, and launch. The deployment receives a private localhost address. On a Linux server, choose an existing template workflow; the project, environment, and selected-host check carry through to deployment persistence. New template launches must use a new instance name; existing instances are updated from their deployment page.
 
 Local image launches currently support a single image with its default command and no extra environment configuration. Source builds, multi-service applications, and custom configuration use Linux-server templates. Native Mac/Windows service management is not supported. Local images are tracked as standalone container instances; template releases use the existing release pipeline.
+
+## Connect an existing deployment
+
+No source import or redeployment is required to enroll an app that already runs:
+
+1. Select its host in **Settings → Connections**. GroundControl must be able to connect and inspect Docker there.
+2. Open the app's project, or create one with **Add project** without source.
+3. Choose **Add deployment → Connect an existing deployment**. Select the discovered Compose stack or standalone container and set its environment, such as `Production`.
+4. Click **Connect deployment**, then verify the displayed host, services, environment, and runtime state. For an already-tracked app, check its current project and host before moving its project association.
+
+Enrollment leaves containers and Compose files in place. It does not enable automatic deployments or grant an agent permission to change the app. Existing private stacks and headless workers do not need a new public domain to be connected.
+
+If the app is missing, check the active connection, Docker access, and whether it is already tracked. For dismissed suggestions, open **Deployments → Suggested from this host/computer → Restore hidden**, then reopen the Connect dialog. If the host changed while the dialog was open, close it and refresh Projects.
+
+An agent can help identify the correct stack and missing access, then guide these steps. Current MCP tools do not perform general discovery or enrollment. After enrollment and explicit [agent authorization](./agent-native-access.md), `deployment.list` and `deployment.inspect` can verify visibility and capabilities. Start with the read access you need; keep secret values out of chat.
 
 ## Discovery
 
