@@ -49,6 +49,7 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   /** true when user clicked Add Server or ?add=1 — never auto-probe existing */
   const [addMode, setAddMode] = useState(false);
   const [existingServers, setExistingServers] = useState<ExistingVps[]>([]);
+  const [scanElapsed, setScanElapsed] = useState(0);
   const [scanError, setScanError] = useState<string | undefined>();
   const [scanResult, setScanResult] = useState<WorkspaceScan | null>(null);
   const localWorkspace = localDesktop && !addMode && existingServers.some((server) => server.isActive && server.isLocal);
@@ -68,6 +69,13 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   const [connectError, setConnectError] = useState("");
   const [testOk, setTestOk] = useState<string | null>(null);
   const [hasVps, setHasVps] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (step !== "probing") return;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setScanElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [step]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -213,6 +221,7 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
   }
 
   async function runProbe() {
+    setScanElapsed(0);
     setStep("probing");
     setScanResult(null);
     setScanError(undefined);
@@ -784,6 +793,12 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
           <p className="mt-2 max-w-sm text-sm font-mono text-muted">
             {localWorkspace ? "Looking for running containers and projects in your shared folder. Your apps won’t be changed." : "OS · Docker · containers · reverse proxy · existing projects"}
           </p>
+          <p role="status" className="mt-4 max-w-md text-sm text-muted">
+            {scanElapsed >= 20
+              ? "Still waiting for the host checks to finish. Some checks can take longer on a new installation. No applications are being installed or restarted."
+              : "Checking the selected host. No applications are being installed or restarted."}
+          </p>
+          <p aria-live="off" className="mt-2 text-xs font-mono text-muted">Elapsed: {scanElapsed}s · Results appear when the scan finishes</p>
         </div>
       </WizardChrome>
     );

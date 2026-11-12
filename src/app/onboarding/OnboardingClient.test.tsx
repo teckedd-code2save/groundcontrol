@@ -99,3 +99,23 @@ it("shows the failed discovery reason without treating installed Docker as ready
   expect(container.textContent).not.toContain("Found 2 running");
   expect(container.textContent).not.toContain("Open dashboard");
 });
+
+it("shows elapsed scan time without inventing completed stages, then resets on retry", async () => {
+  vi.useFakeTimers();
+  try {
+    let finish!: (value: unknown) => void;
+    probe.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    await render(); await click("Scan my Docker apps");
+    expect(container.textContent).toContain("Elapsed: 0s");
+    await act(async () => { vi.advanceTimersByTime(21000); });
+    expect(container.textContent).toContain("Elapsed: 21s");
+    expect(container.textContent).toContain("Still waiting for the host checks");
+    expect(container.textContent).not.toContain("You’re ready to explore");
+    await act(async () => finish(json({ error: "Scan failed" }, false)));
+    expect(container.textContent).toContain("Scan failed");
+    probe.mockReturnValueOnce(new Promise(() => {}));
+    await click("Try the scan again");
+    expect(container.textContent).toContain("Elapsed: 0s");
+    expect(container.textContent).not.toContain("Still waiting");
+  } finally { vi.useRealTimers(); }
+});

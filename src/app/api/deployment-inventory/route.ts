@@ -9,6 +9,7 @@ import {
   getDockerContainers,
   scanProjects,
 } from "@/lib/vps";
+import { hostDisplayName } from "@/lib/host-display-name";
 import { isDesktopMode } from "@/lib/runtime";
 import { scanSourceFolder } from "@/lib/source-discovery";
 import { browseProjectFolders } from "@/lib/project-folder-browser";
@@ -79,6 +80,7 @@ export async function GET(req: NextRequest) {
     requireAuth(req);
     const vps = await getActiveVps();
     await reconcileKnownDeployments(vps?.id ?? null);
+    const displayHost = vps ? await prisma.vpsConfig.findUnique({ where: { id: vps.id }, select: { name: true, host: true, isLocal: true } }) : null;
     const desktop = isDesktopMode() && vps?.isLocal;
     let dockerDiscoveryError: string | null = null;
     const [tree, containers, labels, projects, enrolled, hostProjects, sources, hidden] = await Promise.all([
@@ -147,7 +149,7 @@ export async function GET(req: NextRequest) {
       hiddenCount: hidden.size,
       localDesktop: Boolean(desktop),
       hostId: vps?.id ?? null,
-      hostName: vps?.host || "This computer",
+      hostName: vps ? hostDisplayName(displayHost || vps) : "No connection",
       dockerDiscoveryError,
       discoveryError: dockerDiscoveryError || tree.error || sources.error || null,
     });

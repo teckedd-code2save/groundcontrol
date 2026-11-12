@@ -43,3 +43,14 @@ it("keeps Docker discovery failure actionable instead of showing no available de
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Start Docker on the selected host");
   expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("No available deployments");
 });
+
+it("offers enrollment without requiring source from an empty workspace", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ projects: [], ungrouped: [], hostName: "GroundControl server", hostId: 3 }))));
+  await act(async () => root.render(<ProjectGroupsPanel />));
+  expect(container.textContent).toContain("Add a project without source");
+  await click("Add project");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Organize an existing app");
+  await click("Start without source code");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("creating a project does not start or change an app");
+  expect(mutations).toEqual([]);
+});

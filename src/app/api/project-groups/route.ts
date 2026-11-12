@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { repositoryUrl } from "@/lib/project-settings";
 import { handleApiError } from "@/lib/errors";
 import { getActiveVps } from "@/lib/vps";
+import { hostDisplayName } from "@/lib/host-display-name";
 import { isDesktopMode } from "@/lib/runtime";
 import { readDeploymentOverrides } from "@/lib/deployment-evidence";
 import { prisma } from "@/lib/prisma";
@@ -23,12 +24,12 @@ export async function GET(req: NextRequest) {
       prisma.projectGroup.findMany({
         orderBy: { name: "asc" },
         include: {
-          sources: { include: { vpsConfig: { select: { name: true, isLocal: true } } } },
+          sources: { include: { vpsConfig: { select: { name: true, host: true, isLocal: true } } } },
           enrolledDeployments: {
             where: { kind: { not: "source" } },
             orderBy: { name: "asc" },
             include: {
-              vpsConfig: { select: { name: true, isLocal: true } },
+              vpsConfig: { select: { name: true, host: true, isLocal: true } },
               legacyProject: {
                 include: {
                   deployments: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
         where: { projectGroupId: null, kind: { not: "source" } },
         orderBy: { name: "asc" },
         include: {
-          vpsConfig: { select: { name: true, isLocal: true } },
+          vpsConfig: { select: { name: true, host: true, isLocal: true } },
           legacyProject: {
             include: {
               deployments: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
         environmentName: deployment.environmentName,
         method: deployment.kind,
         hostId: deployment.vpsConfigId,
-        hostName: deployment.vpsConfig?.name || "Connection unavailable",
+        hostName: hostDisplayName(deployment.vpsConfig),
         lastDeploy: latestRelease?.createdAt || deployment.lastSeenAt,
       };
     };
@@ -75,13 +76,13 @@ export async function GET(req: NextRequest) {
       sources: sources.map((source) => {
         let technologies: string[] = [];
         try { technologies = JSON.parse(source.metadataJson).sourceProject?.technologies || []; } catch {}
-        return { id: source.id, path: source.path, hostId: source.vpsConfigId, hostName: source.vpsConfig.name, technologies };
+        return { id: source.id, path: source.path, hostId: source.vpsConfigId, hostName: hostDisplayName(source.vpsConfig), technologies };
       }),
     }));
     const ungrouped = ungroupedDeployments.map(summarize);
     const vps = await getActiveVps();
-    const activeHost = vps ? await prisma.vpsConfig.findUnique({ where: { id: vps.id }, select: { name: true } }) : null;
-    return NextResponse.json({ projects, ungrouped, localDesktop: Boolean(isDesktopMode() && vps?.isLocal), hostId: vps?.id ?? null, hostName: activeHost?.name || "No connection" });
+    const activeHost = vps ? await prisma.vpsConfig.findUnique({ where: { id: vps.id }, select: { name: true, host: true, isLocal: true } }) : null;
+    return NextResponse.json({ projects, ungrouped, localDesktop: Boolean(isDesktopMode() && vps?.isLocal), hostId: vps?.id ?? null, hostName: activeHost ? hostDisplayName(activeHost) : "No connection" });
   } catch (error) {
     return handleApiError(error);
   }
