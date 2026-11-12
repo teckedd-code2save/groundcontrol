@@ -10,14 +10,16 @@ import { executeAgentTool, toolDefinitionsForScopes } from "@/lib/mcp-agent";
 
 const LEGACY_PROTOCOL_VERSION = "2025-11-25";
 const LEGACY_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
-const TOOLSET_REVISION = "2026-11-11.1";
+const TOOLSET_REVISION = "2026-11-12.help.1";
 const SERVER_INFO = {
   name: "GroundControl",
   title: "GroundControl",
   version: "0.1.0",
 };
 const SERVER_INSTRUCTIONS =
-  "GroundControl exposes scoped infrastructure operations. Inspect state before changing it, use durable operation handles for mutations, and never assume access to workloads outside the OAuth grant.";
+  "GroundControl exposes scoped infrastructure operations. Inspect state before changing it, use durable operation handles for mutations, and never assume access to workloads outside the OAuth grant. " +
+  "Help operators deploy successfully: Linux-server templates support repository-owned Docker Compose, ready images, Dockerfile source builds with generated Compose, and static sites. Preserve working Compose configurations. The Existing Compose launch template currently requires a public service, host port and domain; workers may run within that stack, while already-running worker containers can be connected. Desktop local launch currently runs one ready image with its default command and a private localhost port; do not claim local Dockerfile builds, Git checkout, custom env or storage configuration until the installed version exposes them. Importing a repository records source, not a running deployment. " +
+  "When asked to deploy, first inspect approved deployments and returned capabilities. For a new workload, help inspect source using separately authorized tools and prepare a concrete checklist: image or Docker/Compose recipe, required services, app port, environment key names, persistent storage, database connectivity, routing, migrations, verification and rollback limits. A database can be local or external; do not assume a new database is needed. Identify missing tools and information, explain the next step, and offer help installing dependencies or preparing configuration rather than simply saying unsupported. Use Manage Envs where supported, never request secret values in chat. New deployment creation is through Projects > Add deployment and the appropriate template, not an available MCP creation tool. Explain this distinction without blocking preparation. Do not mutate or install without the operator’s authorization. Report success only after inspecting runtime evidence; a running container alone does not prove the application works.";
 
 type JsonRpcRequest = {
   jsonrpc?: string;
