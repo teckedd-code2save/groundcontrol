@@ -113,6 +113,9 @@ export default function PublishInstanceStep({
       setVerification(data.verification || null);
       await load();
     } catch (cause) {
+      // A replacement may be live even when retiring an old path needs attention.
+      // Reload authoritative status rather than leaving a stale handoff link visible.
+      await load();
       setError(cause instanceof Error ? cause.message : "Could not publish GroundControl");
     } finally {
       setWorking(false);
@@ -182,7 +185,7 @@ export default function PublishInstanceStep({
           active={method === "quick_tunnel"}
           icon={<ShieldCheck className="h-4 w-4" />}
           title="No domain yet"
-          detail="Create a temporary outbound HTTPS URL to finish setup."
+          detail="Temporary public HTTPS for setup. Configure a permanent domain for ongoing access."
           onClick={() => setMethod("quick_tunnel")}
         />
         </>}
@@ -297,9 +300,15 @@ export default function PublishInstanceStep({
             </button>
           </div>
           {status.mode === "quick_tunnel" && (
-            <p className="mt-2 text-[10px] text-warning">
-              Temporary bridge. Its hostname may change when the connector restarts. Attach a domain for a durable instance URL.
-            </p>
+            <div className="mt-3 space-y-2 text-xs leading-relaxed text-warning">
+              <p className="font-medium">Temporary access: configure a permanent domain</p>
+              <p>This is a public HTTPS sign-in link, not a private-only address. You can close the setup terminal; GroundControl and this tunnel run on the server.</p>
+              <p>This temporary connector does not restart automatically after a server reboot. Recreating it gives you a new URL, so bookmarks and agent connections may need updating.</p>
+              <p>Quick tunnels have no uptime guarantee and do not support server-sent event streams. Use a permanent domain with a named Cloudflare Tunnel or HTTPS proxy for ongoing access and agents.</p>
+              <button type="button" onClick={() => setMethod("cloudflare")} disabled={working} className="gc-button gc-button-quiet text-[10px]">
+                Set up a permanent domain
+              </button>
+            </div>
           )}
         </div>
       )}

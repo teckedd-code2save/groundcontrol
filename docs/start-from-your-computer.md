@@ -63,6 +63,20 @@ Keep the setup terminal open while using the link. Press Ctrl+C when finished; G
 
 After claiming the instance, the browser can guide you through a permanent HTTPS domain or supported publishing option. You can also keep using the private link.
 
+**No domain yet** gives you a temporary public HTTPS sign-in link. Its connector runs
+on the server, so you can close the Mac setup terminal after verifying that link.
+It does not automatically restart after a server reboot; recreating it changes
+the URL. [Quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
+have no uptime guarantee and do not support server-sent event streams. Configure a permanent domain with a named Cloudflare Tunnel or
+HTTPS proxy for ongoing use, especially agent connections. If temporary access
+stops, rerun this launcher to reconnect privately, then create a new temporary
+link or finish permanent setup. Your account remains on the server.
+
+Make one access change at a time. If setup is interrupted or reports incomplete
+cleanup, reconnect privately and inspect the connector/DNS state before retrying.
+Access changes are not yet durable, crash-recoverable operations.
+
+
 ## Add projects already on your computer
 
 Open **Projects → Add project → Choose a folder**. Select a location, browse its folders, and choose your project. Review its detected technology, name, and purpose, then add it. You do not need to paste a path. With a remote connection selected, the picker browses that server instead of your computer.

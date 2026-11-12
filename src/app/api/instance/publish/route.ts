@@ -69,8 +69,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "hostname is required" }, { status: 400 });
       }
       try {
-        const result = await publishWithCaddy({ hostname: body.hostname });
-        const verification = await verifyGroundControlInstance(result.publicUrl);
+        const { verification, ...result } = await publishWithCaddy({ hostname: body.hostname });
         await createAuditLog(user.id, "instance_access_publish", req, {
           mode: result.mode,
           publicUrl: result.publicUrl,
@@ -97,12 +96,11 @@ export async function POST(req: NextRequest) {
       if (!body.hostname) {
         return NextResponse.json({ error: "hostname is required" }, { status: 400 });
       }
-      const result = await publishWithCloudflare({
+      const { verification, ...result } = await publishWithCloudflare({
         hostname: body.hostname,
         apiToken: body.apiToken,
         accountId: body.accountId,
       });
-      const verification = await verifyGroundControlInstance(result.publicUrl);
       await createAuditLog(user.id, "instance_access_publish", req, {
         mode: result.mode,
         publicUrl: result.publicUrl,
