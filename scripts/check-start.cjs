@@ -167,3 +167,30 @@ test('installer next steps preserve machine-readable stdout in JSON mode',()=>{
   assert.match(source,/Install the Docker Compose plugin.*verify docker compose version/);
   assert.equal((source.match(/^ +finish_setup_guidance$|^finish_setup_guidance$/gm)||[]).length,4);
 });
+
+
+test('remote installer defaults to main independently of image version',()=>{
+  const r=run(['--remote','test-server','--version','candidate']);
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes("sh -s -- 'candidate' 'main'")));
+  assert.match(r.remoteScript,/groundcontrol\/\$2\/scripts/);
+  assert.match(r.remoteScript,/fetch "\$base\/install"/);
+  assert.match(r.remoteScript,/fetch "\$base\/install.sha256"/);
+  assert.match(r.remoteScript,/sha256sum -c install.sha256/);
+});
+
+test('candidate launcher pins installer source and checksum to immutable commit',()=>{
+  const sha='8443d4e02a38898175dd0c38cd1e1975af3640c5';
+  const r=run(['--remote','test-server','--version','8443d4e','--installer-ref',sha]);
+  assert.match(r.stdout,/GroundControl is reachable/);
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes(`sh -s -- '8443d4e' '${sha}'`)));
+});
+
+test('invalid installer refs and local use are rejected before connection or launch',()=>{
+  for(const ref of ['branch/name','../main','8443d4e',';touch /tmp/unsafe','']) {
+    const r=run(['--remote','test-server','--installer-ref',ref]);
+    assert.notEqual(r.status,0); assert.equal(r.commands.length,0);
+  }
+  const local=run(['--local','--installer-ref','a'.repeat(40)]);
+  assert.notEqual(local.status,0); assert.match(local.stderr,/only applies to a remote server/);
+  assert.equal(local.commands.length,0);
+});

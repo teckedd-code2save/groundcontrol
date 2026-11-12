@@ -7,6 +7,7 @@ TARGET=""
 IDENTITY=""
 SSH_PORT=""
 VERSION="latest"
+INSTALLER_REF="main"
 IMAGE=""
 DATA_DIR="${HOME}/.groundcontrol-desktop"
 LOCAL_PORT=""
@@ -30,6 +31,7 @@ Options:
   -p PORT          SSH port (otherwise use your SSH configuration)
   --local-port N   Use this port on your computer
   --version TAG   Select the server image version
+  --installer-ref SHA  Pin remote installer to a full commit (testing; default main)
   --dir PATH      Local configuration directory (default ~/.groundcontrol-desktop)
   --image REF     Local image override for testing a release
   -h, --help      Show help
@@ -54,6 +56,7 @@ while [ "$#" -gt 0 ]; do
     -p) value "$@"; SSH_PORT="$2"; shift 2 ;;
     --local-port) value "$@"; LOCAL_PORT="$2"; shift 2 ;;
     --version) value "$@"; VERSION="$2"; shift 2 ;;
+    --installer-ref) value "$@"; INSTALLER_REF="$2"; shift 2 ;;
     --dir) value "$@"; DATA_DIR="$2"; shift 2 ;;
     --image) value "$@"; IMAGE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -76,6 +79,9 @@ if [ -z "$MODE" ]; then
     *) fail "Choose 1 or 2, or run with --local / --remote." ;;
   esac
 fi
+
+[ "$INSTALLER_REF" = main ] || [[ "$INSTALLER_REF" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Installer ref must be a full 40-character commit SHA."
+[ "$MODE" = remote ] || [ "$INSTALLER_REF" = main ] || fail "--installer-ref only applies to a remote server."
 
 [[ "$VERSION" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "Invalid version tag."
 [ -z "$LOCAL_PORT" ] || port "$LOCAL_PORT" || fail "Local port must be between 1024 and 65535."
@@ -162,14 +168,14 @@ fetch() {
   elif command -v wget >/dev/null; then wget -qO "$2" "$1";
   else echo 'Install curl or wget on the server first.' >&2; return 1; fi
 }
-base=https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts
+base="https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$2/scripts"
 fetch "$base/install" "$task_dir/install"
 fetch "$base/install.sha256" "$task_dir/install.sha256"
 (cd "$task_dir" && sha256sum -c install.sha256) >&2
 if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" --version "$1" --json;
 else sudo -n bash "$task_dir/install" --version "$1" --json; fi
 REMOTE
-  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
+  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
   read_result
   REMOTE_PORT=$(printf '%s\n' "$RESULT" | sed -n 's/.*"hostPort":\([0-9][0-9]*\).*/\1/p')
   port "$REMOTE_PORT" || fail "The server returned an invalid port."
