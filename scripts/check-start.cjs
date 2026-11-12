@@ -194,3 +194,35 @@ test('invalid installer refs and local use are rejected before connection or lau
   assert.notEqual(local.status,0); assert.match(local.stderr,/only applies to a remote server/);
   assert.equal(local.commands.length,0);
 });
+
+
+test('interactive remote key selection preserves defaults and explicit identity',()=>{
+  const source=readFileSync(launcher,'utf8');
+  const helper=source.match(/^choose_remote_identity\(\) \{[\s\S]*?^\}/m)[0];
+  for(const [initial,answer,expected] of [
+    ['', '', ''], ['', '~/my keys/server', '/test-home/my keys/server'],
+    ['', '/tmp/test-key', '/tmp/test-key'], ['/given/key', '/ignored/key', '/given/key'],
+  ]) {
+    const r=spawnSync('bash',['-c',`${helper}\nprompt() { printf '%s' "$ANSWER"; }\nchoose_remote_identity\nprintf '\\nSELECTED=%s\\n' "$IDENTITY"`],{
+      encoding:'utf8',env:{...process.env,HOME:'/test-home',IDENTITY:initial,ANSWER:answer},
+    });
+    assert.equal(r.status,0,r.stderr);
+    assert.ok(r.stdout.endsWith(`SELECTED=${expected}\n`));
+    if(!initial) assert.match(r.stdout,/Do not paste the key contents/);
+  }
+  assert.match(source,/TARGET="\$\(prompt[^\n]+; choose_remote_identity ;;/);
+});
+
+test('explicit SSH key path is passed as one argument without changing SSH settings',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'gc-key-test-'));
+  const key=join(dir,'key with spaces');writeFileSync(key,'not a real key');
+  try {
+    const r=run(['--remote','saved-alias','-i',key]);
+    const connect=r.commands.find(c=>c.name==='ssh'&&c.args.includes('-M'));
+    assert.equal(connect.args[connect.args.indexOf('-i')+1],key);
+    assert.doesNotMatch(r.stdout,/SSH private key path/);
+    assert.ok(!connect.args.includes('IdentitiesOnly=yes'));
+    const failed=run(['--remote','saved-alias'],{GC_TEST_SSH_FAIL:'1'});
+    assert.match(failed.stderr,/enter its path.*-i \/path\/to\/key/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});

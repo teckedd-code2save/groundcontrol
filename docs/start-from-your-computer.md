@@ -47,7 +47,7 @@ Windows currently uses WSL for the launcher; a native PowerShell launcher is not
 
 Use an AMD64 Linux server, such as an Intel/AMD Ubuntu or Debian VPS. Connect as root or an account with passwordless sudo. The server needs Bash and either curl or wget; the server installer handles Docker installation if required.
 
-The launcher uses your normal SSH configuration. Existing host aliases, SSH-agent keys, and default keys work. Your SSH private key stays on your computer.
+The launcher uses your normal SSH configuration. Existing host aliases, SSH-agent keys, and default keys work. Interactive remote setup asks for an optional SSH private-key file path. Press Enter to keep your existing SSH settings, or enter the path to the key for that server (for example `~/.ssh/server_key`). Do not paste the key contents. Your SSH private key stays on your computer.
 
 ```bash
 # Saved SSH host

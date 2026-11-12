@@ -71,11 +71,21 @@ prompt() {
   printf '%s' "$answer"
 }
 
+choose_remote_identity() {
+  [ -z "$IDENTITY" ] || return 0
+  printf 'If this server uses a specific SSH key, enter its file path. The key stays on this computer.\n'
+  printf 'Press Enter to use your SSH agent, default keys, or saved host settings. Do not paste the key contents.\n'
+  IDENTITY="$(prompt 'SSH private key path (optional): ')"
+  case "$IDENTITY" in
+    '~/'*) IDENTITY="$HOME/${IDENTITY#\~/}" ;;
+  esac
+}
+
 if [ -z "$MODE" ]; then
   printf 'Where should GroundControl run?\n  1) This computer\n  2) A remote Linux server\n'
   case "$(prompt 'Choose 1 or 2: ')" in
     1) MODE=local ;;
-    2) MODE=remote; TARGET="$(prompt 'SSH address or saved host alias (for example root@203.0.113.10): ')" ;;
+    2) MODE=remote; TARGET="$(prompt 'SSH address or saved host alias (for example root@203.0.113.10): ')"; choose_remote_identity ;;
     *) fail "Choose 1 or 2, or run with --local / --remote." ;;
   esac
 fi
@@ -146,14 +156,14 @@ if [ "$MODE" = remote ]; then
     SSH_ARGS+=(-p "$SSH_PORT")
   fi
   if [ -n "$IDENTITY" ]; then
-    [ -f "$IDENTITY" ] || fail "SSH key file not found: $IDENTITY"
+    [ -f "$IDENTITY" ] || fail "SSH key file not found. Enter a file path, not key contents; or omit the key to use your SSH settings."
     SSH_ARGS+=(-i "$IDENTITY")
   fi
   CONTROL_DIR=$(mktemp -d /tmp/gc-connect.XXXXXX)
   CONTROL_SOCKET="$CONTROL_DIR/ssh"
   SSH_ARGS+=(-S "$CONTROL_SOCKET" -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
   printf 'Connecting to %s using your SSH settings…\n' "$TARGET"
-  ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address, account, and SSH key."
+  ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address and account. If this server uses a specific key, rerun setup and enter its path, or use --remote user@server -i /path/to/key. Saved SSH aliases and agent keys remain supported."
   printf 'Installing GroundControl on %s…\n' "$TARGET"
   cat > "$CONTROL_DIR/install.sh" <<'REMOTE'
 set -eu
