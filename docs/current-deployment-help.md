@@ -19,7 +19,7 @@ For example, if `shop` already runs as a Compose stack on your VPS, select that 
 - **Wrong host:** switch Connections and reopen the dialog. If the connection changed while it was open, close it and refresh Projects.
 - **Docker cannot be inspected:** check that Docker is running and the selected host connection has the required access. Ask for help identifying the missing dependency or permission before changing the host.
 - **Already tracked:** look among tracked deployments, including those associated with another project, rather than creating a duplicate.
-- **Previously dismissed:** use **Restore hidden** on the discovery surface, then look again. Dismissal hides a suggestion; it does not stop the app.
+- **Previously dismissed:** open **Deployments → Suggested from this host/computer → Restore hidden**, then reopen the Connect dialog. Dismissal hides a suggestion; it does not stop the app.
 - **Only source code exists:** a registered folder or GitHub repository is not a running deployment. Use [Projects and deployments](./projects-and-deployments.md) for launching a new instance. Do not choose Launch just to make an existing app appear.
 
 ## Let an agent help
