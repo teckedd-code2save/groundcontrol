@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { resolve4 } from "node:dns/promises";
 import { execFile } from "node:child_process";
@@ -6,6 +7,8 @@ import { decryptMaybe, encryptIfNeeded } from "@/lib/crypto";
 import {
   createDnsRecord,
   createTunnel,
+  deleteTunnel,
+  deleteDnsRecord,
   getActiveCloudflareAccount,
   listDnsRecords,
   listZones,
@@ -18,6 +21,7 @@ import { execOnHost } from "@/lib/host-exec";
 import { installClaimStatus } from "@/lib/install-claim";
 import { prisma } from "@/lib/prisma";
 import { execOnVps, shQuote } from "@/lib/vps";
+import { HttpError } from "@/lib/errors";
 import { isDesktopMode } from "@/lib/runtime";
 
 const execFileAsync = promisify(execFile);
@@ -71,8 +75,8 @@ export function normalizePublicHostname(value: string) {
   return hostname;
 }
 
-async function setConfig(key: string, value: string) {
-  await prisma.appConfig.upsert({
+async function setConfig(key: string, value: string, db: Pick<typeof prisma, "appConfig"> = prisma) {
+  await db.appConfig.upsert({
     where: { key },
     create: { key, value },
     update: { value },
@@ -115,11 +119,18 @@ async function groundControlDockerNetwork() {
   return network;
 }
 
+async function removeConnectorAndVerify(name: string) {
+  const exactName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const result = await execOnHost([
+    `docker rm -f ${shQuote(name)} >/dev/null 2>&1 || true`,
+    `remaining=$(docker ps -a --filter ${shQuote(`name=^/${exactName}$`)} --format '{{.Names}}') || exit 1`,
+    'test -z "$remaining"',
+  ].join("\n"), { requireHost: true });
+  if (result.code !== 0) throw new HttpError("Public access cleanup could not be verified. Inspect the connector before retrying.", 502);
+}
+
 async function stopQuickTunnel() {
-  await execOnHost(
-    `docker rm -f ${shQuote(QUICK_TUNNEL_CONTAINER)} >/dev/null 2>&1 || true`,
-    { requireHost: true }
-  );
+  await removeConnectorAndVerify(QUICK_TUNNEL_CONTAINER);
 }
 
 async function disableCaddyExposure() {
@@ -143,10 +154,7 @@ async function disableCaddyExposure() {
 async function stopNamedManagementTunnel() {
   const row = await activeNamedTunnelRow();
   if (!row?.connectorId) return;
-  await execOnHost(
-    `docker rm -f ${shQuote(row.connectorId)} >/dev/null 2>&1 || true`,
-    { requireHost: true }
-  );
+  await removeConnectorAndVerify(row.connectorId);
   await prisma.cloudflareTunnel.update({
     where: { id: row.id },
     data: { status: "inactive" },
@@ -202,10 +210,14 @@ async function ensureTunnelDns(
   };
   if (existing?.id) {
     await updateDnsRecord(zoneId, String(existing.id), data, account);
-  } else {
-    await createDnsRecord(zoneId, data, account);
+    return () => updateDnsRecord(zoneId, String(existing.id), {
+      type: String(existing.type), name: String(existing.name), content: String(existing.content),
+      ttl: Number(existing.ttl || 1), proxied: Boolean(existing.proxied), comment: String(existing.comment || ""),
+    }, account);
   }
-  return target;
+  const created = await createDnsRecord(zoneId, data, account);
+  if (!created.id) throw new Error("Cloudflare DNS creation returned no record identity; inspect the candidate DNS record before retrying.");
+  return () => deleteDnsRecord(zoneId, String(created.id), account);
 }
 
 async function startNamedTunnelConnector(
@@ -310,9 +322,7 @@ export async function publishWithCloudflare(input: {
   accountId?: string;
 }) {
   const hostname = normalizePublicHostname(input.hostname);
-  await stopQuickTunnel();
-  await disableCaddyExposure();
-
+  // Keep the existing access path alive until the replacement is verified.
   let account = await getActiveCloudflareAccount();
   if ((!account || !account.accountId) && input.apiToken) {
     account = await saveActiveCloudflareAccount({
@@ -340,56 +350,96 @@ export async function publishWithCloudflare(input: {
     }
   }
 
-  await updateTunnelConfiguration(
-    tunnelId,
-    [{ hostname, service: "http://groundcontrol-web:3000" }],
-    account
-  );
-  await ensureTunnelDns(account, zone.id, hostname, tunnelId);
-
-  const connectorId = `gc-control-plane-${tunnelId.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 18)}`;
-  await startNamedTunnelConnector(connectorId, token);
-
-  row = await prisma.cloudflareTunnel.upsert({
-    where: { tunnelId },
-    create: {
+  const reusedTunnel = Boolean(row?.tunnelId === tunnelId && row?.tunnelSecret);
+  const previousConnectorId = row?.connectorId;
+  const priorHostnames = (row?.domains || "").split(",").map((value) => value.trim()).filter(Boolean);
+  const connectorId = `gc-control-plane-${randomUUID().slice(0, 18)}`;
+  let committed = false;
+  let restoreDns: (() => Promise<unknown>) | undefined;
+  try {
+    await updateTunnelConfiguration(
       tunnelId,
-      name: NAMED_TUNNEL_NAME,
-      tunnelSecret: encryptIfNeeded(token),
-      connectorId,
-      status: "active",
-      domains: hostname,
-      configJson: JSON.stringify({
-        purpose: "groundcontrol-management-plane",
-        hostname,
-        service: "http://groundcontrol-web:3000",
-      }),
-      cloudflareAccountId: account.id,
-    },
-    update: {
-      connectorId,
-      status: "active",
-      domains: hostname,
-      configJson: JSON.stringify({
-        purpose: "groundcontrol-management-plane",
-        hostname,
-        service: "http://groundcontrol-web:3000",
-      }),
-      cloudflareAccountId: account.id,
-    },
-  });
+      [...new Set([...priorHostnames, hostname])].map((name) => ({ hostname: name, service: "http://groundcontrol-web:3000" })),
+      account
+    );
+    restoreDns = await ensureTunnelDns(account, zone.id, hostname, tunnelId);
 
-  const publicUrl = `https://${hostname}`;
-  await setConfig(PUBLIC_URL_KEY, publicUrl);
-  await setConfig(PUBLISH_MODE_KEY, "cloudflare");
+    await startNamedTunnelConnector(connectorId, token);
 
-  return {
-    mode: "cloudflare" as const,
-    publicUrl,
-    tunnelId: row.tunnelId,
-    hostname,
-    zone: zone.name,
-  };
+    const publicUrl = `https://${hostname}`;
+    const verification = await verifyReplacementAccess(publicUrl);
+
+    row = await prisma.$transaction(async (tx) => {
+      const saved = await tx.cloudflareTunnel.upsert({
+        where: { tunnelId },
+        create: {
+          tunnelId,
+          name: NAMED_TUNNEL_NAME,
+          tunnelSecret: encryptIfNeeded(token),
+          connectorId,
+          status: "active",
+          domains: hostname,
+          configJson: JSON.stringify({
+            purpose: "groundcontrol-management-plane",
+            hostname,
+            service: "http://groundcontrol-web:3000",
+          }),
+          cloudflareAccountId: account.id,
+        },
+        update: {
+          connectorId,
+          status: "active",
+          domains: hostname,
+          configJson: JSON.stringify({
+            purpose: "groundcontrol-management-plane",
+            hostname,
+            service: "http://groundcontrol-web:3000",
+          }),
+          cloudflareAccountId: account.id,
+        },
+      });
+
+      await setConfig(PUBLIC_URL_KEY, publicUrl, tx);
+      await setConfig(PUBLISH_MODE_KEY, "cloudflare", tx);
+      await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification), tx);
+      return saved;
+    });
+    committed = true;
+    await updateTunnelConfiguration(tunnelId, [{ hostname, service: "http://groundcontrol-web:3000" }], account);
+    await stopQuickTunnel();
+    await disableCaddyExposure();
+    if (previousConnectorId && previousConnectorId !== connectorId) {
+      await removeConnectorAndVerify(previousConnectorId);
+    }
+
+    return {
+      mode: "cloudflare" as const,
+      verification,
+      publicUrl,
+      tunnelId: row.tunnelId,
+      hostname,
+      zone: zone.name,
+    };
+  } catch (error) {
+    if (!committed) {
+      const cleanup = await execOnHost([
+        `docker rm -f ${shQuote(connectorId)} >/dev/null 2>&1 || true`,
+        // A successful listing proves absence; daemon/permission failure is uncertainty.
+        `remaining=$(docker ps -a --filter ${shQuote(`name=^/${connectorId}$`)} --format '{{.Names}}') || exit 1`,
+        'test -z "$remaining"',
+      ].join("\n"), { requireHost: true });
+      try {
+        if (restoreDns) await restoreDns();
+        if (reusedTunnel) await updateTunnelConfiguration(tunnelId, priorHostnames.map((name) => ({ hostname: name, service: "http://groundcontrol-web:3000" })), account);
+        else await deleteTunnel(tunnelId, account);
+      } catch {
+        throw new HttpError("New public setup failed. Existing quick access was retained, but candidate tunnel cleanup needs inspection.", 502);
+      }
+      if (cleanup.code !== 0) throw new HttpError("New public setup failed. Existing quick access was retained, but candidate connector cleanup needs inspection.", 502);
+    }
+    if (committed) throw new HttpError("New public access was verified and saved, but retiring previous access did not complete. Use the new URL and inspect old routes before retrying.", 502);
+    throw error;
+  }
 }
 
 async function currentPublicIpv4() {
@@ -463,6 +513,7 @@ async function configureCaddy(hostname: string, port: number) {
     "mkdir -p /etc/caddy/sites",
     "touch /etc/caddy/Caddyfile",
     "cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.gc-before-publish",
+    "if [ -f /etc/caddy/sites/groundcontrol.caddy ]; then cp /etc/caddy/sites/groundcontrol.caddy /etc/caddy/groundcontrol.gc-before-publish; else rm -f /etc/caddy/groundcontrol.gc-before-publish; fi",
     "grep -Fq 'import /etc/caddy/sites/*' /etc/caddy/Caddyfile || printf '\nimport /etc/caddy/sites/*\n' >> /etc/caddy/Caddyfile",
     `cat > /etc/caddy/sites/groundcontrol.caddy <<'GC_CADDY'\n${config}GC_CADDY`,
     "caddy validate --config /etc/caddy/Caddyfile",
@@ -471,19 +522,26 @@ async function configureCaddy(hostname: string, port: number) {
 
   const result = await execOnHost(command, { requireHost: true });
   if (result.code !== 0) {
-    await execOnHost(
-      "test -f /etc/caddy/Caddyfile.gc-before-publish && cp /etc/caddy/Caddyfile.gc-before-publish /etc/caddy/Caddyfile || true",
-      { requireHost: true }
-    );
+    await restoreCaddyBeforePublish();
     throw new Error(result.stderr || result.stdout || "Caddy configuration failed.");
   }
 }
 
+async function restoreCaddyBeforePublish() {
+  const result = await execOnHost([
+    "set -eu",
+    "test -f /etc/caddy/Caddyfile.gc-before-publish",
+    "cp /etc/caddy/Caddyfile.gc-before-publish /etc/caddy/Caddyfile",
+    "if [ -f /etc/caddy/groundcontrol.gc-before-publish ]; then cp /etc/caddy/groundcontrol.gc-before-publish /etc/caddy/sites/groundcontrol.caddy; else rm -f /etc/caddy/sites/groundcontrol.caddy; fi",
+    "caddy validate --config /etc/caddy/Caddyfile",
+    "caddy reload --config /etc/caddy/Caddyfile || systemctl reload caddy || rc-service caddy restart",
+  ].join("\n"), { requireHost: true });
+  if (result.code !== 0) throw new HttpError("New public setup failed. Existing quick access was retained; restoring the Caddy configuration needs inspection.", 502);
+}
+
 export async function publishWithCaddy(input: { hostname: string }) {
   const hostname = normalizePublicHostname(input.hostname);
-  await stopQuickTunnel();
-  await stopNamedManagementTunnel();
-
+  // DNS/setup failures must not disconnect the operator from a quick tunnel.
   const originIp = await currentPublicIpv4();
   let resolved: string[] = [];
   try {
@@ -505,11 +563,28 @@ export async function publishWithCaddy(input: { hostname: string }) {
   await configureCaddy(hostname, port);
 
   const publicUrl = `https://${hostname}`;
-  await setConfig(PUBLIC_URL_KEY, publicUrl);
-  await setConfig(PUBLISH_MODE_KEY, "caddy");
+  let verification: InstanceVerification;
+  try {
+    verification = await verifyReplacementAccess(publicUrl);
+    await prisma.$transaction(async (tx) => {
+      await setConfig(PUBLIC_URL_KEY, publicUrl, tx);
+      await setConfig(PUBLISH_MODE_KEY, "caddy", tx);
+      await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification), tx);
+    });
+  } catch (error) {
+    await restoreCaddyBeforePublish();
+    throw error;
+  }
+  try {
+    await stopQuickTunnel();
+    await stopNamedManagementTunnel();
+  } catch {
+    throw new HttpError("New public access was verified and saved, but retiring previous access did not complete. Use the new URL and inspect old routes before retrying.", 502);
+  }
 
   return {
     mode: "caddy" as const,
+    verification,
     publicUrl,
     hostname,
     originIp,
@@ -584,6 +659,7 @@ async function httpCheck(
     const response = await fetch(url, {
       ...init,
       redirect: "manual",
+      cache: "no-store",
       signal: AbortSignal.timeout(10_000),
       headers: {
         ...(init?.headers || {}),
@@ -609,7 +685,8 @@ function check(status: boolean, ready: string, failed: string): VerificationChec
 }
 
 export async function verifyGroundControlInstance(
-  explicitPublicUrl?: string | null
+  explicitPublicUrl?: string | null,
+  options: { persist?: boolean } = {}
 ): Promise<InstanceVerification> {
   const publicUrl = String(explicitPublicUrl ?? await getConfig(PUBLIC_URL_KEY)).replace(/\/$/, "") || null;
   const checkedAt = new Date().toISOString();
@@ -718,14 +795,28 @@ export async function verifyGroundControlInstance(
           });
         }
       }
+      const [publicIdentity, publicAuthorization] = await Promise.all([
+        httpCheck(`${publicUrl}/api/auth/claim`),
+        httpCheck(`${publicUrl}/.well-known/oauth-authorization-server`),
+      ]);
+      const identity = publicIdentity.body as { instanceId?: string; claimed?: boolean } | null;
+      const resource = publicProbe.body as { resource?: string; authorization_servers?: string[] } | null;
+      const authorization = publicAuthorization.body as { issuer?: string; authorization_endpoint?: string; token_endpoint?: string } | null;
+      const sameInstance = publicIdentity.ok && Boolean(claim.instanceId) && identity?.instanceId === claim.instanceId && identity?.claimed === true;
+      // OAuth metadata derives from the request origin, not saved publish config,
+      // so the candidate must already advertise its exact HTTPS origin pre-commit.
+      const correctOAuth = publicProbe.ok && resource?.resource === `${publicUrl}/mcp` &&
+        Array.isArray(resource.authorization_servers) && resource.authorization_servers.includes(publicUrl) &&
+        publicAuthorization.ok && authorization?.issuer === publicUrl &&
+        authorization.authorization_endpoint === `${publicUrl}/oauth/authorize` && authorization.token_endpoint === `${publicUrl}/oauth/token`;
       const publicTools = publicMcp.body && typeof publicMcp.body === "object" && "result" in publicMcp.body
         ? ((publicMcp.body as { result?: { tools?: Array<{ name?: string }> } }).result?.tools || [])
         : [];
       const publicMcpReady = publicMcp.ok && publicTools.some((tool) => tool.name === "deployment.list");
       publicHttps = check(
-        publicProbe.ok && publicMcpReady,
-        `HTTPS, OAuth metadata and MCP discovery are reachable at ${publicUrl}.`,
-        `Public verification failed at ${publicUrl} (OAuth HTTP ${publicProbe.status || "unreachable"}, MCP HTTP ${publicMcp.status || "unreachable"}).`
+        correctOAuth && sameInstance && publicMcpReady,
+        `HTTPS, matching instance identity, OAuth metadata and MCP discovery are reachable at ${publicUrl}.`,
+        `Public verification failed at ${publicUrl} (instance identity ${sameInstance ? "matched" : "not matched"}, OAuth ${correctOAuth ? "valid" : "invalid"}, MCP HTTP ${publicMcp.status || "unreachable"}).`
       );
     }
   }
@@ -780,8 +871,18 @@ export async function verifyGroundControlInstance(
     (item) => item.status === "ready" || item.status === "skipped"
   );
 
-  await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(result));
+  if (options.persist !== false) await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(result));
   return result;
+}
+
+async function verifyReplacementAccess(publicUrl: string) {
+  // Probe the candidate explicitly without changing the saved OAuth/public base.
+  const verification = await verifyGroundControlInstance(publicUrl, { persist: false });
+  if (verification.checks.publicHttps.status !== "ready") {
+    const failed = verification.checks.publicHttps.detail;
+    throw new HttpError(`New public access was not verified. Existing access has not been retired. ${failed}`, 502);
+  }
+  return verification;
 }
 
 export async function instancePublishStatus() {
