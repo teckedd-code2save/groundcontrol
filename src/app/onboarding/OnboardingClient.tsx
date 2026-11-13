@@ -770,7 +770,7 @@ export default function OnboardingClient({ localDesktop }: { localDesktop: boole
       <WizardChrome step={step} localWorkspace={localWorkspace}>
         <h1 className="text-2xl font-semibold tracking-tight">Choose how you’ll open GroundControl</h1>
         <p className="mt-1 max-w-lg text-xs leading-relaxed text-muted">
-          Keep using your private connection, or set up a web address for access from other computers.
+          Review your current access below, or configure a permanent domain.
           This controls access to your GroundControl dashboard.
         </p>
         <PublishInstanceStep

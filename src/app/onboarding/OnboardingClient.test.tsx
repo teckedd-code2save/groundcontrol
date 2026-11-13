@@ -82,6 +82,8 @@ it("retains server access choices for a server installation", async () => {
   await render(false);
   expect(container.textContent).toContain("Choose how you’ll open GroundControl");
   expect(container.textContent).toContain("I have a domain");
+  expect(container.textContent).toContain("Review your current access below, or configure a permanent domain.");
+  expect(container.textContent).not.toContain("Keep using your private connection");
   expect(container.textContent).not.toContain("Scan my Docker apps");
 });
 
