@@ -69,7 +69,7 @@ The raw token exists only in installer output/browser handoff. GroundControl sto
 
 ## Human claim
 
-GroundControl binds the installer deployment to loopback. Its host-only bootstrap helper creates temporary outbound HTTPS and verifies the returned instance identity before handing over the owner link. It does not create an administrator account or expose an unauthenticated publishing API. Recommend a permanent domain; quick-tunnel URLs can change and are not durable agent endpoints.
+GroundControl binds the installer deployment to loopback. Its host-only bootstrap helper creates temporary outbound HTTPS and verifies the returned instance identity before handing over the owner link. It does not create an administrator account or expose an unauthenticated publishing API. After claim, offer the free server-address setup or an optional owned domain; quick-tunnel URLs can change and are not durable agent endpoints.
 
 For `--private` setup or HTTPS recovery, use an SSH tunnel:
 
@@ -163,4 +163,4 @@ This removes the runtime container/bridge processes but preserves the GroundCont
 
 ## Post-claim distribution
 
-After claim, onboarding can keep the instance private or publish it through direct Caddy HTTPS, a named Cloudflare Tunnel, or a temporary outbound HTTPS bridge. GroundControl then verifies host execution, PTY, MCP discovery, OAuth metadata, persistent storage, consumed claim state and public HTTPS when configured.
+After claim, onboarding can keep the instance private, configure a free IP-bound server hostname with Caddy, or add an optional owned domain. Named Cloudflare Tunnel remains an alternative for an owned domain with a private origin; temporary outbound HTTPS is the bootstrap bridge. See [address prerequisites and recovery boundaries](./agent-assisted-distribution.md#publishing-after-claim). GroundControl then verifies host execution, PTY, MCP discovery, OAuth metadata, persistent storage, consumed claim state and public HTTPS when configured.

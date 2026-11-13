@@ -50,19 +50,31 @@ ui_link() {
   fi
   printf '\n'
 }
-ui_next_steps() {
-  ui_heading 'Next in the browser'
-  if [ "$MODE" = local ]; then
-    printf '  1. Sign in and finish the workspace check in onboarding.\n'
-    printf '  2. Connect an existing Docker app in Projects. Keep Docker running.\n'
-    printf '  Server-only tools (such as Caddy) belong on a Linux server connection.\n'
+ui_access_link() {
+  if [ "$STAGE" = claim_required ]; then
+    ui_heading '  OPEN SETUP LINK'
   else
-    printf '  1. Finish the server scan in onboarding.\n'
-    printf '  2. Open Services → Install to finish required tooling.\n'
-    printf '  Git sources need Git; routed templates need a proxy; static builds need build tools.\n'
-    printf '  Install only what your workload needs.\n'
+    ui_heading '  OPEN GROUNDCONTROL'
   fi
-  printf '\nAccess is checked, not that an application is ready to deploy.\n'
+  printf '  ----------------------------------------------------\n'
+  ui_link "$1"
+  printf '  ----------------------------------------------------\n'
+  if [ "$STAGE" = claim_required ]; then
+    printf '  One-time link. Keep it out of recordings and shared screenshots.\n'
+  fi
+  printf '\n'
+}
+ui_next_steps() {
+  ui_heading 'Next'
+  if [ "$STAGE" = claim_required ]; then
+    printf '  Choose your username and password in the browser.\n'
+  fi
+  if [ "$MODE" = local ]; then
+    printf '  Finish the workspace check, then connect a Docker app in Projects.\n'
+  else
+    printf '  Finish the server scan in onboarding.\n'
+    printf '  Install any tools your app needs in Services → Install.\n'
+  fi
 }
 
 fail() { printf '\nGroundControl: %s\n' "$*" >&2; exit 1; }
@@ -94,7 +106,7 @@ Linux server with root or passwordless sudo access.
 The first link lets you choose your administrator password. Later runs return
 a login link. Remote setup uses temporary public HTTPS by default and then exits.
 Use --private for an SSH-only link that stays open while this command runs.
-Configure a permanent domain for reliable ongoing access.
+Set up a server address in onboarding for ongoing access; your own domain is optional.
 EOF
 }
 
@@ -187,14 +199,8 @@ verify_link() {
 
 print_link() {
   ui_step 3 'Open GroundControl'
-  printf 'GroundControl is reachable. Finish setup in the browser.\n'
-  if [ "$STAGE" = claim_required ]; then
-    printf 'Choose your username and password using this one-time link.\n'
-    printf 'Keep this link private: hide it in recordings and shared screenshots.\n'
-  else
-    printf 'Sign in with your existing account.\n'
-  fi
-  ui_link "http://127.0.0.1:$LOCAL_PORT$PAGE"
+  printf 'GroundControl is reachable. Continue in your browser.\n'
+  ui_access_link "http://127.0.0.1:$LOCAL_PORT$PAGE"
   ui_next_steps
 }
 
@@ -218,7 +224,7 @@ if [ "$MODE" = remote ]; then
   ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address and account. If this server uses a specific key, rerun setup and enter its path, or use --remote user@server -i /path/to/key. Saved SSH aliases and agent keys remain supported."
   if [ "$PRIVATE" -eq 0 ]; then
     printf 'Remote setup will provide a public HTTPS sign-in URL through a temporary outbound tunnel. No inbound management port is opened.\n'
-    printf 'For SSH-only access, cancel now and rerun with --private. Configure a permanent domain for ongoing use.\n'
+    printf 'For SSH-only access, cancel now and rerun with --private. Set up a server address in onboarding; your own domain is optional.\n'
   fi
   ui_step 2 'Prepare GroundControl and access'
   printf 'Installing GroundControl on %s…\n' "$TARGET"
@@ -258,23 +264,16 @@ REMOTE
     [[ "$PUBLIC_URL" =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?$ ]] || fail "The installer did not return verified HTTPS access. Rerun with --private to reconnect safely."
     ui_step 3 'Open GroundControl'
     printf 'GroundControl is reachable over HTTPS.\n'
-    if [ "$STAGE" = claim_required ]; then
-      printf 'Choose your username and password using this one-time link.\n'
-      printf 'Keep this link private: hide it in recordings and shared screenshots.\n'
-    else
-      printf 'Sign in with your existing account:\n'
-    fi
-    ui_link "$PUBLIC_URL$PAGE"
-    printf 'You can close this terminal. GroundControl and its connector run on the server.\n'
-    if [ "$ACCESS_MODE" = quick_tunnel ]; then
-      ui_heading 'Temporary access: configure a permanent domain'
-      printf '  Public HTTPS, not a private network link. Account required after setup.\n'
-      printf '  Does not restart after a server reboot; recreating it changes the URL.\n'
-      printf '  No uptime guarantee or server-sent event streams. Update bookmarks and\n'
-      printf '  agent connections if the URL changes. Set up a permanent domain in onboarding.\n'
-    fi
+    ui_access_link "$PUBLIC_URL$PAGE"
+    printf 'You can close this terminal. GroundControl keeps running on your server.\n'
     ui_next_steps
-    printf '\nRecovery: rerun setup; use --private if HTTPS is unavailable.\n'
+    if [ "$ACCESS_MODE" = quick_tunnel ]; then
+      ui_heading 'Temporary access: set up a server address'
+      printf '  Public setup URL, with no uptime guarantee.\n'
+      printf '  A server reboot stops it; recreating it changes the address.\n'
+      printf '  Set up a server address in onboarding for ongoing access and agents.\n'
+      printf '  Your own domain is optional.\n'
+    fi
     exit 0
   fi
   REMOTE_PORT=$(printf '%s\n' "$RESULT" | sed -n 's/.*"hostPort":\([0-9][0-9]*\).*/\1/p')

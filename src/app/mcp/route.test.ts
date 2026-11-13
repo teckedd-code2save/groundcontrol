@@ -6,6 +6,7 @@ const mock = vi.hoisted(() => ({
   authenticateAccessToken: vi.fn(),
   executeAgentTool: vi.fn(),
   tools: vi.fn(),
+  origin: vi.fn(),
 }));
 
 vi.mock("@/lib/oauth", () => ({
@@ -16,8 +17,8 @@ vi.mock("@/lib/oauth", () => ({
       super(message);
     }
   },
-  protectedResourceMetadataUrl: () => "https://groundcontrol.example/.well-known/oauth-protected-resource",
-  requestOrigin: () => "https://groundcontrol.example",
+  protectedResourceMetadataUrl: (origin: string) => `${origin}/.well-known/oauth-protected-resource`,
+  requestOrigin: mock.origin,
 }));
 
 vi.mock("@/lib/mcp-agent", () => ({
@@ -25,7 +26,7 @@ vi.mock("@/lib/mcp-agent", () => ({
   toolDefinitionsForScopes: mock.tools,
 }));
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 import { OAuthBearerError } from "@/lib/oauth";
 
 function request(body: Record<string, unknown>, headers: Record<string, string> = {}) {
@@ -43,6 +44,8 @@ beforeEach(() => {
   mock.authenticateAccessToken.mockReset();
   mock.executeAgentTool.mockReset();
   mock.tools.mockReset();
+  mock.origin.mockReset();
+  mock.origin.mockResolvedValue("https://groundcontrol.example");
   mock.tools.mockReturnValue([
     {
       name: "deployment.list",
@@ -202,3 +205,29 @@ for (const method of ["initialize", "server/discover"]) {
     for (const text of ["Preserve working Compose", "one ready image", "do not claim local Dockerfile", "offer help installing", "never request secret values", "not an available MCP creation tool", "runtime evidence"]) expect(result.instructions).toContain(text);
   });
 }
+
+
+describe("canonical MCP authentication challenge", () => {
+  it("awaits the configured origin and ignores the incoming alias in its challenge", async () => {
+    mock.origin.mockResolvedValue("https://stable.example.com");
+    mock.authenticateAccessToken.mockRejectedValue(new OAuthBearerError("Token required", 401));
+    const response = await POST(new NextRequest("https://alias.example.com/mcp", {
+      method: "POST", headers: { "content-type": "application/json", "x-forwarded-host": "attacker.example" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "deployment.list" } }),
+    }));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toContain('resource_metadata="https://stable.example.com/.well-known/oauth-protected-resource"');
+    expect(response.headers.get("www-authenticate")).not.toMatch(/alias|attacker|Promise/);
+  });
+  it("fails closed without a fabricated challenge when issuer resolution fails", async () => {
+    mock.origin.mockRejectedValue(new Error("unsafe upstream secret"));
+    mock.authenticateAccessToken.mockRejectedValue(new OAuthBearerError("Token required", 401));
+    const response = await POST(request({ jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "deployment.list" } }));
+    expect(response.status).toBe(503);
+    expect(response.headers.get("www-authenticate")).toBeNull();
+    expect(await response.text()).not.toContain("unsafe upstream secret");
+    const get = await GET(new NextRequest("https://alias.example.com/mcp"));
+    expect(get.status).toBe(503);
+    expect(get.headers.get("www-authenticate")).toBeNull();
+  });
+});

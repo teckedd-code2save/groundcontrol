@@ -33,7 +33,9 @@ describe("remote installer HTTPS handoff", () => {
     const r = run(fresh);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("https://test.trycloudflare.com/claim#token=gc_claim_test_only");
-    expect(r.stdout).toContain("Temporary access: configure a permanent domain");
+    expect(r.stdout).toContain("Temporary access: set up a server address");
+    expect(r.stdout).toContain("Your own domain is optional");
+    expect(r.stdout).not.toContain("configure a permanent domain");
     expect(r.stdout).toContain("You can close this terminal");
     expect(r.calls).not.toContain("-O forward");
     expect(r.calls).not.toContain("gc_claim_test_only");

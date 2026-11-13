@@ -102,14 +102,14 @@ function escapeChallenge(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function bearerChallenge(
+async function bearerChallenge(
   req: NextRequest,
   error: "invalid_token" | "insufficient_scope",
   description: string,
   scope?: string
 ) {
   const pieces = [
-    `Bearer resource_metadata="${escapeChallenge(protectedResourceMetadataUrl(requestOrigin(req)))}"`,
+    `Bearer resource_metadata="${escapeChallenge(protectedResourceMetadataUrl(await requestOrigin(req)))}"`,
     `error="${error}"`,
     `error_description="${escapeChallenge(description)}"`,
   ];
@@ -117,14 +117,17 @@ function bearerChallenge(
   return pieces.join(", ");
 }
 
-function authToolResult(
+async function authToolResult(
   req: NextRequest,
   body: JsonRpcRequest,
   modern: boolean,
   error: OAuthBearerError
 ) {
   const kind = error.status === 403 ? "insufficient_scope" : "invalid_token";
-  const challenge = bearerChallenge(req, kind, error.message, error.requiredScope);
+  let challenge: string;
+  try { challenge = await bearerChallenge(req, kind, error.message, error.requiredScope); } catch {
+    return rpcError(body.id, -32603, "GroundControl OAuth origin is unavailable. Review the instance published address.", modern, 503);
+  }
   // HTTP clients drive OAuth recovery from 401/403, not from an MCP isError
   // payload. Keep the tool-level challenge for ChatGPT while also returning
   // the transport status required by native MCP OAuth clients such as Hermes.
@@ -252,6 +255,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  let challenge: string;
+  try { challenge = await bearerChallenge(req, "invalid_token", "Use OAuth to call GroundControl tools."); } catch {
+    return NextResponse.json({ error: "server_error", message: "GroundControl OAuth origin is unavailable. Review the instance published address." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
   return NextResponse.json({
     error: "method_not_allowed",
     message: "GroundControl MCP uses Streamable HTTP POST requests.",
@@ -259,11 +266,7 @@ export async function GET(req: NextRequest) {
     status: 405,
     headers: {
       Allow: "POST",
-      "WWW-Authenticate": bearerChallenge(
-        req,
-        "invalid_token",
-        "Use OAuth to call GroundControl tools."
-      ),
+      "WWW-Authenticate": challenge,
     },
   });
 }

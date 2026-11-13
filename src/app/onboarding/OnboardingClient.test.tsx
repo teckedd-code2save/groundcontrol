@@ -81,8 +81,11 @@ it("shows a recoverable scan error rather than claiming the workspace is ready",
 it("retains server access choices for a server installation", async () => {
   await render(false);
   expect(container.textContent).toContain("Choose how you’ll open GroundControl");
-  expect(container.textContent).toContain("I have a domain");
-  expect(container.textContent).toContain("Review your current access below, or configure a permanent domain.");
+  expect(container.textContent).toContain("Set up free server address");
+  expect(container.textContent).toContain("Use my own domain");
+  await click("Use my own domain");
+  expect(container.textContent).toContain("Use my domain directly");
+  expect(container.textContent).toContain("Review your current access below, or set up a server address.");
   expect(container.textContent).not.toContain("Keep using your private connection");
   expect(container.textContent).not.toContain("Scan my Docker apps");
 });

@@ -37,19 +37,19 @@ Do not expose `http://PUBLIC_IP:3003` as the normal management plane.
 
 ## Publishing after claim
 
-### Direct domain + Caddy
+### Free server address + Caddy
 
-Use when the operator owns a hostname with any DNS provider.
+After claim, **Set up free server address** previews a hostname without changing the host. GroundControl uses `GC_PROVIDER_HOSTNAME` only when the operator has explicitly configured it and its DNS matches this server. Otherwise it uses `<public-ipv4>.sslip.io`. No purchased domain or Cloudflare account is needed.
 
-GroundControl:
+The address is tied to the allocated public IP/provider hostname, not a permanent GroundControl-owned identity. If the IP is released or reassigned, stop using that address and reconnect clients. Shared DNS availability and certificate issuance depend on third parties.
 
-1. determines the VPS public IPv4;
-2. checks the hostname resolves to that address;
-3. returns the exact required A record if DNS is not ready;
-4. installs/reuses Caddy on supported Linux hosts;
-5. proxies the GroundControl loopback port;
-6. obtains HTTPS through Caddy;
-7. verifies the public OAuth endpoint.
+**Set up HTTPS** is an explicit action. It installs/reuses Caddy, keeps GC's application port loopback-only, and verifies HTTPS and the instance identity. Ports 80 and 443 must already be reachable through both cloud and host firewalls. GroundControl does not open them. A different or unidentified service on those ports blocks automatic setup rather than being replaced; configure that existing proxy or deliberately free the ports.
+
+### Optional own domain
+
+A custom hostname is optional. Direct DNS + Caddy needs no Cloudflare account. All A records must point to this server; any AAAA records must match its global IPv6 addresses. Resolver failures are reported as failed checks, not instructions to change DNS. GroundControl never deletes conflicting DNS records automatically.
+
+Custom-domain setup adds another address alongside the established server address. The original canonical OAuth/MCP identity remains the client endpoint; adding an alias is not an issuer migration. Publication verification checks the same claimed instance and canonical metadata before reporting the new address ready. It does not replace a real OAuth authorization/token exchange or authenticated MCP/streaming acceptance test.
 
 ### Cloudflare Tunnel
 
@@ -65,6 +65,12 @@ GroundControl:
 6. verifies the resulting HTTPS URL.
 
 The management port remains loopback-only on the host.
+
+### Transition and recovery limits
+
+Publishing is serialized within the canonical single web process, not across multiple independent replicas. Existing proxy routes are not silently replaced. Interrupted Caddy setup may leave a uniquely named candidate site in `/etc/caddy/groundcontrol-sites/`; retry refuses to overwrite it. Inspect the candidate and current canonical route before removing or repairing only that candidate.
+
+If verification fails after saving the canonical configuration but before completing the handoff, GroundControl attempts to restore the prior identity settings atomically. Candidate routes may remain for inspected recovery. The temporary connector and previous named connector are retained through the response to avoid cutting off the browser handoff. The temporary URL remains an additional public, account-protected route, not a private connection; clean it up explicitly only after checking the primary address. Keep available access paths while inspecting and retrying verification; do not reset the instance. Automatic public-IP/issuer migration and removal of an established canonical address are not provided by this flow. Existing private installations remain supported.
 
 ### Temporary HTTPS bridge
 

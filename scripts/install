@@ -187,7 +187,7 @@ prepare_owner_access() {
 owner_access_guidance() {
   if [ -n "$PUBLIC_URL" ]; then
     log "Open: $OWNER_BASE${CLAIM_PATH:-/login}"
-    [ "$ACCESS_MODE" != "quick_tunnel" ] || log "This temporary HTTPS address can change. Configure a permanent domain in onboarding before relying on it for agents or bookmarks."
+    [ "$ACCESS_MODE" != "quick_tunnel" ] || log "This temporary HTTPS address can change. Set up a server address in onboarding for ongoing use; your own domain is optional."
     log "You can close this SSH session. GroundControl continues running on the server."
   else
     [ "$ACCESS_MODE" != "unchanged" ] || log "Existing publishing settings were preserved; public access was not checked by this upgrade."

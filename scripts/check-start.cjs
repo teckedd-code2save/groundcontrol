@@ -157,13 +157,12 @@ test('unavailable emulation leaves no generated keys and reports the next action
 test('setup directs users to finish workload prerequisites without claiming deployment readiness',()=>{
   const local=run(['--local']);
   assert.equal(local.status,0,local.stderr);
-  assert.match(local.stdout,/finish the workspace check in onboarding/);
-  assert.match(local.stdout,/Server-only tools.*Linux server connection/);
-  assert.match(local.stdout,/not that an application is ready to deploy/);
+  assert.match(local.stdout,/Finish the workspace check/);
+  assert.doesNotMatch(local.stdout,/Access is checked/);
   const remote=run(['--remote','test-server']);
   assert.match(remote.stdout,/Services → Install/);
-  assert.match(remote.stdout,/Git sources need Git/);
-  assert.match(remote.stdout,/Install only what your workload needs/);
+  assert.match(remote.stdout,/Install any tools your app needs/);
+  assert.doesNotMatch(remote.stdout,/Access is checked|Recovery: rerun setup/);
   assert.doesNotMatch(remote.stdout,/GroundControl is ready/);
 });
 

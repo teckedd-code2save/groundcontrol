@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { isIP } from "node:net";
-import { resolve4 } from "node:dns/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { currentPublicIpv4, verifyCaddyDns, normalizePublicHostname } from "./caddy-address-preflight";
+import { inspectGeneratedInstanceAddress, inspectCaddyPortNeeds } from "./generated-instance-address";
+export { normalizePublicHostname } from "./caddy-address-preflight";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { decryptMaybe, encryptIfNeeded } from "@/lib/crypto";
@@ -26,6 +27,9 @@ import { isDesktopMode } from "@/lib/runtime";
 
 const execFileAsync = promisify(execFile);
 
+const CANONICAL_URL_KEY = "groundcontrol_canonical_url";
+const BOOTSTRAP_FALLBACK_KEY = "groundcontrol_bootstrap_fallback_url";
+const ALIASES_KEY = "groundcontrol_public_aliases";
 const PUBLIC_URL_KEY = "groundcontrol_public_url";
 const PUBLISH_MODE_KEY = "groundcontrol_publish_mode";
 const PUBLISH_EVIDENCE_KEY = "groundcontrol_publish_evidence";
@@ -55,26 +59,6 @@ export type InstanceVerification = {
   };
 };
 
-export function normalizePublicHostname(value: string) {
-  const hostname = value.trim().toLowerCase().replace(/\.$/, "");
-  if (
-    hostname.length < 3 ||
-    hostname.length > 253 ||
-    hostname === "localhost" ||
-    isIP(hostname) !== 0
-  ) {
-    throw new Error("Enter a public DNS hostname, not an IP address.");
-  }
-  const labels = hostname.split(".");
-  if (
-    labels.length < 2 ||
-    labels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
-  ) {
-    throw new Error("Enter a valid public DNS hostname.");
-  }
-  return hostname;
-}
-
 async function setConfig(key: string, value: string, db: Pick<typeof prisma, "appConfig"> = prisma) {
   await db.appConfig.upsert({
     where: { key },
@@ -85,6 +69,65 @@ async function setConfig(key: string, value: string, db: Pick<typeof prisma, "ap
 
 async function getConfig(key: string) {
   return (await prisma.appConfig.findUnique({ where: { key } }))?.value || "";
+}
+
+// Serializes the single web process used by the canonical installer. This is not
+// a cross-process lease. Scoped host files refuse overwrite after uncertain work.
+let publishing = false;
+async function withPublishLock<T>(work: () => Promise<T>): Promise<T> {
+  if (Number(process.env.WEB_CONCURRENCY || "1") > 1 || process.env.NODE_APP_INSTANCE !== undefined) {
+    throw new HttpError("Access changes require the supported single-process GroundControl deployment. Multi-process publishing is unavailable; existing routes are unchanged.", 409);
+  }
+  if (publishing) throw new HttpError("Another access change is running. Wait for it to finish before retrying.", 409);
+  publishing = true;
+  try { return await work(); } finally { publishing = false; }
+}
+
+async function accessIdentity() {
+  const [canonical, publicUrl, mode, rawAliases] = await Promise.all([
+    getConfig(CANONICAL_URL_KEY), getConfig(PUBLIC_URL_KEY), getConfig(PUBLISH_MODE_KEY), getConfig(ALIASES_KEY),
+  ]);
+  const aliases: string[] = rawAliases ? JSON.parse(rawAliases) : [];
+  // Migrate existing permanent installs without changing their issuer.
+  const permanent = canonical || ((mode === "caddy" || mode === "cloudflare") ? publicUrl : "");
+  return { canonical: permanent, aliases, mode, publicUrl };
+}
+
+async function savePublicAccess(url: string, mode: PublishMode, verification: InstanceVerification, db: Pick<typeof prisma, "appConfig"> = prisma) {
+  const existing = await accessIdentity();
+  const canonical = existing.canonical || url;
+  const aliases = [...new Set([...existing.aliases, ...(url !== canonical ? [url] : [])])];
+  if (!existing.canonical && existing.mode === "quick_tunnel" && existing.publicUrl) {
+    await setConfig(BOOTSTRAP_FALLBACK_KEY, existing.publicUrl, db);
+  }
+  await setConfig(CANONICAL_URL_KEY, canonical, db);
+  await setConfig(PUBLIC_URL_KEY, canonical, db);
+  await setConfig(ALIASES_KEY, JSON.stringify(aliases), db);
+  await setConfig(PUBLISH_MODE_KEY, existing.canonical ? existing.mode : mode, db);
+  if (url === canonical) await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification), db);
+  return { canonicalUrl: canonical, aliases, aliasUrl: url !== canonical ? url : null };
+}
+
+const identityKeys = [CANONICAL_URL_KEY, PUBLIC_URL_KEY, ALIASES_KEY, PUBLISH_MODE_KEY, PUBLISH_EVIDENCE_KEY, BOOTSTRAP_FALLBACK_KEY];
+async function identitySnapshot() {
+  return Promise.all(identityKeys.map(async key => [key, await getConfig(key)] as const));
+}
+async function verifySavedAccess(publicUrl: string, canonicalUrl: string, snapshot: Awaited<ReturnType<typeof identitySnapshot>>) {
+  try {
+    const aliasVerification = await verifyReplacementAccess(publicUrl);
+    const verification = publicUrl === canonicalUrl ? aliasVerification : await verifyReplacementAccess(canonicalUrl);
+    await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification));
+    return { aliasVerification, verification };
+  } catch {
+    try {
+      await prisma.$transaction(async tx => {
+        for (const [key,value] of snapshot) await setConfig(key,value,tx);
+      });
+    } catch {
+      throw new HttpError("New access did not pass final verification and restoring the previous identity failed. Both routes were retained; inspect instance address configuration before retrying.", 502);
+    }
+    throw new HttpError("New access did not pass final verification. Previous canonical identity and evidence were restored; existing access and the candidate route were retained for inspection. Retry only after reviewing the candidate.", 502);
+  }
 }
 
 async function groundControlHostPort() {
@@ -318,12 +361,27 @@ async function saveActiveCloudflareAccount(input: {
   } satisfies CloudflareAccountRecord;
 }
 
-export async function publishWithCloudflare(input: {
+type CloudflarePublishInput = {
   hostname: string;
   apiToken?: string;
   accountId?: string;
-}) {
+};
+export async function publishWithCloudflare(input: CloudflarePublishInput) {
+  return withPublishLock(() => publishCloudflareUnlocked(input));
+}
+async function publishCloudflareUnlocked(input: CloudflarePublishInput) {
+  const priorIdentity = await accessIdentity();
+  const snapshot = await identitySnapshot();
   const hostname = normalizePublicHostname(input.hostname);
+  const requestedUrl = `https://${hostname}`;
+  if (priorIdentity.canonical === requestedUrl || priorIdentity.aliases.includes(requestedUrl)) {
+    const aliasVerification = await verifyReplacementAccess(requestedUrl);
+    const verification = requestedUrl === priorIdentity.canonical ? aliasVerification : await verifyReplacementAccess(priorIdentity.canonical);
+    await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification));
+    return { mode: "cloudflare" as const, retainedBootstrapUrl: await getConfig(BOOTSTRAP_FALLBACK_KEY) || null,
+      retainedConnectorCount: 0, publicUrl: requestedUrl, canonicalUrl: priorIdentity.canonical, aliases: priorIdentity.aliases,
+      aliasUrl: requestedUrl === priorIdentity.canonical ? null : requestedUrl, hostname, tunnelId: null, zone: null, verification, aliasVerification };
+  }
   // Keep the existing access path alive until the replacement is verified.
   let account = await getActiveCloudflareAccount();
   if ((!account || !account.accountId) && input.apiToken) {
@@ -344,7 +402,10 @@ export async function publishWithCloudflare(input: {
   let tunnelId = row?.tunnelId || "";
   let token = decryptMaybe(row?.tunnelSecret) || "";
 
-  if (!row || !tunnelId || !token) {
+  if (row && (!tunnelId || !token)) {
+    throw new HttpError("The existing named tunnel record is incomplete. Recover its credentials and connector before adding a domain; no replacement was created.", 409);
+  }
+  if (!row) {
     const created = await createTunnel(NAMED_TUNNEL_NAME, account);
     tunnelId = String(created.tunnel.id || "");
     token = created.token;
@@ -356,7 +417,13 @@ export async function publishWithCloudflare(input: {
   const reusedTunnel = Boolean(row?.tunnelId === tunnelId && row?.tunnelSecret);
   const previousConnectorIds = [...new Set([previousRow?.connectorId, row?.connectorId].filter((id): id is string => Boolean(id)))];
   const priorHostnames = (row?.domains || "").split(",").map((value) => value.trim()).filter(Boolean);
-  const connectorId = `gc-control-plane-${randomUUID().slice(0, 18)}`;
+  const reuseConnector = reusedTunnel;
+  const connectorId = reuseConnector ? row?.connectorId || "" : `gc-control-plane-${randomUUID().slice(0, 18)}`;
+  if (reuseConnector) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(connectorId)) throw new HttpError("The existing named tunnel has no usable recorded connector. Inspect and recover it before adding a domain; no replacement connector was created.", 409);
+    const running = await execOnHost(`docker inspect --format '{{.State.Running}}' ${shQuote(connectorId)}`, { requireHost: true });
+    if (running.code !== 0 || running.stdout.trim() !== "true") throw new HttpError("The existing named tunnel connector is not confirmed running. Recover the recorded connector before adding a domain; no replacement was created.", 409);
+  }
   let committed = false;
   let restoreDns: (() => Promise<unknown>) | undefined;
   try {
@@ -367,10 +434,10 @@ export async function publishWithCloudflare(input: {
     );
     restoreDns = await ensureTunnelDns(account, zone.id, hostname, tunnelId);
 
-    await startNamedTunnelConnector(connectorId, token);
+    if (!reuseConnector) await startNamedTunnelConnector(connectorId, token);
 
     const publicUrl = `https://${hostname}`;
-    const verification = await verifyReplacementAccess(publicUrl);
+    const verification = await verifyReplacementAccess(publicUrl, true);
 
     row = await prisma.$transaction(async (tx) => {
       const saved = await tx.cloudflareTunnel.upsert({
@@ -381,7 +448,7 @@ export async function publishWithCloudflare(input: {
           tunnelSecret: encryptIfNeeded(token),
           connectorId,
           status: "active",
-          domains: hostname,
+          domains: [...new Set([...priorHostnames, hostname])].join(","),
           configJson: JSON.stringify({
             purpose: "groundcontrol-management-plane",
             hostname,
@@ -392,7 +459,7 @@ export async function publishWithCloudflare(input: {
         update: {
           connectorId,
           status: "active",
-          domains: hostname,
+          domains: [...new Set([...priorHostnames, hostname])].join(","),
           configJson: JSON.stringify({
             purpose: "groundcontrol-management-plane",
             hostname,
@@ -402,22 +469,25 @@ export async function publishWithCloudflare(input: {
         },
       });
 
-      await setConfig(PUBLIC_URL_KEY, publicUrl, tx);
-      await setConfig(PUBLISH_MODE_KEY, "cloudflare", tx);
-      await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification), tx);
+      await savePublicAccess(publicUrl, "cloudflare", verification, tx);
       return saved;
     });
     committed = true;
-    await updateTunnelConfiguration(tunnelId, [{ hostname, service: "http://groundcontrol-web:3000" }], account);
-    await stopQuickTunnel();
-    await disableCaddyExposure();
-    for (const previousConnectorId of previousConnectorIds) {
-      if (previousConnectorId !== connectorId) await removeConnectorAndVerify(previousConnectorId);
-    }
+    // Recheck metadata after canonical identity is saved, before handing over the new address.
+    const { aliasVerification, verification: canonicalVerification } = await verifySavedAccess(publicUrl, priorIdentity.canonical || publicUrl, snapshot);
+    // This request may itself be using a previous connector. Keep all existing
+    // connectors alive through delivery of the new URL; cleanup is a later,
+    // explicit operation after the operator confirms the new access path.
 
     return {
       mode: "cloudflare" as const,
-      verification,
+      retainedBootstrapUrl: await getConfig(BOOTSTRAP_FALLBACK_KEY) || null,
+      retainedConnectorCount: previousConnectorIds.length,
+      aliasVerification,
+      canonicalUrl: (await accessIdentity()).canonical,
+      aliases: (await accessIdentity()).aliases,
+      aliasUrl: priorIdentity.canonical && priorIdentity.canonical !== publicUrl ? publicUrl : null,
+      verification: canonicalVerification,
       publicUrl,
       tunnelId: row.tunnelId,
       hostname,
@@ -425,7 +495,7 @@ export async function publishWithCloudflare(input: {
     };
   } catch (error) {
     if (!committed) {
-      const cleanup = await execOnHost([
+      const cleanup = reuseConnector ? { code: 0 } : await execOnHost([
         `docker rm -f ${shQuote(connectorId)} >/dev/null 2>&1 || true`,
         // A successful listing proves absence; daemon/permission failure is uncertainty.
         `remaining=$(docker ps -a --filter ${shQuote(`name=^/${connectorId}$`)} --format '{{.Names}}') || exit 1`,
@@ -440,19 +510,10 @@ export async function publishWithCloudflare(input: {
       }
       if (cleanup.code !== 0) throw new HttpError("New public setup failed. Existing quick access was retained, but candidate connector cleanup needs inspection.", 502);
     }
-    if (committed) throw new HttpError("New public access was verified and saved, but retiring previous access did not complete. Use the new URL and inspect old routes before retrying.", 502);
+    if (committed && error instanceof HttpError && error.message.startsWith("New access")) throw error;
+    if (committed) throw new HttpError("New public access was saved, but final verification did not complete. Existing permanent routes were retained. Inspect access before retrying.", 502);
     throw error;
   }
-}
-
-async function currentPublicIpv4() {
-  const result = await execOnHost(
-    "curl -4 -fsS --max-time 8 https://api.ipify.org || curl -4 -fsS --max-time 8 https://ifconfig.co/ip",
-    { requireHost: true }
-  );
-  const value = result.stdout.trim();
-  if (isIP(value) !== 4) throw new Error("Could not determine this VPS public IPv4 address.");
-  return value;
 }
 
 async function ensureCaddyInstalled() {
@@ -492,75 +553,79 @@ async function ensureCaddyInstalled() {
   }
 }
 
+function caddyCandidatePath(hostname: string) {
+  return `/etc/caddy/groundcontrol-sites/groundcontrol-${createHash("sha256").update(hostname).digest("hex").slice(0, 24)}.caddy`;
+}
+
+async function requireCaddyPorts() {
+  const needs = await inspectCaddyPortNeeds();
+  const blockers = needs.filter(need => need.blocking);
+  if (blockers.length) throw new HttpError(blockers.map(need => need.detail).join(" "), 409);
+}
+
 async function configureCaddy(hostname: string, port: number) {
-  const listeners = await execOnHost(
-    "if command -v ss >/dev/null 2>&1; then ss -ltnp 2>/dev/null | grep -E ':(80|443)[[:space:]]' | grep -vi caddy || true; fi",
-    { requireHost: true }
-  );
-  if (listeners.stdout.trim()) {
-    throw new Error(
-      "Ports 80/443 are already owned by another service. Use Cloudflare Tunnel or configure the existing reverse proxy instead of replacing it."
-    );
-  }
-
-  const config = [
-    `${hostname} {`,
-    `  reverse_proxy 127.0.0.1:${port}`,
-    "  encode zstd gzip",
-    "}",
-    "",
-  ].join("\n");
-
-  const command = [
-    "set -eu",
-    "mkdir -p /etc/caddy/sites",
+  await requireCaddyPorts();
+  const path = caddyCandidatePath(hostname);
+  const config = `${hostname} {\n  reverse_proxy 127.0.0.1:${port}\n  encode zstd gzip\n}\n`;
+  // Never overwrite an existing route, including legacy groundcontrol.caddy.
+  // A scoped file avoids restoring a stale snapshot of the entire Caddyfile.
+  const prepared = await execOnHost([
+    "set -eu", "test ! -L /etc/caddy/groundcontrol-sites", "mkdir -p -m 0755 /etc/caddy/groundcontrol-sites", `test ! -e ${shQuote(path)}`,
     "touch /etc/caddy/Caddyfile",
-    "cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.gc-before-publish",
-    "if [ -f /etc/caddy/sites/groundcontrol.caddy ]; then cp /etc/caddy/sites/groundcontrol.caddy /etc/caddy/groundcontrol.gc-before-publish; else rm -f /etc/caddy/groundcontrol.gc-before-publish; fi",
-    "grep -Fq 'import /etc/caddy/sites/*' /etc/caddy/Caddyfile || printf '\nimport /etc/caddy/sites/*\n' >> /etc/caddy/Caddyfile",
-    `cat > /etc/caddy/sites/groundcontrol.caddy <<'GC_CADDY'\n${config}GC_CADDY`,
-    "caddy validate --config /etc/caddy/Caddyfile",
-    "(caddy reload --config /etc/caddy/Caddyfile || systemctl restart caddy || rc-service caddy restart || caddy start --config /etc/caddy/Caddyfile)",
-  ].join("\n");
-
-  const result = await execOnHost(command, { requireHost: true });
+    "grep -Fq 'import /etc/caddy/groundcontrol-sites/*' /etc/caddy/Caddyfile || printf '\\nimport /etc/caddy/groundcontrol-sites/*\\n' >> /etc/caddy/Caddyfile",
+    `(set -C; cat > ${shQuote(path)} <<'GC_CADDY'\n${config}GC_CADDY\n)`,
+  ].join("\n"), { requireHost: true });
+  if (prepared.code !== 0) throw new HttpError("Could not prepare a new scoped Caddy route. An existing route was not overwritten; inspect the candidate before retrying.", 409);
+  const result = await execOnHost("caddy validate --config /etc/caddy/Caddyfile && (caddy reload --config /etc/caddy/Caddyfile || systemctl restart caddy || rc-service caddy restart || caddy start --config /etc/caddy/Caddyfile)", { requireHost: true });
   if (result.code !== 0) {
-    await restoreCaddyBeforePublish();
+    await restoreCaddyBeforePublish(hostname);
     throw new Error(result.stderr || result.stdout || "Caddy configuration failed.");
   }
 }
 
-async function restoreCaddyBeforePublish() {
+async function restoreCaddyBeforePublish(hostname: string) {
   const result = await execOnHost([
-    "set -eu",
-    "test -f /etc/caddy/Caddyfile.gc-before-publish",
-    "cp /etc/caddy/Caddyfile.gc-before-publish /etc/caddy/Caddyfile",
-    "if [ -f /etc/caddy/groundcontrol.gc-before-publish ]; then cp /etc/caddy/groundcontrol.gc-before-publish /etc/caddy/sites/groundcontrol.caddy; else rm -f /etc/caddy/sites/groundcontrol.caddy; fi",
+    "set -eu", `rm -f ${shQuote(caddyCandidatePath(hostname))}`,
     "caddy validate --config /etc/caddy/Caddyfile",
     "caddy reload --config /etc/caddy/Caddyfile || systemctl reload caddy || rc-service caddy restart",
   ].join("\n"), { requireHost: true });
-  if (result.code !== 0) throw new HttpError("New public setup failed. Existing quick access was retained; restoring the Caddy configuration needs inspection.", 502);
+  if (result.code !== 0) throw new HttpError("New public setup failed. Existing routes were retained; candidate Caddy cleanup needs inspection.", 502);
 }
 
-export async function publishWithCaddy(input: { hostname: string }) {
+export async function publishServerAddress() {
+  const plan = await inspectGeneratedInstanceAddress({ providerHostname: process.env.GC_PROVIDER_HOSTNAME });
+  return publishWithCaddy({ hostname: plan.hostname, purpose: "server_address" });
+}
+
+export async function publishWithCaddy(input: { hostname: string; purpose?: "server_address" | "custom_domain" }) {
+  return withPublishLock(() => publishCaddyUnlocked(input));
+}
+async function publishCaddyUnlocked(input: { hostname: string; purpose?: "server_address" | "custom_domain" }) {
+  const priorIdentity = await accessIdentity();
+  const snapshot = await identitySnapshot();
   const hostname = normalizePublicHostname(input.hostname);
+  if (input.purpose === "server_address") {
+    const plan = await inspectGeneratedInstanceAddress({ providerHostname: process.env.GC_PROVIDER_HOSTNAME });
+    if (!plan.canPublish) throw new HttpError(plan.needs.filter(need => need.blocking).map(need => need.detail).join(" "), 409);
+    if (hostname !== plan.hostname) throw new HttpError("The server address changed. Refresh the address plan and retry.", 409);
+  }
+  const requestedUrl = `https://${hostname}`;
+  if (input.purpose === "server_address" && priorIdentity.canonical && priorIdentity.canonical !== requestedUrl) {
+    throw new HttpError("This instance already has a permanent address. A changed server IP needs an explicit address migration; existing agent identity has not been replaced.", 409);
+  }
+  if (priorIdentity.canonical === requestedUrl || priorIdentity.aliases.includes(requestedUrl)) {
+    const aliasVerification = await verifyReplacementAccess(requestedUrl);
+    const verification = requestedUrl === priorIdentity.canonical ? aliasVerification : await verifyReplacementAccess(priorIdentity.canonical);
+    await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification));
+    return { mode: "caddy" as const, retainedBootstrapUrl: await getConfig(BOOTSTRAP_FALLBACK_KEY) || null, publicUrl: requestedUrl, canonicalUrl: priorIdentity.canonical, aliases: priorIdentity.aliases, aliasUrl: requestedUrl === priorIdentity.canonical ? null : requestedUrl, hostname, originIp: null, verification, aliasVerification };
+  }
   // DNS/setup failures must not disconnect the operator from a quick tunnel.
   const originIp = await currentPublicIpv4();
-  let resolved: string[] = [];
-  try {
-    resolved = await resolve4(hostname);
-  } catch {
-    resolved = [];
-  }
-  if (!resolved.includes(originIp)) {
-    const error = new Error(
-      `DNS is not pointing ${hostname} at this VPS yet. Create an A record for ${hostname} → ${originIp}, then retry.`
-    ) as Error & { code?: string; requiredRecord?: Record<string, string> };
-    error.code = "DNS_REQUIRED";
-    error.requiredRecord = { type: "A", name: hostname, content: originIp };
-    throw error;
-  }
+  await verifyCaddyDns(hostname, originIp);
 
+  // Inspect before package installation (which can start a service), then again
+  // immediately before route changes to catch ownership changes during setup.
+  await requireCaddyPorts();
   await ensureCaddyInstalled();
   const port = await groundControlHostPort();
   await configureCaddy(hostname, port);
@@ -568,26 +633,34 @@ export async function publishWithCaddy(input: { hostname: string }) {
   const publicUrl = `https://${hostname}`;
   let verification: InstanceVerification;
   try {
-    verification = await verifyReplacementAccess(publicUrl);
+    verification = await verifyReplacementAccess(publicUrl, true);
     await prisma.$transaction(async (tx) => {
-      await setConfig(PUBLIC_URL_KEY, publicUrl, tx);
-      await setConfig(PUBLISH_MODE_KEY, "caddy", tx);
-      await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification), tx);
+      await savePublicAccess(publicUrl, "caddy", verification, tx);
     });
   } catch (error) {
-    await restoreCaddyBeforePublish();
+    await restoreCaddyBeforePublish(hostname);
     throw error;
   }
+  let canonicalVerification: InstanceVerification;
+  let aliasVerification: InstanceVerification;
   try {
-    await stopQuickTunnel();
-    await stopNamedManagementTunnel();
-  } catch {
-    throw new HttpError("New public access was verified and saved, but retiring previous access did not complete. Use the new URL and inspect old routes before retrying.", 502);
+    const verified = await verifySavedAccess(publicUrl, priorIdentity.canonical || publicUrl, snapshot);
+    aliasVerification = verified.aliasVerification;
+    canonicalVerification = verified.verification;
+    // Do not close the bootstrap connector carrying this HTTP response.
+  } catch (error) {
+    if (error instanceof HttpError && error.message.startsWith("New access")) throw error;
+    throw new HttpError("New public access was saved, but final verification did not complete. Existing permanent routes were retained. Inspect access before retrying.", 502);
   }
 
   return {
     mode: "caddy" as const,
-    verification,
+    retainedBootstrapUrl: await getConfig(BOOTSTRAP_FALLBACK_KEY) || null,
+    aliasVerification,
+    canonicalUrl: (await accessIdentity()).canonical,
+    aliases: (await accessIdentity()).aliases,
+    aliasUrl: priorIdentity.canonical && priorIdentity.canonical !== publicUrl ? publicUrl : null,
+    verification: canonicalVerification,
     publicUrl,
     hostname,
     originIp,
@@ -595,6 +668,10 @@ export async function publishWithCaddy(input: { hostname: string }) {
 }
 
 export async function publishQuickTunnel() {
+  return withPublishLock(publishQuickTunnelUnlocked);
+}
+async function publishQuickTunnelUnlocked() {
+  if ((await accessIdentity()).canonical) throw new HttpError("A permanent address is already configured. Temporary setup cannot replace it. Keep using your current address.", 409);
   const network = await groundControlDockerNetwork();
   await stopQuickTunnel();
   await stopNamedManagementTunnel();
@@ -641,6 +718,10 @@ export async function publishQuickTunnel() {
 }
 
 export async function keepInstancePrivate() {
+  return withPublishLock(keepInstancePrivateUnlocked);
+}
+async function keepInstancePrivateUnlocked() {
+  if ((await accessIdentity()).canonical) throw new HttpError("A permanent address is configured. Removing public access requires a separate explicit removal flow; it cannot be silently downgraded here.", 409);
   if (!isDesktopMode()) {
     await stopQuickTunnel();
     await stopNamedManagementTunnel();
@@ -692,6 +773,8 @@ export async function verifyGroundControlInstance(
   options: { persist?: boolean } = {}
 ): Promise<InstanceVerification> {
   const publicUrl = String(explicitPublicUrl ?? await getConfig(PUBLIC_URL_KEY)).replace(/\/$/, "") || null;
+  const configuredOrigin = await getConfig(CANONICAL_URL_KEY) || await getConfig(PUBLIC_URL_KEY);
+  const oauthOrigin = configuredOrigin || "http://127.0.0.1:3000";
   const checkedAt = new Date().toISOString();
   const desktop = isDesktopMode();
   // The control plane's Docker socket is reachable from its app container.
@@ -780,7 +863,7 @@ export async function verifyGroundControlInstance(
           params: {},
         }),
       });
-      for (let attempt = 0; attempt < 7 && (!publicProbe.ok || !publicMcp.ok); attempt += 1) {
+      for (let attempt = 0; attempt < 7 && ((!publicProbe.ok && Boolean(configuredOrigin)) || !publicMcp.ok); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));
         if (!publicProbe.ok) {
           publicProbe = await httpCheck(`${publicUrl}/.well-known/oauth-protected-resource`);
@@ -806,12 +889,12 @@ export async function verifyGroundControlInstance(
       const resource = publicProbe.body as { resource?: string; authorization_servers?: string[] } | null;
       const authorization = publicAuthorization.body as { issuer?: string; authorization_endpoint?: string; token_endpoint?: string } | null;
       const sameInstance = publicIdentity.ok && Boolean(claim.instanceId) && identity?.instanceId === claim.instanceId && identity?.claimed === true;
-      // OAuth metadata derives from the request origin, not saved publish config,
-      // so the candidate must already advertise its exact HTTPS origin pre-commit.
-      const correctOAuth = publicProbe.ok && resource?.resource === `${publicUrl}/mcp` &&
-        Array.isArray(resource.authorization_servers) && resource.authorization_servers.includes(publicUrl) &&
-        publicAuthorization.ok && authorization?.issuer === publicUrl &&
-        authorization.authorization_endpoint === `${publicUrl}/oauth/authorize` && authorization.token_endpoint === `${publicUrl}/oauth/token`;
+      // Alias reachability and identity are independent of the canonical OAuth issuer.
+      // Pre-commit candidates must advertise the currently saved issuer, not a header-derived origin.
+      const correctOAuth = publicProbe.ok && resource?.resource === `${oauthOrigin}/mcp` &&
+        Array.isArray(resource.authorization_servers) && resource.authorization_servers.includes(oauthOrigin) &&
+        publicAuthorization.ok && authorization?.issuer === oauthOrigin &&
+        authorization.authorization_endpoint === `${oauthOrigin}/oauth/authorize` && authorization.token_endpoint === `${oauthOrigin}/oauth/token`;
       const publicTools = publicMcp.body && typeof publicMcp.body === "object" && "result" in publicMcp.body
         ? ((publicMcp.body as { result?: { tools?: Array<{ name?: string }> } }).result?.tools || [])
         : [];
@@ -878,10 +961,18 @@ export async function verifyGroundControlInstance(
   return result;
 }
 
-async function verifyReplacementAccess(publicUrl: string) {
+async function verifyReplacementAccess(publicUrl: string, initialBootstrap = false) {
   // Probe the candidate explicitly without changing the saved OAuth/public base.
   const verification = await verifyGroundControlInstance(publicUrl, { persist: false });
   if (verification.checks.publicHttps.status !== "ready") {
+    // An existing private installation has no public issuer yet. Authenticate the
+    // candidate by TLS + claimed instance identity before saving its first origin.
+    // OAuth remains failed in this evidence until the mandatory post-save recheck.
+    if (initialBootstrap && !await getConfig(CANONICAL_URL_KEY) && !await getConfig(PUBLIC_URL_KEY)) {
+      const [identity, claim] = await Promise.all([httpCheck(`${publicUrl}/api/auth/claim`), installClaimStatus()]);
+      const body = identity.body as { instanceId?: string; claimed?: boolean } | null;
+      if (publicUrl.startsWith("https://") && identity.ok && claim.claimed && claim.instanceId && body?.instanceId === claim.instanceId && body.claimed === true) return verification;
+    }
     const failed = verification.checks.publicHttps.detail;
     throw new HttpError(`New public access was not verified. Existing access has not been retired. ${failed}`, 502);
   }
@@ -903,6 +994,9 @@ export async function instancePublishStatus() {
   } catch {}
 
   return {
+    retainedBootstrapUrl: await getConfig(BOOTSTRAP_FALLBACK_KEY) || null,
+    canonicalUrl: (await accessIdentity()).canonical || null,
+    aliases: (await accessIdentity()).aliases,
     localDesktop: isDesktopMode(),
     mode: (mode || "private") as PublishMode,
     publicUrl: publicUrl || null,
