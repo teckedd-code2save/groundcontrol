@@ -221,7 +221,9 @@ REMOTE
       printf 'Quick tunnels have no uptime guarantee and do not support server-sent event streams. Use a named tunnel or HTTPS proxy for ongoing use.\n'
     fi
     printf 'You can close this terminal. GroundControl and its access connector run on the server.\n'
-    printf 'Next: finish the server scan in onboarding, then connect an existing app or review its deployment prerequisites.\n'
+    printf 'Next: finish the server scan in onboarding. Open Services → Install on that server to check and finish required tooling.\n'
+    printf 'Git sources need Git; routed templates need their proxy (for example Caddy); static builds need their build tools. Install only what your workload needs.\n'
+    printf 'This checks GroundControl access, not that an application is ready to deploy. Review the selected workload requirements before launching.\n'
     printf 'For recovery, rerun setup; use --private if HTTPS access is unavailable.\n'
     exit 0
   fi
