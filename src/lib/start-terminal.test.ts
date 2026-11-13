@@ -17,6 +17,30 @@ function render(command: string, env: Partial<NodeJS.ProcessEnv> = {}, tty = fal
 const url = "https://fixture.trycloudflare.com/claim#token=gc_claim_fixture_only";
 
 describe("installer terminal presentation", () => {
+  it("isolates the setup link between separators without duplicating the token in plain output", () => {
+    const output = render(`STAGE=claim_required; ui_access_link '${url}'`);
+    expect(output).toContain("OPEN SETUP LINK");
+    expect(output.split("----------------------------------------------------")).toHaveLength(3);
+    expect(output.split("----------------------------------------------------")[1]).toContain(url);
+    expect(output.split("gc_claim_fixture_only")).toHaveLength(2);
+    expect(output).toContain("Keep it out of recordings");
+    expect(output).not.toContain("\x1b");
+  });
+  it("keeps a returning user's login distinct from a one-time claim", () => {
+    const output = render("STAGE=already_claimed; ui_access_link 'https://fixture.example.com/login'");
+    expect(output).toContain("OPEN GROUNDCONTROL");
+    expect(output).not.toContain("One-time");
+    expect(output).not.toContain("token=");
+  });
+  it("shows just the actionable browser steps, not a generic caveat or recovery instruction", () => {
+    const output = render("STAGE=claim_required; MODE=remote; ui_next_steps");
+    expect(output).toContain("Choose your username and password");
+    expect(output).toContain("Finish the server scan");
+    expect(output).toContain("Services → Install");
+    expect(output).not.toContain("Access is checked");
+    expect(output).not.toContain("Recovery:");
+    expect(output).not.toContain("--private");
+  });
   it("keeps redirected output plain and the complete URL copyable", () => {
     const output = render(`ui_step 3 'Open GroundControl'; ui_link '${url}'`, { TERM_PROGRAM: "iTerm.app" });
     expect(output).toContain("[3/3] Open GroundControl");

@@ -31,13 +31,43 @@ const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
 
-export function requestOrigin(req: NextRequest): string {
-  const forwardedProto = (req.headers.get("x-forwarded-proto") || "").split(",")[0]?.trim();
-  const forwardedHost = (req.headers.get("x-forwarded-host") || "").split(",")[0]?.trim();
-  const host = forwardedHost || req.headers.get("host");
-  const protocol = forwardedProto || req.nextUrl.protocol.replace(":", "") || "https";
-  if (host) return `${protocol}://${host}`.replace(/\/$/, "");
-  return req.nextUrl.origin.replace(/\/$/, "");
+/** The issuer is instance configuration, never the request's forwarded headers. */
+export async function requestOrigin(req: NextRequest): Promise<string> {
+  const canonical = (await prisma.appConfig.findUnique({ where: { key: "groundcontrol_canonical_url" } }))?.value;
+  const configured = canonical?.trim() ||
+    (await prisma.appConfig.findUnique({ where: { key: "groundcontrol_public_url" } }))?.value?.trim();
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      const hostname = url.hostname.replace(/^\[|\]$/g, "");
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash ||
+          url.pathname !== "/" || hostname === "localhost" || isPrivateAddress(hostname)) {
+        throw new Error("invalid public origin");
+      }
+      return url.origin;
+    } catch {
+      throw new OAuthRequestError("GroundControl's configured OAuth origin is invalid. Review its published address.", "server_error", 503);
+    }
+  }
+
+  // Private installs may use an actual loopback URL. Do not turn arbitrary Host
+  // or Forwarded values into an issuer, even when a reverse proxy is involved.
+  try {
+    const url = new URL(req.url);
+    const loopback = (hostname: string) => ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+    if (!["http:", "https:"].includes(url.protocol) || !loopback(url.hostname) || url.username || url.password) {
+      throw new Error("not a loopback request");
+    }
+    const host = req.headers.get("host");
+    if (host) {
+      const presented = new URL(`${url.protocol}//${host}`);
+      if (!loopback(presented.hostname) || presented.username || presented.password ||
+          presented.pathname !== "/" || presented.search || presented.hash) throw new Error("unsafe host");
+    }
+    return url.origin;
+  } catch {
+    throw new OAuthRequestError("Configure a verified public address before using GroundControl OAuth remotely.", "server_error", 503);
+  }
 }
 
 export function mcpResource(origin: string) {

@@ -61,7 +61,7 @@ The launcher downloads and verifies the canonical installer on the server. By de
 
 Keep the setup link private. Its fragment contains the one-time owner claim; do not show it in recordings, screenshots or shared terminal logs. After choosing your account, use the sign-in URL without the claim fragment.
 
-**Temporary access: configure a permanent domain.** The HTTPS address is public, with account-protected management access. It is not a private network link. Its connector does not automatically restart after a server reboot; recreating it changes the URL and requires updating bookmarks and agent connections. [Quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) have no uptime guarantee and do not support server-sent event streams. Finish permanent-domain setup using a named Cloudflare Tunnel or HTTPS proxy for ongoing use.
+**Temporary access: set up a server address.** The HTTPS address is public, with account-protected management access. It is not a private network link. Its connector does not automatically restart after a server reboot; recreating it changes the URL and requires updating bookmarks and agent connections. [Quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) have no uptime guarantee and do not support server-sent event streams. Set up a free server address with Caddy for ongoing use; your own domain is optional.
 
 Rerunning setup reuses a working published URL rather than rotating it. It preserves an existing permanent domain and any deliberately saved private-only configuration. If temporary access cannot be established, the installer leaves the healthy instance in place and tells you how to reconnect privately; it does not claim public access succeeded.
 
@@ -69,12 +69,14 @@ Rerunning setup reuses a working published URL rather than rotating it. It prese
 
 The temporary tunnel is an initial bridge, not a permanent GroundControl address. A GC-provided subdomain (similar to a hosted platform's default application domain) is a separate product capability and is **not available yet**. Recreating a quick tunnel does not provide that guarantee.
 
-The implemented permanent options use a domain you control:
+The default ongoing option is **Set up free server address**: a verified provider hostname configured by the operator, or `<public-ipv4>.sslip.io` with Caddy HTTPS. It needs reachable inbound ports 80/443 and stays usable only while the hostname/IP allocation is retained. It is not a universal GC-owned address or automatic IP-migration service.
+
+Optional owned-domain options:
 
 - **Direct HTTPS with Caddy:** create a DNS-only A record pointing to the server's public IPv4 address. Allow inbound TCP 80 and 443 in both cloud and host firewalls, with your operator's approval. GC installs/configures Caddy on supported Linux hosts but does not open those firewall rules. The current setup check does not support IPv6-only or proxied DNS. Keep the GC management port loopback-only.
 - **Named Cloudflare Tunnel:** use a zone in your Cloudflare account and a securely supplied token with zone read, DNS edit and account tunnel edit permissions. Supply the account ID when the token can see more than one account. GC configures tunnel/DNS and keeps the origin private; no inbound management port is needed.
 
-Existing access is retained until replacement HTTPS, instance identity and OAuth/MCP discovery checks pass. Discovery is not a substitute for testing a real agent login and operation. Verify that yourself before treating the permanent route as production-ready.
+New HTTPS, instance identity and canonical OAuth/MCP discovery are checked before readiness is reported. The temporary connector is retained through browser handoff, so the response is not cut off; it remains an additional public, account-protected route until explicit inspected cleanup. Open the primary address and reconnect agents previously configured for the temporary URL. Later custom aliases preserve that primary agent identity. Discovery is not a substitute for a real OAuth login and authenticated MCP/streaming test.
 
 ### Private-only access and recovery
 
@@ -82,7 +84,7 @@ Existing access is retained until replacement HTTPS, instance identity and OAuth
 bash groundcontrol-start --remote ubuntu@YOUR_SERVER --private
 ```
 
-This skips public tunnel creation and opens an SSH-only browser link. Keep Terminal open while using that private link; Ctrl+C closes the connection without stopping GroundControl. Existing public access is not disabled by this flag. If you want to remove it, use the authenticated access settings after signing in.
+This skips public tunnel creation and opens an SSH-only browser link. Keep Terminal open while using that private link; Ctrl+C closes the connection without stopping GroundControl. Existing public access is not disabled by this flag. Removing an established canonical public address is not automated by this setup flow; arrange an inspected cleanup rather than assuming this flag revokes access.
 
 Make one access change at a time. If setup is interrupted or reports incomplete
 cleanup, reconnect privately and inspect the connector/DNS state before retrying.
@@ -114,7 +116,8 @@ Suggestions group Compose services into one app. **Dismiss** hides an unwanted s
 | Local port is busy | Setup normally chooses another port. For a chosen port, retry with `--local-port 43003`. |
 | Existing database has no matching `.env` | Restore the original configuration or supply its directory with `--dir`; do not generate replacement encryption keys. |
 | Image predates desktop setup | Publish/use a desktop-capable GroundControl image; an older image cannot run this mode correctly. |
-| Remote link stopped working | Keep the setup terminal open, or rerun the same command to reconnect. |
+| Temporary HTTPS link stopped working | Terminal closure does not stop it. Rerun setup to inspect/recover the existing route; a server restart may have stopped its connector. |
+| Private SSH link stopped working | Keep its forwarding terminal open, or rerun with `--private` to reconnect. |
 
 For contributors testing an unpublished image:
 
@@ -147,3 +150,33 @@ checks the checksum before running it. It does not upgrade an existing healthy
 instance. Use a disposable host or an explicitly reset test instance for fresh-install
 acceptance; retaining Docker means this is not an absent-Docker prerequisite test.
 Keep the one-time owner setup link, passwords and SSH key contents out of recordings.
+
+## Review network access before setting up a server address
+
+The free-server-address preview includes a read-only **Review network access** panel.
+It reports detected UFW/firewalld state and a provider hint, not proof that Internet
+traffic reaches your server. An unavailable check is unknown, not an open firewall;
+cloud rules are not inspected or changed automatically. Local/desktop setup is unchanged.
+
+1. Preserve existing access, including the temporary link if enabled. Review inbound TCP **80 and 443** at the host,
+   VPS/cloud firewall and any router or subnet filter. Preserve SSH and keep port
+   **3003 private**. Do not reset or disable a firewall to make setup work.
+2. Expand **Firewall steps and approval**. Use the detected provider guide or choose
+   the guide for your server. Selecting a guide does not connect an account.
+   For Azure, review both NIC and subnet NSGs and effective rules. A proposed rule
+   must target this VM's private IP, not its public IP, with an unused priority after
+   checking intentional denies and shared scope. See Microsoft's
+   [rule fields](https://learn.microsoft.com/en-us/azure/virtual-network/manage-network-security-group)
+   and [effective-rule diagnosis](https://learn.microsoft.com/en-us/azure/virtual-network/diagnose-network-traffic-filter-problem).
+   Other providers and self-hosted networks use their own control panels and rules;
+   no Azure account is required.
+3. **Copy review request** prepares a read-only-first request for your operator or
+   assistant, including the proposed hostname and public IP. It neither sends the
+   request nor authorizes changes. Before any mutation, review and explicitly approve
+   the exact resources, source/destination, ports, priority and rollback. Public web
+   ingress exposes the authenticated sign-in endpoint to the Internet.
+4. After any approved changes, select **Recheck network & requirements**, then
+   **Set up & verify address**. GroundControl checks the public HTTPS URL from the
+   server, not an independent external network. Open the new address from another
+   network/device to verify Internet access. Host firewall state alone cannot prove
+   reachability. Keep any temporary fallback until that check succeeds.

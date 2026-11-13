@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { OAUTH_SCOPES, requestOrigin } from "@/lib/oauth";
 
 export async function GET(req: NextRequest) {
-  const issuer = requestOrigin(req);
+  let issuer: string;
+  try { issuer = await requestOrigin(req); } catch {
+    return NextResponse.json({ error: "server_error", error_description: "GroundControl OAuth origin is unavailable. Review the instance published address." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
   return NextResponse.json({
     issuer,
     authorization_endpoint: `${issuer}/oauth/authorize`,

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   hashOpaqueToken,
   issueTokenPair,
+  mcpResource,
+  requestOrigin,
   refreshClientMatches,
   verifyPkce,
 } from "@/lib/oauth";
@@ -18,6 +20,17 @@ export async function POST(req: NextRequest) {
   const params = new URLSearchParams(await req.text());
   const grantType = params.get("grant_type") || "";
   const clientId = params.get("client_id") || "";
+  const resources = params.getAll("resource");
+  if (resources.length) {
+    let origin: string;
+    try { origin = await requestOrigin(req); } catch {
+      return oauthError("server_error", "GroundControl OAuth origin is unavailable. Review the instance published address.", 503);
+    }
+    if (resources.length !== 1 || resources[0].replace(/\/$/, "") !== mcpResource(origin)) {
+      return oauthError("invalid_target", "The requested resource does not match this GroundControl MCP endpoint");
+    }
+  }
+
 
   if (grantType === "authorization_code") {
     const rawCode = params.get("code") || "";

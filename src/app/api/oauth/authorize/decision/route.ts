@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     };
     const query = new URLSearchParams(String(body.query || ""));
     const authRequest = readAuthorizationRequest(query);
-    const issuer = requestOrigin(req);
+    const issuer = await requestOrigin(req);
     const validated = await validateAuthorizationRequest(authRequest, issuer, user.role);
 
     if (!body.approved) {

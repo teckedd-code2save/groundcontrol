@@ -153,6 +153,8 @@ fi
 finish_setup_guidance() {
   log "Next: claim/sign in, then finish the server scan in onboarding."
   log "Open Services → Install on the selected server to check and finish required tooling."
+  log "For a direct HTTPS server address, use onboarding’s network review: check host and provider firewalls, then approve only the required inbound TCP 80/443 rules. Preserve SSH access and keep port 3003 private."
+  log "A temporary HTTPS link, if enabled, needs no inbound web ports and can be used while you finish those steps. GroundControl does not silently change firewalls or assume access to your cloud account."
   log "Git sources need Git; routed templates need their proxy (for example Caddy); static builds need their build tools. Install only what your workload needs."
   log "Docker and Compose checks cover GroundControl setup, not application readiness. No optional workload tools were installed by this step."
 }
@@ -187,7 +189,7 @@ prepare_owner_access() {
 owner_access_guidance() {
   if [ -n "$PUBLIC_URL" ]; then
     log "Open: $OWNER_BASE${CLAIM_PATH:-/login}"
-    [ "$ACCESS_MODE" != "quick_tunnel" ] || log "This temporary HTTPS address can change. Configure a permanent domain in onboarding before relying on it for agents or bookmarks."
+    [ "$ACCESS_MODE" != "quick_tunnel" ] || log "This temporary HTTPS address can change. Set up a server address in onboarding for ongoing use; your own domain is optional."
     log "You can close this SSH session. GroundControl continues running on the server."
   else
     [ "$ACCESS_MODE" != "unchanged" ] || log "Existing publishing settings were preserved; public access was not checked by this upgrade."

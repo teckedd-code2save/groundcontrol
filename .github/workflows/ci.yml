@@ -19,7 +19,7 @@ jobs:
       - run: npx prisma generate
       - run: bash -n scripts/install
       - run: bash -n scripts/start
-      - run: node --test scripts/check-start.cjs
+      - run: node --test scripts/check-start.cjs scripts/check-install-access-retry.cjs
       - run: python3 scripts/check-project-migrations.py
       - run: cd scripts && sha256sum -c install.sha256
       - run: npm run build

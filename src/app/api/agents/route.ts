@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       select: { id: true, name: true, slug: true },
     });
     const byId = new Map(deployments.map((deployment) => [deployment.id, deployment]));
-    const origin = requestOrigin(req);
+    const origin = await requestOrigin(req);
     return NextResponse.json({
       mcpUrl: mcpResource(origin),
       oauthIssuer: origin,

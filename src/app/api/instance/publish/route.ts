@@ -3,10 +3,12 @@ import { requireAuth } from "@/lib/auth";
 import { HttpError, handleApiError } from "@/lib/errors";
 import { createAuditLog } from "@/lib/audit";
 import { isDesktopMode } from "@/lib/runtime";
+import { inspectGeneratedInstanceAddress } from "@/lib/generated-instance-address";
 import {
   instancePublishStatus,
   keepInstancePrivate,
   publishQuickTunnel,
+  publishServerAddress,
   publishWithCaddy,
   publishWithCloudflare,
   verifyGroundControlInstance,
@@ -21,7 +23,11 @@ async function requireAdmin(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     await requireAdmin(req);
-    return NextResponse.json(await instancePublishStatus(), {
+    const status = await instancePublishStatus();
+    const generatedAddress = req.nextUrl.searchParams.get("generatedAddress") === "1" && !isDesktopMode()
+      ? await inspectGeneratedInstanceAddress({ providerHostname: process.env.GC_PROVIDER_HOSTNAME })
+      : undefined;
+    return NextResponse.json({ ...status, ...(generatedAddress ? { generatedAddress } : {}) }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
@@ -64,12 +70,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ result, verification });
     }
 
+    if (body.action === "server_address") {
+      // Recompute server identity and readiness, never trust a client-provided hostname.
+      const plan = await inspectGeneratedInstanceAddress({ providerHostname: process.env.GC_PROVIDER_HOSTNAME });
+      if (!plan.canPublish) {
+        return NextResponse.json({
+          error: "Server address setup needs attention before HTTPS can be configured.",
+          code: "SERVER_ADDRESS_PREREQUISITES", generatedAddress: plan,
+        }, { status: 409 });
+      }
+      const { verification, ...result } = await publishServerAddress();
+      await createAuditLog(user.id, "instance_access_publish", req, {
+        mode: result.mode, publicUrl: result.publicUrl,
+        source: plan.source, verificationOk: verification.ok,
+      });
+      return NextResponse.json({ result, verification });
+    }
+
     if (body.action === "caddy") {
       if (!body.hostname) {
         return NextResponse.json({ error: "hostname is required" }, { status: 400 });
       }
       try {
-        const { verification, ...result } = await publishWithCaddy({ hostname: body.hostname });
+        const { verification, ...result } = await publishWithCaddy({ hostname: body.hostname, purpose: "custom_domain" });
         await createAuditLog(user.id, "instance_access_publish", req, {
           mode: result.mode,
           publicUrl: result.publicUrl,
@@ -119,7 +142,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      error: "action must be private, quick_tunnel, caddy, cloudflare, or verify",
+      error: "action must be private, quick_tunnel, server_address, caddy, cloudflare, or verify",
     }, { status: 400 });
   } catch (error) {
     return handleApiError(error);

@@ -157,13 +157,12 @@ test('unavailable emulation leaves no generated keys and reports the next action
 test('setup directs users to finish workload prerequisites without claiming deployment readiness',()=>{
   const local=run(['--local']);
   assert.equal(local.status,0,local.stderr);
-  assert.match(local.stdout,/finish the workspace check in onboarding/);
-  assert.match(local.stdout,/Server-only tools.*Linux server connection/);
-  assert.match(local.stdout,/not that an application is ready to deploy/);
+  assert.match(local.stdout,/Finish the workspace check/);
+  assert.doesNotMatch(local.stdout,/Access is checked/);
   const remote=run(['--remote','test-server']);
   assert.match(remote.stdout,/Services → Install/);
-  assert.match(remote.stdout,/Git sources need Git/);
-  assert.match(remote.stdout,/Install only what your workload needs/);
+  assert.match(remote.stdout,/Install any tools your app needs/);
+  assert.doesNotMatch(remote.stdout,/Access is checked|Recovery: rerun setup/);
   assert.doesNotMatch(remote.stdout,/GroundControl is ready/);
 });
 
@@ -184,6 +183,9 @@ test('installer next steps preserve machine-readable stdout in JSON mode',()=>{
   assert.deepEqual(JSON.parse(r.stdout),{stage:'claim_required'});
   assert.match(r.stderr,/Services → Install/);
   assert.match(r.stderr,/No optional workload tools were installed/);
+  assert.match(r.stderr,/onboarding’s network review/);
+  assert.match(r.stderr,/approve only.*80\/443/);
+  assert.match(r.stderr,/does not silently change firewalls/);
   assert.match(source,/Install the Docker Compose plugin.*verify docker compose version/);
   assert.equal((source.match(/^ +finish_setup_guidance$|^finish_setup_guidance$/gm)||[]).length,4);
 });
