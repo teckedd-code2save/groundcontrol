@@ -108,7 +108,7 @@ bash groundcontrol-start
 Choose **this computer** or **a remote Linux server**. Setup returns a working browser link where you choose your own administrator password, then configure GroundControl.
 
 - **This computer:** Docker Desktop/Engine must be running. GroundControl operates a local Docker workspace; native Mac/Windows services are outside this mode.
-- **Remote server:** use your normal SSH address or host alias and an AMD64 Linux server with root/passwordless sudo. Setup creates the private connection automatically; keep the terminal open while using its link.
+- **Remote server:** use your normal SSH address or host alias and an AMD64 Linux server with root/passwordless sudo. Fresh setup hands over a temporary public HTTPS link and exits, so Terminal can close. Configure a permanent domain for ongoing use, or choose `--private` for SSH-only access.
 
 Already installed? Run the same command to receive a login link. See the [complete computer-to-login guide](./docs/start-from-your-computer.md), including SSH keys, reconnecting, platform support, and recovery.
 
@@ -129,7 +129,9 @@ curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/mai
 
 A fresh install does **not** generate an administrator password. GroundControl starts unclaimed and returns a short-lived, single-use claim token. The human completes one claim action in the browser and chooses the first administrator credentials.
 
-GroundControl binds to loopback by default. Before a public HTTPS reverse proxy is configured, claim it safely through an SSH tunnel:
+GroundControl stays bound to loopback. Fresh setup creates a temporary outbound HTTPS tunnel and returns the owner link. Configure a permanent domain for ongoing use; temporary addresses can change and have no uptime guarantee. Keep the one-time claim link out of shared logs and recordings.
+
+For SSH-only setup, pass `--private` to the installer, then open a tunnel:
 
 ```bash
 ssh -L 3003:127.0.0.1:3003 root@YOUR_VPS
@@ -144,10 +146,11 @@ Useful installer flags:
 | `--version TAG` | Install a specific image tag/short SHA instead of `latest` |
 | `--port PORT` | Loopback host port (default `3003`) |
 | `--claim-ttl MINUTES` | Claim lifetime, 5–120 minutes |
-| `--json` | Machine-readable final install/claim result |
+| `--json` | Machine-readable final install/claim result (contains a secret one-time token; keep private) |
+| `--private` | Skip public-access setup; preserve existing public access if already configured |
 | `--upgrade` | Explicitly refresh a healthy existing install |
 
-Rerunning the installer against a healthy instance is a no-op unless `--upgrade` is supplied.
+Rerunning preserves a healthy image and account. It can renew an unused claim and recover or verify the access link. `--upgrade` explicitly updates the runtime; it does not change the publishing choice.
 
 The older [`scripts/bootstrap`](./scripts/bootstrap) is retained for compatibility. New users should use `scripts/start` from their computer or `scripts/install` on the authorized server; both preserve the one-time claim flow.
 

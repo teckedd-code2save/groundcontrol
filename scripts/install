@@ -15,6 +15,11 @@ VERSION="latest"
 HOST_PORT="3003"
 INSTALL_DIR="/opt/groundcontrol"
 JSON_MODE=0
+ACCESS="temporary"
+PUBLIC_URL=""
+ACCESS_MODE="private"
+ACCESS_STATUS="private"
+ACCESS_CHANGED=false
 CLAIM_TTL_MINUTES="30"
 UPGRADE=0
 PREVIEW=0
@@ -60,14 +65,17 @@ Options:
   --port PORT          Loopback host port. Default: 3003.
   --dir PATH           Install directory. Default: /opt/groundcontrol.
   --claim-ttl MINUTES  One-time human claim lifetime, 5-120. Default: 30.
+  --private            Keep access private; do not create temporary HTTPS.
+  --access MODE        temporary (default) or private.
   --json               Emit one machine-readable result on stdout; progress goes to stderr.
   --preview            Check the requested image and local upgrade prerequisites without changing the instance.
   --upgrade            Upgrade with a quiesced SQLite backup, health verification and automatic rollback.
   --uninstall          Remove the GroundControl runtime while preserving data and install files.
   -h, --help           Show this help.
 
-The service binds 127.0.0.1 only. After human claim, publish the instance
-through GroundControl's HTTPS/domain or outbound bridge flow.
+The origin binds 127.0.0.1 only. By default an outbound temporary HTTPS
+bridge lets the owner claim from another computer without an SSH tunnel.
+Use --private to opt out. Temporary URLs are not permanent instance identity.
 USAGE
 }
 
@@ -85,6 +93,11 @@ while [ "$#" -gt 0 ]; do
     --claim-ttl)
       [ "$#" -ge 2 ] || fail "--claim-ttl needs a value"
       CLAIM_TTL_MINUTES="$2"; shift 2 ;;
+    --private)
+      ACCESS="private"; shift ;;
+    --access)
+      [ "$#" -ge 2 ] || fail "--access needs temporary or private"
+      ACCESS="$2"; shift 2 ;;
     --json)
       JSON_MODE=1; shift ;;
     --upgrade)
@@ -99,6 +112,8 @@ while [ "$#" -gt 0 ]; do
       fail "Unknown option: $1" ;;
   esac
 done
+
+case "$ACCESS" in temporary|private) ;; *) fail "--access must be temporary or private" ;; esac
 
 case "$HOST_PORT" in
   ''|*[!0-9]*) fail "Port must be numeric" ;;
@@ -140,6 +155,45 @@ finish_setup_guidance() {
   log "Open Services → Install on the selected server to check and finish required tooling."
   log "Git sources need Git; routed templates need their proxy (for example Caddy); static builds need their build tools. Install only what your workload needs."
   log "Docker and Compose checks cover GroundControl setup, not application readiness. No optional workload tools were installed by this step."
+}
+
+prepare_owner_access() {
+  PUBLIC_URL=""; ACCESS_MODE="private"; ACCESS_STATUS="private"
+  if [ "$UPGRADE" -eq 1 ]; then
+    # An upgrade does not inspect or change access. Do not imply an active public route became private.
+    ACCESS_MODE="unchanged"; ACCESS_STATUS="unchecked"
+  fi
+  if [ "$UPGRADE" -eq 0 ]; then
+    log "[install] checking temporary HTTPS owner access (existing configured access is preserved)"
+    local access_json
+    local private_flag=""
+    [ "$ACCESS" != "private" ] || private_flag="--private"
+    if [ "$ACCESS" = "private" ] && ! docker exec groundcontrol-web test -f /app/scripts/bootstrap-install-access.cjs; then
+      log "[install] older image: using private access without changing saved publishing settings; upgrade to persist a new private preference"
+      OWNER_BASE="http://127.0.0.1:$HOST_PORT"
+      return
+    fi
+    access_json="$(docker exec groundcontrol-web flock -n /tmp/groundcontrol-install-access.lock node /app/scripts/bootstrap-install-access.cjs $private_flag)" || fail "GroundControl is healthy, but HTTPS access could not be verified. Inspect the connector and rerun, or rerun with --private for private access. Older images need --upgrade."
+    ACCESS_CHANGED=false
+    case "$access_json" in *'"accessChanged":true'*) ACCESS_CHANGED=true ;; esac
+    PUBLIC_URL="$(json_string_field "$access_json" "publicUrl")"
+    ACCESS_MODE="$(json_string_field "$access_json" "accessMode")"
+    ACCESS_STATUS="$(json_string_field "$access_json" "accessStatus")"
+    [ "$ACCESS_STATUS" = "ready" ] || [ "$ACCESS_STATUS" = "private" ] || fail "Unexpected access bootstrap response"
+  fi
+  OWNER_BASE="${PUBLIC_URL:-http://127.0.0.1:$HOST_PORT}"
+}
+
+owner_access_guidance() {
+  if [ -n "$PUBLIC_URL" ]; then
+    log "Open: $OWNER_BASE${CLAIM_PATH:-/login}"
+    [ "$ACCESS_MODE" != "quick_tunnel" ] || log "This temporary HTTPS address can change. Configure a permanent domain in onboarding before relying on it for agents or bookmarks."
+    log "You can close this SSH session. GroundControl continues running on the server."
+  else
+    [ "$ACCESS_MODE" != "unchanged" ] || log "Existing publishing settings were preserved; public access was not checked by this upgrade."
+    log "Private access: http://127.0.0.1:$HOST_PORT${CLAIM_PATH:-/login}"
+    log "From another computer use: ssh -N -L $HOST_PORT:127.0.0.1:$HOST_PORT <user>@<server>"
+  fi
 }
 
 container_health() {
@@ -345,12 +399,15 @@ if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
   CLAIM_TOKEN="$(json_string_field "$CLAIM_JSON" "claimToken")"
   EXPIRES_AT="$(json_string_field "$CLAIM_JSON" "expiresAt")"
 
+  prepare_owner_access
+
   if [ "$STAGE" = "already_claimed" ]; then
     if [ "$JSON_MODE" -eq 1 ]; then
-      printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","checks":{"docker":"ready","container":"ready","health":"ready"},"changed":false}\n' \
-        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT"
+      printf '{"publicUrl":"%s","accessMode":"%s","accessStatus":"%s","product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","checks":{"docker":"ready","container":"ready","health":"ready"},"changed":%s}\n' "$(json_escape "$PUBLIC_URL")" "$(json_escape "$ACCESS_MODE")" "$(json_escape "$ACCESS_STATUS")" \
+        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$ACCESS_CHANGED"
     else
-      log "GroundControl is already claimed and healthy. Nothing changed."
+      log "GroundControl is already claimed and healthy."
+      owner_access_guidance
     fi
     finish_setup_guidance
     exit 0
@@ -359,13 +416,11 @@ if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
   if [ "$STAGE" = "claim_required" ] && [ -n "$CLAIM_TOKEN" ]; then
     CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
     if [ "$JSON_MODE" -eq 1 ]; then
-      printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"http://127.0.0.1:%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":false}\n' \
-        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT"
+      printf '{"publicUrl":"%s","accessMode":"%s","accessStatus":"%s","product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":%s}\n' "$(json_escape "$PUBLIC_URL")" "$(json_escape "$ACCESS_MODE")" "$(json_escape "$ACCESS_STATUS")" \
+        "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$(json_escape "$OWNER_BASE")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT" "$ACCESS_CHANGED"
     else
       log "GroundControl is healthy but unclaimed."
-      log "Create an SSH tunnel if remote: ssh -L $HOST_PORT:127.0.0.1:$HOST_PORT <user>@<server>"
-      log "Local URL: http://127.0.0.1:$HOST_PORT"
-      log "Claim URL: http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
+      owner_access_guidance
     fi
     finish_setup_guidance
     exit 0
@@ -551,13 +606,14 @@ CLAIM_TOKEN="$(json_string_field "$CLAIM_JSON" "claimToken")"
 EXPIRES_AT="$(json_string_field "$CLAIM_JSON" "expiresAt")"
 
 [ -n "$STAGE" ] || fail "Unexpected claim generator response"
+prepare_owner_access
 
 if [ "$STAGE" = "already_claimed" ]; then
   if [ "$JSON_MODE" -eq 1 ]; then
     if [ -n "$BACKUP_DIR" ]; then
-      printf '{"product":"groundcontrol","stage":"upgrade_complete","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","previousImage":"%s","image":"%s","backup":"%s","checks":{"container":"ready","health":"ready","storageBackup":"ready"},"changed":true}\n'         "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CURRENT_EFFECTIVE")" "$(json_escape "$RESOLVED_IMAGE")" "$(json_escape "$BACKUP_DIR")"
+      printf '{"publicUrl":"%s","accessMode":"%s","accessStatus":"%s","product":"groundcontrol","stage":"upgrade_complete","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","previousImage":"%s","image":"%s","backup":"%s","checks":{"container":"ready","health":"ready","storageBackup":"ready"},"changed":true}\n' "$(json_escape "$PUBLIC_URL")" "$(json_escape "$ACCESS_MODE")" "$(json_escape "$ACCESS_STATUS")"         "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CURRENT_EFFECTIVE")" "$(json_escape "$RESOLVED_IMAGE")" "$(json_escape "$BACKUP_DIR")"
     else
-      printf '{"product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","image":"%s","checks":{"docker":"ready","container":"ready","health":"ready"},"changed":true}\n'         "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$RESOLVED_IMAGE")"
+      printf '{"publicUrl":"%s","accessMode":"%s","accessStatus":"%s","product":"groundcontrol","stage":"already_claimed","instanceId":"%s","hostPort":%s,"localUrl":"http://127.0.0.1:%s","image":"%s","checks":{"docker":"ready","container":"ready","health":"ready"},"changed":true}\n' "$(json_escape "$PUBLIC_URL")" "$(json_escape "$ACCESS_MODE")" "$(json_escape "$ACCESS_STATUS")"         "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$RESOLVED_IMAGE")"
     fi
   else
     log ""
@@ -572,6 +628,7 @@ if [ "$STAGE" = "already_claimed" ]; then
       log "Local endpoint: http://127.0.0.1:$HOST_PORT"
     fi
   fi
+  [ "$JSON_MODE" -eq 1 ] || owner_access_guidance
   finish_setup_guidance
   exit 0
 fi
@@ -583,8 +640,8 @@ CLAIM_PATH="/claim#token=$CLAIM_TOKEN"
 LOCAL_CLAIM_URL="http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
 
 if [ "$JSON_MODE" -eq 1 ]; then
-  printf '{"product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"http://127.0.0.1:%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"image":"%s","checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":true}\n' \
-    "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$HOST_PORT" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT" "$(json_escape "$RESOLVED_IMAGE")"
+  printf '{"publicUrl":"%s","accessMode":"%s","accessStatus":"%s","product":"groundcontrol","stage":"claim_required","instanceId":"%s","localUrl":"http://127.0.0.1:%s","claimUrl":"%s%s","claimPath":"%s","claimToken":"%s","expiresAt":"%s","hostPort":%s,"image":"%s","checks":{"docker":"ready","container":"ready","health":"ready"},"next":"human_claim","changed":true}\n' "$(json_escape "$PUBLIC_URL")" "$(json_escape "$ACCESS_MODE")" "$(json_escape "$ACCESS_STATUS")" \
+    "$(json_escape "$INSTANCE_ID")" "$HOST_PORT" "$(json_escape "$OWNER_BASE")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_PATH")" "$(json_escape "$CLAIM_TOKEN")" "$(json_escape "$EXPIRES_AT")" "$HOST_PORT" "$(json_escape "$RESOLVED_IMAGE")"
 else
   log ""
   log "GroundControl is installed and waiting for its owner."
@@ -592,14 +649,7 @@ else
   log "Instance: $INSTANCE_ID"
   log "Claim expires: $EXPIRES_AT"
   log ""
-  log "If you are on this machine, open:"
-  log "  $LOCAL_CLAIM_URL"
-  log ""
-  log "From another computer, keep GC private and create an SSH tunnel:"
-  log "  ssh -L $HOST_PORT:127.0.0.1:$HOST_PORT <user>@<server>"
-  log "Then open:"
-  log "  http://127.0.0.1:$HOST_PORT$CLAIM_PATH"
-  log ""
+  owner_access_guidance
   log "The claim is single-use. No administrator password was generated by the installer."
 fi
 

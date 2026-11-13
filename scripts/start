@@ -9,11 +9,61 @@ SSH_PORT=""
 VERSION="latest"
 INSTALLER_REF="main"
 IMAGE=""
+PRIVATE=0
 DATA_DIR="${HOME}/.groundcontrol-desktop"
 LOCAL_PORT=""
 CONTROL_DIR=""
 CONTROL_SOCKET=""
 SSH_ARGS=()
+
+# Presentation stays dependency-free because this file is downloaded on its own.
+# Never write output to a log: owner claim links belong only in the operator output.
+ui_tty() { [ -t 1 ] && [ "${TERM:-dumb}" != dumb ]; }
+ui_heading() {
+  if ui_tty && [ -z "${NO_COLOR+x}" ]; then
+    printf '\n\033[1;36m%s\033[0m\n' "$1"
+  else
+    printf '\n%s\n' "$1"
+  fi
+}
+ui_step() { ui_heading "[$1/3] $2"; }
+ui_hyperlinks() {
+  ui_tty || return 1
+  [ "${GC_TERMINAL_LINKS:-auto}" != 0 ] || return 1
+  # Apple Terminal uses native URL detection (Cmd-click), not OSC 8.
+  case "${TERM_PROGRAM:-}" in iTerm.app|WezTerm|vscode|ghostty) return 0 ;; esac
+  case "${TERM:-}" in xterm-kitty|foot|foot-extra) return 0 ;; esac
+  [ -n "${WT_SESSION:-}${VTE_VERSION:-}" ]
+}
+ui_link() {
+  local url="$1"
+  printf '\n  '
+  if ui_hyperlinks; then
+    # URL is already validated by the caller. Use %s, never treat it as a format.
+    printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$url" "$url"
+  else
+    printf '%s' "$url"
+  fi
+  printf '\n'
+  if ui_tty; then
+    printf '  Cmd-click on Mac, Ctrl-click in supported terminals, or copy the link.\n'
+  fi
+  printf '\n'
+}
+ui_next_steps() {
+  ui_heading 'Next in the browser'
+  if [ "$MODE" = local ]; then
+    printf '  1. Sign in and finish the workspace check in onboarding.\n'
+    printf '  2. Connect an existing Docker app in Projects. Keep Docker running.\n'
+    printf '  Server-only tools (such as Caddy) belong on a Linux server connection.\n'
+  else
+    printf '  1. Finish the server scan in onboarding.\n'
+    printf '  2. Open Services → Install to finish required tooling.\n'
+    printf '  Git sources need Git; routed templates need a proxy; static builds need build tools.\n'
+    printf '  Install only what your workload needs.\n'
+  fi
+  printf '\nAccess is checked, not that an application is ready to deploy.\n'
+}
 
 fail() { printf '\nGroundControl: %s\n' "$*" >&2; exit 1; }
 quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
@@ -29,7 +79,8 @@ GroundControl setup — run this on your computer
 Options:
   -i PATH          Use this SSH private key file (it stays on your computer)
   -p PORT          SSH port (otherwise use your SSH configuration)
-  --local-port N   Use this port on your computer
+  --private       Keep remote access private through an SSH connection
+  --local-port N   Use this port on your computer (private remote/local mode)
   --version TAG   Select the server image version
   --installer-ref SHA  Pin remote installer to a full commit (testing; default main)
   --dir PATH      Local configuration directory (default ~/.groundcontrol-desktop)
@@ -41,8 +92,9 @@ Engine/Desktop using Linux containers. Remote mode needs OpenSSH and an AMD64
 Linux server with root or passwordless sudo access.
 
 The first link lets you choose your administrator password. Later runs return
-a login link. Remote access stays open while this command is running; Ctrl+C
-closes that connection without stopping GroundControl on the server.
+a login link. Remote setup uses temporary public HTTPS by default and then exits.
+Use --private for an SSH-only link that stays open while this command runs.
+Configure a permanent domain for reliable ongoing access.
 EOF
 }
 
@@ -54,6 +106,7 @@ while [ "$#" -gt 0 ]; do
     --remote) value "$@"; [ -z "$MODE" ] || fail "Choose one target."; MODE=remote; TARGET="$2"; shift 2 ;;
     -i) value "$@"; IDENTITY="$2"; shift 2 ;;
     -p) value "$@"; SSH_PORT="$2"; shift 2 ;;
+    --private) PRIVATE=1; shift ;;
     --local-port) value "$@"; LOCAL_PORT="$2"; shift 2 ;;
     --version) value "$@"; VERSION="$2"; shift 2 ;;
     --installer-ref) value "$@"; INSTALLER_REF="$2"; shift 2 ;;
@@ -81,6 +134,8 @@ choose_remote_identity() {
   esac
 }
 
+ui_heading 'GroundControl / Setup'
+
 if [ -z "$MODE" ]; then
   printf 'Where should GroundControl run?\n  1) This computer\n  2) A remote Linux server\n'
   case "$(prompt 'Choose 1 or 2: ')" in
@@ -91,6 +146,7 @@ if [ -z "$MODE" ]; then
 fi
 
 [ "$INSTALLER_REF" = main ] || [[ "$INSTALLER_REF" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Installer ref must be a full 40-character commit SHA."
+[ "$MODE" = remote ] || [ "$PRIVATE" -eq 0 ] || fail "--private only applies to a remote server; local mode is already private."
 [ "$MODE" = remote ] || [ "$INSTALLER_REF" = main ] || fail "--installer-ref only applies to a remote server."
 
 [[ "$VERSION" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "Invalid version tag."
@@ -130,21 +186,16 @@ verify_link() {
 }
 
 print_link() {
-  printf '\nGroundControl is reachable. Finish setup in the browser.\n\n'
+  ui_step 3 'Open GroundControl'
+  printf 'GroundControl is reachable. Finish setup in the browser.\n'
   if [ "$STAGE" = claim_required ]; then
-    printf 'Open this one-time setup link and choose your username and password:\n'
+    printf 'Choose your username and password using this one-time link.\n'
+    printf 'Keep this link private: hide it in recordings and shared screenshots.\n'
   else
-    printf 'Open this link and sign in with your existing account:\n'
+    printf 'Sign in with your existing account.\n'
   fi
-  printf '\n  http://127.0.0.1:%s%s\n\n' "$LOCAL_PORT" "$PAGE"
-  if [ "$MODE" = local ]; then
-    printf 'Next: finish the workspace check in onboarding, then connect an existing Docker app in Projects. Keep Docker running.\n'
-    printf 'Server-only tools (such as Caddy) belong on a Linux server connection, not inside Docker Desktop.\n'
-  else
-    printf 'Next: finish the server scan in onboarding. Open Services → Install on that server to check and finish required tooling.\n'
-    printf 'Git sources need Git; routed templates need their proxy (for example Caddy); static builds need their build tools. Install only what your workload needs.\n'
-  fi
-  printf 'This checks GroundControl access, not that an application is ready to deploy. Review the selected workload requirements before launching.\n\n'
+  ui_link "http://127.0.0.1:$LOCAL_PORT$PAGE"
+  ui_next_steps
 }
 
 if [ "$MODE" = remote ]; then
@@ -162,8 +213,14 @@ if [ "$MODE" = remote ]; then
   CONTROL_DIR=$(mktemp -d /tmp/gc-connect.XXXXXX)
   CONTROL_SOCKET="$CONTROL_DIR/ssh"
   SSH_ARGS+=(-S "$CONTROL_SOCKET" -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+  ui_step 1 'Connect to your server'
   printf 'Connecting to %s using your SSH settings…\n' "$TARGET"
   ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address and account. If this server uses a specific key, rerun setup and enter its path, or use --remote user@server -i /path/to/key. Saved SSH aliases and agent keys remain supported."
+  if [ "$PRIVATE" -eq 0 ]; then
+    printf 'Remote setup will provide a public HTTPS sign-in URL through a temporary outbound tunnel. No inbound management port is opened.\n'
+    printf 'For SSH-only access, cancel now and rerun with --private. Configure a permanent domain for ongoing use.\n'
+  fi
+  ui_step 2 'Prepare GroundControl and access'
   printf 'Installing GroundControl on %s…\n' "$TARGET"
   cat > "$CONTROL_DIR/install.sh" <<'REMOTE'
 set -eu
@@ -182,11 +239,44 @@ base="https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$2/scrip
 fetch "$base/install" "$task_dir/install"
 fetch "$base/install.sha256" "$task_dir/install.sha256"
 (cd "$task_dir" && sha256sum -c install.sha256) >&2
-if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" --version "$1" --json;
-else sudo -n bash "$task_dir/install" --version "$1" --json; fi
+version="$1"
+private="$3"
+set -- --version "$version" --json
+[ "$private" = 0 ] || set -- "$@" --private
+if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" "$@";
+else sudo -n bash "$task_dir/install" "$@"; fi
 REMOTE
-  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
+  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF") $(quote "$PRIVATE")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
   read_result
+  ACCESS_MODE=$(field accessMode)
+  if [ "$PRIVATE" -eq 0 ] && [ "$ACCESS_MODE" = private ]; then
+    printf 'Your saved private-only choice is preserved. Opening a private SSH connection instead.\n'
+    PRIVATE=1
+  fi
+  if [ "$PRIVATE" -eq 0 ]; then
+    PUBLIC_URL=$(field publicUrl)
+    [[ "$PUBLIC_URL" =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?$ ]] || fail "The installer did not return verified HTTPS access. Rerun with --private to reconnect safely."
+    ui_step 3 'Open GroundControl'
+    printf 'GroundControl is reachable over HTTPS.\n'
+    if [ "$STAGE" = claim_required ]; then
+      printf 'Choose your username and password using this one-time link.\n'
+      printf 'Keep this link private: hide it in recordings and shared screenshots.\n'
+    else
+      printf 'Sign in with your existing account:\n'
+    fi
+    ui_link "$PUBLIC_URL$PAGE"
+    printf 'You can close this terminal. GroundControl and its connector run on the server.\n'
+    if [ "$ACCESS_MODE" = quick_tunnel ]; then
+      ui_heading 'Temporary access: configure a permanent domain'
+      printf '  Public HTTPS, not a private network link. Account required after setup.\n'
+      printf '  Does not restart after a server reboot; recreating it changes the URL.\n'
+      printf '  No uptime guarantee or server-sent event streams. Update bookmarks and\n'
+      printf '  agent connections if the URL changes. Set up a permanent domain in onboarding.\n'
+    fi
+    ui_next_steps
+    printf '\nRecovery: rerun setup; use --private if HTTPS is unavailable.\n'
+    exit 0
+  fi
   REMOTE_PORT=$(printf '%s\n' "$RESULT" | sed -n 's/.*"hostPort":\([0-9][0-9]*\).*/\1/p')
   port "$REMOTE_PORT" || fail "The server returned an invalid port."
   if [ -n "$LOCAL_PORT" ]; then
@@ -204,6 +294,7 @@ REMOTE
   fail "The server connection closed. Run this command again to reconnect."
 fi
 
+ui_step 1 'Check local Docker'
 [ -z "$IDENTITY$SSH_PORT" ] || fail "SSH options only apply to --remote."
 command -v docker >/dev/null 2>&1 || fail "Install and start Docker Desktop (Mac/Windows) or Docker Engine (Linux), then rerun with --local."
 docker info >/dev/null 2>&1 || fail "Start Docker Desktop/Engine, then run this command again."
@@ -211,6 +302,7 @@ docker info >/dev/null 2>&1 || fail "Start Docker Desktop/Engine, then run this 
 endpoint="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}"
 case "$endpoint" in unix://*|npipe://*) ;; *) fail "Local mode requires a local Docker context. Switch contexts or choose --remote." ;; esac
 
+ui_step 2 'Prepare your Docker workspace'
 if docker inspect groundcontrol-web >/dev/null 2>&1; then
   [ "$(docker inspect --format '{{index .Config.Labels "io.groundcontrol.install-mode"}}' groundcontrol-web)" = desktop ] || fail "A different GroundControl installation already uses this Docker engine. Use its existing login; setup has not changed it."
   docker start groundcontrol-web >/dev/null

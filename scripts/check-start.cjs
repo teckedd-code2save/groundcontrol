@@ -11,7 +11,7 @@ const fs=require('node:fs'),path=require('node:path');
 const name=path.basename(process.argv[1]),args=process.argv.slice(2),e=process.env;
 fs.appendFileSync(e.GC_TEST_LOG,JSON.stringify({name,args})+'\\n');
 const say=x=>process.stdout.write(x+'\\n');
-const result=e.GC_TEST_RESULT||JSON.stringify({stage:'claim_required',claimToken:'gc_claim_test_token',hostPort:4731});
+const result=e.GC_TEST_RESULT||JSON.stringify({stage:'claim_required',claimToken:'gc_claim_test_token',hostPort:4731,publicUrl:'https://test-owner.trycloudflare.com',accessMode:'quick_tunnel',accessStatus:'ready'});
 if(name==='sleep') process.exit(0);
 if(name==='curl') {if(e.GC_TEST_CURL_FAIL)process.exit(7);say('{}');process.exit(0);}
 if(name==='ssh') {
@@ -64,19 +64,39 @@ function run(args, overrides = {}, existing = false) {
   } finally { rmSync(dir,{recursive:true,force:true}); }
 }
 
+test('default remote setup hands off verified HTTPS and exits without forwarding',()=>{
+  const r=run(['--remote','test-server']);
+  assert.equal(r.status,0,r.stderr);
+  assert.match(r.stdout,/https:\/\/test-owner\.trycloudflare\.com\/claim#token=gc_claim_test_token/);
+  assert.match(r.stdout,/You can close this terminal/);
+  assert.doesNotMatch(r.stdout,/Keep this terminal open/);
+  assert.ok(!r.commands.some(c=>c.args.includes('forward')));
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes('exit')));
+});
+
+test('saved private choice uses SSH forwarding instead of requiring HTTPS',()=>{
+  const r=run(['--remote','test-server'],{GC_TEST_RESULT:JSON.stringify({stage:'already_claimed',hostPort:4731,accessMode:'private',publicUrl:''})});
+  // Mock SSH deliberately closes after the link is handed off.
+  assert.match(r.stderr,/server connection closed/);
+  assert.match(r.stdout,/saved private-only choice is preserved/);
+  assert.match(r.stdout,/http:\/\/127\.0\.0\.1:3003\/login/);
+  assert.ok(r.commands.some(c=>c.args.includes('forward')));
+});
+
 test('remote setup uses the reported server port and falls back when a local port is occupied',()=>{
-  const r=run(['--remote','production-alias'],{GC_TEST_BUSY:'1'});
+  const r=run(['--remote','production-alias','--private'],{GC_TEST_BUSY:'1'});
   assert.match(r.stdout,/http:\/\/127\.0\.0\.1:3004\/claim#token=gc_claim_test_token/);
   assert.match(r.stdout,/Keep this terminal open/);
   assert.ok(r.commands.some(c=>c.args.includes('127.0.0.1:3004:127.0.0.1:4731')));
   assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes('exit')));
   assert.match(r.remoteScript,/sha256sum -c install.sha256/);
+  assert.ok(r.commands.some(c=>c.args.includes("sh -s -- 'latest' 'main' '1'")));
   assert.ok(!r.commands.some(c=>c.args.some(a=>a.includes('StrictHostKeyChecking=no'))));
 });
 
 test('reconnecting a claimed server returns its login without generating credentials',()=>{
-  const r=run(['--remote','root@server'],{GC_TEST_RESULT:JSON.stringify({stage:'already_claimed',hostPort:3003})});
-  assert.match(r.stdout,/http:\/\/127\.0\.0\.1:3003\/login/);
+  const r=run(['--remote','root@server'],{GC_TEST_RESULT:JSON.stringify({stage:'already_claimed',hostPort:3003,publicUrl:'https://gc.example.com',accessMode:'permanent',accessStatus:'ready'})});
+  assert.match(r.stdout,/https:\/\/gc\.example\.com\/login/);
   assert.doesNotMatch(r.stdout,/claim#|Password:/);
 });
 
@@ -94,7 +114,7 @@ test('invalid remote input is rejected before invoking SSH',()=>{
 test('invalid result and occupied explicit port give actionable failures',()=>{
   const invalid=run(['--remote','server'],{GC_TEST_RESULT:'not json'});
   assert.match(invalid.stderr,/usable claim or login/);
-  const busy=run(['--remote','server','--local-port','3003'],{GC_TEST_BUSY:'1'});
+  const busy=run(['--remote','server','--private','--local-port','3003'],{GC_TEST_BUSY:'1'});
   assert.match(busy.stderr,/port 3003 is busy/); assert.doesNotMatch(busy.stdout,/GroundControl is ready/);
 });
 
@@ -171,7 +191,7 @@ test('installer next steps preserve machine-readable stdout in JSON mode',()=>{
 
 test('remote installer defaults to main independently of image version',()=>{
   const r=run(['--remote','test-server','--version','candidate']);
-  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes("sh -s -- 'candidate' 'main'")));
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes("sh -s -- 'candidate' 'main' '0'")));
   assert.match(r.remoteScript,/groundcontrol\/\$2\/scripts/);
   assert.match(r.remoteScript,/fetch "\$base\/install"/);
   assert.match(r.remoteScript,/fetch "\$base\/install.sha256"/);
@@ -182,7 +202,7 @@ test('candidate launcher pins installer source and checksum to immutable commit'
   const sha='8443d4e02a38898175dd0c38cd1e1975af3640c5';
   const r=run(['--remote','test-server','--version','8443d4e','--installer-ref',sha]);
   assert.match(r.stdout,/GroundControl is reachable/);
-  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes(`sh -s -- '8443d4e' '${sha}'`)));
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes(`sh -s -- '8443d4e' '${sha}' '0'`)));
 });
 
 test('invalid installer refs and local use are rejected before connection or launch',()=>{

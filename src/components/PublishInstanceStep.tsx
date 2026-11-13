@@ -55,22 +55,23 @@ export default function PublishInstanceStep({
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
-  async function load() {
+  async function load(preserveSelection = false) {
     setLoading(true);
     try {
       const response = await fetch("/api/instance/publish", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load publish status");
       setStatus(data);
-      if (data.localDesktop) setMethod("private");
+      if (!preserveSelection && data.localDesktop) setMethod("private");
       setVerification(data.lastVerification || null);
-      if (data.publicUrl) {
+      if (!preserveSelection && data.mode === "quick_tunnel") setHostname("");
+      if (!preserveSelection && data.publicUrl && data.mode !== "quick_tunnel") {
         try {
           const parsed = new URL(data.publicUrl);
           setHostname(parsed.hostname);
         } catch {}
       }
-      if (data.mode && data.mode !== "private") setMethod(data.mode);
+      if (!preserveSelection && data.mode && data.mode !== "private") setMethod(data.mode);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load publish status");
     } finally {
@@ -82,7 +83,13 @@ export default function PublishInstanceStep({
     void load();
   }, []);
 
+  const hasTemporaryAccess = status?.mode === "quick_tunnel" && Boolean(status.publicUrl);
+
   async function publish() {
+    if (method === "quick_tunnel" && hasTemporaryAccess) {
+      await verifyAgain();
+      return;
+    }
     setWorkingLabel(method === "private" ? "Verifying private access…" : "Publishing & verifying…");
     setWorking(true);
     setError("");
@@ -115,7 +122,7 @@ export default function PublishInstanceStep({
     } catch (cause) {
       // A replacement may be live even when retiring an old path needs attention.
       // Reload authoritative status rather than leaving a stale handoff link visible.
-      await load();
+      await load(true);
       setError(cause instanceof Error ? cause.message : "Could not publish GroundControl");
     } finally {
       setWorking(false);
@@ -123,6 +130,7 @@ export default function PublishInstanceStep({
   }
 
   async function verifyAgain() {
+    setVerification(null);
     setWorkingLabel("Verifying…");
     setWorking(true);
     setError("");
@@ -184,18 +192,18 @@ export default function PublishInstanceStep({
         <MethodCard
           active={method === "quick_tunnel"}
           icon={<ShieldCheck className="h-4 w-4" />}
-          title="No domain yet"
-          detail="Temporary public HTTPS for setup. Configure a permanent domain for ongoing access."
+          title={hasTemporaryAccess ? "Temporary HTTPS is already set up" : "No domain yet"}
+          detail={hasTemporaryAccess ? "Use your existing link. Verify it below, or configure a permanent domain." : "Temporary public HTTPS for setup. Configure a permanent domain for ongoing access."}
           onClick={() => setMethod("quick_tunnel")}
         />
         </>}
-        <MethodCard
+        {!hasTemporaryAccess && <MethodCard
           active={method === "private"}
           icon={<LockKeyhole className="h-4 w-4" />}
           title="Keep it private"
           detail="Use local/SSH access only. External MCP clients will not be able to reach it yet."
           onClick={() => setMethod("private")}
-        />
+        />}
       </div>
 
       {(method === "caddy" || method === "cloudflare") && (
@@ -210,6 +218,12 @@ export default function PublishInstanceStep({
           />
           <p className="mt-2 text-[10px] leading-relaxed text-muted">
             This hostname becomes the operator login, OAuth issuer and MCP base URL for this instance.
+          </p>
+
+          <p className="mt-2 text-xs leading-relaxed text-muted">
+            {method === "caddy"
+              ? "Use a DNS-only A record pointing to this server's public IPv4 address. Ports 80 and 443 must be reachable through your cloud and host firewalls; GroundControl does not open them for you. IPv6-only or proxied DNS is not supported by this setup check."
+              : "Use a domain in your Cloudflare account. The token needs zone read, DNS edit and account tunnel edit permissions. This outbound tunnel does not require opening inbound management ports."}
           </p>
 
           {method === "cloudflare" && !status?.cloudflareConfigured && (
@@ -281,7 +295,7 @@ export default function PublishInstanceStep({
             : method === "private"
               ? "Keep private & verify"
               : method === "quick_tunnel"
-                ? "Create temporary HTTPS"
+                ? hasTemporaryAccess ? "Verify existing access" : "Create temporary HTTPS"
                 : "Publish & verify"}
         </button>
       </div>
@@ -353,7 +367,7 @@ export default function PublishInstanceStep({
       <button
         type="button"
         onClick={onComplete}
-        disabled={!verification?.ok}
+        disabled={working || !verification?.ok}
         className="w-full rounded-md border border-accent/30 bg-accent/10 py-3 text-sm font-mono text-accent hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-40"
       >
         Continue to server scan →

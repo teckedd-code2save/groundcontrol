@@ -52,7 +52,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 - The canonical `scripts/install` runs **on the authorized GroundControl host** and binds the web container to `127.0.0.1` only.
 - `docker-entrypoint.sh` / `ensure-local-vps.cjs` automatically enroll that host as the first active local VPS target. Fresh canonical installs must not ask the operator to SSH back into the same machine.
-- Fresh installs are unclaimed. The human claim is the ownership boundary; instance publishing is authenticated and happens only after claim.
+- Fresh installs are unclaimed. The human claim is the ownership boundary. The host-admin installer may create a temporary HTTPS bootstrap tunnel before claim, but only through its host-local helper with same-instance verification; it must not add an unauthenticated publishing API. Owner tokens stay in URL fragments and must not appear in provider logs. All browser publishing changes require authentication after claim. Preserve explicit private-only setup.
 - The management plane must not be published by opening port 3003 globally.
 - Supported publish modes are:
   - direct domain + Caddy after DNS resolves to the host,

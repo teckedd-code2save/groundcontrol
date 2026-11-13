@@ -1,5 +1,9 @@
 // @vitest-environment node
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 const m = vi.hoisted(() => ({ exec: vi.fn(), account: vi.fn(), zones: vi.fn(), configure: vi.fn(), dns: vi.fn(), removeDns: vi.fn(), tunnel: vi.fn(), removeTunnel: vi.fn(), row: vi.fn(), upsert: vi.fn(), config: new Map<string, string>(), events: [] as string[], resolve: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ resolve4: m.resolve }));
 vi.mock("node:util", () => ({ promisify: () => async () => ({ stdout: "groundcontrol-pty-ok" }) }));
@@ -97,4 +101,76 @@ it("reports incomplete old-connector retirement while keeping the verified repla
   await expect(publishWithCloudflare({ hostname: "app.example.com" })).rejects.toThrow("New public access was verified and saved, but retiring previous access did not complete");
   expect(m.config.get("groundcontrol_public_url")).toBe("https://app.example.com");
   expect(m.removeTunnel).not.toHaveBeenCalled();
+});
+
+it("does not reuse a named tunnel from a different Cloudflare account", async () => {
+  m.row.mockImplementation(async ({ where }: { where: { cloudflareAccountId?: number } }) => where.cloudflareAccountId === 1 ? null : {
+    tunnelId: "other-account-tunnel", tunnelSecret: "other-secret", connectorId: "other-account-connector", cloudflareAccountId: 2, domains: "old.example.org",
+  });
+  await publishWithCloudflare({ hostname: "app.example.com" });
+  expect(m.row).toHaveBeenCalledWith(expect.objectContaining({ where: { name: "groundcontrol-instance", cloudflareAccountId: 1 } }));
+  expect(m.tunnel).toHaveBeenCalledWith("groundcontrol-instance", expect.objectContaining({ id: 1 }));
+  expect(m.configure.mock.calls.every(([id]) => id === "new-tunnel")).toBe(true);
+  const retirement = m.events.findIndex(c => c.includes("docker rm -f 'other-account-connector'"));
+  expect(retirement).toBeGreaterThan(m.events.indexOf("save:groundcontrol_public_url"));
+});
+
+it("preserves another account's connector if the new account's candidate fails", async () => {
+  m.row.mockImplementation(async ({ where }: { where: { cloudflareAccountId?: number } }) => where.cloudflareAccountId === 1 ? null : {
+    tunnelId: "other-account-tunnel", tunnelSecret: "other-secret", connectorId: "other-account-connector", cloudflareAccountId: 2, domains: "old.example.org",
+  });
+  m.upsert.mockRejectedValue(new Error("database write failed"));
+  await expect(publishWithCloudflare({ hostname: "app.example.com" })).rejects.toThrow("database write failed");
+  expect(m.removeTunnel).toHaveBeenCalledWith("new-tunnel", expect.objectContaining({ id: 1 }));
+  expect(m.configure.mock.calls.every(([id]) => id === "new-tunnel")).toBe(true);
+  expect(m.events.some(c => c.includes("docker rm -f 'other-account-connector'"))).toBe(false);
+  expectPreserved();
+});
+
+it("reports failed Caddy retirement without rolling back the verified new URL", async () => {
+  const original = m.exec.getMockImplementation()!;
+  m.exec.mockImplementation((command: string) => command.includes("rm -f /etc/caddy/sites/groundcontrol.caddy")
+    ? Promise.resolve({ code: 1, stdout: "", stderr: "reload failed" }) : original(command));
+  await expect(publishWithCloudflare({ hostname: "app.example.com" })).rejects.toThrow("retiring previous access did not complete");
+  expect(m.config.get("groundcontrol_public_url")).toBe("https://app.example.com");
+  expect(m.removeTunnel).not.toHaveBeenCalled();
+  const command = m.events.find(c => c.includes("rm -f /etc/caddy/sites/groundcontrol.caddy")) || m.exec.mock.calls.map(([c]) => c as string).find(c => c.includes("rm -f /etc/caddy/sites/groundcontrol.caddy"))!;
+  expect(command).toContain('[ -f /etc/caddy/sites/groundcontrol.caddy ] || [ -f /etc/caddy/groundcontrol.gc-retirement-pending ]');
+  expect(command).toContain('rc-service caddy restart >/dev/null 2>&1 || exit 1');
+  expect(command).not.toContain('|| true');
+});
+
+
+it("retries only pending GC retirement, not an unrelated Caddy configuration", async () => {
+  await publishWithCloudflare({ hostname: "app.example.com" });
+  const command = m.exec.mock.calls.map(([c]) => c as string).find(c => c.includes("groundcontrol.gc-retirement-pending"))!;
+  const root = mkdtempSync(join(tmpdir(), "gc-caddy-retirement-"));
+  const config = join(root, "caddy");
+  const bin = join(root, "bin");
+  const marker = join(config, "groundcontrol.gc-retirement-pending");
+  try {
+    mkdirSync(join(config, "sites"), { recursive: true });
+    mkdirSync(bin);
+    writeFileSync(join(config, "Caddyfile"), "# unrelated config");
+    writeFileSync(join(bin, "caddy"), `#!/bin/sh
+if [ "$1" = validate ]; then exit 0; fi
+touch '${root}/reloaded'
+exit "${"$"}{RELOAD_FAIL:-0}"
+`, { mode: 0o755 });
+    for (const name of ["systemctl", "rc-service"]) writeFileSync(join(bin, name), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const run = (fail = "0") => execFileSync("/bin/sh", ["-c", command.replaceAll("/etc/caddy", config)], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RELOAD_FAIL: fail }, stdio: "pipe",
+    });
+    run();
+    expect(existsSync(join(root, "reloaded"))).toBe(false);
+    writeFileSync(join(config, "sites/groundcontrol.caddy"), "# GC route");
+    expect(() => run("1")).toThrow();
+    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(join(config, "sites/groundcontrol.caddy"))).toBe(false);
+    run();
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(join(root, "reloaded"))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

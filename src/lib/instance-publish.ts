@@ -134,14 +134,16 @@ async function stopQuickTunnel() {
 }
 
 async function disableCaddyExposure() {
+  // Retry reload even if an earlier attempt removed the route file but failed to apply it.
   const result = await execOnHost(
     [
-      "if [ -f /etc/caddy/sites/groundcontrol.caddy ]; then",
-      "  rm -f /etc/caddy/sites/groundcontrol.caddy",
-      "  if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then",
-      "    caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || exit 1",
-      "    caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || systemctl reload caddy >/dev/null 2>&1 || rc-service caddy restart >/dev/null 2>&1 || true",
-      "  fi",
+      "if [ -f /etc/caddy/sites/groundcontrol.caddy ] || [ -f /etc/caddy/groundcontrol.gc-retirement-pending ]; then",
+      "  touch /etc/caddy/groundcontrol.gc-retirement-pending || exit 1",
+      "  rm -f /etc/caddy/sites/groundcontrol.caddy || exit 1",
+      "  command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ] || exit 1",
+      "  caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || exit 1",
+      "  caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || systemctl reload caddy >/dev/null 2>&1 || rc-service caddy restart >/dev/null 2>&1 || exit 1",
+      "  rm -f /etc/caddy/groundcontrol.gc-retirement-pending || exit 1",
       "fi",
     ].join("\n"),
     { requireHost: true }
@@ -161,9 +163,9 @@ async function stopNamedManagementTunnel() {
   });
 }
 
-async function activeNamedTunnelRow() {
+async function activeNamedTunnelRow(cloudflareAccountId?: number) {
   return prisma.cloudflareTunnel.findFirst({
-    where: { name: NAMED_TUNNEL_NAME },
+    where: { name: NAMED_TUNNEL_NAME, ...(cloudflareAccountId === undefined ? {} : { cloudflareAccountId }) },
     orderBy: { updatedAt: "desc" },
   });
 }
@@ -337,7 +339,8 @@ export async function publishWithCloudflare(input: {
   }
 
   const zone = await findZoneForHostname(hostname, account);
-  let row = await activeNamedTunnelRow();
+  const previousRow = await activeNamedTunnelRow();
+  let row = await activeNamedTunnelRow(account.id);
   let tunnelId = row?.tunnelId || "";
   let token = decryptMaybe(row?.tunnelSecret) || "";
 
@@ -351,7 +354,7 @@ export async function publishWithCloudflare(input: {
   }
 
   const reusedTunnel = Boolean(row?.tunnelId === tunnelId && row?.tunnelSecret);
-  const previousConnectorId = row?.connectorId;
+  const previousConnectorIds = [...new Set([previousRow?.connectorId, row?.connectorId].filter((id): id is string => Boolean(id)))];
   const priorHostnames = (row?.domains || "").split(",").map((value) => value.trim()).filter(Boolean);
   const connectorId = `gc-control-plane-${randomUUID().slice(0, 18)}`;
   let committed = false;
@@ -408,8 +411,8 @@ export async function publishWithCloudflare(input: {
     await updateTunnelConfiguration(tunnelId, [{ hostname, service: "http://groundcontrol-web:3000" }], account);
     await stopQuickTunnel();
     await disableCaddyExposure();
-    if (previousConnectorId && previousConnectorId !== connectorId) {
-      await removeConnectorAndVerify(previousConnectorId);
+    for (const previousConnectorId of previousConnectorIds) {
+      if (previousConnectorId !== connectorId) await removeConnectorAndVerify(previousConnectorId);
     }
 
     return {

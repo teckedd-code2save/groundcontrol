@@ -26,7 +26,7 @@ describe("distribution acceptance workflow", () => {
     const steps = workflow.jobs?.["clean-host"]?.steps || [];
     const script = steps.map((step) => step.run || "").join("\n");
 
-    expect(script).toContain("scripts/install --version");
+    expect(script).toContain("scripts/install --private --version");
     expect(script).toContain("/api/auth/claim");
     expect(script).toContain('/api/instance/publish');
     expect(script).toContain('"action":"private"');

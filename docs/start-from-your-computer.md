@@ -25,7 +25,7 @@ bash groundcontrol-start --remote root@YOUR_SERVER
 
 Setup checks that GroundControl is reachable and prints one link. On a new installation, open it and choose your administrator username and password. The link expires after 30 minutes and can be used once. Run setup again if you need a new link.
 
-If you already have an account, setup prints a login link and leaves your account in place.
+If you already have an account, setup prints a login link and leaves your account in place. In macOS Terminal, hold Command and click the URL, or copy it into your browser. Set `GC_TERMINAL_LINKS=0` if your terminal does not handle clickable links correctly.
 
 ## This computer
 
@@ -57,20 +57,32 @@ bash groundcontrol-start --remote production
 bash groundcontrol-start --remote ubuntu@YOUR_SERVER -i ~/.ssh/server_key -p 2222
 ```
 
-The launcher downloads and verifies the canonical installer on the server, then creates the secure connection back to your computer automatically. You do not need to open a second terminal or expose a management port.
+The launcher downloads and verifies the canonical installer on the server. By default, a fresh server setup creates an outbound temporary HTTPS tunnel, verifies that it reaches this GroundControl instance, and prints your one-time setup link. The command then exits: you can close Terminal and finish setup in the browser. No inbound management port is opened.
 
-Keep the setup terminal open while using the link. Press Ctrl+C when finished; GroundControl continues running on the server. Run the same command later to reconnect.
+Keep the setup link private. Its fragment contains the one-time owner claim; do not show it in recordings, screenshots or shared terminal logs. After choosing your account, use the sign-in URL without the claim fragment.
 
-After claiming the instance, the browser can guide you through a permanent HTTPS domain or supported publishing option. You can also keep using the private link.
+**Temporary access: configure a permanent domain.** The HTTPS address is public, with account-protected management access. It is not a private network link. Its connector does not automatically restart after a server reboot; recreating it changes the URL and requires updating bookmarks and agent connections. [Quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) have no uptime guarantee and do not support server-sent event streams. Finish permanent-domain setup using a named Cloudflare Tunnel or HTTPS proxy for ongoing use.
 
-**No domain yet** gives you a temporary public HTTPS sign-in link. Its connector runs
-on the server, so you can close the Mac setup terminal after verifying that link.
-It does not automatically restart after a server reboot; recreating it changes
-the URL. [Quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
-have no uptime guarantee and do not support server-sent event streams. Configure a permanent domain with a named Cloudflare Tunnel or
-HTTPS proxy for ongoing use, especially agent connections. If temporary access
-stops, rerun this launcher to reconnect privately, then create a new temporary
-link or finish permanent setup. Your account remains on the server.
+Rerunning setup reuses a working published URL rather than rotating it. It preserves an existing permanent domain and any deliberately saved private-only configuration. If temporary access cannot be established, the installer leaves the healthy instance in place and tells you how to reconnect privately; it does not claim public access succeeded.
+
+### Moving to a permanent address
+
+The temporary tunnel is an initial bridge, not a permanent GroundControl address. A GC-provided subdomain (similar to a hosted platform's default application domain) is a separate product capability and is **not available yet**. Recreating a quick tunnel does not provide that guarantee.
+
+The implemented permanent options use a domain you control:
+
+- **Direct HTTPS with Caddy:** create a DNS-only A record pointing to the server's public IPv4 address. Allow inbound TCP 80 and 443 in both cloud and host firewalls, with your operator's approval. GC installs/configures Caddy on supported Linux hosts but does not open those firewall rules. The current setup check does not support IPv6-only or proxied DNS. Keep the GC management port loopback-only.
+- **Named Cloudflare Tunnel:** use a zone in your Cloudflare account and a securely supplied token with zone read, DNS edit and account tunnel edit permissions. Supply the account ID when the token can see more than one account. GC configures tunnel/DNS and keeps the origin private; no inbound management port is needed.
+
+Existing access is retained until replacement HTTPS, instance identity and OAuth/MCP discovery checks pass. Discovery is not a substitute for testing a real agent login and operation. Verify that yourself before treating the permanent route as production-ready.
+
+### Private-only access and recovery
+
+```bash
+bash groundcontrol-start --remote ubuntu@YOUR_SERVER --private
+```
+
+This skips public tunnel creation and opens an SSH-only browser link. Keep Terminal open while using that private link; Ctrl+C closes the connection without stopping GroundControl. Existing public access is not disabled by this flag. If you want to remove it, use the authenticated access settings after signing in.
 
 Make one access change at a time. If setup is interrupted or reports incomplete
 cleanup, reconnect privately and inspect the connector/DNS state before retrying.
