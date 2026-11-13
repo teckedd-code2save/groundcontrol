@@ -9,6 +9,7 @@ SSH_PORT=""
 VERSION="latest"
 INSTALLER_REF="main"
 IMAGE=""
+PRIVATE=0
 DATA_DIR="${HOME}/.groundcontrol-desktop"
 LOCAL_PORT=""
 CONTROL_DIR=""
@@ -29,7 +30,8 @@ GroundControl setup — run this on your computer
 Options:
   -i PATH          Use this SSH private key file (it stays on your computer)
   -p PORT          SSH port (otherwise use your SSH configuration)
-  --local-port N   Use this port on your computer
+  --private       Keep remote access private through an SSH connection
+  --local-port N   Use this port on your computer (private remote/local mode)
   --version TAG   Select the server image version
   --installer-ref SHA  Pin remote installer to a full commit (testing; default main)
   --dir PATH      Local configuration directory (default ~/.groundcontrol-desktop)
@@ -41,8 +43,9 @@ Engine/Desktop using Linux containers. Remote mode needs OpenSSH and an AMD64
 Linux server with root or passwordless sudo access.
 
 The first link lets you choose your administrator password. Later runs return
-a login link. Remote access stays open while this command is running; Ctrl+C
-closes that connection without stopping GroundControl on the server.
+a login link. Remote setup uses temporary public HTTPS by default and then exits.
+Use --private for an SSH-only link that stays open while this command runs.
+Configure a permanent domain for reliable ongoing access.
 EOF
 }
 
@@ -54,6 +57,7 @@ while [ "$#" -gt 0 ]; do
     --remote) value "$@"; [ -z "$MODE" ] || fail "Choose one target."; MODE=remote; TARGET="$2"; shift 2 ;;
     -i) value "$@"; IDENTITY="$2"; shift 2 ;;
     -p) value "$@"; SSH_PORT="$2"; shift 2 ;;
+    --private) PRIVATE=1; shift ;;
     --local-port) value "$@"; LOCAL_PORT="$2"; shift 2 ;;
     --version) value "$@"; VERSION="$2"; shift 2 ;;
     --installer-ref) value "$@"; INSTALLER_REF="$2"; shift 2 ;;
@@ -91,6 +95,7 @@ if [ -z "$MODE" ]; then
 fi
 
 [ "$INSTALLER_REF" = main ] || [[ "$INSTALLER_REF" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Installer ref must be a full 40-character commit SHA."
+[ "$MODE" = remote ] || [ "$PRIVATE" -eq 0 ] || fail "--private only applies to a remote server; local mode is already private."
 [ "$MODE" = remote ] || [ "$INSTALLER_REF" = main ] || fail "--installer-ref only applies to a remote server."
 
 [[ "$VERSION" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "Invalid version tag."
@@ -164,6 +169,10 @@ if [ "$MODE" = remote ]; then
   SSH_ARGS+=(-S "$CONTROL_SOCKET" -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
   printf 'Connecting to %s using your SSH settings…\n' "$TARGET"
   ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address and account. If this server uses a specific key, rerun setup and enter its path, or use --remote user@server -i /path/to/key. Saved SSH aliases and agent keys remain supported."
+  if [ "$PRIVATE" -eq 0 ]; then
+    printf 'Remote setup will provide a public HTTPS sign-in URL through a temporary outbound tunnel. No inbound management port is opened.\n'
+    printf 'For SSH-only access, cancel now and rerun with --private. Configure a permanent domain for ongoing use.\n'
+  fi
   printf 'Installing GroundControl on %s…\n' "$TARGET"
   cat > "$CONTROL_DIR/install.sh" <<'REMOTE'
 set -eu
@@ -182,11 +191,40 @@ base="https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$2/scrip
 fetch "$base/install" "$task_dir/install"
 fetch "$base/install.sha256" "$task_dir/install.sha256"
 (cd "$task_dir" && sha256sum -c install.sha256) >&2
-if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" --version "$1" --json;
-else sudo -n bash "$task_dir/install" --version "$1" --json; fi
+version="$1"
+private="$3"
+set -- --version "$version" --json
+[ "$private" = 0 ] || set -- "$@" --private
+if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" "$@";
+else sudo -n bash "$task_dir/install" "$@"; fi
 REMOTE
-  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
+  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF") $(quote "$PRIVATE")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
   read_result
+  ACCESS_MODE=$(field accessMode)
+  if [ "$PRIVATE" -eq 0 ] && [ "$ACCESS_MODE" = private ]; then
+    printf 'Your saved private-only choice is preserved. Opening a private SSH connection instead.\n'
+    PRIVATE=1
+  fi
+  if [ "$PRIVATE" -eq 0 ]; then
+    PUBLIC_URL=$(field publicUrl)
+    [[ "$PUBLIC_URL" =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?$ ]] || fail "The installer did not return verified HTTPS access. Rerun with --private to reconnect safely."
+    printf '\nGroundControl is reachable over HTTPS.\n'
+    if [ "$STAGE" = claim_required ]; then
+      printf 'Open this one-time setup link and choose your username and password. Keep it private; do not include it in recordings or shared logs.\n'
+    else
+      printf 'Sign in with your existing account:\n'
+    fi
+    printf '\n  %s%s\n\n' "$PUBLIC_URL" "$PAGE"
+    if [ "$ACCESS_MODE" = quick_tunnel ]; then
+      printf 'Temporary access: configure a permanent domain in onboarding. This is a public HTTPS URL protected by your account, not a private network link.\n'
+      printf 'The connector does not restart automatically after a server reboot. Recreating it changes the URL; bookmarks and agent connections must be updated.\n'
+      printf 'Quick tunnels have no uptime guarantee and do not support server-sent event streams. Use a named tunnel or HTTPS proxy for ongoing use.\n'
+    fi
+    printf 'You can close this terminal. GroundControl and its access connector run on the server.\n'
+    printf 'Next: finish the server scan in onboarding, then connect an existing app or review its deployment prerequisites.\n'
+    printf 'For recovery, rerun setup; use --private if HTTPS access is unavailable.\n'
+    exit 0
+  fi
   REMOTE_PORT=$(printf '%s\n' "$RESULT" | sed -n 's/.*"hostPort":\([0-9][0-9]*\).*/\1/p')
   port "$REMOTE_PORT" || fail "The server returned an invalid port."
   if [ -n "$LOCAL_PORT" ]; then

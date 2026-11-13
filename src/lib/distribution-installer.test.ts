@@ -58,3 +58,11 @@ describe("GroundControl distribution installer contract", () => {
     expect(installer).not.toContain("/root/.ssh");
   });
 });
+
+
+describe("upgrade access reporting", () => {
+  it("reports unchecked unchanged access instead of incorrectly claiming private mode", () => {
+    expect(installer).toContain('ACCESS_MODE="unchanged"; ACCESS_STATUS="unchecked"');
+    expect(installer).toContain('Existing publishing settings were preserved; public access was not checked by this upgrade.');
+  });
+});

@@ -2,7 +2,7 @@
 
 GroundControl's canonical installer is designed to be run **on the authorized target host**. An agent may perform the mechanical installation, but a fresh instance remains unclaimed until a human completes the one-time claim.
 
-For a person starting on their own computer, [`scripts/start`](../scripts/start) provides the local/remote chooser and browser handoff. Remote mode calls this same canonical installer over SSH and creates the local tunnel automatically. Local mode uses the desktop-capable Docker image. See [Start from your computer](./start-from-your-computer.md).
+For a person starting on their own computer, [`scripts/start`](../scripts/start) provides the local/remote chooser and browser handoff. Remote mode calls this same canonical installer over SSH and hands over verified temporary HTTPS by default, then exits. `--private` selects the local SSH tunnel instead. Local mode uses the desktop-capable Docker image. See [Start from your computer](./start-from-your-computer.md).
 
 ## Why the claim boundary exists
 
@@ -38,7 +38,7 @@ sudo bash install --json
 
 CI verifies `scripts/install.sha256` on every change to keep the published checksum in sync.
 
-Progress is written to stderr in JSON mode. stdout contains one final JSON object.
+Progress is written to stderr in JSON mode. stdout contains one final JSON object, including the secret one-time claim token. Capture it privately, never publish raw output or include it in recordings. The installer does not send the token to tunnel-provider logs.
 
 ## Fresh-install result
 
@@ -49,6 +49,9 @@ Example shape:
   "product": "groundcontrol",
   "stage": "claim_required",
   "instanceId": "gc_...",
+  "publicUrl": "https://example.trycloudflare.com",
+  "accessMode": "quick_tunnel",
+  "accessStatus": "ready",
   "claimPath": "/claim#token=gc_claim_...",
   "claimToken": "gc_claim_...",
   "expiresAt": "2026-09-18T14:00:00.000Z",
@@ -66,13 +69,15 @@ The raw token exists only in installer output/browser handoff. GroundControl sto
 
 ## Human claim
 
-GroundControl binds the installer deployment to loopback. Before HTTPS is configured, use an SSH tunnel:
+GroundControl binds the installer deployment to loopback. Its host-only bootstrap helper creates temporary outbound HTTPS and verifies the returned instance identity before handing over the owner link. It does not create an administrator account or expose an unauthenticated publishing API. Recommend a permanent domain; quick-tunnel URLs can change and are not durable agent endpoints.
+
+For `--private` setup or HTTPS recovery, use an SSH tunnel:
 
 ```bash
 ssh -L 3003:127.0.0.1:3003 root@SERVER
 ```
 
-Open the returned claim path on `http://127.0.0.1:3003`. The token is transported in the URL fragment, which is not sent in the initial HTTP request; the claim page reads it client-side and immediately removes it from the address bar.
+Open the returned claim path on the verified HTTPS `publicUrl`, or on `http://127.0.0.1:3003` for explicit private access. The token is transported in the URL fragment, which is not sent in the initial HTTP request; the claim page reads it client-side and immediately removes it from the address bar.
 
 The human chooses the first administrator username/password. Successful claim:
 
