@@ -454,3 +454,25 @@ it("does not imply a retained fallback exists after cleanup or on an unrelated a
   expect(container.textContent).not.toContain("Reconnect any agents");
   expect(container.textContent).toContain("Keep this primary address for your agents");
 });
+
+it("rechecks network read-only and removes stale diagnosis on error while retaining temporary access", async () => {
+  let checks = 0;
+  const fetcher = vi.fn(async (url, options) => {
+    if (options?.method === "POST") {post(options); return response({verification: evidence(temporaryUrl)});}
+    if (String(url).includes("generatedAddress=1")) {
+      if (++checks > 1) return response({error: "Network inspection unavailable"}, false);
+      return response({generatedAddress: {...addressPlan, firewallAssistance: {provider: "azure", hostFirewalls: [{name: "ufw", state: "active", detail: "Old firewall observation"}], hostGuidance: "Inspect first", providerGuidance: "Review NSG"}}});
+    }
+    return response({mode: "quick_tunnel", publicUrl: temporaryUrl});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () => root.render(<PublishInstanceStep onComplete={() => {}} />));
+  await click("Set up free server address");
+  expect(container.textContent).toContain("Old firewall observation");
+  await click("Recheck network");
+  expect(checks).toBe(2);
+  expect(container.textContent).toContain("Network inspection unavailable");
+  expect(container.textContent).not.toContain("Old firewall observation");
+  expect(container.querySelector(`a[href="${temporaryUrl}"]`)).not.toBeNull();
+  expect(post.mock.calls.map(([options]) => JSON.parse(options.body))).toEqual([{action: "verify"}]);
+});

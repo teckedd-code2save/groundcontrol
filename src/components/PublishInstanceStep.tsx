@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import AddressFirewallHelp, { type AddressFirewallAssistance } from "./AddressFirewallHelp";
 import {
   CheckCircle2,
   Cloud,
@@ -44,6 +45,7 @@ type GeneratedAddress = {
   stability: string;
   needs: { code: string; blocking: boolean; detail: string }[];
   canPublish: boolean;
+  firewallAssistance?: AddressFirewallAssistance;
 };
 
 type PublishMethod = "caddy" | "cloudflare" | "quick_tunnel" | "private";
@@ -288,7 +290,7 @@ export default function PublishInstanceStep({
             </div>
             <p className="text-xs leading-relaxed text-muted">{generated.stability}</p>
             <p className="font-mono text-xs text-muted">Server IPv4: {generated.publicIpv4}</p>
-            {generated.needs.filter(need => need.blocking || !["ports_unverified", "caddy_setup"].includes(need.code)).map(need => <div key={need.code} className={`border-l-2 pl-3 text-xs leading-relaxed ${need.blocking ? "border-warning text-warning" : "border-border text-muted"}`}>
+            {generated.needs.filter(need => need.blocking || !["ports_unverified", "caddy_setup", "host_firewall_review", "provider_firewall_review"].includes(need.code)).map(need => <div key={need.code} className={`border-l-2 pl-3 text-xs leading-relaxed ${need.blocking ? "border-warning text-warning" : "border-border text-muted"}`}>
               {need.blocking && <p className="font-medium">Needs attention</p>}
               <p>{need.detail}</p>
             </div>)}
@@ -297,10 +299,11 @@ export default function PublishInstanceStep({
               <summary className="cursor-pointer">Detailed setup requirements</summary>
               {generated.needs.filter(need => !need.blocking && ["ports_unverified", "caddy_setup"].includes(need.code)).map(need => <p key={need.code} className="mt-2">{need.detail}</p>)}
             </details>
+            <AddressFirewallHelp assistance={generated.firewallAssistance} hostname={generated.hostname} publicIpv4={generated.publicIpv4} />
             <button type="button" onClick={() => void publish(true)} disabled={working || generatedBlocked} className="gc-button gc-button-primary w-full">{working ? workingLabel : "Set up & verify address"}</button>
           </>}
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => void previewGenerated()} disabled={working || generatedLoading} className="gc-button gc-button-quiet">{generatedError ? "Retry address check" : "Recheck requirements"}</button>
+            <button type="button" onClick={() => void previewGenerated()} disabled={working || generatedLoading} className="gc-button gc-button-quiet">{generatedError ? "Retry address check" : "Recheck network & requirements"}</button>
             <button type="button" onClick={openCustom} disabled={working} className="gc-button gc-button-quiet">Use my own domain</button>
             <button type="button" onClick={closeGenerated} disabled={working} className="gc-button gc-button-quiet">Back to current access</button>
           </div>

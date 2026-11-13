@@ -7,6 +7,7 @@ vi.mock("./caddy-address-preflight", () => ({
   normalizePublicHostname: (value: string) => value.trim().toLowerCase(),
 }));
 vi.mock("./host-exec", () => ({execOnHost: m.exec}));
+vi.mock("./address-firewall-assistance", () => ({inspectAddressFirewallAssistance: async () => ({provider: "unknown", hostFirewalls: [], hostGuidance: "Review host rules", providerGuidance: "Review provider rules"})}));
 import { inspectGeneratedInstanceAddress, isPublicIpv4, inspectCaddyPortNeeds } from "./generated-instance-address";
 beforeEach(() => {
   vi.resetAllMocks();

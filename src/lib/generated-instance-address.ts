@@ -1,9 +1,10 @@
+import { inspectAddressFirewallAssistance, type AddressFirewallAssistance } from "./address-firewall-assistance";
 import { isIP } from "node:net";
 import { currentPublicIpv4, normalizePublicHostname, verifyCaddyDns, execReadOnlyAddressProbe } from "./caddy-address-preflight";
 import { HttpError } from "./errors";
 
 export type GeneratedAddressNeed = {
-  code: "ports_unverified" | "proxy_conflict" | "port_inspection_unavailable" | "caddy_setup";
+  code: "ports_unverified" | "proxy_conflict" | "port_inspection_unavailable" | "caddy_setup" | "host_firewall_review" | "provider_firewall_review";
   blocking: boolean;
   detail: string;
 };
@@ -15,6 +16,7 @@ export type GeneratedAddressPlan = {
   stability: string;
   needs: GeneratedAddressNeed[];
   canPublish: boolean;
+  firewallAssistance?: AddressFirewallAssistance;
 };
 
 /** Only globally routable unicast IPv4 is eligible for the public-IP-derived default. */
@@ -76,11 +78,13 @@ export async function inspectGeneratedInstanceAddress(
   const hostname = normalizePublicHostname(source === "provider" ? input.providerHostname! : `${publicIpv4}.sslip.io`);
   await verifyCaddyDns(hostname, publicIpv4);
 
-  const needs = await inspectCaddyPortNeeds();
+  const [needs, firewallAssistance] = await Promise.all([inspectCaddyPortNeeds(), inspectAddressFirewallAssistance()]);
+  needs.push({code: "host_firewall_review", blocking: false, detail: firewallAssistance.hostFirewalls.map(item => item.detail).join(" ") + " " + firewallAssistance.hostGuidance});
+  needs.push({code: "provider_firewall_review", blocking: false, detail: firewallAssistance.providerGuidance});
   needs.push({ code: "ports_unverified", blocking: false, detail: "Public inbound TCP ports 80 and 443 must reach this server through host and cloud firewalls. This local check cannot confirm outside reachability. GroundControl will not open firewall ports; check your provider or ask for help if HTTPS verification fails." });
   needs.push({ code: "caddy_setup", blocking: false, detail: "Continuing configures Caddy HTTPS for this public, authenticated dashboard and installs Caddy if needed. Existing Caddy is reused; port 3003 remains private. HTTPS and instance identity must pass verification before the address is ready." });
   return {
-    hostname, publicUrl: `https://${hostname}`, source, publicIpv4, needs,
+    hostname, publicUrl: `https://${hostname}`, source, publicIpv4, needs, firewallAssistance,
     canPublish: !needs.some(need => need.blocking),
     stability: source === "sslip"
       ? "Free server address using shared sslip.io DNS. It stays the same while this public IP is assigned to you, not forever. If the IP changes or is released, stop using the old address and reconnect agents. DNS availability and certificate issuance depend on third parties."

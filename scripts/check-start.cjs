@@ -183,6 +183,9 @@ test('installer next steps preserve machine-readable stdout in JSON mode',()=>{
   assert.deepEqual(JSON.parse(r.stdout),{stage:'claim_required'});
   assert.match(r.stderr,/Services → Install/);
   assert.match(r.stderr,/No optional workload tools were installed/);
+  assert.match(r.stderr,/onboarding’s network review/);
+  assert.match(r.stderr,/approve only.*80\/443/);
+  assert.match(r.stderr,/does not silently change firewalls/);
   assert.match(source,/Install the Docker Compose plugin.*verify docker compose version/);
   assert.equal((source.match(/^ +finish_setup_guidance$|^finish_setup_guidance$/gm)||[]).length,4);
 });

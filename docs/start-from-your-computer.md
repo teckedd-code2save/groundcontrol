@@ -150,3 +150,33 @@ checks the checksum before running it. It does not upgrade an existing healthy
 instance. Use a disposable host or an explicitly reset test instance for fresh-install
 acceptance; retaining Docker means this is not an absent-Docker prerequisite test.
 Keep the one-time owner setup link, passwords and SSH key contents out of recordings.
+
+## Review network access before setting up a server address
+
+The free-server-address preview includes a read-only **Review network access** panel.
+It reports detected UFW/firewalld state and a provider hint, not proof that Internet
+traffic reaches your server. An unavailable check is unknown, not an open firewall;
+cloud rules are not inspected or changed automatically. Local/desktop setup is unchanged.
+
+1. Preserve existing access, including the temporary link if enabled. Review inbound TCP **80 and 443** at the host,
+   VPS/cloud firewall and any router or subnet filter. Preserve SSH and keep port
+   **3003 private**. Do not reset or disable a firewall to make setup work.
+2. Expand **Firewall steps and approval**. Use the detected provider guide or choose
+   the guide for your server. Selecting a guide does not connect an account.
+   For Azure, review both NIC and subnet NSGs and effective rules. A proposed rule
+   must target this VM's private IP, not its public IP, with an unused priority after
+   checking intentional denies and shared scope. See Microsoft's
+   [rule fields](https://learn.microsoft.com/en-us/azure/virtual-network/manage-network-security-group)
+   and [effective-rule diagnosis](https://learn.microsoft.com/en-us/azure/virtual-network/diagnose-network-traffic-filter-problem).
+   Other providers and self-hosted networks use their own control panels and rules;
+   no Azure account is required.
+3. **Copy review request** prepares a read-only-first request for your operator or
+   assistant, including the proposed hostname and public IP. It neither sends the
+   request nor authorizes changes. Before any mutation, review and explicitly approve
+   the exact resources, source/destination, ports, priority and rollback. Public web
+   ingress exposes the authenticated sign-in endpoint to the Internet.
+4. After any approved changes, select **Recheck network & requirements**, then
+   **Set up & verify address**. GroundControl checks the public HTTPS URL from the
+   server, not an independent external network. Open the new address from another
+   network/device to verify Internet access. Host firewall state alone cannot prove
+   reachability. Keep any temporary fallback until that check succeeds.
