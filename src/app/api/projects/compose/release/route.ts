@@ -1,3 +1,4 @@
+import { requireCandidateConfigOwner, rejectCandidateLegacyMutation } from "@/lib/candidate-config-access";
 import { agentComposeCommand } from "@/lib/agent-health";
 import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
 import { NextRequest, NextResponse } from "next/server";
@@ -35,12 +36,16 @@ function writeOverrideCommand(projectPath: string, content: string): string {
  */
 export async function POST(req: NextRequest) {
   try {
-    requireAuth(req);
+    const user = requireAuth(req);
     const body = await req.json();
     const projectSlug = String(body.projectSlug || "");
     if (!isValidProjectSlug(projectSlug)) {
       throw new HttpError("A valid projectSlug is required", 400);
     }
+    const candidateProject = await prisma.project.findFirst({ where: { slug: projectSlug } });
+    if (candidateProject) await rejectCandidateLegacyMutation(user.id, candidateProject.id);
+    const candidateDeployment = await prisma.enrolledDeployment.findFirst({ where: { slug: projectSlug }, select: { legacyProjectId: true } });
+    if (candidateDeployment?.legacyProjectId) await rejectCandidateLegacyMutation(user.id, candidateDeployment.legacyProjectId);
     const images: unknown[] = Array.isArray(body.images) ? body.images : [];
     if (images.length === 0) {
       throw new HttpError("At least one image digest is required to release.", 400);
@@ -59,6 +64,10 @@ export async function POST(req: NextRequest) {
     const vps = agentTarget ? agentTarget.vps : await getActiveVps();
     const resolved = agentTarget ? { projectPath: agentTarget.projectPath! } : await resolveComposeProjectPath(projectSlug, undefined, vps);
     const projectPath = resolved.projectPath;
+    const pathDeployment = await prisma.enrolledDeployment.findFirst({ where: { sourcePath: projectPath }, select: { legacyProjectId: true } });
+    if (pathDeployment?.legacyProjectId) await rejectCandidateLegacyMutation(user.id, pathDeployment.legacyProjectId);
+    const pathProject = await prisma.project.findFirst({ where: { path: projectPath }, select: { id: true } });
+    if (pathProject) await rejectCandidateLegacyMutation(user.id, pathProject.id);
 
     const { content, refs } = buildDigestImageOverride(
       parsedImages.map((entry) => ({ service: entry.service, digest: entry.digest }))
@@ -124,6 +133,7 @@ export async function POST(req: NextRequest) {
             })
           : null;
         if (profile) {
+          await requireCandidateConfigOwner(user.id, profile.projectId, profile.id);
           await setLocalEnvValues(profile.id, imageEnv, [], "");
         }
       }

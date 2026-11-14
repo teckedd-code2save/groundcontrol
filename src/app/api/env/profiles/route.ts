@@ -1,3 +1,4 @@
+import { requireCandidateConfigOwner } from "@/lib/candidate-config-access";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -58,7 +59,7 @@ async function resolveReleaseDeploymentId(projectId: number, deploymentId: numbe
 
 export async function GET(req: NextRequest) {
   try {
-    requireAuth(req);
+    const user = requireAuth(req);
     const { searchParams } = new URL(req.url);
     const projectId = Number(searchParams.get("projectId") || 0);
     const deploymentId = Number(searchParams.get("deploymentId") || 0);
@@ -74,6 +75,7 @@ export async function GET(req: NextRequest) {
     if (!project) {
       return NextResponse.json({ error: "projectId or deploymentId is required" }, { status: 400 });
     }
+    await requireCandidateConfigOwner(user.id, project.id);
     const releaseDeploymentId = await resolveReleaseDeploymentId(project.id, deploymentId);
 
     const profile = environmentSlug
@@ -85,6 +87,7 @@ export async function GET(req: NextRequest) {
           deploymentId: releaseDeploymentId,
         });
     if (!profile) return NextResponse.json({ error: "Deployment environment not found" }, { status: 404 });
+    await requireCandidateConfigOwner(user.id, profile.projectId, profile.id);
     const [storedValues, storedComponentValues, environments] = await Promise.all([
       getProfileValues(profile.id),
       getProfileValuesByComponent(profile.id),
@@ -103,12 +106,13 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    requireAuth(req);
+    const user = requireAuth(req);
     const body = await req.json();
     const projectId = Number(body.projectId || 0);
     if (!projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) return NextResponse.json({ error: "project not found" }, { status: 404 });
+    await requireCandidateConfigOwner(user.id, project.id);
     const releaseDeploymentId = await resolveReleaseDeploymentId(projectId, Number(body.deploymentId || 0));
 
     if (body.action === "create-environment") {
@@ -160,6 +164,7 @@ export async function POST(req: NextRequest) {
       ? await prisma.deploymentEnvProfile.findFirst({ where: { id: Number(body.profileId), projectId } })
       : await prisma.deploymentEnvProfile.findFirst({ where: { projectId, slug: environmentSlug } });
     if (!existingProfile) return NextResponse.json({ error: "Deployment environment not found" }, { status: 404 });
+    await requireCandidateConfigOwner(user.id, existingProfile.projectId, existingProfile.id);
     const existingSchema = parseEnvJson(existingProfile?.schemaJson);
     let schema = mergeSchema(existingSchema, submittedSchema);
     let profile = await upsertEnvProfileForProject({

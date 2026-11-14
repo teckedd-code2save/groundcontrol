@@ -71,6 +71,7 @@ export function runtimeCapabilities(deployment: AgentRuntimeDeployment) {
   const runtime = deploymentRuntime(deployment);
   const enrollment = jsonObject(JSON.stringify(jsonObject(deployment.metadataJson).agentEnrollment));
   const enrolledByAgent = Boolean(jsonObject(deployment.metadataJson).agentEnrollment);
+  const publicSourceReady = enrolledByAgent && enrollment.firstLaunchState === "success" && (!enrollment.sourceUpdateState || enrollment.sourceUpdateState === "success") && typeof enrollment.recipeHash === "string" && process.env.GC_AGENT_ENROLLMENT_PROPOSALS === "1";
   const firstLaunchReady = enrolledByAgent && enrollment.firstLaunchState === "pending" && typeof enrollment.recipeHash === "string" && /^[a-f0-9]{64}$/.test(enrollment.recipeHash) && process.env.GC_AGENT_ENROLLMENT_PROPOSALS === "1";
   const host = Boolean(deployment.vpsConfigId);
   const compose = runtime === "compose" && Boolean(composeDirectory(deployment));
@@ -86,7 +87,7 @@ export function runtimeCapabilities(deployment: AgentRuntimeDeployment) {
       "deployment.first_launch": support(firstLaunchReady, "An enabled, pending owner-approved enrollment recipe is required; completed or uncertain launches cannot be replayed."),
       "deployment.restart": support((!enrolledByAgent || enrollment.firstLaunchState === "success") && (compose || runtime === "container"), "This runtime has no supported container restart operation."),
       "deployment.redeploy": ongoing(compose || publish || recreate, runtime === "container" ? "No recreate specification is recorded for this standalone container; use deployment.restart." : "A saved source, build recipe and separate static document root are required."),
-      "deployment.source.deploy": ongoing((compose || publish) && linkedSource, "A deployable runtime and a linked GitHub repository are required."),
+      "deployment.source.deploy": enrolledByAgent ? support(compose && publicSourceReady, "A successfully launched public-source recipe without an unresolved update is required; submit an exact commit SHA with unchanged Compose/configuration/access.") : ongoing((compose || publish) && linkedSource, "A deployable runtime and a linked GitHub repository are required."),
       "deployment.build_publish": ongoing(compose && linkedSource, "Image builds require a Compose deployment and a linked GitHub repository."),
       "deployment.release": ongoing(compose, "Digest releases require a Compose deployment."),
     },

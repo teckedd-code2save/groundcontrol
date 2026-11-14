@@ -87,3 +87,28 @@ it("persists actionable blockers but does not accept unsafe Compose", async () =
   expect(review.plan.readyForOwnerReview).toBe(false);
   await expect(acceptOwnerDeploymentProposal(f.user.id, f.proposal.id, { reviewId: review.reviewId, reviewHash: review.reviewHash })).rejects.toThrow("blockers");
 });
+it("binds only candidate config refs, rejects stale saved config and links the dedicated project",async()=>{
+ vi.stubEnv("GROUNDCONTROL_SECRET","a".repeat(64));
+ const {saveProposalConfiguration}=await import("./agent-proposal-configuration");
+ const {reviewOwnerDeploymentProposal,acceptOwnerDeploymentProposal}=await import("./agent-enrollment-review");
+ const f=await fixture();
+ const saved=await saveProposalConfiguration(f.user.id,f.proposal.id,{contentHash:f.proposal.contentHash,expectedRevision:0,values:[{service:"web",key:"QLOO_API_KEY",value:"SYNTHETIC_SECRET",required:true}]});
+ const stale=await reviewOwnerDeploymentProposal(f.user.id,f.proposal.id,f.input);
+ expect(JSON.stringify(stale)).not.toContain("SYNTHETIC_SECRET");
+ expect(stale.configuration?.configuration.bindings[0]).toMatchObject({service:"web",key:"QLOO_API_KEY",version:1});
+ await saveProposalConfiguration(f.user.id,f.proposal.id,{contentHash:f.proposal.contentHash,expectedRevision:1,values:[{service:"web",key:"QLOO_API_KEY",value:"SYNTHETIC_CHANGED",required:true}]});
+ await expect(acceptOwnerDeploymentProposal(f.user.id,f.proposal.id,{reviewId:stale.reviewId,reviewHash:stale.reviewHash})).rejects.toThrow(/configuration changed/);
+ const fresh=await reviewOwnerDeploymentProposal(f.user.id,f.proposal.id,f.input);
+ expect(fresh.plan.readyForOwnerReview).toBe(true);
+ const accepted=await acceptOwnerDeploymentProposal(f.user.id,f.proposal.id,{reviewId:fresh.reviewId,reviewHash:fresh.reviewHash});
+ expect((await db.enrolledDeployment.findUniqueOrThrow({where:{id:accepted.deploymentId}})).legacyProjectId).toBe(saved.projectId);
+ expect((await db.agentDeploymentRecipe.findUniqueOrThrow({where:{deploymentId:accepted.deploymentId}})).recipeJson).not.toMatch(/SYNTHETIC|enc:v1/);
+});
+it("blocks required empty config before owner acceptance",async()=>{
+ const {saveProposalConfiguration}=await import("./agent-proposal-configuration");
+ const {reviewOwnerDeploymentProposal}=await import("./agent-enrollment-review");
+ const f=await fixture();
+ await saveProposalConfiguration(f.user.id,f.proposal.id,{contentHash:f.proposal.contentHash,expectedRevision:0,values:[{service:"web",key:"QLOO_API_KEY",value:"",required:true}]});
+ const review=await reviewOwnerDeploymentProposal(f.user.id,f.proposal.id,f.input);
+ expect(review.plan.readyForOwnerReview).toBe(false);expect(review.plan.blockers.some(b=>b.field==="configuration")).toBe(true);
+});

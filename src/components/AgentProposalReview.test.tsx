@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentProposalReview } from "./AgentProposalReview";
+vi.mock("./AgentProposalConfiguration", () => ({ AgentProposalConfiguration: () => <div>Candidate configuration</div> }));
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
 const context = { proposal: { id: "proposal1", contentHash: "abc", status: "pending", expiresAt: "2026-11-15", input: { repositoryUrl: "https://github.com/example/app", revision: "a".repeat(40), composePath: "compose.yml", workloadName: "app", serverId: 1 } }, servers: [{ id: 1, name: "Test server" }] };
 const review = { reviewId: "review1", reviewHash: "hash", expiresAt: "2026-11-14T15:00:00Z", sourceCompose: "services:\n  web:\n    image: example", plan: { readyForOwnerReview: true, blockers: [], limitations: ["Not a sandbox."], deploymentPath: "/srv/groundcontrol/deployments/proposal-test", services: ["web"] }, host: { id: 1, name: "Test server" }, notice: "Review only" };

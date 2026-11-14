@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./host-exec", () => ({ execOnWorkloadTarget: vi.fn() }));
 vi.mock("./vps", () => ({ shQuote: (value: string) => `'${value.replace(/'/g, `'"'"'`)}'` }));
 vi.mock("./agent-health", () => ({ probePublicUrl: vi.fn() }));
-import { executeAgentFirstDeploy, prepareFirstDeployExecution, type ApprovedFirstDeployRecipe } from "./agent-first-deploy-execution";
+import { executeAgentFirstDeploy, executeAgentPublicSourceUpdate, prepareAgentPublicSourceUpdate, prepareFirstDeployExecution, type ApprovedFirstDeployRecipe } from "./agent-first-deploy-execution";
 import { planAgentFirstDeploy } from "./agent-first-deploy-plan";
 import type { VpsConnection } from "./vps";
 function recipe(yaml = "services:\n  app:\n    build: .\n    ports: ['127.0.0.1:8080:80']\n"): ApprovedFirstDeployRecipe {
@@ -95,5 +95,78 @@ describe("approved first deploy runner", () => {
   const run = vi.fn().mockResolvedValueOnce(ready).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok).mockResolvedValueOnce(owned()).mockResolvedValue({...ok,stdout:"verified"}); const publicProbe = vi.fn().mockResolvedValue({checked:true,healthy:false});
   const result = await executeAgentFirstDeploy({...recipe(),publicUrl:"https://app.example.test/health"},host,async()=>{}, {run,publicProbe});
   expect(result.loopbackVerified).toBe(true); expect(result.success).toBe(false); expect(publicProbe).toHaveBeenCalledOnce();
+ });
+});
+
+describe("accepted public code-only source updates",()=>{
+ const update = {deploymentId:7,operationId:"operation_12345",commitSha:"b".repeat(40)};
+ it("preserves policy, project and named volumes while generating an exclusive release directory",()=>{
+  const approved = recipe("services:\n  app:\n    build: .\n    ports: ['127.0.0.1:8080:80']\n    volumes: ['data:/data']\nvolumes:\n  data: {}\n");
+  const before = JSON.stringify(approved);
+  const original = prepareFirstDeployExecution(approved);
+  const result = prepareAgentPublicSourceUpdate(approved,update);
+  expect(result.prepared.composeProject).toBe(original.composeProject);
+  expect(result.prepared.plan.deploymentPath).not.toBe(original.plan.deploymentPath);
+  expect(result.prepared.plan.deploymentPath).toMatch(/\/release-[a-f0-9]{64}$/);
+  expect(result.prepared.effectiveYaml).toContain("data:/data");
+  expect(result.prepared.effectiveYaml).toContain(update.commitSha);
+  expect(result.prepared.effectiveYaml).toContain(result.prepared.plan.deploymentPath);
+  expect(result.recipe.composeYaml).toBe(approved.composeYaml);
+  expect(result.recipe.budget).toEqual(approved.budget);
+  expect(JSON.stringify(approved)).toBe(before);
+  expect(prepareAgentPublicSourceUpdate(approved,{...update,operationId:"operation_other"}).prepared.plan.deploymentPath).not.toBe(result.prepared.plan.deploymentPath);
+ });
+ it.each(["main","v1.0","abc"])("rejects unpinned update %s",commitSha=>expect(()=>prepareAgentPublicSourceUpdate(recipe(),{...update,commitSha})).toThrow(/immutable/));
+ it("rejects changed approved recipe instead of recomputing trust",()=>{
+  const r=recipe(); r.composeYaml += "# changed";
+  expect(()=>prepareAgentPublicSourceUpdate(r,update)).toThrow(/changed/);
+ });
+ it("checks new SHA and original Compose bytes before launch and keeps namespace",async()=>{
+  const approved=recipe();
+  const run=vi.fn().mockResolvedValueOnce(ready).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok).mockResolvedValueOnce(owned()).mockResolvedValueOnce({...ok,stdout:"verified"});
+  const result=await executeAgentPublicSourceUpdate(approved,update,host,async()=>{}, {run});
+  expect(result.success).toBe(true); expect(result.commitSha).toBe(update.commitSha);
+  expect(run.mock.calls[1][0]).toContain(update.commitSha); expect(run.mock.calls[1][0]).toContain("sha256sum");
+  expect(result.composeProject).toBe(prepareFirstDeployExecution(approved).composeProject);
+ });
+ it("stops at checkout when new revision changes Compose",async()=>{
+  const run=vi.fn().mockResolvedValueOnce(ready).mockResolvedValueOnce({...ok,code:1});
+  const result=await executeAgentPublicSourceUpdate(recipe(),update,host,async()=>{}, {run});
+  expect(result.success).toBe(false); expect(run).toHaveBeenCalledTimes(2); expect(result.error).toContain("recipe verification");
+ });
+});
+
+describe("private owner runtime configuration",()=>{
+ function configured(){const r=recipe();r.configuration={version:1,projectId:1,profileId:2,bindings:[{service:"app",key:"API_KEY",required:true,versionId:3,version:1}]};return r;}
+ function runner(secret="synthetic-$SECRET#'value") {return vi.fn().mockImplementation(async (command:string,...rest:unknown[])=> { void rest; return command.includes("printf prerequisites-ready")?ready:command.includes("docker inspect --format")?owned():command.includes("code=$(curl")?{...ok,stdout:"verified"}:command.includes("cat >")?{...ok,stderr:secret}:ok; });}
+ it("uses private stdin and a directory outside every source build context",async()=>{
+  const r=configured(),run=runner(), evidence=vi.fn();const secret="synthetic-$SECRET#'value";
+  const result=await executeAgentFirstDeploy(r,host,evidence,{run,resolveRuntimeConfiguration:async()=>({app:{API_KEY:secret}})});
+  expect(result.success).toBe(true);
+  const calls=run.mock.calls;expect(calls.some(call=>call[3]===`API_KEY=${secret}\n`)).toBe(true);
+  expect(calls.map(call=>call[0]).join("\n")).not.toContain(secret);
+  expect(JSON.stringify(evidence.mock.calls)+JSON.stringify(result)).not.toContain(secret);
+  const p=prepareFirstDeployExecution(r);expect(p.effectiveYaml).toContain(`${p.plan.deploymentPath}-runtime/.groundcontrol/env/app.env`);expect(p.effectiveYaml).toContain('format: raw');
+ });
+ it("accepts only approved environment key references",()=>{
+  const r=configured();r.composeYaml="services:\n  app:\n    image: nginx\n    ports: ['127.0.0.1:8080:80']\n    environment:\n      API_KEY: ${API_KEY}\n";r.recipeHash=planAgentFirstDeploy(r).recipeHash;
+  expect(prepareFirstDeployExecution(r).effectiveYaml).not.toContain('${API_KEY}');
+  r.configuration=undefined;expect(()=>prepareFirstDeployExecution(r)).toThrow(/owner-approved/);
+ });
+ it.each([{app:{API_KEY:"x",EXTRA:"secret"}},{app:{API_KEY:"first\nsecond"}},{}])("rejects mismatched or multiline config without exposing values",async values=>{
+  const run=runner();const result=await executeAgentFirstDeploy(configured(),host,async()=>{},{run,resolveRuntimeConfiguration:async()=>values as Record<string,Record<string,string>>});
+  expect(result.success).toBe(false);expect(run.mock.calls.some(call=>call[0].includes(" up -d"))).toBe(false);
+ });
+ it("preserves private configuration injection on public source updates",async()=>{
+  const run=runner(),r=configured();const input={deploymentId:1,operationId:"operation_config",commitSha:"b".repeat(40)};
+  const p=prepareAgentPublicSourceUpdate(r,input).prepared;
+  expect(p.effectiveYaml).toContain(`${p.plan.deploymentPath}-runtime/.groundcontrol/env/app.env`);
+  const result=await executeAgentPublicSourceUpdate(r,input,host,async()=>{},{run,resolveRuntimeConfiguration:async()=>({app:{API_KEY:"secret"}})});
+  expect(result.success).toBe(true);
+ });
+ it("never surfaces secret-bearing host errors",async()=>{
+  const run=runner();run.mockImplementation(async(command:string)=>command.includes("printf prerequisites-ready")?ready:command.includes("cat >")?{...ok,code:1,stderr:"synthetic-secret"}:ok);
+  const result=await executeAgentFirstDeploy(configured(),host,async()=>{},{run,resolveRuntimeConfiguration:async()=>({app:{API_KEY:"synthetic-secret"}})});
+  expect(result.success).toBe(false);expect(JSON.stringify(result)).not.toContain("synthetic-secret");
  });
 });

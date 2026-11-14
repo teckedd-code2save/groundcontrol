@@ -1,3 +1,5 @@
+import { captureProposalConfiguration } from "./agent-proposal-configuration";
+import type { FirstLaunchConfiguration } from "./agent-first-launch-config";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -83,11 +85,14 @@ export async function reviewOwnerDeploymentProposal(userId: number, proposalId: 
   if (!plan.services.includes(input.health.service)) plan.blockers.push({ field: "health.service", message: "Choose a service present in the pinned Compose file." });
   if (plan.services.length > input.budget.maxServices) plan.blockers.push({ field: "budget.maxServices", message: "The Compose service count exceeds your approved budget." });
   plan.readyForOwnerReview = plan.blockers.length === 0;
+  const candidateConfig = await captureProposalConfiguration(userId, proposalId, plan.services);
+  if (candidateConfig?.missing.length) plan.blockers.push({ field: "configuration", message: `Missing required configuration: ${candidateConfig.missing.map(item => `${item.service}:${item.key}`).join(", ")}` });
   const persisted = await prisma.agentDeploymentProposal.findUniqueOrThrow({ where: { id: proposalId } });
   const envelope = {
     version: 1, proposalContentHash: proposal.contentHash, grantHash: persisted.grantHash,
+    configurationRevision: candidateConfig?.revision ?? null,
     host: { ...host, updatedAt: host.updatedAt.toISOString() },
-    recipe: { proposalId, repositoryUrl: proposal.input.repositoryUrl, commitSha: proposal.input.revision, composeFile: proposal.input.composePath, composeYaml, recipeHash: plan.recipeHash, health: input.health, appAccess: input.appAccess, budget: input.budget, allowUnboundedBuildResources: input.allowUnboundedBuildResources },
+    recipe: { proposalId, repositoryUrl: proposal.input.repositoryUrl, commitSha: proposal.input.revision, composeFile: proposal.input.composePath, composeYaml, recipeHash: plan.recipeHash, ...(candidateConfig ? { configuration: candidateConfig.configuration } : {}), health: input.health, appAccess: input.appAccess, budget: input.budget, allowUnboundedBuildResources: input.allowUnboundedBuildResources },
     plan,
   };
   try { prepareFirstDeployExecution(envelope.recipe); }
@@ -95,7 +100,7 @@ export async function reviewOwnerDeploymentProposal(userId: number, proposalId: 
   plan.readyForOwnerReview = plan.blockers.length === 0;
   const reviewJson = JSON.stringify(envelope), reviewHash = hash(reviewJson);
   const review = await prisma.agentDeploymentReview.create({ data: { proposalId, userId, reviewJson, reviewHash, expiresAt: new Date(Math.min(Date.now()+15*60*1000, Date.parse(proposal.expiresAt))) } });
-  return { reviewId: review.id, reviewHash, expiresAt: review.expiresAt.toISOString(), proposal, sourceCompose: composeYaml, plan, host: envelope.host, health: input.health, appAccess: input.appAccess, budget: input.budget, allowUnboundedBuildResources: input.allowUnboundedBuildResources, notice: "Accepting reserves this deployment only. It does not run code, open ports, or grant agent access. Builds execute untrusted code; build CPU/RAM and daemon-side duration are not bounded. The execution wait is limited; a timeout requires inspection before retrying." };
+  return { reviewId: review.id, reviewHash, expiresAt: review.expiresAt.toISOString(), proposal, sourceCompose: composeYaml, configuration: candidateConfig, plan, host: envelope.host, health: input.health, appAccess: input.appAccess, budget: input.budget, allowUnboundedBuildResources: input.allowUnboundedBuildResources, notice: "Accepting reserves this deployment only. It does not run code, open ports, or grant agent access. Builds execute untrusted code; build CPU/RAM and daemon-side duration are not bounded. The execution wait is limited; a timeout requires inspection before retrying." };
 }
 
 type ReviewEnvelope = Awaited<ReturnType<typeof reviewOwnerDeploymentProposal>>;
@@ -116,9 +121,24 @@ export async function acceptOwnerDeploymentProposal(userId: number, proposalId: 
     if (!proposal || proposal.expiresAt <= new Date() || hash(proposal.inputJson) !== proposal.contentHash) fail("Proposal expired or changed");
     const grant = await tx.oAuthGrant.findUnique({ where: { id: proposal.grantId } });
     if (!grant || grant.userId !== userId || grant.revokedAt || !grant.scope.split(" ").includes("deployment:propose") || deploymentProposalGrantHash(grant) !== proposal.grantHash) fail("Proposal authorization changed; request a new proposal");
-    const envelope = JSON.parse(review.reviewJson) as { version: number; proposalContentHash: string; grantHash: string; host: { id: number }; recipe: ApprovedFirstDeployRecipe; plan: ReviewEnvelope["plan"] };
+    const envelope = JSON.parse(review.reviewJson) as { version: number; proposalContentHash: string; grantHash: string; host: { id: number }; recipe: ApprovedFirstDeployRecipe & { configuration?: FirstLaunchConfiguration }; configurationRevision?: number | null; plan: ReviewEnvelope["plan"] };
     if (envelope.proposalContentHash !== proposal.contentHash || envelope.grantHash !== proposal.grantHash || !envelope.plan.readyForOwnerReview || envelope.plan.blockers.length) fail("Review contains unresolved blockers");
     prepareFirstDeployExecution(envelope.recipe);
+    const mapping = await tx.agentProposalConfiguration.findUnique({ where: { proposalId } });
+    const configuration = envelope.recipe.configuration;
+    if (mapping || configuration) {
+      if (!mapping || !configuration || mapping.userId !== userId || mapping.projectId !== configuration.projectId || mapping.profileId !== configuration.profileId || mapping.revision !== envelope.configurationRevision) fail("Review configuration changed; review again");
+      const profile = await tx.deploymentEnvProfile.findUnique({ where: { id: mapping.profileId } });
+      const project = await tx.project.findUnique({ where: { id: mapping.projectId } });
+      if (!profile || profile.projectId !== mapping.projectId || profile.providerType !== "local" || !project || project.path !== envelope.plan.deploymentPath) fail("Review configuration project changed");
+      const current = await tx.deploymentEnvValue.findMany({ where: { profileId: mapping.profileId } });
+      if (current.length !== configuration.bindings.length) fail("Review configuration changed; review again");
+      for (const binding of configuration.bindings) {
+        const version = await tx.deploymentEnvValueVersion.findUnique({ where: { id: binding.versionId } });
+        const value = current.find(item => item.component === binding.service && item.key === binding.key);
+        if (!version || version.profileId !== mapping.profileId || version.component !== binding.service || version.key !== binding.key || version.version !== binding.version || version.state !== "active" || !value || value.version !== binding.version || value.value !== version.value) fail("Review configuration changed; review again");
+      }
+    }
     const host = await tx.vpsConfig.findUnique({ where: { id: envelope.host.id }, select: hostSelect });
     if (!host || JSON.stringify({ ...host, updatedAt: host.updatedAt.toISOString() }) !== JSON.stringify(envelope.host)) fail("Server configuration changed; review again");
     const collision = await tx.enrolledDeployment.findFirst({ where: { vpsConfigId: host.id, sourcePath: envelope.plan.deploymentPath } });
@@ -127,6 +147,7 @@ export async function acceptOwnerDeploymentProposal(userId: number, proposalId: 
     const composeProject = `gcf_${hash(proposalId).slice(0,24)}`;
     const deployment = await tx.enrolledDeployment.create({ data: {
       name: proposalInput.workloadName, slug: `${proposalInput.workloadName}-${hash(proposalId).slice(0,16)}`, kind: "compose", managementMode: "managed", status: "pending", vpsConfigId: host.id,
+      legacyProjectId: mapping?.projectId,
       sourcePath: envelope.plan.deploymentPath, composePath: `${envelope.plan.deploymentPath}/.groundcontrol/effective-compose.yml`,
       metadataJson: JSON.stringify({ composeProject, agentEnrollment: { proposalId, recipeHash: review.reviewHash, firstLaunchState: "pending" } }),
     } });

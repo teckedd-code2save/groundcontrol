@@ -2,21 +2,30 @@
 
 Status: release gate, not a record of tests passed.
 
-## A useful real service
+## Actual rehearsal target: Unstressed
 
-Use a small public **release evidence board**: a web app listing releases, health
-checks and human-readable change summaries for a project. Start with one usable
-screen and a health endpoint; Hermes adds a meaningful feature after first launch.
-Use synthetic example release data, never customer records or secrets. The app
-must be independent of GroundControl so opening it proves an application was
-actually deployed rather than showing the GC dashboard.
+Use the owner's `teckedd-code2save/swipe-to-plan` application, not a synthetic
+service. Preserve its existing production deployment, domain, secrets and data.
+GroundControl is already set up: show its interface, do not reset GC or SSH.
 
-The recorded task is: “Take this repository, propose its deployment on this
-server, tell me what information is missing, and get it working through
-GroundControl. Then add a filter for failed checks and release that improvement.”
-Do not prepare a hidden enrollment to make this appear supported. Pin the exact
-repository revision shown in each approval. Keep rehearsal and recorded service
-identities separate so the recording exercises first enrollment again.
+The existing production `compose.yml` contains production-specific paths and
+identity. Prepare an isolated reviewed Compose recipe, dedicated named data
+volume, unique Compose project and new subdomain. Do not use the development
+PostgreSQL `docker-compose.yml` as if it were the application deployment.
+The app serves port 4000 and `/api/health`; verify the exact target revision before
+using these facts. Required provider configuration is entered explicitly by the
+owner for this candidate. Do not copy production credentials or data.
+
+Rehearse the deployment prerequisites together first. Then inventory and confirm
+reset of only the disposable app deployment/data. Keep GC, its access and SSH.
+Record the fresh sequence: repository → candidate configuration → domain/DNS
+preparation → first launch → publish/verify app HTTPS → implement one or two
+selected real features → exact-SHA source deploy → browser verification. Do not
+prebuild those features or represent rehearsal output as the recorded run.
+
+Feature selection belongs to the owner and the actual first-customer need. This
+checklist does not invent the feature or claim live Qloo/model/OAuth integrations
+work before exercising them with authorized candidate configuration.
 
 ## Gate 1: access and native Hermes
 
@@ -56,8 +65,8 @@ identities separate so the recording exercises first enrollment again.
 
 ## Gate 4: evolution and failure behavior
 
-- Hermes makes and tests the failed-check filter in the actual repository.
-- Show changed revision and tests; approve release through GC, not a hidden SSH
+- Hermes makes and tests the selected real Unstressed feature in the actual repository.
+- Show changed revision and tests; approve exact-SHA source deploy through GC, not a hidden SSH
   command. Confirm browser behavior and revision after release.
 - Reusing an operation key must not start another deployment.
 - Interrupt a disposable rehearsal operation safely; unknown results must be
@@ -74,3 +83,18 @@ with reconstructed logs. Capture bugs as bugs and retest the corrected build.
 The final report must distinguish **unit-tested**, **integration-tested** and
 **live-rehearsed**, and include any manual setup. No promise of “no issues” follows
 from a green unit suite.
+
+## Candidate implementation limits to surface before starting
+
+- Runtime values use candidate-only encrypted profiles, immutable version binding,
+  private stdin materialization outside the build context, and Compose 2.30+ raw
+  service env files. Multiline values/build secrets need another reviewed path.
+- Code-only source updates preserve the original Compose bytes, approved config,
+  host, volume namespace and public route. Deployment-policy changes need review.
+- App domains currently require an existing supported file-managed Caddy layout,
+  direct IPv4 DNS, no unverified AAAA path and a TXT ownership challenge. Caddy
+  installation and DNS/NSG/firewall changes are separate owner-authorized steps.
+- Publisher verifies trusted TLS, route marker and health from the server;
+  independent browser/off-host access and user journey are separate evidence.
+- Uncertain outcomes are inspected, not blindly replayed. Production data, GC
+  management identity and SSH are never part of the disposable app reset.

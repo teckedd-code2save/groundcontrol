@@ -29,3 +29,9 @@ describe("agent first-deploy static planner", () => {
   });
   it("bounds YAML input", () => expect(review("#".repeat(256 * 1024 + 1)).blockers.some(b => b.field === "composeYaml")).toBe(true));
 });
+it.each(["no-new-privileges:true","no-new-privileges"])("allows only explicit privilege-reduction security option %s",option=>{
+ expect(service(`image: nginx\nsecurity_opt: ['${option}']`).readyForOwnerReview).toBe(true);
+});
+it.each(["[no-new-privileges:false]","[no-new-privileges:true, seccomp:unconfined]","no-new-privileges:true","[]"])("rejects other security_opt shape %s",option=>{
+ expect(service(`image: nginx\nsecurity_opt: ${option}`).readyForOwnerReview).toBe(false);
+});

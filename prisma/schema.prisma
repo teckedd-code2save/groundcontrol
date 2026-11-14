@@ -921,3 +921,38 @@ model AgentDeploymentRecipe {
   updatedAt DateTime @updatedAt
   @@unique([vpsConfigId, deploymentPath])
 }
+
+// Metadata only. Values stay in the existing encrypted deployment environment store.
+model AgentProposalConfiguration {
+  proposalId String @id
+  projectId Int @unique
+  profileId Int @unique
+  userId Int
+  revision Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Owner-approved app route publication; no DNS/firewall or GC identity mutations.
+model AgentAppDomainPublication {
+  id String @id @default(cuid())
+  deploymentId Int
+  vpsConfigId Int
+  userId Int
+  hostname String
+  idempotencyKey String
+  challenge String
+  status String @default("reviewed")
+  planJson String @default("{}")
+  planHash String @default("")
+  resultJson String?
+  error String?
+  expiresAt DateTime
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([userId, idempotencyKey])
+  @@unique([vpsConfigId, hostname])
+  @@index([deploymentId, status])
+}

@@ -1,3 +1,4 @@
+import { getActiveAppDomainBinding } from "./agent-app-domain-publish";
 import { agentEnrollmentEnabled, createAgentDeploymentProposal, getAgentDeploymentProposal } from "./agent-enrollment";
 import { runtimeCapabilities, runtimeIdentity, requireRuntimeOperation, jsonObject } from "./agent-runtime-capabilities";
 import { runtimeHealth, probePublicUrl, overallHealth } from "./agent-health";
@@ -333,13 +334,14 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.source.deploy",
     title: "Build and deploy linked source",
-    description: "Queue a durable deployment that syncs a linked GitHub source branch through the GroundControl GitHub App, builds on the enrolled host and deploys supported Compose or static workloads without relying on GitHub Actions.",
+    description: "Queue a durable source deployment. Existing linked workloads use their GitHub App branch. Owner-approved public-source workloads require an exact commitSha, retain the accepted Compose/configuration/access, and use an isolated release directory without a GitHub App.",
     requiredScope: "deployment:redeploy",
     inputSchema: {
       type: "object",
       properties: {
         deployment: { type: "string", description: "Deployment slug or numeric id." },
-        branch: { type: "string", minLength: 1, maxLength: 200, description: "Optional GitHub branch. Defaults to the linked repository default branch." },
+        branch: { type: "string", minLength: 1, maxLength: 200, description: "Existing GitHub App workloads only. Defaults to the linked repository default branch." },
+        commitSha: { type: "string", pattern: "^[a-fA-F0-9]{40}$", description: "Required immutable commit for an accepted public-source recipe; branch alone is not accepted." },
         idempotencyKey: { type: "string", minLength: 8, maxLength: 160, description: "Stable unique key. Reusing it returns the original operation instead of deploying twice." },
         reason: { type: "string", maxLength: 500, description: "Short operational reason for the source deployment." },
       },
@@ -708,6 +710,13 @@ export async function executeAgentTool(
     if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
       throw new Error("idempotencyKey must be between 8 and 160 characters");
     }
+    if (jsonObject(deployment.metadataJson).agentEnrollment) {
+      if (!agentEnrollmentEnabled()) throw new Error("Public source updates are disabled.");
+      if (Object.keys(args).some(key => !["deployment", "commitSha", "idempotencyKey", "reason"].includes(key))) throw new Error("Public source updates require an immutable commitSha, not a branch or changed recipe.");
+      if (typeof args.commitSha !== "string" || !/^[a-fA-F0-9]{40}$/.test(args.commitSha)) throw new Error("An exact 40-character commitSha is required for public source updates.");
+      return enqueueOperation(context, deployment, name, idempotencyKey, { commitSha: args.commitSha.toLowerCase(), publicSourceRecipe: true, recipeHash: runtimeCapabilities(deployment).firstLaunchRecipeHash, appDomainBinding: await getActiveAppDomainBinding(context.user.id, deployment.id), reason: String(args.reason || "").trim().slice(0, 500) });
+    }
+    if (args.commitSha !== undefined) throw new Error("commitSha input is only supported for accepted public-source recipes; use the linked workload's existing branch flow.");
     const branch = typeof args.branch === "string" ? args.branch.trim() : "";
     if (branch.length > 200) throw new Error("branch must be 200 characters or fewer");
     return enqueueOperation(context, deployment, name, idempotencyKey, {
@@ -796,7 +805,10 @@ async function enqueueOperation(context: AgentAccessContext, deployment: Awaited
   const inputJson = JSON.stringify({ ...input, runtimeIdentity: runtimeIdentity(deployment) });
   const lookup = () => prisma.agentOperation.findUnique({ where: { grantId_idempotencyKey: { grantId: context.grant.id, idempotencyKey } } });
   const reuse = (existing: NonNullable<Awaited<ReturnType<typeof lookup>>>) => {
-    if (existing.deploymentId !== deployment.id || existing.type !== type || existing.inputJson !== inputJson) {
+    const existingInput = jsonObject(existing.inputJson);
+    const samePublicSourceIntent = type === "deployment.source.deploy" && input.publicSourceRecipe === true
+      && JSON.stringify({ ...existingInput, runtimeIdentity: undefined }) === JSON.stringify({ ...input, runtimeIdentity: undefined });
+    if (existing.deploymentId !== deployment.id || existing.type !== type || (existing.inputJson !== inputJson && !samePublicSourceIntent)) {
       throw new Error("idempotencyKey is already bound to a different deployment, operation, input or runtime identity.");
     }
     return { operation: serializeOperation(existing), reused: true };
@@ -804,6 +816,10 @@ async function enqueueOperation(context: AgentAccessContext, deployment: Awaited
   const existing = await lookup();
   if (existing) return reuse(existing);
   requireRuntimeOperation(deployment, type);
+  if (type === "deployment.source.deploy" && input.publicSourceRecipe === true) {
+    const recipe = await prisma.agentDeploymentRecipe.findUnique({ where: { deploymentId: deployment.id } });
+    if (!recipe || recipe.status !== "success" || recipe.recipeHash !== input.recipeHash || recipe.userId !== context.user.id) throw new Error("Public source recipe is not ready; inspect unresolved work before a new update.");
+  }
   if (type === "deployment.first_launch") {
     const recipe = await prisma.agentDeploymentRecipe.findUnique({ where: { deploymentId: deployment.id } });
     if (!recipe || recipe.status !== "pending" || recipe.launchOperationId || recipe.recipeHash !== input.recipeHash || recipe.userId !== context.user.id) throw new Error("The owner-approved first-launch recipe is not pending or is already claimed.");

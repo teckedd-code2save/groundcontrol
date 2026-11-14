@@ -88,10 +88,11 @@ The local implementation now includes:
   HTTPS verification must not disable certificate checking.
 
 The first-launch runner, owner UI, acceptance transaction and durable dispatch are
-implemented locally and tested. Public repositories and loopback access only are
-supported in this initial path. Environment provisioning and later source updates
-require a separate supported workflow. Ordinary redeploy/source/release operations
-remain blocked for these recipes until an explicit adoption/update flow exists.
+implemented locally and tested. Public repositories, candidate-only encrypted runtime configuration and owned
+loopback applications are supported. A separate owner-approved app-domain publisher
+uses existing Caddy without changing DNS or firewall rules. Existing source.deploy
+can update a full SHA when reviewed Compose/configuration/host/volume/domain policy
+remains unchanged. Other deployment-policy changes still require owner review.
 
 Passing tests are not evidence of live first-deploy support. Only an end-to-end
 rehearsal closes that claim; enabling this feature is an operator decision.

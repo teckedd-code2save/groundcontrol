@@ -124,6 +124,7 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
           phase: sourceDeploy ? "source_deploy_started" : "redeploy_started",
           projectSlug,
           branch: sourceDeploy && typeof input.branch === "string" ? input.branch : undefined,
+          commitSha: sourceDeploy && typeof input.commitSha === "string" ? input.commitSha : undefined,
         }),
         leaseUntil: new Date(Date.now() + LEASE_MS),
       },

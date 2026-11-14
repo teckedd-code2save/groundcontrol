@@ -68,9 +68,10 @@ export function planAgentFirstDeploy(input: FirstDeployPlanInput): FirstDeployPl
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || !isRecord(raw)) { block(field, "Use a valid service name and a service mapping."); continue; }
     const svc = record(raw);
     // Reject these features rather than trying to prove a privileged variation safe.
-    for (const key of ["extends", "devices", "device_cgroup_rules", "cap_add", "security_opt", "use_api_socket", "volumes_from", "provider", "post_start", "pre_stop", "credential_spec", "container_name", "cgroup", "cgroup_parent", "sysctls", "gpus", "develop", "profiles", "scale"]) {
+    for (const key of ["extends", "devices", "device_cgroup_rules", "cap_add", "use_api_socket", "volumes_from", "provider", "post_start", "pre_stop", "credential_spec", "container_name", "cgroup", "cgroup_parent", "sysctls", "gpus", "develop", "profiles", "scale"]) {
       if (key in svc) block(`${field}.${key}`, `Remove ${key} from this initial deployment or use a separately reviewed operator workflow.`);
     }
+    if ("security_opt" in svc && (!Array.isArray(svc.security_opt) || svc.security_opt.length !== 1 || !["no-new-privileges:true", "no-new-privileges"].includes(String(svc.security_opt[0])))) block(`${field}.security_opt`, "Only the no-new-privileges hardening option is supported.");
     if ("privileged" in svc && svc.privileged !== false) block(`${field}.privileged`, "Privileged containers are not supported.");
     for (const key of ["network_mode", "pid", "ipc", "uts", "userns_mode"]) if (key in svc) block(`${field}.${key}`, `Explicit ${key} is not supported; use isolated default namespaces.`);
     if ("extra_hosts" in svc) block(`${field}.extra_hosts`, "Remove extra_hosts, including host-gateway mappings, from the initial deployment.");

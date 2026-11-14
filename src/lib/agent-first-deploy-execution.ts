@@ -1,3 +1,4 @@
+import type { FirstLaunchConfiguration } from "./agent-first-launch-config";
 import { createHash } from "node:crypto";
 import { parse, stringify } from "yaml";
 import { planAgentFirstDeploy, type FirstDeployPlanInput } from "./agent-first-deploy-plan";
@@ -6,6 +7,7 @@ import { shQuote, type VpsConnection } from "./vps";
 import { probePublicUrl } from "./agent-health";
 export interface ApprovedFirstDeployRecipe extends FirstDeployPlanInput {
   recipeHash: string;
+  configuration?: FirstLaunchConfiguration;
   health: { service: string; port: number; path: string };
   budget: { maxServices: number; cpusPerService: number; memoryMbPerService: number; pidsPerService: number; timeoutSeconds: number };
   allowUnboundedBuildResources: boolean;
@@ -13,7 +15,7 @@ export interface ApprovedFirstDeployRecipe extends FirstDeployPlanInput {
 }
 type Evidence = { phase: string; deploymentPath: string; composePath: string; composeProject: string; commitSha: string };
 export type FirstDeployResult = Evidence & { success: boolean; status: "success" | "failed" | "uncertain"; error?: string; loopbackVerified: boolean; publicVerified: boolean; hostMutation: "none" | "possible" | "confirmed" };
-type Deps = { run?: typeof execOnWorkloadTarget; publicProbe?: typeof probePublicUrl };
+type Deps = { run?: typeof execOnWorkloadTarget; publicProbe?: typeof probePublicUrl; resolveRuntimeConfiguration?: () => Promise<Record<string, Record<string, string>>> };
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const within = (value: number, min: number, max: number) => Number.isFinite(value) && value >= min && value <= max;
 /** No side effects. Acceptance MUST persist/hash this complete recipe, not just recipeHash. */
@@ -24,14 +26,24 @@ export function prepareFirstDeployExecution(recipe: ApprovedFirstDeployRecipe) {
   if (!b || !Number.isInteger(b.maxServices) || !within(b.maxServices,1,10) || !within(b.cpusPerService,.1,2) || !Number.isInteger(b.memoryMbPerService) || !within(b.memoryMbPerService,128,2048) || !Number.isInteger(b.pidsPerService) || !within(b.pidsPerService,16,512) || !Number.isInteger(b.timeoutSeconds) || !within(b.timeoutSeconds,30,600) || plan.services.length > b.maxServices) throw new Error("Choose a valid explicit runtime budget and execution wait timeout.");
   const h = recipe.health;
   if (!h || !plan.services.includes(h.service) || !Number.isInteger(h.port) || !within(h.port,1024,65535) || !/^\/[A-Za-z0-9/_.-]*$/.test(h.path) || h.path.length > 200) throw new Error("Choose an approved service, unprivileged loopback port and HTTP health path.");
-  if (recipe.composeYaml.includes("$")) throw new Error("Environment interpolation is not supported for first launch; resolve configuration in the reviewed recipe.");
+
   if (recipe.publicUrl) { const u = new URL(recipe.publicUrl); if (u.protocol !== "https:" || u.username || u.password || u.hash || u.search) throw new Error("Public verification requires an existing credential-free HTTPS URL."); }
   const doc = parse(recipe.composeYaml);
   let selected = false;
   let healthContainerPort = 0;
   for (const [name, service] of Object.entries(doc.services) as [string, Record<string, unknown>][]) {
     if (service.build && recipe.allowUnboundedBuildResources !== true) throw new Error("Approve host source builds explicitly: build CPU/RAM are not isolated; the execution wait is bounded but daemon-side builds may continue after timeout.");
-    if (service.env_file || service.environment) throw new Error("Owner environment provisioning is not implemented for first launch; remove environment values or use the existing deployment workflow.");
+    if (service.env_file) throw new Error("Repository env_file paths are not supported; configure scoped owner-managed values instead.");
+    const bindings = (recipe.configuration?.bindings || []).filter(binding => binding.service === name);
+    const keys = new Set(bindings.map(binding => binding.key));
+    if (bindings.some(binding => !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(binding.key)) || keys.size !== bindings.length) throw new Error("Invalid or duplicate approved configuration keys.");
+    if (service.environment !== undefined) {
+      const entries = Array.isArray(service.environment) ? service.environment.map(key => [key, null]) : service.environment && typeof service.environment === "object" ? Object.entries(service.environment) : [];
+      if (!entries.length) throw new Error("Environment declarations must contain only approved configuration key names.");
+      for (const [key, value] of entries) if (typeof key !== "string" || !keys.has(key) || !(value === null || value === `\${${key}}`)) throw new Error("Map every environment key to an owner-approved configuration version; inline values and host environment forwarding are not accepted.");
+      delete service.environment;
+    }
+    if (bindings.length) service.env_file = [{path:`${plan.deploymentPath}-runtime/.groundcontrol/env/${name}.env`,format:"raw",required:true}];
     if (service.deploy) throw new Error("Resolve deploy directives into the approved runtime budget before first launch.");
     if (service.ports !== undefined && !Array.isArray(service.ports)) throw new Error("Published ports must be an explicit list of loopback TCP mappings.");
     for (const port of (service.ports || []) as unknown[]) {
@@ -54,12 +66,47 @@ export function prepareFirstDeployExecution(recipe: ApprovedFirstDeployRecipe) {
   }
   if (!selected) throw new Error("The approved health port must be published by the selected service on loopback.");
   const effectiveYaml = stringify(doc);
+  if (effectiveYaml.includes("$")) throw new Error("Unresolved Compose interpolation is not supported; use approved scoped configuration keys.");
   if (Buffer.byteLength(effectiveYaml, "utf8") > 32 * 1024) throw new Error("Effective Compose configuration exceeds the 32 KiB first-launch limit. Reduce the workload recipe or use the existing operator deployment workflow.");
   return { plan, healthContainerPort, effectiveYaml, composeProject: `gcf_${sha(recipe.proposalId).slice(0,24)}`, composePath: `${plan.deploymentPath}/.groundcontrol/effective-compose.yml` };
 }
 /** Caller owns authorization, durable single claim and terminal DB state. Never automatically retry this function. */
 export async function executeAgentFirstDeploy(recipe: ApprovedFirstDeployRecipe, vps: VpsConnection, recordEvidence: (evidence: Evidence) => Promise<void>, deps: Deps = {}): Promise<FirstDeployResult> {
-  const prepared = prepareFirstDeployExecution(recipe); // reject before any host action
+  return executePreparedDeploy(recipe, prepareFirstDeployExecution(recipe), vps, recordEvidence, deps);
+}
+
+export interface PublicSourceUpdateInput { deploymentId: number; operationId: string; commitSha: string }
+/** Derive a code-only update; the persisted approved recipe is never rewritten or broadened. */
+export function prepareAgentPublicSourceUpdate(approved: ApprovedFirstDeployRecipe, input: PublicSourceUpdateInput) {
+  const original = prepareFirstDeployExecution(approved);
+  if (!Number.isSafeInteger(input.deploymentId) || input.deploymentId < 1 || !/^[A-Za-z0-9_-]{8,160}$/.test(input.operationId)) throw new Error("A durable deployment operation identity is required for a source update.");
+  if (!/^[a-fA-F0-9]{40}$/.test(input.commitSha)) throw new Error("Public source updates require an explicit immutable commit SHA, not a branch or tag.");
+  const sourceInput = { ...approved, commitSha: input.commitSha.toLowerCase() };
+  const recipe = { ...sourceInput, recipeHash: planAgentFirstDeploy(sourceInput).recipeHash };
+  const prepared = prepareFirstDeployExecution(recipe);
+  const releasePath = `/srv/groundcontrol/deployments/release-${sha(JSON.stringify([approved.proposalId, input.deploymentId, input.operationId]))}`;
+  const doc = parse(prepared.effectiveYaml);
+  for (const service of Object.values(doc.services) as Record<string, unknown>[]) {
+    if (Array.isArray(service.env_file)) service.env_file = service.env_file.map((entry: {path:string;format:string;required:boolean}) => ({...entry,path:releasePath+entry.path.slice(prepared.plan.deploymentPath.length)}));
+    if (service.build) {
+      const build = service.build as Record<string, unknown>;
+      const context = String(build.context);
+      if (!context.startsWith(prepared.plan.deploymentPath + "/")) throw new Error("Build context is not owned by the accepted recipe.");
+      build.context = releasePath + context.slice(prepared.plan.deploymentPath.length);
+    }
+  }
+  const effectiveYaml = stringify(doc);
+  if (Buffer.byteLength(effectiveYaml, "utf8") > 32 * 1024) throw new Error("Effective release Compose exceeds the 32 KiB execution limit.");
+  return { recipe, prepared: { ...prepared, plan: { ...prepared.plan, deploymentPath: releasePath }, effectiveYaml, composeProject: original.composeProject, composePath: `${releasePath}/.groundcontrol/effective-compose.yml` } };
+}
+
+/** Requires the existing resource grant + accepted recipe/host checks in the caller. Compose bytes must remain identical. */
+export async function executeAgentPublicSourceUpdate(approved: ApprovedFirstDeployRecipe, input: PublicSourceUpdateInput, vps: VpsConnection, recordEvidence: (evidence: Evidence) => Promise<void>, deps: Deps = {}): Promise<FirstDeployResult> {
+  const { recipe, prepared } = prepareAgentPublicSourceUpdate(approved, input);
+  return executePreparedDeploy(recipe, prepared, vps, recordEvidence, deps);
+}
+
+async function executePreparedDeploy(recipe: ApprovedFirstDeployRecipe, prepared: ReturnType<typeof prepareFirstDeployExecution>, vps: VpsConnection, recordEvidence: (evidence: Evidence) => Promise<void>, deps: Deps): Promise<FirstDeployResult> {
   if (!vps) throw new Error("An explicitly approved host is required.");
   const run = deps.run || execOnWorkloadTarget;
   const evidence: Evidence = { phase: "prepared", deploymentPath: prepared.plan.deploymentPath, composePath: prepared.composePath, composeProject: prepared.composeProject, commitSha: recipe.commitSha };
@@ -67,13 +114,13 @@ export async function executeAgentFirstDeploy(recipe: ApprovedFirstDeployRecipe,
   let hostMutation: FirstDeployResult["hostMutation"] = "none";
   const result = (status: FirstDeployResult["status"], error?: string): FirstDeployResult => ({ ...evidence, success: status === "success", status, error, loopbackVerified, publicVerified: false, hostMutation });
   const deadline = Date.now() + recipe.budget.timeoutSeconds * 1000;
-  const command = async (phase: string, shell: string) => {
+  const command = async (phase: string, shell: string, stdin?: string) => {
     evidence.phase = phase;
     await recordEvidence({ ...evidence });
     const seconds = Math.floor((deadline-Date.now())/1000);
     if (seconds < 1) throw new Error("Execution wait deadline reached; builds may continue on the Docker daemon. Inspect before retrying.");
     if (phase === "checkout_started") hostMutation = "possible";
-    return run(`timeout -k 5s ${seconds}s sh -c ${shQuote(shell)}`,vps,undefined,undefined,{ timeout: seconds*1000+5000 });
+    return run(`timeout -k 5s ${seconds}s sh -c ${shQuote(shell)}`,vps,undefined,stdin,{ timeout: seconds*1000+5000 });
   };
   const path = shQuote(evidence.deploymentPath);
   try {
@@ -84,6 +131,7 @@ export async function executeAgentFirstDeploy(recipe: ApprovedFirstDeployRecipe,
       "set -eu",
       "for tool in timeout git docker sha256sum curl base64 find cut; do command -v \"$tool\" >/dev/null 2>&1 || { printf 'missing-tool:%s' \"$tool\"; exit 1; }; done",
       "docker compose version >/dev/null 2>&1 || { printf 'missing-compose'; exit 1; }",
+      ...(recipe.configuration?.bindings.length ? ["version=$(docker compose version --short); major=${version%%.*}; rest=${version#*.}; minor=${rest%%.*}; case \"$major:$minor\" in *[!0-9:]*) printf compose-raw-required; exit 1;; esac; test \"$major\" -gt 2 || { test \"$major\" -eq 2 && test \"$minor\" -ge 30; } || { printf compose-raw-required; exit 1; }"] : []),
       "docker info >/dev/null 2>&1 || { printf 'docker-unavailable'; exit 1; }",
       "parent=/; for p in /srv /srv/groundcontrol /srv/groundcontrol/deployments; do if [ -L \"$p\" ]; then printf 'unsafe-path'; exit 1; elif [ -e \"$p\" ]; then test -d \"$p\" || { printf 'unsafe-path'; exit 1; }; parent=$p; else break; fi; done",
       "test -w \"$parent\" && test -x \"$parent\" || { printf 'unwritable-parent'; exit 1; }",
@@ -94,6 +142,7 @@ export async function executeAgentFirstDeploy(recipe: ApprovedFirstDeployRecipe,
       const key = preflight.stdout.trim();
       const missing = /^missing-tool:(timeout|git|docker|sha256sum|curl|base64|find|cut)$/.exec(key);
       const messages: Record<string, string> = {
+        "compose-raw-required": "Owner-managed runtime configuration requires Docker Compose 2.30 or newer. Update Compose through server tooling before launching.",
         "missing-compose": "Install the Docker Compose v2 plugin through server tooling setup, then request a new first launch.",
         "docker-unavailable": "Docker is not reachable by the configured host account. Finish Docker setup and verify daemon access before requesting a new first launch; permissions were not changed.",
         "unsafe-path": "The managed deployment hierarchy contains a symlink or non-directory. Ask the owner to resolve /srv/groundcontrol/deployments before launching; nothing was changed.",
@@ -107,6 +156,27 @@ export async function executeAgentFirstDeploy(recipe: ApprovedFirstDeployRecipe,
     if (checkout.code === 124 || checkout.code === 137) return result("uncertain", "Checkout wait timed out. Inspect reserved files and running processes before retrying.");
     if (checkout.code !== 0) return result("failed","Source checkout, exclusive path reservation or immutable recipe verification failed. Existing files were not removed; inspect before retrying.");
     hostMutation = "confirmed";
+    if (recipe.configuration?.bindings.length) {
+      if (!deps.resolveRuntimeConfiguration) return result("failed", "Approved runtime configuration resolver is unavailable; no application was launched.");
+      const scoped = await deps.resolveRuntimeConfiguration();
+      const expected = new Set(recipe.configuration.bindings.map(binding => `${binding.service}:${binding.key}`));
+      const supplied = Object.entries(scoped).flatMap(([service, values]) => Object.keys(values).map(key => `${service}:${key}`));
+      if (supplied.length !== expected.size || supplied.some(key => !expected.has(key))) return result("failed", "Resolved configuration does not match the approved service/key versions.");
+      // Outside the checkout: Docker COPY/build contexts must never receive runtime secrets.
+      const runtimeDir = `${prepared.plan.deploymentPath}-runtime`;
+      const reserved = await command("configuration_directory_reservation", `set -eu\numask 077\nmkdir ${shQuote(runtimeDir)}\nmkdir ${shQuote(runtimeDir+"/.groundcontrol")}\nmkdir ${shQuote(runtimeDir+"/.groundcontrol/env")}`);
+      if (reserved.code !== 0) return result("failed", "Runtime configuration directory already exists or cannot be reserved. Inspect before retrying; nothing was overwritten.");
+      for (const service of prepared.plan.services) {
+        const bindings = recipe.configuration.bindings.filter(binding => binding.service === service);
+        if (!bindings.length) continue;
+        const values = scoped[service];
+        if (!values || bindings.some(binding => typeof values[binding.key] !== "string" || /[\r\n\0]/.test(values[binding.key]) || Buffer.byteLength(values[binding.key], "utf8") > 65536 || (binding.required && !values[binding.key]))) return result("failed", "Approved runtime configuration contains a missing, multiline or oversized value. Review configuration before launching.");
+        const content = bindings.map(binding => `${binding.key}=${values[binding.key]}`).join("\n") + "\n";
+        const envPath = `${prepared.plan.deploymentPath}-runtime/.groundcontrol/env/${service}.env`;
+        const materialized = await command("configuration_materialization_started", `set -eu\numask 077\ncd ${shQuote(runtimeDir)}\ntest ! -L .groundcontrol\ntest ! -L .groundcontrol/env\ntest ! -e ${shQuote(envPath)}\ncat > ${shQuote(envPath)}`, content);
+        if (materialized.code !== 0) return result("uncertain", "Runtime configuration materialization was not confirmed. Values are not included in operation output; inspect securely before retrying.");
+      }
+    }
     const compose = `docker compose --project-directory ${path} --env-file /dev/null -p ${shQuote(evidence.composeProject)} -f ${shQuote(evidence.composePath)}`;
     const config = await command("compose_validation_started", `set -eu\ncd ${path}\n${compose} config --quiet`);
     if (config.code === 124 || config.code === 137) return result("uncertain", "Compose validation wait timed out. Inspect before retrying.");

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { PageHeader } from "./PageHeader";
+import { AgentProposalConfiguration } from "./AgentProposalConfiguration";
 
 type Proposal = { deploymentId?: number; launchStatus?: string; operationId?: string | null; id: string; contentHash: string; status: string; expiresAt: string; input: { repositoryUrl: string; revision: string; composePath: string; workloadName: string; serverId: number | null } };
 type Context = { proposal: Proposal; servers: Array<{ id: number; name: string; host?: string }> };
@@ -85,7 +86,9 @@ export function AgentProposalReview({ proposalId }: { proposalId: string }) {
         {accepted.status === "pending" && <ol className="list-decimal space-y-2 pl-5 text-sm"><li>Reconnect Hermes to GroundControl and select only this deployment in the OAuth consent screen.</li><li>Have Hermes inspect the pending deployment, then request its first launch.</li><li>Approve that launch in Hermes and follow the returned operation until health is verified.</li></ol>}
         <p className="text-sm text-muted">The application will listen on the server&apos;s loopback address. No public URL, firewall rule or DNS record has been created.</p>
         <Link href="/deployments" className="gc-button gc-button-primary">Open deployments</Link>
+        <Link href={`/agent-deployments/${accepted.deploymentId}/domain`} className="gc-button gc-button-quiet">Prepare application domain</Link>
       </section> : <>
+        <AgentProposalConfiguration proposalId={proposalId} contentHash={context.proposal.contentHash} disabled={busy} onSaved={edit} />
         <section className="space-y-4 rounded border border-border bg-card p-5">
           <h2 className="font-semibold">Server and application health</h2>
           <fieldset disabled={busy || Boolean(review)} className="grid gap-4 sm:grid-cols-2">
@@ -95,7 +98,7 @@ export function AgentProposalReview({ proposalId }: { proposalId: string }) {
             <label className="text-sm sm:col-span-2">Health endpoint<input className={field} value={healthPath} onChange={e => setHealthPath(e.target.value)} /></label>
             <label className="flex items-start gap-3 text-sm sm:col-span-2"><input className="mt-1" type="checkbox" checked={allowBuild} onChange={e => setAllowBuild(e.target.checked)} /><span>I authorize building this pinned repository on the server. Builds execute repository code. This flow limits how long it waits, not daemon-side build duration, CPU or memory. A timeout requires inspection before retrying.</span></label>
           </fieldset>
-          <p className="text-xs text-muted">The selected Compose service must already publish 127.0.0.1:host-port:container-port. This flow does not rewrite ports. Initial limits: up to 4 services, 1 CPU, 512 MiB and 128 processes per running service; 10-minute execution wait timeout. Build work may continue after a timeout; this does not cap build CPU or memory. Secret inputs and environment-file setup are not supported in this first-launch flow yet.</p>
+          <p className="text-xs text-muted">The selected Compose service must already publish 127.0.0.1:host-port:container-port. This flow does not rewrite ports. Initial limits: up to 4 services, 1 CPU, 512 MiB and 128 processes per running service; 10-minute execution wait timeout. Build work may continue after a timeout; this does not cap build CPU or memory. Use the configuration form for approved runtime values; existing production files are never imported.</p>
           {!review && <button type="button" className="gc-button gc-button-primary" disabled={busy || !serverId || !service || !hostPort} onClick={() => void prepare()}>{busy ? "Preparing review…" : "Fetch pinned configuration for review"}</button>}
         </section>
         {review && <section className="space-y-4 rounded border border-border bg-card p-5">

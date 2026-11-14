@@ -65,3 +65,18 @@ it("restricts accepted enrollments to first launch then restart, retaining stabl
     expect(runtimeIdentity({ ...success, composePath: "/srv/other/compose.yml" })).not.toBe(runtimeIdentity(success));
   } finally { if (previous === undefined) delete process.env.GC_AGENT_ENROLLMENT_PROPOSALS; else process.env.GC_AGENT_ENROLLMENT_PROPOSALS = previous; }
 });
+
+it("offers exact-SHA source updates only after successful public first launch", () => {
+  const previous = process.env.GC_AGENT_ENROLLMENT_PROPOSALS;
+  process.env.GC_AGENT_ENROLLMENT_PROPOSALS = "1";
+  try {
+    const base = { ...compose, githubRepositories: [], metadataJson: JSON.stringify({ agentEnrollment: { firstLaunchState: "success", recipeHash: "a".repeat(64) } }) };
+    expect(runtimeCapabilities(base).operations["deployment.source.deploy"].supported).toBe(true);
+    expect(runtimeCapabilities(base).operations["deployment.redeploy"].supported).toBe(false);
+    for (const sourceUpdateState of ["started", "failed", "uncertain"]) {
+      expect(runtimeCapabilities({ ...base, metadataJson: JSON.stringify({ agentEnrollment: { firstLaunchState: "success", recipeHash: "a".repeat(64), sourceUpdateState } }) }).operations["deployment.source.deploy"].supported).toBe(false);
+    }
+    process.env.GC_AGENT_ENROLLMENT_PROPOSALS = "0";
+    expect(runtimeCapabilities(base).operations["deployment.source.deploy"].supported).toBe(false);
+  } finally { if (previous === undefined) delete process.env.GC_AGENT_ENROLLMENT_PROPOSALS; else process.env.GC_AGENT_ENROLLMENT_PROPOSALS = previous; }
+});
