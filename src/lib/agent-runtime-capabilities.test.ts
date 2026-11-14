@@ -7,7 +7,7 @@ const site = { kind: "static", vpsConfigId: 7, sourcePath: "/src/site", legacyPr
 describe("runtime capabilities", () => {
   it.each(["track", "managed"])("supports native and generated Compose in %s mode", (managementMode) => {
     const d = { ...compose, managementMode };
-    expect(Object.values(runtimeCapabilities(d).operations).every((op) => op.supported)).toBe(true);
+    expect(Object.entries(runtimeCapabilities(d).operations).filter(([name]) => name !== "deployment.first_launch").every(([, op]) => op.supported)).toBe(true);
     expect(runtimeCapabilities({ ...d, kind: "app", composePath: null, sourcePath: "/srv/demo", legacyProject: { id: 1, path: "/srv/demo", category: "docker", dockerCompose: "services: {}" } }).operations["deployment.redeploy"].supported).toBe(true);
   });
   it("offers standalone restart without inventing an image recreate recipe", () => {
@@ -47,4 +47,21 @@ describe("runtime capabilities", () => {
     expect(runtimeIdentity(compose)).not.toBe(runtimeIdentity({ ...compose, vpsConfigId: 8 }));
     expect(runtimeIdentity(site)).not.toBe(runtimeIdentity({ ...site, sourcePath: "/src/other" }));
   });
+});
+
+it("restricts accepted enrollments to first launch then restart, retaining stable identity", () => {
+  const previous = process.env.GC_AGENT_ENROLLMENT_PROPOSALS;
+  process.env.GC_AGENT_ENROLLMENT_PROPOSALS = "1";
+  try {
+    const pending = { kind: "compose", vpsConfigId: 1, sourcePath: "/srv/app", composePath: "/srv/app/.groundcontrol/effective-compose.yml", metadataJson: JSON.stringify({ agentEnrollment: { recipeHash: "a".repeat(64), firstLaunchState: "pending" } }) };
+    const capabilities = runtimeCapabilities(pending);
+    expect(capabilities.operations["deployment.first_launch"].supported).toBe(true);
+    for (const name of ["deployment.restart", "deployment.redeploy", "deployment.source.deploy", "deployment.build_publish", "deployment.release"] as const) expect(capabilities.operations[name].supported).toBe(false);
+    const success = { ...pending, composePath: "/srv/app/.groundcontrol/effective-compose.yml", metadataJson: JSON.stringify({ agentEnrollment: { recipeHash: "a".repeat(64), firstLaunchState: "success" } }) };
+    expect(runtimeCapabilities(success).operations["deployment.first_launch"].supported).toBe(false);
+    expect(runtimeCapabilities(success).operations["deployment.restart"].supported).toBe(true);
+    expect(runtimeCapabilities(success).operations["deployment.redeploy"].supported).toBe(false);
+    expect(runtimeIdentity(success)).toBe(runtimeIdentity(pending));
+    expect(runtimeIdentity({ ...success, composePath: "/srv/other/compose.yml" })).not.toBe(runtimeIdentity(success));
+  } finally { if (previous === undefined) delete process.env.GC_AGENT_ENROLLMENT_PROPOSALS; else process.env.GC_AGENT_ENROLLMENT_PROPOSALS = previous; }
 });

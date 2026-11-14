@@ -49,3 +49,11 @@ it("reconciles detached evidence using the exact operation header", async () => 
   expect(fetch.mock.calls[0][1].headers["X-GroundControl-Agent-Operation"]).toBe("operation-1");
   expect(h.update.mock.calls[0][0].data.status).toBe("success");
 });
+it("dispatches first launch only through the durable runtime route", async () => {
+  const h = harness({ ...operation(), type: "deployment.first_launch" });
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, applied: true })));
+  vi.stubGlobal("fetch", fetch);
+  await executeRedeploy(h);
+  expect(fetch.mock.calls[0][0]).toBe("http://localhost/api/agent-operations/runtime");
+  expect(h.update.mock.calls[0][0].data.status).toBe("success");
+});

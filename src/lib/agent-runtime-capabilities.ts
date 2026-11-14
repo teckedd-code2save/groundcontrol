@@ -69,20 +69,26 @@ export function staticRecipe(deployment: AgentRuntimeDeployment) {
 
 export function runtimeCapabilities(deployment: AgentRuntimeDeployment) {
   const runtime = deploymentRuntime(deployment);
+  const enrollment = jsonObject(JSON.stringify(jsonObject(deployment.metadataJson).agentEnrollment));
+  const enrolledByAgent = Boolean(jsonObject(deployment.metadataJson).agentEnrollment);
+  const firstLaunchReady = enrolledByAgent && enrollment.firstLaunchState === "pending" && typeof enrollment.recipeHash === "string" && /^[a-f0-9]{64}$/.test(enrollment.recipeHash) && process.env.GC_AGENT_ENROLLMENT_PROPOSALS === "1";
   const host = Boolean(deployment.vpsConfigId);
   const compose = runtime === "compose" && Boolean(composeDirectory(deployment));
   const publish = runtime === "static" && Boolean(staticRecipe(deployment));
   const recreate = runtime === "container" && Boolean(parseStandaloneRecipe(deployment));
   const linkedSource = Boolean(deployment.githubRepositories?.length);
   const support = (supported: boolean, reason: string) => ({ supported: host && supported, reason: !host ? "No deployment host is recorded." : supported ? null : reason });
+  const ongoing = (supported: boolean, reason: string) => support(!enrolledByAgent && supported, enrolledByAgent ? "This workload requires its owner-approved first-launch recipe; ordinary deployment mutations are not enabled." : reason);
   return {
     runtime,
+    ...(enrolledByAgent ? { firstLaunchRecipeHash: enrollment.recipeHash, firstLaunchState: enrollment.firstLaunchState } : {}),
     operations: {
-      "deployment.restart": support(compose || runtime === "container", "This runtime has no supported container restart operation."),
-      "deployment.redeploy": support(compose || publish || recreate, runtime === "container" ? "No recreate specification is recorded for this standalone container; use deployment.restart." : "A saved source, build recipe and separate static document root are required."),
-      "deployment.source.deploy": support((compose || publish) && linkedSource, "A deployable runtime and a linked GitHub repository are required."),
-      "deployment.build_publish": support(compose && linkedSource, "Image builds require a Compose deployment and a linked GitHub repository."),
-      "deployment.release": support(compose, "Digest releases require a Compose deployment."),
+      "deployment.first_launch": support(firstLaunchReady, "An enabled, pending owner-approved enrollment recipe is required; completed or uncertain launches cannot be replayed."),
+      "deployment.restart": support((!enrolledByAgent || enrollment.firstLaunchState === "success") && (compose || runtime === "container"), "This runtime has no supported container restart operation."),
+      "deployment.redeploy": ongoing(compose || publish || recreate, runtime === "container" ? "No recreate specification is recorded for this standalone container; use deployment.restart." : "A saved source, build recipe and separate static document root are required."),
+      "deployment.source.deploy": ongoing((compose || publish) && linkedSource, "A deployable runtime and a linked GitHub repository are required."),
+      "deployment.build_publish": ongoing(compose && linkedSource, "Image builds require a Compose deployment and a linked GitHub repository."),
+      "deployment.release": ongoing(compose, "Digest releases require a Compose deployment."),
     },
   };
 }
@@ -101,6 +107,7 @@ export function runtimeIdentity(deployment: AgentRuntimeDeployment) {
     container: deployment.containerName, composeProject: jsonObject(deployment.metadataJson).composeProject,
     project: deployment.legacyProject?.id, directory: composeDirectory(deployment),
     static: deploymentRuntime(deployment) === "static" ? staticRecipe(deployment) : null,
+    enrollmentRecipe: jsonObject(JSON.stringify(jsonObject(deployment.metadataJson).agentEnrollment)).recipeHash,
     standalone: standaloneRecipeIdentity(parseStandaloneRecipe(deployment)),
   })).digest("hex");
 }

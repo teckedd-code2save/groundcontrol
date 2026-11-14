@@ -795,6 +795,7 @@ model OAuthGrant {
   id          Int       @id @default(autoincrement())
   userId      Int
   clientDbId  Int
+  consentRevision Int @default(0)
   scope       String
   resources   String    @default("[]") // JSON array of EnrolledDeployment ids
   revokedAt   DateTime?
@@ -809,6 +810,8 @@ model OAuthGrant {
 
   @@unique([userId, clientDbId])
   @@index([clientDbId, revokedAt])
+  deploymentProposals AgentDeploymentProposal[]
+
 }
 
 model OAuthAuthorizationCode {
@@ -869,4 +872,52 @@ model AgentOperation {
   @@unique([grantId, idempotencyKey])
   @@index([status, createdAt])
   @@index([deploymentId, createdAt])
+}
+
+// An inert owner-review request. Approval does not enroll, deploy, or extend a grant.
+model AgentDeploymentProposal {
+  id String @id @default(cuid())
+  grantId Int
+  userId Int
+  idempotencyKey String
+  inputJson String
+  contentHash String
+  grantHash String
+  status String @default("pending")
+  expiresAt DateTime
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  grant OAuthGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  @@unique([grantId, idempotencyKey])
+  @@index([userId, status, createdAt])
+}
+
+// Owner-reviewed content; no host effect until a separately scoped launch.
+model AgentDeploymentReview {
+  id String @id @default(cuid())
+  proposalId String
+  userId Int
+  reviewJson String
+  reviewHash String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([proposalId, userId])
+}
+
+model AgentDeploymentRecipe {
+  id String @id @default(cuid())
+  proposalId String @unique
+  reviewId String @unique
+  deploymentId Int @unique
+  vpsConfigId Int
+  deploymentPath String
+  userId Int
+  recipeJson String
+  recipeHash String
+  status String @default("pending")
+  launchOperationId String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([vpsConfigId, deploymentPath])
 }

@@ -1,3 +1,5 @@
+import { claimAgentFirstLaunch, recordFirstLaunchEvidence, finishAgentFirstLaunch } from "./agent-first-launch";
+import { executeAgentFirstDeploy } from "./agent-first-deploy-execution";
 import { redeployStandalone } from "./standalone-redeploy";
 import type { agentOperationTarget } from "./agent-operation-target";
 import { deploymentRuntime, staticRecipe } from "./agent-runtime-capabilities";
@@ -13,6 +15,12 @@ type Target = NonNullable<Awaited<ReturnType<typeof agentOperationTarget>>>;
 export async function executeRuntimeOperation(target: Target) {
   const { deployment, operation, input, vps } = target;
   const runtime = deploymentRuntime(deployment);
+  if (operation.type === "deployment.first_launch") {
+    const claimed = await claimAgentFirstLaunch(deployment.id, operation.id, String(input.recipeHash || ""), operation.grantId, target.operation.grant.userId);
+    const result = await executeAgentFirstDeploy(claimed.recipe, claimed.vps, evidence => recordFirstLaunchEvidence(deployment.id, operation.id, operation.grantId, target.operation.grant.userId, evidence));
+    await finishAgentFirstLaunch(deployment.id, operation.id, result);
+    return { ...result, ...(result.status === "uncertain" ? { uncertain: true } : {}), ...(result.hostMutation === "confirmed" ? { applied: true } : result.hostMutation === "none" ? { applied: false } : {}) };
+  }
   if (operation.type === "deployment.restart") {
     const command = runtime === "container"
       ? `docker restart ${shQuote(deployment.containerName!)}`

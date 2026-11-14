@@ -1,3 +1,4 @@
+import { agentEnrollmentEnabled, createAgentDeploymentProposal, getAgentDeploymentProposal } from "./agent-enrollment";
 import { runtimeCapabilities, runtimeIdentity, requireRuntimeOperation, jsonObject } from "./agent-runtime-capabilities";
 import { runtimeHealth, probePublicUrl, overallHealth } from "./agent-health";
 import { prisma } from "@/lib/prisma";
@@ -80,6 +81,22 @@ const OPERATION_SCHEMA = {
 } as const;
 
 const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    name: "deployment.proposal.create", title: "Request deployment review",
+    description: "Persist an inert public GitHub Compose proposal for owner review. Does not fetch source, enroll, deploy, or grant access. Experimental.",
+    requiredScope: "deployment:propose",
+    inputSchema: { type: "object", additionalProperties: false, required: ["repositoryUrl", "revision", "runtime", "composePath", "workloadName", "idempotencyKey"], properties: {
+      repositoryUrl: { type: "string", maxLength: 220 }, revision: { type: "string", pattern: "^[a-fA-F0-9]{40}$" }, runtime: { const: "compose" }, composePath: { type: "string", maxLength: 200 }, workloadName: { type: "string", maxLength: 48 }, serverId: { type: "integer", minimum: 1 }, idempotencyKey: { type: "string", minLength: 8, maxLength: 160 }
+    } },
+    outputSchema: { type: "object" }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "deployment.proposal.get", title: "Inspect deployment review request",
+    description: "Read a proposal created under this grant. Approval and deployment are separate and not implemented by this tool.", requiredScope: "deployment:propose",
+    inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string", maxLength: 128 } } },
+    outputSchema: { type: "object" }, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+
   {
     name: "deployment.list",
     title: "List deployments",
@@ -302,6 +319,18 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   {
+    name: "deployment.first_launch", title: "Launch an owner-approved new workload",
+    description: "Execute the exact owner-approved first-launch recipe for a newly enrolled deployment. Requires separate resource consent and explicit execution approval. Inspect capabilities for recipeHash. Does not alter recipe, host or grants; uncertain or completed launches cannot be replayed.",
+    requiredScope: "deployment:redeploy",
+    inputSchema: { type: "object", properties: {
+      deployment: { type: ["integer", "string"] },
+      recipeHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      idempotencyKey: { type: "string", minLength: 8, maxLength: 160 },
+    }, required: ["deployment", "recipeHash", "idempotencyKey"], additionalProperties: false },
+    outputSchema: { type: "object", properties: { operation: OPERATION_SCHEMA, reused: { type: "boolean" } }, required: ["operation", "reused"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  {
     name: "deployment.source.deploy",
     title: "Build and deploy linked source",
     description: "Queue a durable deployment that syncs a linked GitHub source branch through the GroundControl GitHub App, builds on the enrolled host and deploys supported Compose or static workloads without relying on GitHub Actions.",
@@ -462,9 +491,10 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 ];
 
 export function toolDefinitionsForScopes(scopes?: Set<string>) {
+  const available = TOOL_DEFINITIONS.filter(tool => (tool.requiredScope !== "deployment:propose" && tool.name !== "deployment.first_launch") || agentEnrollmentEnabled());
   const visible = scopes
-    ? TOOL_DEFINITIONS.filter((tool) => scopes.has(tool.requiredScope))
-    : TOOL_DEFINITIONS;
+    ? available.filter((tool) => scopes.has(tool.requiredScope))
+    : available;
 
   return visible.map(({ requiredScope, ...tool }) => {
     const securitySchemes = [{ type: "oauth2" as const, scopes: [requiredScope] }];
@@ -577,6 +607,11 @@ export async function executeAgentTool(
   const definition = TOOL_DEFINITIONS.find((tool) => tool.name === name);
   if (!definition) throw new Error(`Unknown tool: ${name}`);
   requireTokenScope(context, definition.requiredScope);
+  if (name === "deployment.proposal.create") return createAgentDeploymentProposal(context, args);
+  if (name === "deployment.proposal.get") {
+    if (Object.keys(args).some(key => key !== "id") || typeof args.id !== "string" || args.id.length > 128) throw new Error("Invalid proposal id");
+    return getAgentDeploymentProposal(context, args.id);
+  }
 
   if (name === "deployment.list") {
     const deployments = await prisma.enrolledDeployment.findMany({
@@ -654,6 +689,17 @@ export async function executeAgentTool(
       profile: status.profile,
       checks: status.checks,
     };
+  }
+
+  if (name === "deployment.first_launch") {
+    if (!agentEnrollmentEnabled()) throw new Error("First launch is not enabled.");
+    if (Object.keys(args).some(key => !["deployment", "recipeHash", "idempotencyKey"].includes(key))) throw new Error("Unexpected first-launch input.");
+    const deployment = await allowedDeployment(context, args.deployment);
+    const recipeHash = String(args.recipeHash || "");
+    const idempotencyKey = String(args.idempotencyKey || "").trim();
+    if (!/^[a-f0-9]{64}$/.test(recipeHash) || runtimeCapabilities(deployment).firstLaunchRecipeHash !== recipeHash) throw new Error("Inspect the exact owner-approved recipe before launching.");
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 160) throw new Error("idempotencyKey must be 8–160 characters.");
+    return enqueueOperation(context, deployment, name, idempotencyKey, { recipeHash });
   }
 
   if (name === "deployment.source.deploy") {
@@ -758,6 +804,10 @@ async function enqueueOperation(context: AgentAccessContext, deployment: Awaited
   const existing = await lookup();
   if (existing) return reuse(existing);
   requireRuntimeOperation(deployment, type);
+  if (type === "deployment.first_launch") {
+    const recipe = await prisma.agentDeploymentRecipe.findUnique({ where: { deploymentId: deployment.id } });
+    if (!recipe || recipe.status !== "pending" || recipe.launchOperationId || recipe.recipeHash !== input.recipeHash || recipe.userId !== context.user.id) throw new Error("The owner-approved first-launch recipe is not pending or is already claimed.");
+  }
   try {
     const operation = await prisma.agentOperation.create({ data: { grantId: context.grant.id, deploymentId: deployment.id, type, idempotencyKey, inputJson } });
     return { operation: serializeOperation(operation), reused: false };
