@@ -1,3 +1,4 @@
+import { rejectCandidateLegacyMutation } from "@/lib/candidate-config-access";
 import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
 import { jsonObject } from "@/lib/agent-runtime-capabilities";
 import { NextRequest, NextResponse } from "next/server";
@@ -278,7 +279,7 @@ export async function POST(req: NextRequest) {
   let redeployVps: Awaited<ReturnType<typeof getActiveVps>> = null;
   let redeployPhase = "prepare";
   try {
-    requireAuth(req);
+    const user = requireAuth(req);
     const {
       projectSlug,
       projectPath: requestedPath,
@@ -369,6 +370,9 @@ export async function POST(req: NextRequest) {
         ],
       },
     });
+    if (project) await rejectCandidateLegacyMutation(user.id, project.id);
+    const recordedDeployment = await prisma.enrolledDeployment.findFirst({ where: { OR: [{ slug: projectSlug }, { sourcePath: target.projectPath }] }, select: { legacyProjectId: true } });
+    if (recordedDeployment?.legacyProjectId && recordedDeployment.legacyProjectId !== project?.id) await rejectCandidateLegacyMutation(user.id, recordedDeployment.legacyProjectId);
     const recentReleaseUrls = project
       ? await prisma.deployment.findMany({
           where: { projectId: project.id },

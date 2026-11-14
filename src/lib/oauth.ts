@@ -1,12 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
+import type { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 export const OAUTH_SCOPES = [
+  "deployment:propose",
   "deployment:read",
   "deployment:logs",
   "deployment:health",
@@ -17,7 +19,14 @@ export const OAUTH_SCOPES = [
 
 export type OAuthScope = (typeof OAUTH_SCOPES)[number];
 
+// Keep the static union for typing, but discovery/consent must reflect the feature gate.
+export function supportedOAuthScopes(): OAuthScope[] {
+  return OAUTH_SCOPES.filter(scope => scope !== "deployment:propose" || process.env.GC_AGENT_ENROLLMENT_PROPOSALS === "1");
+}
+
+
 export const OAUTH_SCOPE_LABELS: Record<OAuthScope, string> = {
+  "deployment:propose": "Submit deployment proposals for owner review (does not deploy)",
   "deployment:read": "Inspect deployments and their recorded configuration",
   "deployment:logs": "Read deployment execution evidence and logs",
   "deployment:health": "Check runtime and public endpoint health",
@@ -82,7 +91,10 @@ export function hasScope(scope: string, required: OAuthScope): boolean {
 
 export function validateScope(scope: string, userRole: string): string {
   const normalized = normalizeScope(scope);
-  const unknown = [...scopeSet(normalized)].filter((item) => !OAUTH_SCOPES.includes(item as OAuthScope));
+  if (hasScope(normalized, "deployment:propose") && userRole !== "admin") {
+    throw new OAuthRequestError("Administrator approval is required for deployment:propose", "invalid_scope");
+  }
+  const unknown = [...scopeSet(normalized)].filter((item) => !supportedOAuthScopes().includes(item as OAuthScope));
   if (unknown.length) throw new OAuthRequestError(`Unsupported scope: ${unknown.join(", ")}`, "invalid_scope");
   if (hasScope(normalized, "deployment:redeploy") && userRole !== "admin") {
     throw new OAuthRequestError("Administrator approval is required for deployment:redeploy", "invalid_scope");
@@ -266,9 +278,9 @@ export async function createAuthorizationCode(input: {
   scope: string;
   codeChallenge: string;
   codeChallengeMethod: string;
-}) {
+}, db: Pick<Prisma.TransactionClient, "oAuthAuthorizationCode"> = prisma) {
   const raw = generateOpaqueToken("gc_code");
-  await prisma.oAuthAuthorizationCode.create({
+  await db.oAuthAuthorizationCode.create({
     data: {
       grantId: input.grantId,
       codeHash: hashOpaqueToken(raw),
@@ -286,11 +298,11 @@ export async function issueTokenPair(input: {
   grantId: number;
   scope: string;
   familyId?: string;
-}) {
+}, db: Pick<Prisma.TransactionClient, "oAuthToken"> = prisma) {
   const familyId = input.familyId || randomBytes(18).toString("base64url");
   const accessToken = generateOpaqueToken("gc_at");
   const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS);
-  await prisma.oAuthToken.create({
+  await db.oAuthToken.create({
     data: {
       grantId: input.grantId,
       tokenHash: hashOpaqueToken(accessToken),
@@ -304,7 +316,7 @@ export async function issueTokenPair(input: {
   let refreshToken: string | undefined;
   if (hasScope(input.scope, "offline_access")) {
     refreshToken = generateOpaqueToken("gc_rt");
-    await prisma.oAuthToken.create({
+    await db.oAuthToken.create({
       data: {
         grantId: input.grantId,
         tokenHash: hashOpaqueToken(refreshToken),

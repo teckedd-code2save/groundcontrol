@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromToken } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit";
+import { allowsResourceFreeConsent, replaceConsent } from "@/lib/oauth-consent";
 import { prisma } from "@/lib/prisma";
 import {
-  createAuthorizationCode,
   OAuthRequestError,
   readAuthorizationRequest,
   requestOrigin,
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
         .map(Number)
         .filter((id) => Number.isSafeInteger(id) && id > 0)
     ));
-    if (!requestedIds.length) {
+    if (!requestedIds.length && !allowsResourceFreeConsent(validated.scope)) {
       return NextResponse.json({ error: "Select at least one deployment for this agent." }, { status: 400 });
     }
     const allowed = await prisma.enrolledDeployment.findMany({
@@ -61,29 +61,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "One or more selected deployments no longer exist." }, { status: 400 });
     }
 
-    const grant = await prisma.oAuthGrant.upsert({
-      where: { userId_clientDbId: { userId: user.id, clientDbId: validated.client.id } },
-      create: {
-        userId: user.id,
-        clientDbId: validated.client.id,
-        scope: validated.scope,
-        resources: JSON.stringify(requestedIds),
-      },
-      update: {
-        scope: validated.scope,
-        resources: JSON.stringify(requestedIds),
-        revokedAt: null,
-      },
-    });
-    await prisma.oAuthToken.updateMany({
-      where: { grantId: grant.id, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-
-    const code = await createAuthorizationCode({
-      grantId: grant.id,
-      redirectUri: authRequest.redirectUri,
+    const code = await replaceConsent({
+      userId: user.id,
+      clientDbId: validated.client.id,
       scope: validated.scope,
+      resourceIds: requestedIds,
+      redirectUri: authRequest.redirectUri,
       codeChallenge: authRequest.codeChallenge,
       codeChallengeMethod: authRequest.codeChallengeMethod,
     });

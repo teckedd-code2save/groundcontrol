@@ -10,7 +10,7 @@ import { POST as composeOperation } from "@/app/api/projects/compose/route";
 export async function POST(req: NextRequest) {
   try {
     requireAuth(req);
-    const target = await agentOperationTarget(req, ["deployment.restart", "deployment.redeploy", "deployment.source.deploy"]);
+    const target = await agentOperationTarget(req, ["deployment.restart", "deployment.redeploy", "deployment.source.deploy", "deployment.first_launch"]);
     if (!target) throw new HttpError("A durable agent operation is required.", 403);
     // The worker owns dispatch; this second claim prevents duplicate HTTP execution.
     const claimed = await prisma.agentOperation.updateMany({
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
       data: { evidenceJson: JSON.stringify({ phase: "runtime_execution_started" }) },
     });
     if (claimed.count !== 1) return NextResponse.json({ uncertain: true, error: "This operation has already started. Inspect before retrying." }, { status: 409 });
-    if (deploymentRuntime(target.deployment) === "compose" && target.operation.type !== "deployment.restart") {
+    if (deploymentRuntime(target.deployment) === "compose" && target.input.publicSourceRecipe !== true && !["deployment.restart", "deployment.first_launch"].includes(target.operation.type)) {
       return composeOperation(new NextRequest(req.url, { method: "POST", headers: req.headers, body: JSON.stringify({
         projectSlug: target.projectSlug,
         projectPath: target.projectPath,

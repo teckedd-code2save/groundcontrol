@@ -1,3 +1,4 @@
+import { requireCandidateConfigOwner } from "@/lib/candidate-config-access";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { auditLog, getClientInfo } from "@/lib/audit";
@@ -30,6 +31,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
     if (!profile) return NextResponse.json({ error: "Environment not found" }, { status: 404 });
 
+    await requireCandidateConfigOwner(user.id, profile.projectId, profile.id);
     const resolved = await resolveDeploymentEnv(profile.project, profile.slug);
     if (!resolved) return NextResponse.json({ error: "Environment could not be resolved" }, { status: 404 });
     const values = component

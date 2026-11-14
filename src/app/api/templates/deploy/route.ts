@@ -1,3 +1,4 @@
+import { requireCandidateConfigOwner, rejectCandidateLegacyMutation } from "@/lib/candidate-config-access";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { isRepositoryComposeTemplate, isStaticTemplate, loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
@@ -272,6 +273,7 @@ export async function POST(req: NextRequest) {
     });
     const slug = slugifyDeploymentName(project ? `${project.slug.slice(0, 35)}-${environmentName || "production"}-${inferredName}` : inferredName);
     const existing = await prisma.enrolledDeployment.findUnique({ where: { slug } });
+    if (existing?.legacyProjectId) await rejectCandidateLegacyMutation(user.id, existing.legacyProjectId);
     const previousRecord = projectGroupId ? await prisma.project.findUnique({ where: { slug } }) : null;
     if (projectGroupId && (existing || previousRecord)) throw new HttpError("A deployment with this name already exists. Choose another name, or open that deployment to release an update.", 409);
     const composeProject = staticMode ? "" : `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
@@ -800,6 +802,7 @@ export async function POST(req: NextRequest) {
       durationMs: Date.now() - startTime,
       status: deploymentStatus,
     });
+    await requireCandidateConfigOwner(user.id, persisted.projectId);
     const envProfile = await upsertEnvProfileForProject({
       projectId: persisted.projectId,
       deploymentId: persisted.deploymentId,

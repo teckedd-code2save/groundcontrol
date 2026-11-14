@@ -1,3 +1,4 @@
+import { requireCandidateConfigOwner } from "@/lib/candidate-config-access";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -17,10 +18,12 @@ import { setLocalEnvValues } from "@/lib/env-management";
  */
 export async function POST(req: NextRequest) {
   try {
+    let userId: number | null = null;
     const token = req.headers.get("x-pipeline-token") || "";
     const expected = process.env.PIPELINE_SYNC_TOKEN;
     if (!expected || token !== expected) {
       const user = requireAuth(req);
+      userId = user.id;
       if (user.role !== "admin") {
         return NextResponse.json({ error: "Admin access or pipeline token required" }, { status: 403 });
       }
@@ -47,6 +50,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Project not found: ${deploymentSlug}` }, { status: 404 });
     }
 
+    await requireCandidateConfigOwner(userId, project.id);
+
     // Find the default env profile
     const profile = await prisma.deploymentEnvProfile.findFirst({
       where: { projectId: project.id },
@@ -55,6 +60,8 @@ export async function POST(req: NextRequest) {
     if (!profile) {
       return NextResponse.json({ error: "No environment profile found for this deployment" }, { status: 404 });
     }
+
+    await requireCandidateConfigOwner(userId, project.id, profile.id);
 
     // Write image tags as deployment-wide values (component: "")
     // so they land in .env for Docker Compose substitution.

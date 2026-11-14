@@ -1,3 +1,10 @@
+import { getActiveAppDomainBinding, verifyActiveAppDomainBinding, type ActiveAppDomainBinding } from "./agent-app-domain-publish";
+import { resolveFirstLaunchConfiguration, type FirstLaunchConfiguration } from "./agent-first-launch-config";
+import { planAgentFirstDeploy } from "./agent-first-deploy-plan";
+import type { ApprovedFirstDeployRecipe } from "./agent-first-deploy-execution";
+import { claimAgentFirstLaunch, recordFirstLaunchEvidence, finishAgentFirstLaunch } from "./agent-first-launch";
+import { claimAgentPublicSourceUpdate, recordPublicSourceUpdateEvidence, finishAgentPublicSourceUpdate } from "./agent-public-source-update";
+import { executeAgentFirstDeploy, executeAgentPublicSourceUpdate } from "./agent-first-deploy-execution";
 import { redeployStandalone } from "./standalone-redeploy";
 import type { agentOperationTarget } from "./agent-operation-target";
 import { deploymentRuntime, staticRecipe } from "./agent-runtime-capabilities";
@@ -10,9 +17,55 @@ import { HttpError } from "./errors";
 
 type Target = NonNullable<Awaited<ReturnType<typeof agentOperationTarget>>>;
 
+function runtimeConfigurationResolver(target: Target, recipe: ApprovedFirstDeployRecipe & { configuration?: FirstLaunchConfiguration }) {
+  return async () => {
+    if (!recipe.configuration) return {};
+    const current = await prisma.enrolledDeployment.findUnique({ where: { id: target.deployment.id }, select: { legacyProjectId: true } });
+    if (!current?.legacyProjectId || current.legacyProjectId !== target.deployment.legacyProjectId) throw new Error("Approved configuration project is no longer linked.");
+    return resolveFirstLaunchConfiguration(target.operation.grant.userId, recipe.configuration, target.deployment.legacyProjectId, planAgentFirstDeploy(recipe).services);
+  };
+}
+
 export async function executeRuntimeOperation(target: Target) {
   const { deployment, operation, input, vps } = target;
   const runtime = deploymentRuntime(deployment);
+  if (operation.type === "deployment.first_launch") {
+    const claimed = await claimAgentFirstLaunch(deployment.id, operation.id, String(input.recipeHash || ""), operation.grantId, target.operation.grant.userId);
+    const resolveRuntimeConfiguration = runtimeConfigurationResolver(target, claimed.recipe);
+    const result = await executeAgentFirstDeploy(claimed.recipe, claimed.vps, async evidence => {
+      await resolveRuntimeConfiguration();
+      await recordFirstLaunchEvidence(deployment.id, operation.id, operation.grantId, target.operation.grant.userId, evidence);
+    }, { resolveRuntimeConfiguration });
+    await finishAgentFirstLaunch(deployment.id, operation.id, result);
+    return { ...result, ...(result.status === "uncertain" ? { uncertain: true } : {}), ...(result.hostMutation === "confirmed" ? { applied: true } : result.hostMutation === "none" ? { applied: false } : {}) };
+  }
+  if (operation.type === "deployment.source.deploy" && input.publicSourceRecipe === true) {
+    const expectedDomain = input.appDomainBinding as ActiveAppDomainBinding | null | undefined;
+    if (expectedDomain === undefined) throw new Error("Source update is missing its explicit domain snapshot; inspect and submit a new approved operation.");
+    const checkDomainBinding = async () => {
+      const current = await getActiveAppDomainBinding(operation.grant.userId, deployment.id);
+      if (JSON.stringify(current) !== JSON.stringify(expectedDomain)) throw new Error("Approved application domain binding changed; inspect before recovery.");
+    };
+    await checkDomainBinding();
+    const claimed = await claimAgentPublicSourceUpdate(deployment.id, operation.id, operation.grantId, operation.grant.userId);
+    const resolveRuntimeConfiguration = runtimeConfigurationResolver(target, claimed.recipe);
+    let result = await executeAgentPublicSourceUpdate(claimed.recipe, claimed.update, claimed.vps, async evidence => {
+      await resolveRuntimeConfiguration();
+      await checkDomainBinding();
+      await recordPublicSourceUpdateEvidence(deployment.id, operation.id, operation.grantId, operation.grant.userId, evidence);
+    }, { resolveRuntimeConfiguration });
+    if (result.success && expectedDomain) {
+      try {
+        const publicHealth = await verifyActiveAppDomainBinding(operation.grant.userId, deployment.id, expectedDomain);
+        if (!publicHealth.checked || !publicHealth.healthy) result = { ...result, success: false, status: "failed", publicVerified: false, error: "Application updated but the approved public HTTPS route, marker or health could not be verified. Inspect before recovery." };
+        else result = { ...result, publicVerified: true };
+      } catch {
+        result = { ...result, success: false, status: "uncertain", publicVerified: false, error: "Application update public outcome could not be confirmed. Inspect before recovery; do not replay." };
+      }
+    }
+    await finishAgentPublicSourceUpdate(deployment.id, operation.id, result);
+    return { ...result, ...(result.status === "uncertain" ? { uncertain: true } : {}), ...(result.hostMutation === "confirmed" ? { applied: true } : result.hostMutation === "none" ? { applied: false } : {}) };
+  }
   if (operation.type === "deployment.restart") {
     const command = runtime === "container"
       ? `docker restart ${shQuote(deployment.containerName!)}`

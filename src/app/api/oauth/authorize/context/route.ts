@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromToken } from "@/lib/auth";
+import { allowsResourceFreeConsent } from "@/lib/oauth-consent";
 import { prisma } from "@/lib/prisma";
 import {
   OAUTH_SCOPE_LABELS,
@@ -49,12 +50,13 @@ export async function GET(req: NextRequest) {
       scopes: requestedScopes.map((scope) => ({
         id: scope,
         label: OAUTH_SCOPE_LABELS[scope as keyof typeof OAUTH_SCOPE_LABELS] || scope,
-        write: scope === "deployment:redeploy",
+        write: scope === "deployment:redeploy" || scope === "deployment:propose",
       })),
       deployments,
+      allowsEmptyResources: allowsResourceFreeConsent(validated.scope),
       selectedDeploymentIds: existingGrant && !existingGrant.revokedAt
         ? parseResourceIds(existingGrant.resources)
-        : deployments.map((deployment) => deployment.id),
+        : [],
       user: { username: user.username, role: user.role },
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

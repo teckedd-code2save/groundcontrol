@@ -1,6 +1,8 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  supportedOAuthScopes,
+  validateScope,
   isAllowedRedirectUri,
   normalizeScope,
   pkceChallenge,
@@ -56,4 +58,39 @@ describe("agent OAuth primitives", () => {
       presentedClientId: "",
     })).toBe(false);
   });
+});
+
+
+describe("proposal OAuth feature gate", () => {
+  it("does not advertise or accept proposal scope while disabled", () => {
+    vi.stubEnv("GC_AGENT_ENROLLMENT_PROPOSALS", "0");
+    try {
+      expect(supportedOAuthScopes()).not.toContain("deployment:propose");
+      expect(() => validateScope("deployment:propose", "admin")).toThrow("Unsupported scope");
+      expect(validateScope("deployment:read", "admin")).toBe("deployment:read");
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("requires explicit scope and admin approval while enabled", () => {
+    vi.stubEnv("GC_AGENT_ENROLLMENT_PROPOSALS", "1");
+    try {
+      expect(supportedOAuthScopes()).toContain("deployment:propose");
+      expect(validateScope("deployment:propose", "admin")).toBe("deployment:propose");
+      expect(() => validateScope("deployment:propose", "viewer")).toThrow("Administrator approval");
+      expect(validateScope("", "admin")).not.toContain("deployment:propose");
+    } finally { vi.unstubAllEnvs(); }
+  });
+});
+
+it.each(["0", "1"])("OAuth discovery reflects proposal gate %s", async (enabled) => {
+  const { NextRequest } = await import("next/server");
+  const { GET: serverMetadata } = await import("../app/api/oauth/metadata/authorization-server/route");
+  const { GET: resourceMetadata } = await import("../app/api/oauth/metadata/protected-resource/route");
+  vi.stubEnv("GC_AGENT_ENROLLMENT_PROPOSALS", enabled);
+  try {
+    for (const endpoint of [serverMetadata, resourceMetadata]) {
+      const response = await endpoint(new NextRequest("https://gc.example.test/.well-known/oauth-authorization-server"));
+      const body = await response.json();
+      expect(body.scopes_supported.includes("deployment:propose")).toBe(enabled === "1");
+    }
+  } finally { vi.unstubAllEnvs(); }
 });

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { beforeEach, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
+  agentDeploymentRecipe: { findUnique: vi.fn() },
   enrolledDeployment: { findFirst: vi.fn(), findMany: vi.fn() },
   agentOperation: { findUnique: vi.fn(), create: vi.fn(), findFirst: vi.fn() },
 }));
@@ -71,4 +72,19 @@ it("operation reads remain bound to current resources and the owning grant", asy
   db.agentOperation.findFirst.mockResolvedValue(null);
   await expect(executeAgentTool(context, "operation.get", { operationId: "operation-1" })).rejects.toThrow(/not found/);
   expect(db.agentOperation.findFirst).toHaveBeenCalledWith({ where: { id: "operation-1", grantId: 5, deploymentId: { in: [7] } } });
+});
+
+it("requires a dedicated pending recipe as well as resource consent for first launch", async () => {
+  vi.stubEnv("GC_AGENT_ENROLLMENT_PROPOSALS", "1");
+  try {
+    const ctx = { ...context, user: { id: 1 } } as AgentAccessContext;
+    db.enrolledDeployment.findFirst.mockResolvedValue({ ...deployment, kind: "compose", sourcePath: "/srv/app", metadataJson: JSON.stringify({ agentEnrollment: { firstLaunchState: "pending", recipeHash: "a".repeat(64) } }) });
+    const args = { deployment: 7, recipeHash: "a".repeat(64), idempotencyKey: "firstlaunch-001" };
+    db.agentDeploymentRecipe.findUnique.mockResolvedValue(null);
+    await expect(executeAgentTool(ctx, "deployment.first_launch", args)).rejects.toThrow(/not pending/);
+    db.agentDeploymentRecipe.findUnique.mockResolvedValue({ status: "pending", recipeHash: args.recipeHash, userId: 1 });
+    expect(await executeAgentTool(ctx, "deployment.first_launch", args)).toMatchObject({ operation: { type: "deployment.first_launch" } });
+    db.agentDeploymentRecipe.findUnique.mockResolvedValue({ status: "uncertain", recipeHash: args.recipeHash, userId: 1, launchOperationId: "old" });
+    await expect(executeAgentTool(ctx, "deployment.first_launch", { ...args, idempotencyKey: "new-key-001" })).rejects.toThrow(/already claimed/);
+  } finally { vi.unstubAllEnvs(); }
 });

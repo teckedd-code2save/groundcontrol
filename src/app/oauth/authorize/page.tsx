@@ -7,6 +7,7 @@ type ConsentContext = {
   scopes: Array<{ id: string; label: string; write: boolean }>;
   deployments: Array<{ id: number; name: string; slug: string; kind: string; status: string; vpsConfig?: { name: string } | null }>;
   selectedDeploymentIds: number[];
+  allowsEmptyResources: boolean;
   user: { username: string; role: string };
 };
 
@@ -97,6 +98,7 @@ export default function OAuthAuthorizePage() {
               <div className="flex items-end justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-medium">Allowed deployments</h2>
+                  {context.allowsEmptyResources && <p className="mt-1 text-xs text-muted">You can authorize proposals without selecting a deployment. Proposals require separate owner review and cannot deploy or grant access to a workload.</p>}
                   <p className="mt-1 text-xs text-muted">Unselected workloads remain invisible to this client.</p>
                 </div>
                 <button type="button" className="text-xs text-accent" onClick={() => {
@@ -133,8 +135,8 @@ export default function OAuthAuthorizePage() {
 
             <div className="flex flex-col-reverse gap-2 border-t border-border pt-5 sm:flex-row sm:justify-end">
               <button disabled={busy} type="button" onClick={() => void decide(false)} className="gc-button gc-button-quiet">Deny</button>
-              <button disabled={busy || selected.size === 0} type="button" onClick={() => void decide(true)} className="gc-button gc-button-primary">
-                {busy ? "Authorizing…" : `Authorize ${selected.size} deployment${selected.size === 1 ? "" : "s"}`}
+              <button disabled={busy || (selected.size === 0 && !context.allowsEmptyResources)} type="button" onClick={() => void decide(true)} className="gc-button gc-button-primary">
+                {busy ? "Authorizing…" : selected.size === 0 ? "Authorize proposals only" : `Authorize ${selected.size} deployment${selected.size === 1 ? "" : "s"}`}
               </button>
             </div>
           </div>

@@ -88,7 +88,7 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
   if (!parseResources(current.grant.resources).includes(current.deploymentId)) {
     return markFailed(prisma, current, "The grant no longer authorizes this deployment");
   }
-  if (!["deployment.redeploy", "deployment.source.deploy", "deployment.restart"].includes(current.type)) {
+  if (!["deployment.redeploy", "deployment.source.deploy", "deployment.restart", "deployment.first_launch"].includes(current.type)) {
     return markFailed(prisma, current, `Unsupported operation type: ${current.type}`);
   }
 
@@ -124,6 +124,7 @@ async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
           phase: sourceDeploy ? "source_deploy_started" : "redeploy_started",
           projectSlug,
           branch: sourceDeploy && typeof input.branch === "string" ? input.branch : undefined,
+          commitSha: sourceDeploy && typeof input.commitSha === "string" ? input.commitSha : undefined,
         }),
         leaseUntil: new Date(Date.now() + LEASE_MS),
       },

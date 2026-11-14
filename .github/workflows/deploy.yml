@@ -2,7 +2,7 @@ name: Build & Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/hermes-enrollment]
   workflow_dispatch:
     inputs:
       deploy_vps:
@@ -11,7 +11,7 @@ on:
         default: false
 
 concurrency:
-  group: production-deploy
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 env:

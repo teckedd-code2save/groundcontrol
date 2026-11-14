@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { toolDefinitionsForScopes } from "./mcp-agent";
 
 describe("GroundControl MCP tool catalog", () => {
@@ -62,5 +62,21 @@ describe("GroundControl MCP tool catalog", () => {
       expect(tool.securitySchemes[0].scopes.length).toBeGreaterThan(0);
       expect(tool._meta.securitySchemes).toEqual(tool.securitySchemes);
     }
+  });
+});
+
+
+describe("experimental proposal catalog isolation", () => {
+  it("never adds proposal tools to redeploy grants even when enabled", () => {
+    vi.stubEnv("GC_AGENT_ENROLLMENT_PROPOSALS", "1");
+    try {
+      expect(toolDefinitionsForScopes(new Set(["deployment:redeploy"])).some(t => t.name.includes("proposal"))).toBe(false);
+      expect(toolDefinitionsForScopes(new Set(["deployment:propose"])).map(t => t.name)).toEqual(["deployment.proposal.create", "deployment.proposal.get"]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("hides proposal tools by default even with the scope", () => {
+    vi.stubEnv("GC_AGENT_ENROLLMENT_PROPOSALS", "0");
+    try { expect(toolDefinitionsForScopes(new Set(["deployment:propose"]))).toEqual([]); }
+    finally { vi.unstubAllEnvs(); }
   });
 });

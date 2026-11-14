@@ -33,7 +33,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     fetch("/api/auth/me")
       .then((res) => {
         if (!res.ok) {
-          router.push("/login");
+          router.push(`/login?next=${encodeURIComponent(pathname)}`);
           return null;
         }
         return res.json() as Promise<MeResponse>;
@@ -45,7 +45,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           router.push("/force-password-change");
         }
       })
-      .catch(() => router.push("/login"))
+      .catch(() => router.push(`/login?next=${encodeURIComponent(pathname)}`))
       .finally(() => setAuthChecked(true));
   }, [pathname, router, isPublic]);
 
