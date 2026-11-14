@@ -68,9 +68,11 @@ describe("pure application domain plan", () => {
     }
   });
   it("copies only safe host identity fields, never credentials",()=>{
-    const input=fixture();Object.assign(input.host,{password:"private-value",privateKey:"private-key"});
+    // Synthetic marker only: never read credentials or environment values in this test.
+    const omittedFieldMarker = "TEST_ONLY_NOT_A_CREDENTIAL";
+    const input=fixture();Object.assign(input.host,{password:omittedFieldMarker,privateKey:omittedFieldMarker});
     const output=JSON.stringify(planAgentAppDomain(input));
-    expect(output).not.toContain("private-value"); expect(output).not.toContain("private-key");
+    expect(output).not.toContain(omittedFieldMarker);
   });
   it("rejects malformed host snapshots and preflight data",()=>{
     expect(()=>planAgentAppDomain({...fixture(),host:{...fixture().host,username:"root\nEOF"}})).toThrow();
