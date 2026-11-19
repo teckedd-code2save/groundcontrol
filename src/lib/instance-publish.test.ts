@@ -18,3 +18,14 @@ describe("GroundControl instance publishing", () => {
     expect(() => normalizePublicHostname(hostname)).toThrow();
   });
 });
+
+describe("Assigned HTTPS origin policy", () => {
+  it.each(["https://my-name.ngrok-free.dev", "https://my-name.ngrok-free.app/"])("accepts an assigned origin %s", async (value) => {
+    const { normalizeAssignedHttpsUrl } = await import("./instance-publish");
+    expect(normalizeAssignedHttpsUrl(value)).toBe(new URL(value).origin);
+  });
+  it.each(["http://my-name.ngrok-free.dev", "https://ngrok-free.dev", "https://x.y.ngrok-free.dev", "https://x.ngrok-free.dev.evil.test", "https://x.ngrok-free.dev:443", "https://x.ngrok-free.dev/path", "https://x.ngrok-free.dev?x=1", "https://x.ngrok-free.dev#x", "https://user@x.ngrok-free.dev", "https://127.0.0.1", "https://x.ngrok-free.dev\\\\@evil.test"])("rejects %s before network activity", async (value) => {
+    const { normalizeAssignedHttpsUrl } = await import("./instance-publish");
+    expect(() => normalizeAssignedHttpsUrl(value)).toThrow();
+  });
+});

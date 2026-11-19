@@ -164,3 +164,5 @@ This removes the runtime container/bridge processes but preserves the GroundCont
 ## Post-claim distribution
 
 After claim, onboarding can keep the instance private or publish it through direct Caddy HTTPS, a named Cloudflare Tunnel, or a temporary outbound HTTPS bridge. GroundControl then verifies host execution, PTY, MCP discovery, OAuth metadata, persistent storage, consumed claim state and public HTTPS when configured.
+
+For a stable provider-assigned address without an owned domain, see [Use an assigned HTTPS address](./assigned-https-address.md).

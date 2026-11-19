@@ -69,7 +69,9 @@ Rerunning setup reuses a working published URL rather than rotating it. It prese
 
 The temporary tunnel is an initial bridge, not a permanent GroundControl address. A GC-provided subdomain (similar to a hosted platform's default application domain) is a separate product capability and is **not available yet**. Recreating a quick tunnel does not provide that guarantee.
 
-The implemented permanent options use a domain you control:
+For a stable address without buying or owning a domain, Linux-server onboarding now offers **Use an assigned HTTPS address** with your own ngrok account. See [the assigned-address guide](./assigned-https-address.md) for connector setup, verification, quotas and security. This is a provider-assigned address, not a GC-issued domain or a centrally funded relay. Desktop adoption is not enabled in this version.
+
+The other permanent options use a domain you control:
 
 - **Direct HTTPS with Caddy:** create a DNS-only A record pointing to the server's public IPv4 address. Allow inbound TCP 80 and 443 in both cloud and host firewalls, with your operator's approval. GC installs/configures Caddy on supported Linux hosts but does not open those firewall rules. The current setup check does not support IPv6-only or proxied DNS. Keep the GC management port loopback-only.
 - **Named Cloudflare Tunnel:** use a zone in your Cloudflare account and a securely supplied token with zone read, DNS edit and account tunnel edit permissions. Supply the account ID when the token can see more than one account. GC configures tunnel/DNS and keeps the origin private; no inbound management port is needed.

@@ -174,3 +174,47 @@ exit "${"$"}{RELOAD_FAIL:-0}"
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+it("adopts an assigned URL only after verification and retains every existing connector", async () => {
+  const { adoptAssignedHttps } = await import("./instance-publish");
+  const result = await adoptAssignedHttps({ publicUrl: "https://our-name.ngrok-free.dev" });
+  expect(result.previousPublicUrl).toBe("https://prior.trycloudflare.com");
+  expect(result.verification.checks.publicHttps.status).toBe("ready");
+  expect(m.events.indexOf("save:groundcontrol_public_url")).toBeGreaterThan(m.events.indexOf("http:https://our-name.ngrok-free.dev/api/auth/claim"));
+  expect(m.events.some(e => e.includes("docker rm") || e.includes("caddy reload"))).toBe(false);
+  expect(m.config.get("groundcontrol_external_connector_url")).toBe(result.publicUrl);
+});
+it.each(["identity", "oauth", "redirect"])("rejects assigned endpoint with %s failure and preserves prior access", async (failure) => {
+  const { adoptAssignedHttps } = await import("./instance-publish");
+  const original = fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("https:") && url.endsWith(failure === "oauth" ? "/.well-known/oauth-authorization-server" : "/api/auth/claim")) {
+      if (failure === "redirect") return new Response(null, { status: 302, headers: { Location: "http://127.0.0.1" } });
+      return new Response(JSON.stringify(failure === "identity" ? { instanceId: "impostor", claimed: true } : { issuer: "https://wrong.example" }));
+    }
+    return original(url, init);
+  }));
+  await expect(adoptAssignedHttps({ publicUrl: "https://our-name.ngrok-free.app" })).rejects.toMatchObject({ status: 502 });
+  expectPreserved();
+  for (const [, init] of vi.mocked(fetch).mock.calls) expect(init?.redirect).toBe("manual");
+});
+it("does not overwrite concurrent access changes", async () => {
+  const { adoptAssignedHttps } = await import("./instance-publish");
+  const original = fetch;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/auth/claim")) m.config.set("groundcontrol_public_url", "https://new.example.com");
+    return original(url, init);
+  }));
+  await expect(adoptAssignedHttps({ publicUrl: "https://our-name.ngrok-free.app" })).rejects.toMatchObject({ status: 409 });
+  expect(m.config.get("groundcontrol_public_url")).toBe("https://new.example.com");
+  expect(m.events.some(e => e.startsWith("save:"))).toBe(false);
+});
+it("requires operator shutdown attestation before private mode, never removes their connector", async () => {
+  const { keepInstancePrivate } = await import("./instance-publish");
+  m.config.set("groundcontrol_external_connector_url", "https://our-name.ngrok-free.app");
+  await expect(keepInstancePrivate()).rejects.toMatchObject({ status: 409 });
+  expectPreserved();
+  await keepInstancePrivate({ externalConnectorStopped: true });
+  expect(m.config.get("groundcontrol_external_connector_url")).toBe("");
+  expect(m.events.some(e => e.includes("ngrok") && !e.startsWith("save:"))).toBe(false);
+});

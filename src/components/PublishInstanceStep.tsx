@@ -25,7 +25,8 @@ type Verification = {
 
 type PublishStatus = {
   localDesktop?: boolean;
-  mode: "private" | "caddy" | "cloudflare" | "quick_tunnel";
+  externallyManagedUrl?: string | null;
+  mode: "private" | "caddy" | "cloudflare" | "quick_tunnel" | "assigned_https";
   publicUrl: string | null;
   claimed: boolean;
   cloudflareConfigured: boolean;
@@ -33,7 +34,7 @@ type PublishStatus = {
   lastVerification?: Verification | null;
 };
 
-type PublishMethod = "caddy" | "cloudflare" | "quick_tunnel" | "private";
+type PublishMethod = "caddy" | "cloudflare" | "quick_tunnel" | "private" | "assigned_https";
 
 export default function PublishInstanceStep({
   onComplete,
@@ -44,6 +45,8 @@ export default function PublishInstanceStep({
 }) {
   const [status, setStatus] = useState<PublishStatus | null>(null);
   const [method, setMethod] = useState<PublishMethod>("caddy");
+  const [assignedUrl, setAssignedUrl] = useState("");
+  const [externalStopped, setExternalStopped] = useState(false);
   const [hostname, setHostname] = useState("");
   const [apiToken, setApiToken] = useState("");
   const [accountId, setAccountId] = useState("");
@@ -62,6 +65,7 @@ export default function PublishInstanceStep({
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load publish status");
       setStatus(data);
+      if (!preserveSelection && data.mode === "assigned_https") setAssignedUrl(data.publicUrl || "");
       if (!preserveSelection && data.localDesktop) setMethod("private");
       setVerification(data.lastVerification || null);
       if (!preserveSelection && data.mode === "quick_tunnel") setHostname("");
@@ -96,6 +100,8 @@ export default function PublishInstanceStep({
     setRequiredRecord(null);
     try {
       const payload: Record<string, unknown> = { action: method };
+      if (method === "assigned_https") payload.publicUrl = assignedUrl.trim();
+      if (method === "private" && status?.externallyManagedUrl) payload.externalConnectorStopped = externalStopped;
       if (method === "caddy" || method === "cloudflare") {
         payload.hostname = hostname.trim();
       }
@@ -197,6 +203,13 @@ export default function PublishInstanceStep({
           onClick={() => setMethod("quick_tunnel")}
         />
         </>}
+        {!status?.localDesktop && <MethodCard
+          active={method === "assigned_https"}
+          icon={<Globe2 className="h-4 w-4" />}
+          title="Use an assigned HTTPS address"
+          detail="Your own ngrok account, no owned domain. Set up the connector yourself; then verify this instance."
+          onClick={() => setMethod("assigned_https")}
+        />}
         {!hasTemporaryAccess && <MethodCard
           active={method === "private"}
           icon={<LockKeyhole className="h-4 w-4" />}
@@ -205,6 +218,23 @@ export default function PublishInstanceStep({
           onClick={() => setMethod("private")}
         />}
       </div>
+
+      {method === "assigned_https" && (
+        <div className="border border-border bg-card p-5 space-y-3 text-xs text-muted">
+          <p>Use your own ngrok account and its assigned static address. No Serendepify relay or domain is involved. GroundControl does not install ngrok or collect its token.</p>
+          <p>On the machine hosting GroundControl, inspect <code>docker port groundcontrol-web 3000/tcp</code>. Forward ngrok to the reported loopback address and port, for example <code>ngrok http http://127.0.0.1:3003</code> only if that is the reported port. Never open the management port publicly.</p>
+          <p>Configure automatic startup using the <a href="https://ngrok.com/docs/gateway/agent/config/v3" target="_blank" rel="noreferrer" className="text-accent">ngrok v3 configuration</a> and <a href="https://ngrok.com/docs/gateway/agent/service" target="_blank" rel="noreferrer" className="text-accent">service guide</a>. A foreground command alone does not survive reboot.</p>
+          <label className="gc-label" htmlFor="gc-assigned-url">Assigned HTTPS address</label>
+          <input id="gc-assigned-url" value={assignedUrl} onChange={(event) => setAssignedUrl(event.target.value)} placeholder="https://your-name.ngrok-free.dev" className="gc-field w-full font-mono" />
+          <p>Free-plan browser warnings, quotas and idle timeouts apply. The previous access route stays running. After verification, reconnect Hermes using the new /mcp URL and complete fresh OAuth consent; discovery is not an authenticated test.</p>
+        </div>
+      )}
+      {status?.externallyManagedUrl && (
+        <div className="border border-warning/30 p-4 text-xs text-warning space-y-2">
+          <p>Externally managed connector: {status.externallyManagedUrl}. GroundControl never stops this connector, including when changing access methods. Previous access routes may also remain active.</p>
+          {method === "private" && <label className="flex gap-2"><input type="checkbox" checked={externalStopped} onChange={(event) => setExternalStopped(event.target.checked)} />I stopped the external ngrok connector. This is my confirmation, not an independent provider shutdown check.</label>}
+        </div>
+      )}
 
       {(method === "caddy" || method === "cloudflare") && (
         <div className="border border-border bg-card p-5">
@@ -285,6 +315,8 @@ export default function PublishInstanceStep({
           onClick={() => void publish()}
           disabled={
             working ||
+            (method === "assigned_https" && !assignedUrl.trim()) ||
+            (method === "private" && Boolean(status?.externallyManagedUrl) && !externalStopped) ||
             ((method === "caddy" || method === "cloudflare") && !hostname.trim()) ||
             (method === "cloudflare" && !status?.cloudflareConfigured && !apiToken.trim())
           }
@@ -296,7 +328,7 @@ export default function PublishInstanceStep({
               ? "Keep private & verify"
               : method === "quick_tunnel"
                 ? hasTemporaryAccess ? "Verify existing access" : "Create temporary HTTPS"
-                : "Publish & verify"}
+                : method === "assigned_https" ? "Verify & use assigned address" : "Publish & verify"}
         </button>
       </div>
 
@@ -319,6 +351,7 @@ export default function PublishInstanceStep({
               <p>This is a public HTTPS sign-in link, not a private-only address. You can close the setup terminal; GroundControl and this tunnel run on the server.</p>
               <p>This temporary connector does not restart automatically after a server reboot. Recreating it gives you a new URL, so bookmarks and agent connections may need updating.</p>
               <p>Quick tunnels have no uptime guarantee and do not support server-sent event streams. Use a permanent domain with a named Cloudflare Tunnel or HTTPS proxy for ongoing access and agents.</p>
+              <button type="button" onClick={() => setMethod("assigned_https")} disabled={working} className="gc-button gc-button-quiet text-[10px]">Use an assigned address instead</button>
               <button type="button" onClick={() => setMethod("cloudflare")} disabled={working} className="gc-button gc-button-quiet text-[10px]">
                 Set up a permanent domain
               </button>
