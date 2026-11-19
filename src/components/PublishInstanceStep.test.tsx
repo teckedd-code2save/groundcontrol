@@ -129,3 +129,20 @@ it("preserves permanent-domain selection and input when DNS setup needs a retry"
   expect(container.textContent).toContain("Publish & verify");
   expect(container.textContent).not.toContain("Create temporary HTTPS");
 });
+
+it("offers assigned HTTPS on Linux server without publishing when selected", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ mode: "private", localDesktop: false }) })));
+  await act(async () => root.render(<PublishInstanceStep onComplete={() => {}} />));
+  await click("Use an assigned HTTPS address");
+  expect(container.querySelector("#gc-assigned-url")).not.toBeNull();
+  expect(container.textContent).toContain("does not install ngrok or collect its token");
+  expect(post).not.toHaveBeenCalled();
+});
+it("requires external shutdown attestation before enabling private mode", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ mode: "assigned_https", publicUrl: "https://mine.ngrok-free.dev", externallyManagedUrl: "https://mine.ngrok-free.dev" }) })));
+  await act(async () => root.render(<PublishInstanceStep onComplete={() => {}} />));
+  await click("Keep it private");
+  const submit = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Keep private & verify"));
+  expect(submit?.disabled).toBe(true);
+  expect(container.textContent).toContain("not an independent provider shutdown check");
+});

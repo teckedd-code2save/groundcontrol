@@ -30,9 +30,10 @@ const PUBLIC_URL_KEY = "groundcontrol_public_url";
 const PUBLISH_MODE_KEY = "groundcontrol_publish_mode";
 const PUBLISH_EVIDENCE_KEY = "groundcontrol_publish_evidence";
 const QUICK_TUNNEL_CONTAINER = "groundcontrol-quick-tunnel";
+const EXTERNAL_URL_KEY = "groundcontrol_external_connector_url";
 const NAMED_TUNNEL_NAME = "groundcontrol-instance";
 
-export type PublishMode = "private" | "caddy" | "cloudflare" | "quick_tunnel";
+export type PublishMode = "private" | "caddy" | "cloudflare" | "quick_tunnel" | "assigned_https";
 
 export type VerificationCheck = {
   status: "ready" | "failed" | "skipped";
@@ -73,6 +74,37 @@ export function normalizePublicHostname(value: string) {
     throw new Error("Enter a valid public DNS hostname.");
   }
   return hostname;
+}
+
+/** Only provider-assigned, single-label HTTPS origins. Never accept arbitrary proxy targets. */
+export function normalizeAssignedHttpsUrl(value: string) {
+  const raw = value.trim();
+  if (!/^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.ngrok-free\.(?:dev|app)\/?$/i.test(raw)) {
+    throw new HttpError("Enter your assigned https://NAME.ngrok-free.dev or .ngrok-free.app address only, without a path, port or credentials.", 400);
+  }
+  return new URL(raw).origin;
+}
+
+export async function adoptAssignedHttps(input: { publicUrl: string }) {
+  const publicUrl = normalizeAssignedHttpsUrl(input.publicUrl);
+  const claim = await installClaimStatus();
+  if (!claim.claimed) throw new HttpError("Claim this instance before adopting public access.", 409);
+  const keys = [PUBLIC_URL_KEY, PUBLISH_MODE_KEY, EXTERNAL_URL_KEY];
+  const before = await Promise.all(keys.map(getConfig));
+  if (before[2] && before[2] !== publicUrl) throw new HttpError("Another external connector is still recorded. Stop it and confirm private access before adopting a different assigned address.", 409);
+  const verification = await verifyReplacementAccess(publicUrl);
+  await prisma.$transaction(async (tx) => {
+    const current = await Promise.all(keys.map(async (key) => (await tx.appConfig.findUnique({ where: { key } }))?.value || ""));
+    if (current.some((value, index) => value !== before[index])) {
+      throw new HttpError("Instance access changed during verification. Reload and retry; no connector was removed.", 409);
+    }
+    await setConfig(PUBLIC_URL_KEY, publicUrl, tx);
+    await setConfig(PUBLISH_MODE_KEY, "assigned_https", tx);
+    await setConfig(EXTERNAL_URL_KEY, publicUrl, tx);
+    await setConfig(PUBLISH_EVIDENCE_KEY, JSON.stringify(verification), tx);
+  });
+  // The connector belongs to the operator. Never retire it or any prior access here.
+  return { mode: "assigned_https" as const, publicUrl, previousPublicUrl: before[0] || null, verification };
 }
 
 async function setConfig(key: string, value: string, db: Pick<typeof prisma, "appConfig"> = prisma) {
@@ -640,14 +672,23 @@ export async function publishQuickTunnel() {
   };
 }
 
-export async function keepInstancePrivate() {
+export async function keepInstancePrivate(input: { externalConnectorStopped?: boolean } = {}) {
+  const externalUrl = await getConfig(EXTERNAL_URL_KEY);
+  if (externalUrl && input.externalConnectorStopped !== true) {
+    throw new HttpError("Stop your externally managed ngrok connector and confirm it is stopped before choosing private access.", 409);
+  }
   if (!isDesktopMode()) {
     await stopQuickTunnel();
     await stopNamedManagementTunnel();
     await disableCaddyExposure();
   }
-  await setConfig(PUBLIC_URL_KEY, "");
-  await setConfig(PUBLISH_MODE_KEY, "private");
+  await prisma.$transaction(async (tx) => {
+    const currentExternal = (await tx.appConfig.findUnique({ where: { key: EXTERNAL_URL_KEY } }))?.value || "";
+    if (currentExternal !== externalUrl) throw new HttpError("External access changed. Reload and confirm the current connector before choosing private access.", 409);
+    await setConfig(EXTERNAL_URL_KEY, "", tx);
+    await setConfig(PUBLIC_URL_KEY, "", tx);
+    await setConfig(PUBLISH_MODE_KEY, "private", tx);
+  });
   return {
     mode: "private" as const,
     publicUrl: null,
@@ -889,12 +930,13 @@ async function verifyReplacementAccess(publicUrl: string) {
 }
 
 export async function instancePublishStatus() {
-  const [publicUrl, mode, evidence, claim, activeCloudflare] = await Promise.all([
+  const [publicUrl, mode, evidence, claim, activeCloudflare, externallyManagedUrl] = await Promise.all([
     getConfig(PUBLIC_URL_KEY),
     getConfig(PUBLISH_MODE_KEY),
     getConfig(PUBLISH_EVIDENCE_KEY),
     installClaimStatus(),
     getActiveCloudflareAccount(),
+    getConfig(EXTERNAL_URL_KEY),
   ]);
 
   let lastVerification: InstanceVerification | null = null;
@@ -903,6 +945,7 @@ export async function instancePublishStatus() {
   } catch {}
 
   return {
+    externallyManagedUrl: externallyManagedUrl || null,
     localDesktop: isDesktopMode(),
     mode: (mode || "private") as PublishMode,
     publicUrl: publicUrl || null,

@@ -4,6 +4,7 @@ import { HttpError, handleApiError } from "@/lib/errors";
 import { createAuditLog } from "@/lib/audit";
 import { isDesktopMode } from "@/lib/runtime";
 import {
+  adoptAssignedHttps,
   instancePublishStatus,
   keepInstancePrivate,
   publishQuickTunnel,
@@ -34,6 +35,8 @@ export async function POST(req: NextRequest) {
     const user = await requireAdmin(req);
     const body = await req.json() as {
       action?: string;
+      publicUrl?: string;
+      externalConnectorStopped?: boolean;
       hostname?: string;
       apiToken?: string;
       accountId?: string;
@@ -43,8 +46,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "This installation uses a local login link. Install on a Linux server to configure public instance access." }, { status: 400 });
     }
 
+    if (body.action === "assigned_https") {
+      if (typeof body.publicUrl !== "string") throw new HttpError("publicUrl is required", 400);
+      const { verification, ...result } = await adoptAssignedHttps({ publicUrl: body.publicUrl });
+      await createAuditLog(user.id, "instance_access_publish", req, { mode: result.mode, publicUrl: result.publicUrl, verificationOk: verification.ok });
+      return NextResponse.json({ result, verification });
+    }
+
     if (body.action === "private") {
-      const result = await keepInstancePrivate();
+      const result = await keepInstancePrivate({ externalConnectorStopped: body.externalConnectorStopped });
       const verification = await verifyGroundControlInstance(null);
       await createAuditLog(user.id, "instance_access_disable", req, {
         mode: "private",
@@ -119,7 +129,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      error: "action must be private, quick_tunnel, caddy, cloudflare, or verify",
+      error: "action must be private, quick_tunnel, caddy, cloudflare, assigned_https, or verify",
     }, { status: 400 });
   } catch (error) {
     return handleApiError(error);

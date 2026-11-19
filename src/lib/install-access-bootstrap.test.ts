@@ -74,3 +74,10 @@ describe('host-only installation access bootstrap', () => {
   });
 
 });
+
+it('reuses assigned HTTPS on installer rerun without replacing its external connector', async () => {
+  const f = fixture({ groundcontrol_publish_mode: 'assigned_https', groundcontrol_public_url: 'https://mine.ngrok-free.dev' });
+  expect(await bootstrap(f)).toMatchObject({ publicUrl: 'https://mine.ngrok-free.dev', accessMode: 'permanent', accessChanged: false });
+  expect(f.docker).not.toHaveBeenCalled();
+  expect(f.prisma.appConfig.upsert).not.toHaveBeenCalled();
+});
