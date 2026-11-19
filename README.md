@@ -156,6 +156,16 @@ The older [`scripts/bootstrap`](./scripts/bootstrap) is retained for compatibili
 
 See [`docs/agent-assisted-installation.md`](./docs/agent-assisted-installation.md) for the install/claim contract and [`DEPLOY.md`](./DEPLOY.md) for HTTPS/reverse-proxy hardening.
 
+### Connect Hermes to your first deployment
+
+1. Finish GroundControl setup and choose a stable HTTPS address under **Access**. The temporary setup link is for claiming your instance, not for ongoing agent access. If you use the local Docker workspace, Hermes must be able to reach the endpoint from where it runs; a localhost URL on your laptop is not reachable by a remote Hermes.
+2. In GroundControl, [connect one existing deployment](./docs/projects-and-deployments.md#connect-an-existing-deployment) or add an isolated test deployment. Enrollment does not grant Hermes access or restart the workload.
+3. In Hermes 0.17.0 or later, run `hermes plugins install groundcontrol` to install the [catalog plugin](https://hermes-agent.nousresearch.com/marketplace/by/teckedd-code2save). The plugin provides the command and operating skill; it does not configure MCP or grant permission.
+4. In your selected Hermes profile, merge the [read-only MCP example](https://github.com/teckedd-code2save/hermes-groundcontrol/blob/d2905e9cdd710aaa20217e1c24a8091cdf8b9dcc/examples/read-only.yaml) with your existing settings. Replace the example URL with `https://YOUR-GROUNDCONTROL-HOST/mcp`. Use native OAuth and grant read access to just the test deployment. Do not add a bearer token to the file.
+5. Ask Hermes to list the deployments it can access and check the test deployment's health. Setup passes when Hermes makes a real authenticated call and returns the expected deployment, not merely when it loads the plugin or discovers tools. If the list is empty, check enrollment and the OAuth grant first; it does not mean the server has no workloads.
+
+Start read-only. Before attempting a test release, check that the deployment's runtime supports the operation, that GroundControl grants it for that workload, and that Hermes prompts for approval of the exact action. See the [plugin setup and recovery guide](https://github.com/teckedd-code2save/hermes-groundcontrol#setup) for OAuth reconnects and write-enabled profiles.
+
 ### Local development
 
 Run GroundControl on your laptop in minutes. No VPS is required to explore the UI — seed the schema and click around.
