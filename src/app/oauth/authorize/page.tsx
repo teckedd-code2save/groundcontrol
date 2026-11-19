@@ -99,13 +99,21 @@ export default function OAuthAuthorizePage() {
                   <h2 className="text-sm font-medium">Allowed deployments</h2>
                   <p className="mt-1 text-xs text-muted">Unselected workloads remain invisible to this client.</p>
                 </div>
-                <button type="button" className="text-xs text-accent" onClick={() => {
+                {context.deployments.length > 0 && <button type="button" className="text-xs text-accent" onClick={() => {
                   setSelected(selected.size === context.deployments.length ? new Set() : new Set(context.deployments.map((item) => item.id)));
                 }}>
                   {selected.size === context.deployments.length ? "Clear" : "Select all"}
-                </button>
+                </button>}
               </div>
-              <div className="mt-3 max-h-72 divide-y divide-border overflow-auto border border-border">
+              {context.deployments.length === 0 ? (
+                <div className="mt-3 border border-border px-4 py-4">
+                  <p className="text-sm font-medium">No deployments available to grant</p>
+                  <p className="mt-1 text-sm text-muted">
+                    Connect an existing workload or launch a test deployment in Projects. Then return here and refresh this page. If this request has expired, restart the connection in your agent.
+                  </p>
+                  <a href="/projects" target="_blank" rel="noopener noreferrer" className="gc-button gc-button-quiet mt-3 inline-flex">Open Projects in a new tab</a>
+                </div>
+              ) : <div className="mt-3 max-h-72 divide-y divide-border overflow-auto border border-border">
                 {context.deployments.map((deployment) => {
                   const checked = selected.has(deployment.id);
                   return (
@@ -128,7 +136,7 @@ export default function OAuthAuthorizePage() {
                     </label>
                   );
                 })}
-              </div>
+              </div>}
             </section>
 
             <div className="flex flex-col-reverse gap-2 border-t border-border pt-5 sm:flex-row sm:justify-end">
