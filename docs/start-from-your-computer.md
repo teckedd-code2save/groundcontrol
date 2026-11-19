@@ -114,7 +114,8 @@ Suggestions group Compose services into one app. **Dismiss** hides an unwanted s
 | Local port is busy | Setup normally chooses another port. For a chosen port, retry with `--local-port 43003`. |
 | Existing database has no matching `.env` | Restore the original configuration or supply its directory with `--dir`; do not generate replacement encryption keys. |
 | Image predates desktop setup | Publish/use a desktop-capable GroundControl image; an older image cannot run this mode correctly. |
-| Remote link stopped working | Keep the setup terminal open, or rerun the same command to reconnect. |
+| Public HTTPS link stopped working | Rerun the same launcher command to verify or recover access. If HTTPS is unavailable, retry with `--private` to reconnect over SSH. |
+| Private SSH link stopped working | Rerun with `--private` and keep that terminal open while using the local link. |
 
 For contributors testing an unpublished image:
 
