@@ -16,6 +16,8 @@ HOST_PORT="3003"
 INSTALL_DIR="/opt/groundcontrol"
 JSON_MODE=0
 ACCESS="temporary"
+DIRECT_IPV4_REVISION=""
+DIRECT_IPV4_SETTING=""
 PUBLIC_URL=""
 ACCESS_MODE="private"
 ACCESS_STATUS="private"
@@ -66,6 +68,7 @@ Options:
   --dir PATH           Install directory. Default: /opt/groundcontrol.
   --claim-ttl MINUTES  One-time human claim lifetime, 5-120. Default: 30.
   --private            Keep access private; do not create temporary HTTPS.
+  --experimental-direct-ipv4 FULL_COMMIT  Enable reserved IPv4 Access rehearsal on the matching candidate image.
   --access MODE        temporary (default) or private.
   --json               Emit one machine-readable result on stdout; progress goes to stderr.
   --preview            Check the requested image and local upgrade prerequisites without changing the instance.
@@ -95,6 +98,9 @@ while [ "$#" -gt 0 ]; do
       CLAIM_TTL_MINUTES="$2"; shift 2 ;;
     --private)
       ACCESS="private"; shift ;;
+    --experimental-direct-ipv4)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--experimental-direct-ipv4 needs a full source commit."
+      DIRECT_IPV4_REVISION="$2"; shift 2 ;;
     --access)
       [ "$#" -ge 2 ] || fail "--access needs temporary or private"
       ACCESS="$2"; shift 2 ;;
@@ -130,6 +136,11 @@ case "$VERSION" in
 esac
 [ "$PREVIEW" -eq 0 ] || [ "$UNINSTALL" -eq 0 ] || fail "--preview and --uninstall cannot be combined"
 [ "$UPGRADE" -eq 0 ] || [ "$UNINSTALL" -eq 0 ] || fail "--upgrade and --uninstall cannot be combined"
+
+if [ -n "$DIRECT_IPV4_REVISION" ]; then
+  [[ "$DIRECT_IPV4_REVISION" =~ ^[0-9a-f]{40}$ && "$VERSION" =~ ^[0-9a-f]{7,40}$ && "$DIRECT_IPV4_REVISION" = "$VERSION"* ]] || fail "The reserved IPv4 rehearsal needs a full source commit and matching commit image tag."
+  [ "$UNINSTALL" -eq 0 ] || fail "The reserved IPv4 rehearsal cannot be combined with --uninstall."
+fi
 
 [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || fail "This installer currently supports Linux hosts"
 
@@ -328,9 +339,24 @@ if docker inspect groundcontrol-web >/dev/null 2>&1; then
   fi
 fi
 
+if [ "$EXISTING" -eq 1 ] && { [ "$UPGRADE" -eq 1 ] || [ -n "$DIRECT_IPV4_REVISION" ]; } && [ "$PREVIEW" -eq 0 ]; then
+  direct_setting="$(docker inspect --format '{{range .Config.Env}}{{if eq . "GC_EXPERIMENTAL_DIRECT_IPV4=1"}}enabled{{end}}{{end}}' groundcontrol-web 2>/dev/null)" || fail "Unable to inspect the existing rehearsal setting; the instance was not changed."
+  if [ "$direct_setting" = enabled ]; then DIRECT_IPV4_SETTING="      - GC_EXPERIMENTAL_DIRECT_IPV4=1"; fi
+  if [ -n "$DIRECT_IPV4_REVISION" ] && [ "$UPGRADE" -eq 0 ]; then
+    current_revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' groundcontrol-web 2>/dev/null || true)"
+    [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$direct_setting" = enabled ] && [ "$current_revision" = "$DIRECT_IPV4_REVISION" ] || fail "The existing instance was not changed. Use the pinned on-host installer with --preview, then explicitly --upgrade if you intend to enable the reserved IPv4 rehearsal."
+  fi
+fi
+
 if [ "$EXISTING_HEALTHY" -eq 1 ]; then
   EXISTING_PORT="$(docker port groundcontrol-web 3000/tcp 2>/dev/null | head -n 1 | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
   if [ -n "$EXISTING_PORT" ]; then HOST_PORT="$EXISTING_PORT"; fi
+fi
+
+if [ "$PREVIEW" -eq 0 ] && { [ "$UPGRADE" -eq 1 ] || [ "$UNINSTALL" -eq 1 ] || [ "$EXISTING_HEALTHY" -eq 0 ]; }; then
+  for ingress_path in /etc/systemd/system/groundcontrol-direct-ipv4.service /etc/groundcontrol-direct-ipv4; do
+    [ ! -e "$ingress_path" ] && [ ! -L "$ingress_path" ] || fail "Remove the owned reserved IPv4 HTTPS slot and Forget its address over recovery before changing the runtime."
+  done
 fi
 
 TARGET_REF="$IMAGE_REPO:$VERSION"
@@ -434,6 +460,17 @@ else
   random_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 fi
 
+RESOLVED_IMAGE=""
+if [ -n "$DIRECT_IPV4_REVISION" ]; then
+  log "[install] pulling $TARGET_REF"
+  docker pull "$TARGET_REF" >/dev/null
+  RESOLVED_IMAGE="$(image_repo_digest "$TARGET_REF")"
+  [[ "$RESOLVED_IMAGE" =~ ^ghcr\.io/teckedd-code2save/groundcontrol@sha256:[0-9a-f]{64}$ ]] || fail "The candidate registry digest could not be verified. Existing access was not changed."
+  actual_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$RESOLVED_IMAGE" 2>/dev/null || true)"
+  [ "$actual_revision" = "$DIRECT_IPV4_REVISION" ] || fail "The candidate image revision does not match the pinned installer. Existing access was not changed."
+  DIRECT_IPV4_SETTING="      - GC_EXPERIMENTAL_DIRECT_IPV4=1"
+fi
+
 # Resolve a missing encryption setting before changing any configuration.
 # docker cp reads stopped containers too; a read failure is never proof that
 # existing encrypted data can safely be assigned a new key.
@@ -505,9 +542,11 @@ if [ "$UPGRADE" -eq 1 ] && [ "$EXISTING" -eq 1 ] && [ -z "$DB_MOUNT" ]; then
   fail "Upgrade refused: persistent /app/prisma storage could not be identified for backup"
 fi
 
-log "[install] pulling $TARGET_REF"
-docker pull "$TARGET_REF" >/dev/null
-RESOLVED_IMAGE="$(image_repo_digest "$TARGET_REF")"
+if [ -z "$RESOLVED_IMAGE" ]; then
+  log "[install] pulling $TARGET_REF"
+  docker pull "$TARGET_REF" >/dev/null
+  RESOLVED_IMAGE="$(image_repo_digest "$TARGET_REF")"
+fi
 if [ -z "$RESOLVED_IMAGE" ]; then RESOLVED_IMAGE="$TARGET_REF"; fi
 IMAGE="$RESOLVED_IMAGE"
 
@@ -540,6 +579,7 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/prisma/prod.db
+$DIRECT_IPV4_SETTING
     volumes:
       - groundcontrol-db:/app/prisma
       - /var/run/docker.sock:/var/run/docker.sock

@@ -10,6 +10,8 @@ VERSION="latest"
 INSTALLER_REF="main"
 IMAGE=""
 PRIVATE=0
+DIRECT_IPV4_REHEARSAL=0
+DIRECT_IPV4_INGRESS=""
 DATA_DIR="${HOME}/.groundcontrol-desktop"
 LOCAL_PORT=""
 CONTROL_DIR=""
@@ -80,6 +82,8 @@ Options:
   -i PATH          Use this SSH private key file (it stays on your computer)
   -p PORT          SSH port (otherwise use your SSH configuration)
   --private       Keep remote access private through an SSH connection
+  --experimental-direct-ipv4  Enable the reserved IPv4 Access rehearsal (Linux server only)
+  --direct-ipv4-ingress ACTION  stage, enable, or remove the owned HTTPS slot after sign-in
   --local-port N   Use this port on your computer (private remote/local mode)
   --version TAG   Select the server image version
   --installer-ref SHA  Pin remote installer to a full commit (testing; default main)
@@ -107,6 +111,8 @@ while [ "$#" -gt 0 ]; do
     -i) value "$@"; IDENTITY="$2"; shift 2 ;;
     -p) value "$@"; SSH_PORT="$2"; shift 2 ;;
     --private) PRIVATE=1; shift ;;
+    --experimental-direct-ipv4) DIRECT_IPV4_REHEARSAL=1; shift ;;
+    --direct-ipv4-ingress) value "$@"; DIRECT_IPV4_INGRESS="$2"; shift 2 ;;
     --local-port) value "$@"; LOCAL_PORT="$2"; shift 2 ;;
     --version) value "$@"; VERSION="$2"; shift 2 ;;
     --installer-ref) value "$@"; INSTALLER_REF="$2"; shift 2 ;;
@@ -148,6 +154,14 @@ fi
 [ "$INSTALLER_REF" = main ] || [[ "$INSTALLER_REF" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Installer ref must be a full 40-character commit SHA."
 [ "$MODE" = remote ] || [ "$PRIVATE" -eq 0 ] || fail "--private only applies to a remote server; local mode is already private."
 [ "$MODE" = remote ] || [ "$INSTALLER_REF" = main ] || fail "--installer-ref only applies to a remote server."
+if [ -n "$DIRECT_IPV4_INGRESS" ]; then
+  case "$DIRECT_IPV4_INGRESS" in stage|enable|remove) ;; *) fail "Choose stage, enable or remove for the owned HTTPS slot." ;; esac
+  [ "$DIRECT_IPV4_REHEARSAL" -eq 1 ] || fail "The owned HTTPS slot needs --experimental-direct-ipv4."
+fi
+if [ "$DIRECT_IPV4_REHEARSAL" -eq 1 ]; then
+  [ "$MODE" = remote ] || fail "The reserved IPv4 rehearsal only applies to a remote Linux server."
+  [[ "$INSTALLER_REF" =~ ^[0-9a-f]{40}$ && "$VERSION" =~ ^[0-9a-f]{7,40}$ && "$INSTALLER_REF" = "$VERSION"* ]] || fail "The reserved IPv4 rehearsal needs --installer-ref FULL_COMMIT and a matching commit --version tag."
+fi
 
 [[ "$VERSION" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "Invalid version tag."
 [ -z "$LOCAL_PORT" ] || port "$LOCAL_PORT" || fail "Local port must be between 1024 and 65535."
@@ -216,12 +230,19 @@ if [ "$MODE" = remote ]; then
   ui_step 1 'Connect to your server'
   printf 'Connecting to %s using your SSH settings…\n' "$TARGET"
   ssh "${SSH_ARGS[@]}" -M -N -f "$TARGET" || fail "SSH connection failed. Check the address and account. If this server uses a specific key, rerun setup and enter its path, or use --remote user@server -i /path/to/key. Saved SSH aliases and agent keys remain supported."
-  if [ "$PRIVATE" -eq 0 ]; then
+  if [ "$PRIVATE" -eq 0 ] && [ -z "$DIRECT_IPV4_INGRESS" ]; then
     printf 'Remote setup will provide a public HTTPS sign-in URL through a temporary outbound tunnel. No inbound management port is opened.\n'
     printf 'For SSH-only access, cancel now and rerun with --private. Configure a permanent domain for ongoing use.\n'
   fi
+  if [ "$DIRECT_IPV4_REHEARSAL" -eq 1 ] && [ -z "$DIRECT_IPV4_INGRESS" ]; then
+    printf 'Reserved IPv4 rehearsal: claim or sign in using the existing setup route, then open Access. No address or firewall will be changed by this option.\n'
+  fi
   ui_step 2 'Prepare GroundControl and access'
-  printf 'Installing GroundControl on %s…\n' "$TARGET"
+  if [ -n "$DIRECT_IPV4_INGRESS" ]; then
+    printf 'GroundControl owned HTTPS slot: %s on %s…\n' "$DIRECT_IPV4_INGRESS" "$TARGET"
+  else
+    printf 'Installing GroundControl on %s…\n' "$TARGET"
+  fi
   cat > "$CONTROL_DIR/install.sh" <<'REMOTE'
 set -eu
 [ "$(uname -s)" = Linux ] || { echo 'The target must run Linux.' >&2; exit 1; }
@@ -236,17 +257,35 @@ fetch() {
   else echo 'Install curl or wget on the server first.' >&2; return 1; fi
 }
 base="https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$2/scripts"
+ingress_action="${5:-}"
+if [ -n "$ingress_action" ]; then
+  fetch "$base/direct-ipv4-ingress" "$task_dir/direct-ipv4-ingress"
+  fetch "$base/direct-ipv4-ingress.sha256" "$task_dir/direct-ipv4-ingress.sha256"
+  (cd "$task_dir" && sha256sum -c direct-ipv4-ingress.sha256) >&2
+  if [ "$(id -u)" = 0 ]; then bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2";
+  else sudo -n bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2"; fi
+  exit $?
+fi
 fetch "$base/install" "$task_dir/install"
 fetch "$base/install.sha256" "$task_dir/install.sha256"
 (cd "$task_dir" && sha256sum -c install.sha256) >&2
 version="$1"
 private="$3"
+rehearsal_revision="${4:-}"
 set -- --version "$version" --json
 [ "$private" = 0 ] || set -- "$@" --private
+[ -z "$rehearsal_revision" ] || set -- "$@" --experimental-direct-ipv4 "$rehearsal_revision"
 if [ "$(id -u)" = 0 ]; then bash "$task_dir/install" "$@";
 else sudo -n bash "$task_dir/install" "$@"; fi
 REMOTE
-  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF") $(quote "$PRIVATE")" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
+  REMOTE_COMMAND="sh -s -- $(quote "$VERSION") $(quote "$INSTALLER_REF") $(quote "$PRIVATE")"
+  if [ "$DIRECT_IPV4_REHEARSAL" -eq 1 ]; then REMOTE_COMMAND="$REMOTE_COMMAND $(quote "$INSTALLER_REF")"; fi
+  if [ -n "$DIRECT_IPV4_INGRESS" ]; then
+    REMOTE_COMMAND="$REMOTE_COMMAND $(quote "$DIRECT_IPV4_INGRESS")"
+    ssh "${SSH_ARGS[@]}" "$TARGET" "$REMOTE_COMMAND" < "$CONTROL_DIR/install.sh" || fail "The owned HTTPS slot was not verified. Review the server message; use your existing or SSH access."
+    exit 0
+  fi
+  RESULT=$(ssh "${SSH_ARGS[@]}" "$TARGET" "$REMOTE_COMMAND" < "$CONTROL_DIR/install.sh") || fail "Server setup could not finish. Your SSH connection will close; rerun this command after correcting the message above."
   read_result
   ACCESS_MODE=$(field accessMode)
   if [ "$PRIVATE" -eq 0 ] && [ "$ACCESS_MODE" = private ]; then

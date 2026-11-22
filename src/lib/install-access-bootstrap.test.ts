@@ -43,6 +43,12 @@ describe('host-only installation access bootstrap', () => {
     const f = fixture({ groundcontrol_publish_mode: 'caddy', groundcontrol_public_url: 'https://gc.example.com' });
     expect((await bootstrap(f)).accessMode).toBe('permanent'); expect(f.docker).not.toHaveBeenCalled();
   });
+  it('keeps a verified direct IPv4 address without starting or retiring a connector', async () => {
+    const f = fixture({ groundcontrol_publish_mode: 'direct_ipv4', groundcontrol_public_url: 'https://8.8.8.8' });
+    expect(await bootstrap(f)).toMatchObject({ accessMode: 'permanent', publicUrl: 'https://8.8.8.8', accessChanged: false });
+    expect(f.docker).not.toHaveBeenCalled();
+    expect(f.prisma.appConfig.upsert).not.toHaveBeenCalled();
+  });
   it('never rotates an existing quick connector, including recovery before URL save', async () => {
     const f = fixture({}, true); await bootstrap(f);
     expect(f.docker.mock.calls.some(([args]) => ['run', 'rm', 'restart'].includes(args[0]))).toBe(false);

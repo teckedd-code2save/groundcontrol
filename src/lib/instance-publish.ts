@@ -32,7 +32,7 @@ const PUBLISH_EVIDENCE_KEY = "groundcontrol_publish_evidence";
 const QUICK_TUNNEL_CONTAINER = "groundcontrol-quick-tunnel";
 const NAMED_TUNNEL_NAME = "groundcontrol-instance";
 
-export type PublishMode = "private" | "caddy" | "cloudflare" | "quick_tunnel";
+export type PublishMode = "private" | "caddy" | "cloudflare" | "quick_tunnel" | "direct_ipv4";
 
 export type VerificationCheck = {
   status: "ready" | "failed" | "skipped";

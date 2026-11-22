@@ -1,0 +1,324 @@
+#!/usr/bin/env bash
+# Privileged post-claim companion for the reserved-IPv4 experiment. Linux/systemd only.
+set -euo pipefail
+umask 077
+unit=groundcontrol-direct-ipv4.service
+owned_dir=/etc/groundcontrol-direct-ipv4
+unit_file=/etc/systemd/system/$unit
+slot_lock=/run/groundcontrol-direct-ipv4.lock
+cert_owner=/etc/groundcontrol-direct-ipv4.state-owner
+cert_path=/var/lib/groundcontrol-direct-ipv4
+cert_private=/var/lib/private/groundcontrol-direct-ipv4
+
+die() { printf 'GroundControl IPv4: %s\n' "$*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+file_is_root_only() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = '0:0:600:1' ]
+}
+content_digest() { sha256sum -- "$1" | awk '{print $1}'; }
+render_config() {
+  cat <<EOF
+{
+  admin off
+  default_sni $ip
+  auto_https disable_redirects
+  servers {
+    protocols h1 h2
+  }
+}
+https://$ip {
+  bind 0.0.0.0
+  tls {
+    issuer acme https://acme-v02.api.letsencrypt.org/directory {
+      profile shortlived
+      disable_http_challenge
+    }
+  }
+EOF
+  if [ "$phase" = staged ]; then
+    cat <<EOF
+  @metadata {
+    method GET
+    path /api/auth/claim /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource
+  }
+  handle @metadata {
+    reverse_proxy 127.0.0.1:$port
+  }
+  @discovery {
+    method POST
+    path /mcp
+    not header Authorization *
+    not header Cookie *
+  }
+  handle @discovery {
+    reverse_proxy 127.0.0.1:$port
+  }
+  @proof {
+    method POST
+    path /api/instance/direct-ipv4-proof
+  }
+  handle @proof {
+    reverse_proxy 127.0.0.1:$port {
+      header_up X-GroundControl-IP-Route $route_key
+    }
+  }
+  handle {
+    respond 404
+  }
+}
+EOF
+  else
+    cat <<EOF
+  reverse_proxy 127.0.0.1:$port
+}
+EOF
+  fi
+}
+render_unit() {
+  cat <<EOF
+[Unit]
+Description=GroundControl reserved IPv4 HTTPS (owned slot)
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=groundcontrol-direct-ipv4
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/groundcontrol-direct-ipv4
+Environment=XDG_DATA_HOME=/var/lib/groundcontrol-direct-ipv4
+Environment=XDG_CONFIG_HOME=/var/lib/groundcontrol-direct-ipv4
+LoadCredential=Caddyfile:$owned_dir/Caddyfile
+ExecStart=$caddy run --config %d/Caddyfile --adapter caddyfile
+NoNewPrivileges=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+EOF
+  if [ "$phase" = staged ]; then
+    printf 'RuntimeMaxSec=%ss\nRestart=no\n' "$ttl"
+  else
+    printf 'Restart=on-failure\n'
+  fi
+  cat <<EOF
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+known_slot() {
+  [ -d "$owned_dir" ] && [ ! -L "$owned_dir" ] &&
+    [ "$(stat -c '%u:%g:%a' "$owned_dir")" = '0:0:700' ] &&
+    file_is_root_only "$owned_dir/Caddyfile" && file_is_root_only "$owned_dir/owner" &&
+    file_is_root_only "$unit_file" &&
+    [ "$(systemctl show --property=FragmentPath --value "$unit")" = "$unit_file" ] &&
+    [ -z "$(systemctl show --property=DropInPaths --value "$unit")" ] || return 1
+  IFS=' ' read -r owner_id owner_ip config_digest unit_digest owner_port owner_phase extra < "$owned_dir/owner" || return 1
+  [ -z "$extra" ] && [[ "$owner_id" =~ ^gc_[[:alnum:]-]{1,80}$ ]] &&
+    [[ "$owner_ip" =~ ^[0-9.]{7,15}$ ]] && [[ "$owner_port" =~ ^[1-9][0-9]{0,4}$ ]] &&
+    [[ "$owner_phase" =~ ^(staged|active)$ ]] &&
+    [ "$(content_digest "$owned_dir/Caddyfile")" = "$config_digest" ] &&
+    [ "$(content_digest "$unit_file")" = "$unit_digest" ]
+}
+app_state() {
+  docker exec groundcontrol-web node /app/scripts/read-direct-ipv4-ingress.cjs "$1"
+}
+valid_ip() {
+  local o x octets
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  IFS=. read -r -a octets <<< "$1"
+  [ "${#octets[@]}" -eq 4 ] || return 1
+  for o in "${octets[@]}"; do
+    [[ "$o" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [ "$o" -le 255 ] || return 1
+  done
+  x=$(( octets[0] * 16777216 + octets[1] * 65536 + octets[2] * 256 + octets[3] ))
+  # Same public-unicast exclusions as the application. The strict parser and
+  # exact host loopback check also prevent any generated directive injection.
+  for span in '0 8' '167772160 8' '1681915904 10' '2130706432 8' '2851995648 16' '2886729728 12' '3221225472 24' '3221225984 24' '3227017984 24' '3232235520 16' '3323068416 15' '3325256704 24' '3405803776 24' '3758096384 3'; do
+    local net bits
+    read -r net bits <<< "$span"
+    [ "$((x >> (32-bits)))" -ne "$((net >> (32-bits)))" ] || return 1
+  done
+}
+trusted_caddy() {
+  local binary perms dirperms
+  binary="$(command -v caddy || true)"
+  [[ "$binary" =~ ^/usr/(local/)?bin/caddy$ ]] && [ -f "$binary" ] && [ ! -L "$binary" ] || return 1
+  perms="$(stat -Lc '%u:%A' "$binary")" || return 1
+  dirperms="$(stat -c '%u:%A' "$(dirname "$binary")")" || return 1
+  [[ "$perms" =~ ^0:.....[^w]..[^w].$ && "$dirperms" =~ ^0:d....[^w]..[^w].$ && "$("$binary" version)" = 'v2.11.9 '* ]] || return 1
+  printf '%s\n' "$binary"
+}
+loopback_port() {
+  local binding n
+  binding="$(docker port groundcontrol-web 3000/tcp)" || return 1
+  [[ "$binding" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]] || return 1
+  n="${BASH_REMATCH[1]}"
+  [ "$n" -le 65535 ] && [ "$n" -ne 443 ] || return 1
+  printf '%s\n' "$n"
+}
+write_owner() {
+  printf '%s %s %s %s %s %s\n' "$instance_id" "$ip" "$(content_digest "$owned_dir/Caddyfile")" \
+    "$(content_digest "$unit_file")" "$port" "$phase"
+}
+promote_slot() {
+  local backup
+  phase=active
+  caddy="$(trusted_caddy)" || die 'The trusted Caddy prerequisite is missing.'
+  port="$(loopback_port)" || die 'GroundControl is no longer bound to one loopback port.'
+  [ "$port" = "$owner_port" ] || die 'GroundControl loopback port changed; retain recovery and remove the slot.'
+  instance_id="$owner_id"; ip="$owner_ip"
+  backup="$(mktemp -d "$owned_dir/promotion.XXXXXX")" || die 'Could not prepare the owned slot backup.'
+  cp -- "$unit_file" "$backup/unit" && cp -- "$owned_dir/Caddyfile" "$backup/config" &&
+    cp -- "$owned_dir/owner" "$backup/owner" || die 'Could not preserve the staged files; no promotion attempted.'
+  if render_config > "$owned_dir/Caddyfile" && render_unit > "$unit_file" &&
+    write_owner > "$owned_dir/owner" && systemctl daemon-reload && known_slot &&
+    systemctl restart "$unit" && systemctl is-active --quiet "$unit" &&
+    systemctl enable "$unit" >/dev/null; then
+    rm -f -- "$backup/unit" "$backup/config" "$backup/owner"
+    rmdir -- "$backup"
+    return
+  fi
+  known_slot && systemctl disable --now "$unit" >/dev/null ||
+    die 'Promotion failed and safe stop was not confirmed. Use recovery; owned rollback files retained.'
+  cp -- "$backup/unit" "$unit_file" && cp -- "$backup/config" "$owned_dir/Caddyfile" &&
+    cp -- "$backup/owner" "$owned_dir/owner" && systemctl daemon-reload ||
+    die 'Promotion failed and staged files could not be restored. Keep recovery.'
+  rm -f -- "$backup/unit" "$backup/config" "$backup/owner"
+  rmdir -- "$backup"
+  die 'Promotion failed; the owned listener was stopped and staged files restored. Use recovery and remove the failed slot.'
+}
+main() {
+  [ "$#" -eq 2 ] && [[ "$2" =~ ^[0-9a-f]{40}$ ]] || die 'Use stage, enable or remove with the pinned candidate launcher.'
+  case "$1" in stage|enable|remove) ;; *) die 'Choose stage, enable or remove.' ;; esac
+  local action="$1" expected="$2" state listener revision expires now
+  [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || die 'Run this command on the Linux server with sudo.'
+  for tool in docker systemctl stat flock sha256sum; do command -v "$tool" >/dev/null || die "$tool is required."; done
+  # /run is root-owned on a systemd host. Never follow pre-existing symlinks.
+  [ -d /run ] && [ ! -L /run ] && [ "$(stat -c '%u:%g:%a' /run)" = 0:0:755 ] ||
+    die 'Unexpected /run ownership; no slot was changed.'
+  if [ ! -e "$slot_lock" ] && [ ! -L "$slot_lock" ]; then
+    (set -o noclobber; : > "$slot_lock") || die 'Could not create the private lock; retry.'
+  fi
+  file_is_root_only "$slot_lock" || die 'Ambiguous slot lock; no slot was changed.'
+  exec 8<>"$slot_lock"
+  flock -n 8 || die 'Another GroundControl IPv4 operation is in progress.'
+
+  if [ "$action" != remove ]; then
+    revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' groundcontrol-web 2>/dev/null)" ||
+      die 'Could not inspect the running candidate. Recovery access was not changed.'
+    [ "$revision" = "$expected" ] || die 'Use the launcher pinned to the running candidate image. Recovery access was not changed.'
+  fi
+
+  if [ "$action" = enable ] || [ "$action" = remove ]; then
+    known_slot || die 'No exact GroundControl-owned slot found; nothing was changed.'
+    if [ "$action" = enable ]; then
+      state="$(app_state adopted)" || die 'Complete the external checks and save the proof in GroundControl first.'
+      [ "$state" = "$owner_id $owner_ip" ] || die 'Saved access does not match this slot.'
+      systemctl is-active --quiet "$unit" || die 'The owned listener is not running; keep using recovery access.'
+      if [ "$owner_phase" = staged ]; then
+        promote_slot
+      else
+        [ "$owner_phase" = active ] && [ "$(loopback_port)" = "$owner_port" ] &&
+          systemctl is-enabled --quiet "$unit" || die 'The enabled connector or loopback port no longer matches.'
+      fi
+      say 'GroundControl HTTPS is enabled for this verified address:'
+      say "  https://$owner_ip"
+      return
+    fi
+    systemctl disable --now "$unit" >/dev/null ||
+      die 'Could not stop and disable the owned service. Files retained for diagnosis.'
+    rm -- "$unit_file" "$owned_dir/Caddyfile" "$owned_dir/owner"
+    rmdir -- "$owned_dir"
+    systemctl daemon-reload
+    say 'Only the GroundControl-owned HTTPS slot was removed; certificate storage and recovery access were kept. If the address was saved, use Forget IPv4 address from the earlier route.'
+    return
+  fi
+
+  command -v ss >/dev/null || die 'Install iproute2 to check that TCP 443 is free.'
+  # Require the operator's verified host package; no distro/global config edits.
+  caddy="$(trusted_caddy)" || die 'Install trusted host Caddy 2.11.9 first. Do not replace an existing listener.'
+  state="$(app_state staged)" || die 'Sign in on your existing GroundControl route and prepare a fresh reserved IPv4 check first.'
+  IFS=' ' read -r instance_id ip route_key expires extra <<< "$state"
+  [ -z "$extra" ] && [[ "$instance_id" =~ ^gc_[[:alnum:]-]{1,80}$ ]] &&
+    valid_ip "$ip" && [[ "$route_key" =~ ^[a-f0-9]{64}$ ]] ||
+    die 'Invalid staged route; no slot was changed.'
+  port="$(loopback_port)" || die 'A single IPv4 loopback GroundControl port is required.'
+  [[ "$expires" =~ ^[0-9]{10}$ ]] || die 'Invalid stage expiry.'
+  now="$(date +%s)"
+  ttl=$((expires - now))
+  [ "$ttl" -gt 0 ] && [ "$ttl" -le 1800 ] || die 'The stage expired. Prepare a fresh check from Access.'
+  phase=staged
+
+  if [ -e "$unit_file" ] || [ -L "$unit_file" ] || [ -e "$owned_dir" ] || [ -L "$owned_dir" ]; then
+    known_slot && [ "$owner_id" = "$instance_id" ] && [ "$owner_ip" = "$ip" ] &&
+      [ "$(render_config | sha256sum | awk '{print $1}')" = "$config_digest" ] &&
+      [ "$owner_phase" = staged ] && [ "$owner_port" = "$port" ] &&
+      systemctl is-active --quiet "$unit" ||
+      die 'An existing or changed slot was found; nothing was replaced. Inspect it or remove only a verified owned slot.'
+    say 'The same HTTPS candidate is already staged. Run the verifier from outside the server; recovery access is unchanged.'
+    return
+  fi
+  [ "$(systemctl show --property=LoadState --value "$unit")" = not-found ] &&
+    [ -z "$(systemctl show --property=DropInPaths --value "$unit")" ] ||
+    die 'An existing service name or override is present. Nothing was replaced.'
+  for path in /etc/systemd/system/"$unit".d /run/systemd/system/"$unit".d /usr/lib/systemd/system/"$unit".d /lib/systemd/system/"$unit".d; do
+    [ ! -e "$path" ] && [ ! -L "$path" ] || die 'An existing service override is present. Nothing was replaced.'
+  done
+  listener="$(ss -H -ltn 'sport = :443')" || die 'Could not check TCP 443; no slot was changed.'
+  [ -z "$listener" ] ||
+    die 'TCP 443 already has a listener. Keep existing access; nothing was replaced. Use the operator-managed Caddy option or another disposable server.'
+
+  if [ -e "$cert_owner" ] || [ -L "$cert_owner" ]; then
+    file_is_root_only "$cert_owner" && [ "$(cat "$cert_owner")" = "$instance_id" ] ||
+      die 'Certificate storage ownership is not attributable to this instance.'
+  elif [ -e "$cert_path" ] || [ -L "$cert_path" ] || [ -e "$cert_private" ] || [ -L "$cert_private" ]; then
+    die 'Existing certificate storage does not belong to a recognized slot.'
+  fi
+  if [ -e "$cert_path" ] || [ -L "$cert_path" ]; then
+    [ -L "$cert_path" ] && [ "$(readlink "$cert_path")" = "$cert_private" ] &&
+      [ -d "$cert_private" ] && [ ! -L "$cert_private" ] ||
+      die 'Certificate storage paths are ambiguous.'
+  fi
+  if [ -e "$cert_private" ] || [ -L "$cert_private" ]; then
+    [ ! -L "$(dirname "$cert_private")" ] && [ -d "$cert_private" ] && [ ! -L "$cert_private" ] ||
+      die 'Certificate storage paths are ambiguous.'
+  fi
+  mkdir -m 0700 -- "$owned_dir" || die 'Could not create an exclusive slot directory.'
+  # Remove no pre-existing root paths. Use an exclusive create for the unit.
+  if ! (set -o noclobber; render_unit > "$unit_file"); then
+    rmdir -- "$owned_dir"
+    die 'Could not create the exclusive unit file; no existing service was replaced.'
+  fi
+  if ! (set -o noclobber; render_config > "$owned_dir/Caddyfile") ||
+    ! (set -o noclobber; write_owner > "$owned_dir/owner") ||
+    ! systemctl daemon-reload || ! known_slot; then
+    rm -f -- "$unit_file" "$owned_dir/Caddyfile" "$owned_dir/owner"
+    rmdir -- "$owned_dir"
+    systemctl daemon-reload || true
+    die 'Could not create an unambiguous slot; no service was started.'
+  fi
+  if [ ! -e "$cert_owner" ]; then
+    if ! (set -o noclobber; printf '%s\n' "$instance_id" > "$cert_owner"); then
+      die 'Could not reserve certificate ownership. The slot was not started; use remove to clean it up.'
+    fi
+  fi
+  if ! systemctl start "$unit" || ! systemctl is-active --quiet "$unit"; then
+    if known_slot && systemctl stop "$unit" >/dev/null; then
+      rm -f -- "$unit_file" "$owned_dir/Caddyfile" "$owned_dir/owner"
+      rmdir -- "$owned_dir"
+      systemctl daemon-reload || true
+      die 'The owned slot could not start and was removed. Check Caddy and TCP 443; recovery access was not changed.'
+    fi
+    die 'Could not confirm the owned service stopped; files retained for diagnosis. Recovery access was not changed.'
+  fi
+  say 'The HTTPS candidate is staged on TCP 443 only. Certificate issuance and external access are not verified yet.'
+  say 'Keep your earlier GroundControl link or SSH session. Run the verifier off-server, save its proof in Access, then enable this owned service.'
+}
+# Sourcing exposes pure render/policy functions for offline tests only.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

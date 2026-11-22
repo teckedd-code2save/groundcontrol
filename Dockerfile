@@ -59,6 +59,7 @@ COPY scripts/ensure-local-vps.cjs /app/ensure-local-vps.cjs
 COPY scripts/agent-operation-worker.cjs /app/scripts/agent-operation-worker.cjs
 COPY scripts/create-install-claim.cjs /app/scripts/create-install-claim.cjs
 COPY scripts/bootstrap-install-access.cjs /app/scripts/bootstrap-install-access.cjs
+COPY scripts/read-direct-ipv4-ingress.cjs /app/scripts/read-direct-ipv4-ingress.cjs
 RUN chmod +x /app/docker-entrypoint.sh
 
 # Ensure db directory exists for SQLite

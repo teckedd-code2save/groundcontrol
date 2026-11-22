@@ -246,3 +246,33 @@ test('explicit SSH key path is passed as one argument without changing SSH setti
     assert.match(failed.stderr,/enter its path.*-i \/path\/to\/key/);
   } finally {rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('reserved IPv4 rehearsal forwards exact candidate revision without changing normal bootstrap access',()=>{
+  const sha='8443d4e02a38898175dd0c38cd1e1975af3640c5';
+  const r=run(['--remote','test-server','--version','8443d4e','--installer-ref',sha,'--experimental-direct-ipv4']);
+  assert.equal(r.status,0,r.stderr);
+  assert.ok(r.commands.some(c=>c.name==='ssh'&&c.args.includes(`sh -s -- '8443d4e' '${sha}' '0' '${sha}'`)));
+  assert.match(r.remoteScript,/--experimental-direct-ipv4 "\$rehearsal_revision"/);
+  assert.match(r.stdout,/claim or sign in using the existing setup route/);
+  assert.match(r.stdout,/https:\/\/test-owner\.trycloudflare\.com\/claim/);
+});
+
+test('reserved IPv4 rehearsal rejects local or inconsistent pins before SSH',()=>{
+  const sha='8443d4e02a38898175dd0c38cd1e1975af3640c5';
+  for(const args of [['--local'],['--remote','test-server','--version','8443d4e'],['--remote','test-server','--installer-ref',sha,'--version','deadbee']]){
+    const r=run([...args,'--experimental-direct-ipv4']);
+    assert.notEqual(r.status,0);
+    assert.equal(r.commands.length,0);
+  }
+});
+
+
+test('owned ingress command uses a pinned helper and does not run the normal claim path',()=>{
+  const sha='8443d4e02a38898175dd0c38cd1e1975af3640c5';
+  const r=run(['--remote','test-server','--version','8443d4e','--installer-ref',sha,'--experimental-direct-ipv4','--direct-ipv4-ingress','stage'],{GC_TEST_RESULT:'HTTPS candidate staged'});
+  assert.equal(r.status,0,r.stderr);
+  assert.ok(r.commands.some(c=>c.args.includes(`sh -s -- '8443d4e' '${sha}' '0' '${sha}' 'stage'`)));
+  assert.match(r.remoteScript,/sha256sum -c direct-ipv4-ingress.sha256/);
+  assert.doesNotMatch(r.stdout,/claim#|GroundControl is reachable over HTTPS/);
+});

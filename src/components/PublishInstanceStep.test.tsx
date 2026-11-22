@@ -129,3 +129,42 @@ it("preserves permanent-domain selection and input when DNS setup needs a retry"
   expect(container.textContent).toContain("Publish & verify");
   expect(container.textContent).not.toContain("Create temporary HTTPS");
 });
+
+it("offers IPv4 rehearsal with an explicit reserved address and port confirmation", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_url, options) => options?.method === "POST" ? post(options) : {
+    ok: true, json: async () => ({ mode: "quick_tunnel", publicUrl: "https://prior.trycloudflare.com", directIpv4Enabled: true }),
+  }));
+  post.mockResolvedValue({ ok: true, json: async () => ({ candidate: {
+    url: "https://8.8.8.8", instanceId: "gc_example", challenge: "a".repeat(64),
+    caddyfile: "test site block", expiresAt: "2099-01-01T08:30:00.000Z",
+  } }) });
+  await act(async () => root.render(<PublishInstanceStep onComplete={() => {}} />));
+  const input = container.querySelector("#gc-publish-ip") as HTMLInputElement;
+  const confirm = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+  const prepare = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Prepare IPv4 setup"));
+  expect(prepare?.disabled).toBe(true);
+  expect(container.textContent).toContain("inbound HTTPS on port 443");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "8.8.8.8");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    confirm.click();
+  });
+  await click("Prepare IPv4 setup");
+  expect(JSON.parse(post.mock.calls[0][0].body)).toEqual({ action: "prepare_direct_ipv4", ip: "8.8.8.8", confirmed: true });
+  expect(container.textContent).toContain("test site block");
+  expect(container.textContent).toContain("different machine");
+  expect(container.querySelector('a[href="https://prior.trycloudflare.com"]')).not.toBeNull();
+  expect([...container.querySelectorAll("button")].find(b => b.textContent?.includes("Save verified address"))?.disabled).toBe(true);
+});
+
+it("provides readiness and explicit cleanup controls after IPv4 adoption", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({
+    mode: "direct_ipv4", publicUrl: "https://8.8.8.8", directIpv4Enabled: true,
+    directIpv4Evidence: { publicUrl: "https://8.8.8.8", checkedAt: "2026-11-21T10:00:00Z", priorUrl: "https://prior.trycloudflare.com" },
+  }) })));
+  await act(async () => root.render(<PublishInstanceStep onComplete={() => {}} />));
+  expect(container.textContent).toContain("Check local readiness");
+  expect(container.textContent).toContain("does not migrate or revoke old OAuth grants");
+  expect(container.querySelector('a[href="https://prior.trycloudflare.com"]')).not.toBeNull();
+  expect([...container.querySelectorAll("button")].find(b => b.textContent?.includes("Forget IPv4 address"))?.disabled).toBe(true);
+});

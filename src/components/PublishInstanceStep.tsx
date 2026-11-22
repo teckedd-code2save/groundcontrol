@@ -25,7 +25,9 @@ type Verification = {
 
 type PublishStatus = {
   localDesktop?: boolean;
-  mode: "private" | "caddy" | "cloudflare" | "quick_tunnel";
+  mode: PublishMethod;
+  directIpv4Enabled?: boolean;
+  directIpv4Evidence?: { publicUrl: string; checkedAt: string; priorUrl: string } | null;
   publicUrl: string | null;
   claimed: boolean;
   cloudflareConfigured: boolean;
@@ -33,7 +35,8 @@ type PublishStatus = {
   lastVerification?: Verification | null;
 };
 
-type PublishMethod = "caddy" | "cloudflare" | "quick_tunnel" | "private";
+type PublishMethod = "caddy" | "cloudflare" | "quick_tunnel" | "private" | "direct_ipv4";
+type DirectCandidate = { url: string; instanceId: string; challenge: string; expiresAt: string; caddyfile: string };
 
 export default function PublishInstanceStep({
   onComplete,
@@ -45,6 +48,12 @@ export default function PublishInstanceStep({
   const [status, setStatus] = useState<PublishStatus | null>(null);
   const [method, setMethod] = useState<PublishMethod>("caddy");
   const [hostname, setHostname] = useState("");
+  const [directIp, setDirectIp] = useState("");
+  const [directConfirmed, setDirectConfirmed] = useState(false);
+  const [externalConfirmed, setExternalConfirmed] = useState(false);
+  const [removedDirectRoute, setRemovedDirectRoute] = useState(false);
+  const [directProof, setDirectProof] = useState("");
+  const [directCandidate, setDirectCandidate] = useState<DirectCandidate | null>(null);
   const [apiToken, setApiToken] = useState("");
   const [accountId, setAccountId] = useState("");
   const [verification, setVerification] = useState<Verification | null>(null);
@@ -62,7 +71,9 @@ export default function PublishInstanceStep({
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load publish status");
       setStatus(data);
-      if (!preserveSelection && data.localDesktop) setMethod("private");
+      if (!preserveSelection && (data.localDesktop || data.mode === "private")) {
+        setMethod(current => data.localDesktop || current === "direct_ipv4" ? "private" : current);
+      }
       setVerification(data.lastVerification || null);
       if (!preserveSelection && data.mode === "quick_tunnel") setHostname("");
       if (!preserveSelection && data.publicUrl && data.mode !== "quick_tunnel") {
@@ -72,6 +83,9 @@ export default function PublishInstanceStep({
         } catch {}
       }
       if (!preserveSelection && data.mode && data.mode !== "private") setMethod(data.mode);
+      if (!preserveSelection && data.directIpv4Enabled && (!data.mode || ["private", "quick_tunnel"].includes(data.mode))) {
+        setMethod("direct_ipv4");
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load publish status");
     } finally {
@@ -90,12 +104,17 @@ export default function PublishInstanceStep({
       await verifyAgain();
       return;
     }
-    setWorkingLabel(method === "private" ? "Verifying private access…" : "Publishing & verifying…");
+    setWorkingLabel(method === "direct_ipv4" ? "Checking setup…" : method === "private" ? "Verifying private access…" : "Publishing & verifying…");
     setWorking(true);
     setError("");
     setRequiredRecord(null);
     try {
       const payload: Record<string, unknown> = { action: method };
+      if (method === "direct_ipv4") {
+        Object.assign(payload, directCandidate
+          ? { action: "adopt_direct_ipv4", proof: directProof.trim(), confirmed: externalConfirmed }
+          : { action: "prepare_direct_ipv4", ip: directIp.trim(), confirmed: directConfirmed });
+      }
       if (method === "caddy" || method === "cloudflare") {
         payload.hostname = hostname.trim();
       }
@@ -117,6 +136,12 @@ export default function PublishInstanceStep({
         throw new Error(data.error || "Could not publish GroundControl");
       }
 
+      if (data.candidate) {
+        setDirectCandidate(data.candidate);
+        return;
+      }
+      setDirectCandidate(null);
+      setDirectProof("");
       setVerification(data.verification || null);
       await load();
     } catch (cause) {
@@ -124,6 +149,27 @@ export default function PublishInstanceStep({
       // Reload authoritative status rather than leaving a stale handoff link visible.
       await load(true);
       setError(cause instanceof Error ? cause.message : "Could not publish GroundControl");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function forgetDirectAddress() {
+    setWorking(true);
+    setError("");
+    try {
+      const response = await fetch("/api/instance/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "forget_direct_ipv4", confirmed: removedDirectRoute }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not forget the address");
+      setRemovedDirectRoute(false);
+      await load();
+    } catch (cause) {
+      await load(true);
+      setError(cause instanceof Error ? cause.message : "Could not forget the address");
     } finally {
       setWorking(false);
     }
@@ -174,7 +220,16 @@ export default function PublishInstanceStep({
         </div>
       )}
       <div className="grid gap-2 sm:grid-cols-2">
-        {!status?.localDesktop && <>
+        {status?.directIpv4Enabled && (!status.publicUrl || hasTemporaryAccess) && (
+          <MethodCard
+            active={method === "direct_ipv4"}
+            icon={<Globe2 className="h-4 w-4" />}
+            title="Use my server’s reserved IP"
+            detail="Experimental. Use a public IPv4 you already have, without buying a domain."
+            onClick={() => setMethod("direct_ipv4")}
+          />
+        )}
+        {!status?.localDesktop && status?.mode !== "direct_ipv4" && <>
         <MethodCard
           active={method === "caddy"}
           icon={<Globe2 className="h-4 w-4" />}
@@ -197,7 +252,7 @@ export default function PublishInstanceStep({
           onClick={() => setMethod("quick_tunnel")}
         />
         </>}
-        {!hasTemporaryAccess && <MethodCard
+        {!hasTemporaryAccess && status?.mode !== "direct_ipv4" && <MethodCard
           active={method === "private"}
           icon={<LockKeyhole className="h-4 w-4" />}
           title="Keep it private"
@@ -205,6 +260,37 @@ export default function PublishInstanceStep({
           onClick={() => setMethod("private")}
         />}
       </div>
+
+      {method === "direct_ipv4" && status?.mode !== "direct_ipv4" && (
+        <section className="space-y-3 border border-border bg-card p-5">
+          {!directCandidate ? <>
+            <label className="gc-label" htmlFor="gc-publish-ip">Reserved public IPv4</label>
+            <input id="gc-publish-ip" value={directIp} onChange={(event) => setDirectIp(event.target.value)}
+              className="gc-field w-full font-mono" placeholder="Enter the address shown by your VPS provider" />
+            <label className="flex items-start gap-2 text-xs text-muted">
+              <input type="checkbox" checked={directConfirmed} onChange={(event) => setDirectConfirmed(event.target.checked)} />
+              My VPS provider shows this as a reserved public IPv4. I can configure inbound HTTPS on port 443.
+            </label>
+            <p className="text-xs text-muted">This prepares a Caddy route for you to review and apply. GroundControl will not install Caddy, change your firewall or replace existing routes.</p>
+          </> : <>
+            <p className="text-xs text-muted">Add this site block to your existing Caddy configuration without replacing other sites. Keep Caddy’s certificate storage persistent. This opens the signed-in dashboard on public HTTPS; port 3003 stays private.</p>
+            <pre className="overflow-auto border border-border p-3 text-xs" tabIndex={0}>{directCandidate.caddyfile}</pre>
+            <p className="text-xs text-muted">On a different machine with Python 3, run this from the candidate source checkout, then enter the challenge when prompted. It expires at {new Date(directCandidate.expiresAt).toLocaleTimeString()}.</p>
+            <pre className="overflow-auto border border-border p-3 text-xs" tabIndex={0}>python3 scripts/check-direct-ipv4.py {new URL(directCandidate.url).hostname} {directCandidate.instanceId}</pre>
+            <p className="break-all font-mono text-xs text-muted">Challenge: {directCandidate.challenge}</p>
+            <label htmlFor="gc-ip-proof" className="gc-label">Verification proof</label>
+            <input id="gc-ip-proof" value={directProof} onChange={(event) => setDirectProof(event.target.value)}
+              maxLength={64} autoComplete="off" className="gc-field w-full font-mono" />
+            <label className="flex items-start gap-2 text-xs text-muted">
+              <input type="checkbox" checked={externalConfirmed} onChange={(event) => setExternalConfirmed(event.target.checked)} />
+              I ran the check outside this VPS. Keep my previous route and save this as the management address.
+            </label>
+            <button type="button" disabled={working} onClick={() => {
+              setDirectCandidate(null); setDirectProof(""); setExternalConfirmed(false);
+            }} className="gc-button gc-button-quiet">Start a new check</button>
+          </>}
+        </section>
+      )}
 
       {(method === "caddy" || method === "cloudflare") && (
         <div className="border border-border bg-card p-5">
@@ -280,11 +366,12 @@ export default function PublishInstanceStep({
             Back
           </button>
         )}
-        <button
+        {status?.mode !== "direct_ipv4" && <button
           type="button"
           onClick={() => void publish()}
           disabled={
             working ||
+            (method === "direct_ipv4" && (directCandidate ? !externalConfirmed || directProof.trim().length !== 64 : !directConfirmed || !directIp.trim())) ||
             ((method === "caddy" || method === "cloudflare") && !hostname.trim()) ||
             (method === "cloudflare" && !status?.cloudflareConfigured && !apiToken.trim())
           }
@@ -296,8 +383,8 @@ export default function PublishInstanceStep({
               ? "Keep private & verify"
               : method === "quick_tunnel"
                 ? hasTemporaryAccess ? "Verify existing access" : "Create temporary HTTPS"
-                : "Publish & verify"}
-        </button>
+                : method === "direct_ipv4" ? directCandidate ? "Save verified address" : "Prepare IPv4 setup" : "Publish & verify"}
+        </button>}
       </div>
 
       {status?.publicUrl && (
@@ -313,6 +400,23 @@ export default function PublishInstanceStep({
               <Copy className="h-3 w-3" /> {copied ? "Copied" : "Copy"}
             </button>
           </div>
+          {status.mode === "direct_ipv4" && (
+            <div className="mt-3 space-y-2 text-xs leading-relaxed text-muted">
+              <p>GroundControl saved the address after an operator-run TLS and identity check. Reconnect external agents to the new address; this does not migrate or revoke old OAuth grants.</p>
+              {!verification && <button type="button" disabled={working} onClick={() => void verifyAgain()} className="gc-button gc-button-quiet">Check local readiness</button>}
+              {status.directIpv4Evidence?.priorUrl && <p>Previous dashboard route retained: <a href={status.directIpv4Evidence.priorUrl} className="underline" target="_blank" rel="noreferrer">{status.directIpv4Evidence.priorUrl}</a>. Temporary links can stop working after a reboot.</p>}
+              <p>GroundControl does not manage this Caddy route or firewall. Keep the IP reserved and Caddy’s certificate renewal running.</p>
+              <details className="space-y-2">
+                <summary className="cursor-pointer">Remove this address from GroundControl</summary>
+                <p>Open the previous login route or SSH recovery first. Remove only the IPv4 site block and reload Caddy. Then forget the saved address here. This step does not remove or check the route itself.</p>
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={removedDirectRoute} onChange={(event) => setRemovedDirectRoute(event.target.checked)} />
+                  I have removed the Caddy route.
+                </label>
+                <button type="button" disabled={!removedDirectRoute || working} onClick={() => void forgetDirectAddress()} className="gc-button gc-button-quiet">Forget IPv4 address</button>
+              </details>
+            </div>
+          )}
           {status.mode === "quick_tunnel" && (
             <div className="mt-3 space-y-2 text-xs leading-relaxed text-warning">
               <p className="font-medium">Temporary access: configure a permanent domain</p>
