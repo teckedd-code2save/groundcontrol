@@ -3,6 +3,9 @@
 set -euo pipefail
 
 MODE=""
+README_INTERACTIVE=0
+[ "$#" -ne 0 ] || README_INTERACTIVE=1
+PRIVATE_REQUESTED=0
 TARGET=""
 IDENTITY=""
 SSH_PORT=""
@@ -110,7 +113,7 @@ while [ "$#" -gt 0 ]; do
     --remote) value "$@"; [ -z "$MODE" ] || fail "Choose one target."; MODE=remote; TARGET="$2"; shift 2 ;;
     -i) value "$@"; IDENTITY="$2"; shift 2 ;;
     -p) value "$@"; SSH_PORT="$2"; shift 2 ;;
-    --private) PRIVATE=1; shift ;;
+    --private) PRIVATE=1; PRIVATE_REQUESTED=1; shift ;;
     --experimental-direct-ipv4) DIRECT_IPV4_REHEARSAL=1; shift ;;
     --direct-ipv4-ingress) value "$@"; DIRECT_IPV4_INGRESS="$2"; shift 2 ;;
     --local-port) value "$@"; LOCAL_PORT="$2"; shift 2 ;;
@@ -212,6 +215,152 @@ print_link() {
   ui_next_steps
 }
 
+# Offer the optional guided path only from the normal interactive README invocation.
+# Old images, other install modes and scripted clients keep their existing handoff.
+guided_ipv4_has_tty() { [ -t 0 ] && [ -t 1 ]; }
+guided_ipv4_read() { IFS= read -r -t "$1" answer </dev/tty; }
+guided_ipv4_offer() {
+  local revision answer
+  [ "$README_INTERACTIVE" -eq 1 ] && guided_ipv4_has_tty || return 1
+  [ "$PRIVATE_REQUESTED" -eq 0 ] && [ "$DIRECT_IPV4_REHEARSAL" -eq 0 ] &&
+    [ "$INSTALLER_REF" = main ] && [ "$VERSION" = latest ] || return 1
+  case "$ACCESS_MODE" in quick_tunnel|private) ;; *) return 1 ;; esac
+  revision="$(ssh "${SSH_ARGS[@]}" "$TARGET" 'if [ "$(id -u)" = 0 ]; then docker inspect --format '\''{{index .Config.Labels "io.groundcontrol.direct-ipv4-guided"}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{range .Config.Env}}{{if eq . "GC_INSTALLER_GUIDED_IPV4=1"}}guided{{end}}{{end}}'\'' groundcontrol-web; else sudo -n docker inspect --format '\''{{index .Config.Labels "io.groundcontrol.direct-ipv4-guided"}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{range .Config.Env}}{{if eq . "GC_INSTALLER_GUIDED_IPV4=1"}}guided{{end}}{{end}}'\'' groundcontrol-web; fi' 2>/dev/null)" ||
+    return 1
+  [[ "$revision" =~ ^1\ ([0-9a-f]{40})\ guided$ ]] || return 1
+  revision="${BASH_REMATCH[1]}"
+  ui_heading 'Use a stable HTTPS address?'
+  printf 'Your setup link above is ready. If the VPS has a reserved public IPv4, continue to set up HTTPS on TCP 443.\n'
+  printf 'You will approve the address in the browser. GroundControl will not edit your firewall or replace another listener.\n'
+  printf 'Continue with public IPv4 HTTPS? [y/N] '
+  if ! guided_ipv4_read 30 || [[ ! "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+    return 1
+  fi
+  guided_ipv4_run "$revision"
+}
+
+guided_ipv4_run() {
+  # Never place the challenge in argv, a file, or trace output. The ephemeral
+  # one-time proof is displayed solely for the administrator to paste in Access.
+  set +x
+  local revision="$1" expected guide_dir base challenge_line id ip challenge expires extra proof enabled answer guide_lease=""
+  guide_dir="$CONTROL_DIR/ipv4-client"
+  base="https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$revision/scripts"
+  expected="$(field instanceId)"
+  if ! [[ "$expected" =~ ^gc_[A-Za-z0-9-]{1,80}$ ]] ||
+    ! command -v python3 >/dev/null ||
+    ! python3 -c 'import ssl, http.client, ipaddress' >/dev/null 2>&1 ||
+    ! mkdir -p -- "$guide_dir/trust" ||
+    ! curl --proto '=https' -fSs --max-time 12 "$base/check-direct-ipv4.py" -o "$guide_dir/check-direct-ipv4.py" ||
+    ! curl --proto '=https' -fSs --max-time 12 "$base/trust/lets-encrypt-isrg-roots.pem" -o "$guide_dir/trust/lets-encrypt-isrg-roots.pem" ||
+    ! curl --proto '=https' -fSs --max-time 12 "$base/direct-ipv4-client.sha256" -o "$guide_dir/direct-ipv4-client.sha256" ||
+    ! (cd "$guide_dir" && verify_guided_downloads); then
+    printf '\nCould not prepare the local Python HTTPS verifier. Your setup link still works.\n' >&2
+    return 1
+  fi
+  ui_heading 'Approve the address in GroundControl'
+  printf 'Use the setup link above. Claim or sign in, open Access, choose “Use my server’s reserved IP”, enter the reserved address, then select Prepare IPv4 setup.\n'
+  printf 'When it is prepared, press Enter here. Type q to keep the previous link and stop. This prompt expires after five minutes: '
+  if ! guided_ipv4_read 300 || [ -n "$answer" ]; then return 1; fi
+  guide_lease="$(LC_ALL=C od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  [[ "$guide_lease" =~ ^[a-f0-9]{32}$ ]] || return 1
+  if ! guided_ipv4_remote "$revision" stage >/dev/null; then
+    printf '\nCould not stage TCP 443. Keep using your setup link; no saved address was replaced.\n' >&2
+    return 1
+  fi
+  if ! challenge_line="$(guided_ipv4_remote "$revision" challenge 2>/dev/null)" ||
+    ! IFS=' ' read -r id ip challenge expires extra <<< "$challenge_line" ||
+    [ "$id" != "$expected" ] || [ -n "$extra" ] || [[ ! "$challenge" =~ ^[a-f0-9]{64}$ ]] ||
+    [[ ! "$ip" =~ ^[0-9.]{7,15}$ ]] || [[ ! "$expires" =~ ^[0-9]{10}$ ]]; then
+    guided_ipv4_abort "$revision"
+    printf '\nThe staged check did not match this installer session. Keep your recovery link. The verification-only listener expires automatically.\n' >&2
+    return 1
+  fi
+  ui_heading 'Verify HTTPS from this computer'
+  printf 'Checking TLS, the GroundControl instance and OAuth discovery from this computer; no private keys or browser sessions are sent.\n'
+  local attempt
+  proof=""
+  for attempt in 1 2 3; do
+    proof="$(printf '%s\n' "$challenge" | python3 "$guide_dir/check-direct-ipv4.py" --challenge-stdin "$ip" "$expected" 2>/dev/null)" &&
+      [[ "$proof" =~ ^[a-f0-9]{64}$ ]] && break
+    proof=""
+    [ "$attempt" -eq 3 ] || sleep 5
+  done
+  unset challenge_line
+  if [ -z "$proof" ]; then
+    guided_ipv4_abort "$revision"
+    printf '\nPublic HTTPS could not be verified. Keep your recovery link. Check the VPS listener and inbound TCP 443. The verification-only listener expires automatically.\n' >&2
+    return 1
+  fi
+  if ! guided_ipv4_remote "$revision" trial "$proof" >/dev/null; then
+    guided_ipv4_abort "$revision"
+    printf '\nCould not start the time-limited sign-in test. Your previous link still works.\n' >&2
+    return 1
+  fi
+  unset proof
+  proof="$(printf '%s\n' "$challenge" | python3 "$guide_dir/check-direct-ipv4.py" --challenge-stdin --trial-check "$ip" "$expected")" || proof=""
+  unset challenge
+  if [[ ! "$proof" =~ ^[a-f0-9]{64}$ ]]; then
+    guided_ipv4_abort "$revision"
+    printf '\nThe public sign-in test failed. No new address was saved; use your recovery link.\n' >&2
+    return 1
+  fi
+  # Browser approval stays an admin-only POST using that browser's session.
+  printf '\nCopy this one-time proof into the Access screen. Do not share it or include it in a recording:\n\n  %s\n\n' "$proof"
+  unset proof
+  printf 'Confirm the outside check, select Save verified address, then press Enter here. Type q to stop. This prompt expires after five minutes: '
+  if ! guided_ipv4_read 300 || [ -n "$answer" ]; then
+    guided_ipv4_abort "$revision"
+    printf '\nIf you saved the candidate address but stopped here, use your recovery link to finish or forget it.\n' >&2
+    return 1
+  fi
+  if ! enabled="$(guided_ipv4_remote "$revision" enable)" ||
+    ! printf '%s\n' "$enabled" | grep -Fqx "  https://$ip" ||
+    ! python3 "$guide_dir/check-direct-ipv4.py" --verify-active "$ip" "$expected" >/dev/null; then
+    guided_ipv4_abort "$revision"
+    printf '\nThe new address was not handed off. Keep your recovery link and use Access to inspect or revert the saved address.\n' >&2
+    return 1
+  fi
+  ui_heading 'GroundControl HTTPS verified'
+  ui_link "https://$ip/login"
+  printf 'Sign in at this address to continue. Keep the earlier route available for recovery.\n'
+  return 0
+}
+
+verify_guided_downloads() {
+  # Compare only the two expected local files, never use filenames supplied by a remote manifest.
+  local manifest verifier roots
+  manifest="$(cat direct-ipv4-client.sha256)"
+  if command -v shasum >/dev/null; then
+    verifier="$(shasum -a 256 check-direct-ipv4.py)"
+    roots="$(shasum -a 256 trust/lets-encrypt-isrg-roots.pem)"
+  elif command -v sha256sum >/dev/null; then
+    verifier="$(sha256sum check-direct-ipv4.py)"
+    roots="$(sha256sum trust/lets-encrypt-isrg-roots.pem)"
+  else
+    return 1
+  fi
+  [ "$manifest" = "$(printf '%s\n%s' "$verifier" "$roots")" ]
+}
+
+guided_ipv4_abort() {
+  # Only this launch’s own still-staged slot may be removed. If the state is
+  # ambiguous or already active, leave it alone; the stage has its own TTL.
+  guided_ipv4_remote "$1" abort >/dev/null 2>&1 || true
+}
+guided_ipv4_remote() {
+  local revision="$1" action="$2" supplied_proof="${3:-}"
+  if [ "$action" = trial ]; then
+    [[ "$supplied_proof" =~ ^[a-f0-9]{64}$ ]] || return 1
+    # Send the probe proof only inside the already authorized encrypted SSH
+    # script stream. Never place it in argv, an environment export or a file.
+    { printf 'GC_GUIDED_TRIAL_PROOF=%s\n' "$supplied_proof"; cat "$CONTROL_DIR/install.sh"; } |
+      ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$revision") $(quote "$PRIVATE") $(quote "$revision") trial $(quote "${guide_lease:-}")"
+    return
+  fi
+  ssh "${SSH_ARGS[@]}" "$TARGET" "sh -s -- $(quote "$VERSION") $(quote "$revision") $(quote "$PRIVATE") $(quote "$revision") $(quote "$action") $(quote "${guide_lease:-}")" < "$CONTROL_DIR/install.sh"
+}
+
 if [ "$MODE" = remote ]; then
   [ -z "$IMAGE" ] || fail "--image is for local mode; use --version for a server."
   [[ "$TARGET" =~ ^[A-Za-z0-9_][A-Za-z0-9_.@:-]*$ ]] || fail "Enter an SSH address such as root@server, or a saved SSH host alias."
@@ -262,8 +411,13 @@ if [ -n "$ingress_action" ]; then
   fetch "$base/direct-ipv4-ingress" "$task_dir/direct-ipv4-ingress"
   fetch "$base/direct-ipv4-ingress.sha256" "$task_dir/direct-ipv4-ingress.sha256"
   (cd "$task_dir" && sha256sum -c direct-ipv4-ingress.sha256) >&2
-  if [ "$(id -u)" = 0 ]; then bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2";
-  else sudo -n bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2"; fi
+  if [ "$ingress_action" = trial ]; then
+    if [ "$(id -u)" = 0 ]; then printf '%s\n' "${GC_GUIDED_TRIAL_PROOF:-}" | bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2" "${6:-}";
+    else printf '%s\n' "${GC_GUIDED_TRIAL_PROOF:-}" | sudo -n bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2" "${6:-}"; fi
+  else
+    if [ "$(id -u)" = 0 ]; then bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2" "${6:-}";
+    else sudo -n bash "$task_dir/direct-ipv4-ingress" "$ingress_action" "$2" "${6:-}"; fi
+  fi
   exit $?
 fi
 fetch "$base/install" "$task_dir/install"
@@ -304,7 +458,7 @@ REMOTE
       printf 'Sign in with your existing account:\n'
     fi
     ui_link "$PUBLIC_URL$PAGE"
-    printf 'You can close this terminal. GroundControl and its connector run on the server.\n'
+    printf 'GroundControl and its connector run on the server.\n'
     if [ "$ACCESS_MODE" = quick_tunnel ]; then
       ui_heading 'Temporary access: configure a permanent domain'
       printf '  Public HTTPS, not a private network link. Account required after setup.\n'
@@ -312,6 +466,8 @@ REMOTE
       printf '  No uptime guarantee or server-sent event streams. Update bookmarks and\n'
       printf '  agent connections if the URL changes. Set up a permanent domain in onboarding.\n'
     fi
+    if guided_ipv4_offer; then ui_next_steps; exit 0; fi
+    printf 'You can close this terminal.\n'
     ui_next_steps
     printf '\nRecovery: rerun setup; use --private if HTTPS is unavailable.\n'
     exit 0
@@ -328,6 +484,7 @@ REMOTE
   fi
   verify_link
   print_link
+  if guided_ipv4_offer; then ui_next_steps; exit 0; fi
   printf 'Keep this terminal open while using the link. Ctrl+C closes the connection.\nGroundControl will keep running on your server. Run this command again to reconnect.\n'
   while ssh "${SSH_ARGS[@]}" -O check "$TARGET" >/dev/null 2>&1; do sleep 2; done
   fail "The server connection closed. Run this command again to reconnect."

@@ -35,6 +35,7 @@ LABEL org.opencontainers.image.source="https://github.com/teckedd-code2save/grou
 LABEL org.opencontainers.image.description="groundcontrol — Next.js app"
 LABEL org.opencontainers.image.licenses="UNLICENSED"
 LABEL io.groundcontrol.desktop="1"
+LABEL io.groundcontrol.direct-ipv4-guided="1"
 
 # Install Docker CLI + Compose plugin for host Docker socket management.
 RUN apk add --no-cache openssl docker-cli docker-cli-compose procps util-linux wget \

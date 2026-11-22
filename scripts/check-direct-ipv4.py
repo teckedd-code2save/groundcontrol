@@ -8,6 +8,7 @@ import ipaddress
 import json
 from pathlib import Path
 import re
+import signal
 import ssl
 import sys
 
@@ -61,7 +62,18 @@ def request_json(ip, path, method="GET", headers=None, body=None, *, status=200,
         conn.close()
 
 
-def verify(ip, instance_id, challenge, request=request_json):
+def verify_browser_login(ip):
+    conn = http.client.HTTPSConnection(ip, 443, timeout=10, context=lets_encrypt_context())
+    try:
+        conn.request("GET", "/login")
+        response = conn.getresponse()
+        if response.status != 200 or response.getheader("content-type", "").split(";", 1)[0].strip().lower() != "text/html":
+            raise ValueError("The exact address did not serve the sign-in page without a redirect")
+    finally:
+        conn.close()
+
+
+def verify(ip, instance_id, challenge, request=request_json, *, trial_check=False):
     parsed = ipaddress.IPv4Address(ip)
     if not parsed.is_global or parsed.is_multicast or str(parsed) != ip:
         raise ValueError("Enter the reserved public IPv4 only")
@@ -71,6 +83,8 @@ def verify(ip, instance_id, challenge, request=request_json):
     identity = request(ip, "/api/auth/claim")
     if identity.get("instanceId") != instance_id or identity.get("claimed") is not True:
         raise ValueError("The address does not identify this claimed GroundControl instance")
+    if trial_check:
+        verify_browser_login(ip)
     oauth = request(ip, "/.well-known/oauth-authorization-server")
     for field, expected in (
         ("issuer", origin),
@@ -113,13 +127,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ipv4")
     parser.add_argument("instance_id")
+    parser.add_argument("--challenge-stdin", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--verify-active", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--trial-check", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    def bounded_wait(_signum, _frame):
+        raise TimeoutError("HTTPS verification took too long")
+    signal.signal(signal.SIGALRM, bounded_wait)
+    signal.alarm(35 if args.challenge_stdin else 12 if args.verify_active else 0)
     try:
-        challenge = getpass.getpass("GroundControl rehearsal challenge: ")
-        print(verify(args.ipv4, args.instance_id, challenge))
+        if args.verify_active:
+            parsed = ipaddress.IPv4Address(args.ipv4)
+            if not parsed.is_global or parsed.is_multicast or str(parsed) != args.ipv4:
+                raise ValueError("Enter the exact verified public IPv4")
+            identity = request_json(args.ipv4, "/api/auth/claim")
+            if identity.get("instanceId") != args.instance_id or identity.get("claimed") is not True:
+                raise ValueError("The live address does not match the claimed instance")
+            return 0
+        challenge = (sys.stdin.readline(66).rstrip("\n") if args.challenge_stdin
+                     else getpass.getpass("GroundControl rehearsal challenge: "))
+        print(verify(args.ipv4, args.instance_id, challenge, trial_check=args.trial_check))
     except (OSError, ValueError, TypeError, AttributeError, KeyError, http.client.HTTPException) as exc:
         print(f"Verification failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        signal.alarm(0)
     return 0
 
 

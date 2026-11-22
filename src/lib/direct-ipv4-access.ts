@@ -15,7 +15,7 @@ const HEX = /^[a-f0-9]{64}$/;
 
 type Stage = {
   ip: string; instanceId: string; adminId: number; challenge: string;
-  routeKey: string; signingKey: string; expiresAt: number; priorUrl: string; priorMode: string;
+  routeKey: string; signingKey: string; expiresAt: number; priorUrl: string; priorMode: string; guidedTrial?: boolean;
 };
 type ConfigDb = Pick<typeof prisma, "appConfig">;
 
@@ -27,7 +27,11 @@ async function put(db: ConfigDb, key: string, value: string) {
 }
 
 export function directIpv4Enabled() {
-  return !isDesktopMode() && process.env.GC_EXPERIMENTAL_DIRECT_IPV4 === "1";
+  return !isDesktopMode() && (process.env.GC_EXPERIMENTAL_DIRECT_IPV4 === "1" || process.env.GC_INSTALLER_GUIDED_IPV4 === "1");
+}
+
+export function directIpv4GuidedEnabled() {
+  return !isDesktopMode() && process.env.GC_INSTALLER_GUIDED_IPV4 === "1";
 }
 
 export async function directIpv4Active() {
@@ -50,14 +54,17 @@ function safeMatch(a: string | null, b: string) {
   return Boolean(a && HEX.test(a) && timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex")));
 }
 
-function proofFor(stage: Stage) {
-  return createHmac("sha256", Buffer.from(stage.signingKey, "hex"))
-    .update(JSON.stringify([stage.ip, stage.instanceId, stage.adminId, stage.challenge, stage.expiresAt]))
-    .digest("hex");
+function proofFor(stage: Stage, phase: "trial" | "probe" = "probe") {
+  const inputs = [stage.ip, stage.instanceId, stage.adminId, stage.challenge, stage.expiresAt];
+  // Preserve the existing manual/probe protocol and bind guided adoption to the full trial route.
+  if (phase === "trial") inputs.push("trial");
+  return createHmac("sha256", Buffer.from(stage.signingKey, "hex")).update(JSON.stringify(inputs)).digest("hex");
 }
 
-export async function prepareDirectIpv4(ipInput: unknown, confirmed: unknown, adminId: number) {
+export async function prepareDirectIpv4(ipInput: unknown, confirmed: unknown, adminId: number, guided: unknown = false) {
   if (!directIpv4Enabled()) throw new HttpError("Direct IPv4 rehearsal is not enabled.", 404);
+  const guidedTrial = guided === true && directIpv4GuidedEnabled();
+  if (guided === true && !guidedTrial) throw new HttpError("Guided IPv4 access is unavailable.", 409);
   const ip = publicIpv4(ipInput);
   if (!ip || confirmed !== true) throw new HttpError("Enter the reserved public IPv4 from your VPS provider and confirm inbound HTTPS.", 400);
   const claim = await installClaimStatus();
@@ -87,13 +94,14 @@ export async function prepareDirectIpv4(ipInput: unknown, confirmed: unknown, ad
     const keys = Array.from({ length: 3 }, () => randomBytes(32).toString("hex"));
     const stage: Stage = {
       ip, instanceId: claim.instanceId, adminId, challenge: keys[0], routeKey: keys[1],
-      signingKey: keys[2], expiresAt: Date.now() + 30 * 60_000, priorUrl, priorMode,
+      signingKey: keys[2], expiresAt: Date.now() + 30 * 60_000, priorUrl, priorMode, guidedTrial,
     };
     await put(tx, STAGE, JSON.stringify(stage));
     return {
       url: `https://${ip}`,
       instanceId: stage.instanceId,
       challenge: stage.challenge,
+      guidedTrial,
       expiresAt: new Date(stage.expiresAt).toISOString(),
       caddyfile: directIpv4Caddyfile(ip, port, stage.routeKey),
     };
@@ -102,12 +110,14 @@ export async function prepareDirectIpv4(ipInput: unknown, confirmed: unknown, ad
 
 // Public route; all invalid, expired, incorrect-origin and unconfigured
 // attempts look identical. No request body, redirects, cookies or host fetch.
-export async function issueDirectIpv4Proof(requestOrigin: string, challenge: string | null, routeKey: string | null) {
+export async function issueDirectIpv4Proof(requestOrigin: string, challenge: string | null, routeKey: string | null, phase: string | null = null) {
   if (!directIpv4Enabled() || !challenge || !HEX.test(challenge) || !routeKey || !HEX.test(routeKey)) return null;
   const stage = stageFrom(await get(prisma, STAGE));
   if (!stage || requestOrigin !== `https://${stage.ip}` ||
       !safeMatch(challenge, stage.challenge) || !safeMatch(routeKey, stage.routeKey)) return null;
-  return proofFor(stage);
+  if (phase === "trial" && !stage.guidedTrial) return null;
+  if (phase !== null && phase !== "trial") return null;
+  return proofFor(stage, phase === "trial" ? "trial" : "probe");
 }
 
 export async function adoptDirectIpv4(proof: unknown, confirmedExternal: unknown, adminId: number) {
@@ -119,8 +129,11 @@ export async function adoptDirectIpv4(proof: unknown, confirmedExternal: unknown
   return prisma.$transaction(async (tx) => {
     const stage = stageFrom(await get(tx, STAGE));
     if (!stage || stage.adminId !== adminId || !claim.claimed || claim.activeClaim ||
-        claim.instanceId !== stage.instanceId || !safeMatch(proof, proofFor(stage))) {
+        claim.instanceId !== stage.instanceId || !safeMatch(proof, proofFor(stage, stage.guidedTrial ? "trial" : "probe"))) {
       throw new HttpError("That proof is invalid or expired. Prepare a fresh check.", 409);
+    }
+    if (stage.guidedTrial && stage.expiresAt - Date.now() < 60_000) {
+      throw new HttpError("The sign-in trial is about to expire. Keep recovery and prepare a fresh check.", 409);
     }
     if (await get(tx, ACCESS_URL) !== stage.priorUrl || await get(tx, MODE) !== stage.priorMode) {
       throw new HttpError("Access changed during verification. The saved address was not replaced.", 409);

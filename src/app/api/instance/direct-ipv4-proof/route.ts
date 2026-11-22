@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
       requestOrigin(req),
       req.headers.get("x-groundcontrol-ip-challenge"),
       req.headers.get("x-groundcontrol-ip-route"),
+      req.headers.get("x-groundcontrol-ip-phase"),
     );
     if (proof) return NextResponse.json({ proof }, { headers });
   } catch {

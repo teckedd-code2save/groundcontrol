@@ -112,3 +112,20 @@ it("lets an operator restore prior state without implying the Caddy site was rem
   expect(m.data.get(urlKey)).toBe(oldUrl);
   expect(m.exec).toHaveBeenCalledTimes(1);
 });
+
+
+it("requires phase-specific proof from the short full-route trial before guided adoption", async () => {
+  vi.stubEnv("GC_INSTALLER_GUIDED_IPV4", "1");
+  const candidate = await prepareDirectIpv4(ip, true, 1, true);
+  const routeKey = candidate.caddyfile.match(/X-GroundControl-IP-Route ([a-f0-9]{64})/)?.[1] || "";
+  const probe = await issueDirectIpv4Proof(candidate.url, candidate.challenge, routeKey);
+  expect(candidate.guidedTrial).toBe(true);
+  expect(probe).toMatch(/^[a-f0-9]{64}$/);
+  await expect(adoptDirectIpv4(probe, true, 1)).rejects.toMatchObject({ status: 409 });
+  expect(m.data.get(urlKey)).toBe(oldUrl);
+  const full = await issueDirectIpv4Proof(candidate.url, candidate.challenge, routeKey, "trial");
+  expect(full).toMatch(/^[a-f0-9]{64}$/);
+  expect(full).not.toBe(probe);
+  expect(await issueDirectIpv4Proof(candidate.url, candidate.challenge, routeKey, "guess")).toBeNull();
+  await expect(adoptDirectIpv4(full, true, 1)).resolves.toMatchObject({ publicUrl: candidate.url, priorUrl: oldUrl });
+});

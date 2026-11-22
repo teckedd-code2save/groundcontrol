@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { HttpError, handleApiError } from "@/lib/errors";
 import { createAuditLog } from "@/lib/audit";
 import {
-  adoptDirectIpv4, directIpv4Active, directIpv4Enabled, directIpv4Evidence, forgetDirectIpv4, prepareDirectIpv4,
+  adoptDirectIpv4, directIpv4Active, directIpv4Enabled, directIpv4Evidence, directIpv4GuidedEnabled, forgetDirectIpv4, prepareDirectIpv4,
 } from "@/lib/direct-ipv4-access";
 import { isDesktopMode } from "@/lib/runtime";
 import {
@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ...await instancePublishStatus(),
       directIpv4Enabled: directIpv4Enabled(),
+      directIpv4Guided: directIpv4GuidedEnabled(),
       directIpv4Evidence: await directIpv4Evidence(),
     }, {
       headers: { "Cache-Control": "no-store" },
@@ -50,6 +51,7 @@ export async function POST(req: NextRequest) {
       ip?: unknown;
       confirmed?: unknown;
       proof?: unknown;
+      guidedTrial?: unknown;
     };
 
     if (isDesktopMode() && body.action !== "private" && body.action !== "verify" && body.action !== "forget_direct_ipv4") {
@@ -74,7 +76,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === "prepare_direct_ipv4") {
-      const candidate = await prepareDirectIpv4(body.ip, body.confirmed, user.id);
+      const candidate = await prepareDirectIpv4(body.ip, body.confirmed, user.id, body.guidedTrial);
       return NextResponse.json({ candidate }, { headers: { "Cache-Control": "no-store" } });
     }
 

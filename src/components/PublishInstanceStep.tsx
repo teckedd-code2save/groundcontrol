@@ -27,6 +27,7 @@ type PublishStatus = {
   localDesktop?: boolean;
   mode: PublishMethod;
   directIpv4Enabled?: boolean;
+  directIpv4Guided?: boolean;
   directIpv4Evidence?: { publicUrl: string; checkedAt: string; priorUrl: string } | null;
   publicUrl: string | null;
   claimed: boolean;
@@ -36,7 +37,7 @@ type PublishStatus = {
 };
 
 type PublishMethod = "caddy" | "cloudflare" | "quick_tunnel" | "private" | "direct_ipv4";
-type DirectCandidate = { url: string; instanceId: string; challenge: string; expiresAt: string; caddyfile: string };
+type DirectCandidate = { url: string; instanceId: string; challenge: string; expiresAt: string; caddyfile: string; guidedTrial?: boolean };
 
 export default function PublishInstanceStep({
   onComplete,
@@ -50,6 +51,7 @@ export default function PublishInstanceStep({
   const [hostname, setHostname] = useState("");
   const [directIp, setDirectIp] = useState("");
   const [directConfirmed, setDirectConfirmed] = useState(false);
+  const [manualDirect, setManualDirect] = useState(false);
   const [externalConfirmed, setExternalConfirmed] = useState(false);
   const [removedDirectRoute, setRemovedDirectRoute] = useState(false);
   const [directProof, setDirectProof] = useState("");
@@ -113,7 +115,7 @@ export default function PublishInstanceStep({
       if (method === "direct_ipv4") {
         Object.assign(payload, directCandidate
           ? { action: "adopt_direct_ipv4", proof: directProof.trim(), confirmed: externalConfirmed }
-          : { action: "prepare_direct_ipv4", ip: directIp.trim(), confirmed: directConfirmed });
+          : { action: "prepare_direct_ipv4", ip: directIp.trim(), confirmed: directConfirmed, ...(status?.directIpv4Guided && !manualDirect ? { guidedTrial: true } : {}) });
       }
       if (method === "caddy" || method === "cloudflare") {
         payload.hostname = hostname.trim();
@@ -269,15 +271,24 @@ export default function PublishInstanceStep({
               className="gc-field w-full font-mono" placeholder="Enter the address shown by your VPS provider" />
             <label className="flex items-start gap-2 text-xs text-muted">
               <input type="checkbox" checked={directConfirmed} onChange={(event) => setDirectConfirmed(event.target.checked)} />
-              My VPS provider shows this as a reserved public IPv4. I can configure inbound HTTPS on port 443.
+              {status?.directIpv4Guided && !manualDirect
+                ? "This is my server’s reserved public IPv4. I approve a short public sign-in test on TCP 443 before saving the address."
+                : "My VPS provider shows this as a reserved public IPv4. I can configure inbound HTTPS on port 443."}
             </label>
-            <p className="text-xs text-muted">This prepares a Caddy route for you to review and apply. GroundControl will not install Caddy, change your firewall or replace existing routes.</p>
+            <p className="text-xs text-muted">GroundControl will not install Caddy, change your firewall or replace another listener.</p>
+            {status?.directIpv4Guided && <label className="flex items-start gap-2 text-xs text-muted">
+              <input type="checkbox" checked={manualDirect} onChange={(event) => setManualDirect(event.target.checked)} />
+              Use my own Caddy route instead of the guided Terminal setup.
+            </label>}
           </> : <>
-            <p className="text-xs text-muted">Add this site block to your existing Caddy configuration without replacing other sites. Keep Caddy’s certificate storage persistent. This opens the signed-in dashboard on public HTTPS; port 3003 stays private.</p>
+            {directCandidate.guidedTrial ? <p className="text-xs text-muted">Return to the same setup Terminal to test and verify the public sign-in. Then paste its final proof here and save. Keep this recovery page open until Terminal confirms the new HTTPS address.</p> : <details className="space-y-3" open>
+              <summary className="cursor-pointer text-sm">Set up and verify manually instead</summary>
+              <p className="text-xs text-muted">Add the site block only to Caddy you manage, without replacing other sites. Keep its certificate storage persistent and port 3003 private.</p>
             <pre className="overflow-auto border border-border p-3 text-xs" tabIndex={0}>{directCandidate.caddyfile}</pre>
             <p className="text-xs text-muted">On a different machine with Python 3, run this from the candidate source checkout, then enter the challenge when prompted. It expires at {new Date(directCandidate.expiresAt).toLocaleTimeString()}.</p>
             <pre className="overflow-auto border border-border p-3 text-xs" tabIndex={0}>python3 scripts/check-direct-ipv4.py {new URL(directCandidate.url).hostname} {directCandidate.instanceId}</pre>
-            <p className="break-all font-mono text-xs text-muted">Challenge: {directCandidate.challenge}</p>
+              <p className="break-all font-mono text-xs text-muted">Challenge: {directCandidate.challenge}</p>
+            </details>}
             <label htmlFor="gc-ip-proof" className="gc-label">Verification proof</label>
             <input id="gc-ip-proof" value={directProof} onChange={(event) => setDirectProof(event.target.value)}
               maxLength={64} autoComplete="off" className="gc-field w-full font-mono" />

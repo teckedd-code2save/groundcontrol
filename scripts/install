@@ -18,6 +18,7 @@ JSON_MODE=0
 ACCESS="temporary"
 DIRECT_IPV4_REVISION=""
 DIRECT_IPV4_SETTING=""
+GUIDED_IPV4_SETTING=""
 PUBLIC_URL=""
 ACCESS_MODE="private"
 ACCESS_STATUS="private"
@@ -160,6 +161,15 @@ elif command -v docker-compose >/dev/null 2>&1; then
 else
   fail "Docker Compose is required on this server. Install the Docker Compose plugin using the Docker installation instructions for your OS, verify docker compose version, then rerun the installer."
 fi
+
+# Detect new capability without assuming that latest follows the launcher ref.
+guided_ipv4_image_capable() {
+  local image="$1" label
+  [[ "$image" =~ ^ghcr\.io/teckedd-code2save/groundcontrol@sha256:[0-9a-f]{64}$ ]] || return 1
+  label="$(docker image inspect --format '{{index .Config.Labels "io.groundcontrol.direct-ipv4-guided"}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "$image" 2>/dev/null)" ||
+    return 1
+  [[ "$label" =~ ^1\ [0-9a-f]{40}$ ]]
+}
 
 finish_setup_guidance() {
   log "Next: claim/sign in, then finish the server scan in onboarding."
@@ -549,6 +559,9 @@ if [ -z "$RESOLVED_IMAGE" ]; then
 fi
 if [ -z "$RESOLVED_IMAGE" ]; then RESOLVED_IMAGE="$TARGET_REF"; fi
 IMAGE="$RESOLVED_IMAGE"
+if guided_ipv4_image_capable "$IMAGE"; then
+  GUIDED_IPV4_SETTING="      - GC_INSTALLER_GUIDED_IPV4=1"
+fi
 
 BACKUP_DIR=""
 if [ "$UPGRADE" -eq 1 ] && [ "$EXISTING" -eq 1 ]; then
@@ -580,6 +593,7 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/prisma/prod.db
 $DIRECT_IPV4_SETTING
+$GUIDED_IPV4_SETTING
     volumes:
       - groundcontrol-db:/app/prisma
       - /var/run/docker.sock:/var/run/docker.sock

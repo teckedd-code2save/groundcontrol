@@ -60,10 +60,24 @@ EOF
   handle @proof {
     reverse_proxy 127.0.0.1:$port {
       header_up X-GroundControl-IP-Route $route_key
+      header_up -X-GroundControl-IP-Phase
     }
   }
   handle {
     respond 404
+  }
+}
+EOF
+  elif [ "$phase" = trial ]; then
+    cat <<EOF
+  handle /api/instance/direct-ipv4-proof {
+    reverse_proxy 127.0.0.1:$port {
+      header_up X-GroundControl-IP-Route $route_key
+      header_up X-GroundControl-IP-Phase trial
+    }
+  }
+  handle {
+    reverse_proxy 127.0.0.1:$port
   }
 }
 EOF
@@ -100,7 +114,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 EOF
-  if [ "$phase" = staged ]; then
+  if [ "$phase" != active ]; then
     printf 'RuntimeMaxSec=%ss\nRestart=no\n' "$ttl"
   else
     printf 'Restart=on-failure\n'
@@ -118,15 +132,19 @@ known_slot() {
     file_is_root_only "$unit_file" &&
     [ "$(systemctl show --property=FragmentPath --value "$unit")" = "$unit_file" ] &&
     [ -z "$(systemctl show --property=DropInPaths --value "$unit")" ] || return 1
-  IFS=' ' read -r owner_id owner_ip config_digest unit_digest owner_port owner_phase extra < "$owned_dir/owner" || return 1
+  IFS=' ' read -r owner_id owner_ip config_digest unit_digest owner_port owner_phase owner_lease extra < "$owned_dir/owner" || return 1
   [ -z "$extra" ] && [[ "$owner_id" =~ ^gc_[[:alnum:]-]{1,80}$ ]] &&
     [[ "$owner_ip" =~ ^[0-9.]{7,15}$ ]] && [[ "$owner_port" =~ ^[1-9][0-9]{0,4}$ ]] &&
-    [[ "$owner_phase" =~ ^(staged|active)$ ]] &&
+    [[ "$owner_phase" =~ ^(staged|trial|active)$ ]] && [[ "$owner_lease" =~ ^([a-f0-9]{32})?$ ]] &&
     [ "$(content_digest "$owned_dir/Caddyfile")" = "$config_digest" ] &&
     [ "$(content_digest "$unit_file")" = "$unit_digest" ]
 }
 app_state() {
-  docker exec groundcontrol-web node /app/scripts/read-direct-ipv4-ingress.cjs "$1"
+  if [ "$1" = trial ]; then
+    docker exec -i groundcontrol-web node /app/scripts/read-direct-ipv4-ingress.cjs "$1"
+  else
+    docker exec groundcontrol-web node /app/scripts/read-direct-ipv4-ingress.cjs "$1"
+  fi
 }
 valid_ip() {
   local o x octets
@@ -163,12 +181,13 @@ loopback_port() {
   printf '%s\n' "$n"
 }
 write_owner() {
-  printf '%s %s %s %s %s %s\n' "$instance_id" "$ip" "$(content_digest "$owned_dir/Caddyfile")" \
-    "$(content_digest "$unit_file")" "$port" "$phase"
+  printf '%s %s %s %s %s %s %s\n' "$instance_id" "$ip" "$(content_digest "$owned_dir/Caddyfile")" \
+    "$(content_digest "$unit_file")" "$port" "$phase" "${lease:-}"
 }
 promote_slot() {
   local backup
-  phase=active
+  phase="$1"
+  if [ "$phase" = active ]; then lease=""; fi
   caddy="$(trusted_caddy)" || die 'The trusted Caddy prerequisite is missing.'
   port="$(loopback_port)" || die 'GroundControl is no longer bound to one loopback port.'
   [ "$port" = "$owner_port" ] || die 'GroundControl loopback port changed; retain recovery and remove the slot.'
@@ -179,7 +198,7 @@ promote_slot() {
   if render_config > "$owned_dir/Caddyfile" && render_unit > "$unit_file" &&
     write_owner > "$owned_dir/owner" && systemctl daemon-reload && known_slot &&
     systemctl restart "$unit" && systemctl is-active --quiet "$unit" &&
-    systemctl enable "$unit" >/dev/null; then
+    { [ "$phase" = trial ] || systemctl enable "$unit" >/dev/null; }; then
     rm -f -- "$backup/unit" "$backup/config" "$backup/owner"
     rmdir -- "$backup"
     return
@@ -194,9 +213,11 @@ promote_slot() {
   die 'Promotion failed; the owned listener was stopped and staged files restored. Use recovery and remove the failed slot.'
 }
 main() {
-  [ "$#" -eq 2 ] && [[ "$2" =~ ^[0-9a-f]{40}$ ]] || die 'Use stage, enable or remove with the pinned candidate launcher.'
-  case "$1" in stage|enable|remove) ;; *) die 'Choose stage, enable or remove.' ;; esac
-  local action="$1" expected="$2" state listener revision expires now
+  { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } && [[ "$2" =~ ^[0-9a-f]{40}$ ]] || die 'Use stage, enable or remove with the pinned candidate launcher.'
+  case "$1" in stage|enable|remove|challenge|abort|trial) ;; *) die 'Choose stage, enable or remove.' ;; esac
+  local action="$1" expected="$2" lease="${3:-}" state listener revision expires now trial_proof
+  [[ "$lease" =~ ^([a-f0-9]{32})?$ ]] || die 'Invalid launcher session.'
+  if [ "$action" = abort ] || [ "$action" = trial ]; then [ -n "$lease" ] || die 'No launcher session supplied.'; fi
   [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || die 'Run this command on the Linux server with sudo.'
   for tool in docker systemctl stat flock sha256sum; do command -v "$tool" >/dev/null || die "$tool is required."; done
   # /run is root-owned on a systemd host. Never follow pre-existing symlinks.
@@ -215,14 +236,57 @@ main() {
     [ "$revision" = "$expected" ] || die 'Use the launcher pinned to the running candidate image. Recovery access was not changed.'
   fi
 
-  if [ "$action" = enable ] || [ "$action" = remove ]; then
+  if [ "$action" = trial ]; then
+    known_slot && [ "$owner_phase" = staged ] && [ "$owner_lease" = "$lease" ] &&
+      systemctl is-active --quiet "$unit" || die 'No matching owned probe slot.'
+    IFS= read -r -n 65 trial_proof || die 'A signed off-host probe proof is required.'
+    [[ "$trial_proof" =~ ^[a-f0-9]{64}$ ]] || die 'A signed off-host probe proof is required.'
+    state="$(printf '%s\n' "$trial_proof" | app_state trial)" || die 'The requested active test is not approved or its external proof does not match.'
+    unset trial_proof
+    IFS=' ' read -r instance_id ip route_key expires extra <<< "$state"
+    port="$(loopback_port)" || die 'GroundControl is not bound to one loopback port.'
+    [ -z "$extra" ] && [ "$instance_id" = "$owner_id" ] && [ "$ip" = "$owner_ip" ] &&
+      [ "$port" = "$owner_port" ] && valid_ip "$ip" && [[ "$route_key" =~ ^[a-f0-9]{64}$ ]] ||
+      die 'The administrator stage changed; keep using recovery.'
+    phase=staged
+    [ "$(render_config | sha256sum | awk '{print $1}')" = "$config_digest" ] ||
+      die 'The proof does not match the staged listener.'
+    [[ "$expires" =~ ^[0-9]{10}$ ]] || die 'Invalid stage expiry.'
+    now="$(date +%s)"; ttl=$((expires - now))
+    [ "$ttl" -gt 0 ] && [ "$ttl" -le 1800 ] || die 'The stage is no longer active.'
+    promote_slot trial
+    say 'Time-limited sign-in test is ready. Verify it off-server; the address is not saved and the service is not enabled at boot.'
+    return
+  fi
+
+  if [ "$action" = challenge ]; then
+    known_slot && [ "$owner_phase" = staged ] && systemctl is-active --quiet "$unit" ||
+      die 'No live owned IPv4 stage was found.'
+    state="$(app_state staged)" || die 'The administrator stage is no longer valid.'
+    IFS=' ' read -r instance_id ip route_key expires extra <<< "$state"
+    port="$(loopback_port)" || die 'GroundControl is not bound to one loopback port.'
+    [ -z "$extra" ] && [ "$instance_id" = "$owner_id" ] && [ "$ip" = "$owner_ip" ] &&
+      [ "$port" = "$owner_port" ] && valid_ip "$ip" && [[ "$route_key" =~ ^[a-f0-9]{64}$ ]] ||
+      die 'The live stage no longer matches the approved address.'
+    phase=staged
+    [ "$(render_config | sha256sum | awk '{print $1}')" = "$config_digest" ] ||
+      die 'The live stage no longer matches the approved route.'
+    app_state challenge
+    return
+  fi
+
+  if [ "$action" = enable ] || [ "$action" = remove ] || [ "$action" = abort ]; then
     known_slot || die 'No exact GroundControl-owned slot found; nothing was changed.'
+    if [ "$action" = abort ]; then
+      [[ "$owner_phase" =~ ^(staged|trial)$ ]] && [ "$owner_lease" = "$lease" ] ||
+        die 'This launcher did not create the currently staged slot.'
+    fi
     if [ "$action" = enable ]; then
       state="$(app_state adopted)" || die 'Complete the external checks and save the proof in GroundControl first.'
       [ "$state" = "$owner_id $owner_ip" ] || die 'Saved access does not match this slot.'
       systemctl is-active --quiet "$unit" || die 'The owned listener is not running; keep using recovery access.'
-      if [ "$owner_phase" = staged ]; then
-        promote_slot
+      if [ "$owner_phase" = trial ] || { [ "$owner_phase" = staged ] && [ -z "$owner_lease" ]; }; then
+        promote_slot active
       else
         [ "$owner_phase" = active ] && [ "$(loopback_port)" = "$owner_port" ] &&
           systemctl is-enabled --quiet "$unit" || die 'The enabled connector or loopback port no longer matches.'

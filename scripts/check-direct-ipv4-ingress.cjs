@@ -14,7 +14,7 @@ const shell = [
   'id() { printf "0\\n"; }',
   'trusted_caddy() { printf "/usr/bin/caddy\\n"; }',
   'stat() { command stat -c "$2" "$3" | sed -E "s/^[0-9]+:[0-9]+:/0:0:/"; }',
-  'app_state() { if [ "$1" = staged ]; then printf "gc_fixture 8.8.4.4 %064d %s\\n" 1 "$(( $(date +%s) + 360 ))"; elif [ "$ADOPTED" = yes ]; then printf "gc_fixture 8.8.4.4\\n"; else return 1; fi; }',
+  'app_state() { if [ "$1" = trial ]; then IFS= read -r receipt; [ "$receipt" = "$VALID_PROBE" ] || return 1; fi; if [ "$1" = staged ] || [ "$1" = trial ]; then printf "gc_fixture 8.8.4.4 %064d %s\\n" 1 "$(( $(date +%s) + 360 ))"; elif [ "$ADOPTED" = yes ]; then printf "gc_fixture 8.8.4.4\\n"; else return 1; fi; }',
   'docker() { if [ "$1" = inspect ]; then printf "%s\\n" "$RUNNING_REVISION"; return; fi; printf "%s\\n" "$PORT_MAPPING"; }',
   'ss() { if [ "$PORT_BUSY" = yes ]; then printf "occupied\\n"; fi; }',
   'systemctl() {',
@@ -28,14 +28,15 @@ const shell = [
   '    is-active:*) [ -f "$FIXTURE/active" ];;',
   '  esac',
   '}',
-  'main "$ACTION" "$REVISION"'
+  'if [ -n "$LEASE" ]; then main "$ACTION" "$REVISION" "$LEASE"; else main "$ACTION" "$REVISION"; fi'
 ].join('\n');
 
 function fixture(fn){
   const dir=mkdtempSync(join(tmpdir(),'gc-ingress-test-'));
   const f={
     run(action, overrides={}){
-      return spawnSync('bash',['-c',shell],{encoding:'utf8',env:{...process.env,HELPER:h,FIXTURE:dir,
+      return spawnSync('bash',['-c',shell],{encoding:'utf8',input:(overrides.PROBE || '')+'\n',env:{...process.env,HELPER:h,FIXTURE:dir,
+        LEASE:'',VALID_PROBE:'c'.repeat(64),
         ACTION:action,REVISION:'a'.repeat(40),RUNNING_REVISION:'a'.repeat(40), ADOPTED:'no',PORT_BUSY:'no',FAIL_START:'no',DROPIN:'no',PORT_MAPPING:'127.0.0.1:3003',...overrides}});
     },
     put(p,t){writeFileSync(join(dir,p),t)},
@@ -54,6 +55,7 @@ test('owned slot stages only TCP HTTPS, no public HTTP/admin, no URL before adop
   assert.match(f.text('unit'),/RuntimeMaxSec=\d+s/);
   assert.match(config,/respond 404/);
   assert.match(config,/not header Authorization/);
+  assert.match(config,/header_up -X-GroundControl-IP-Phase/);
   assert.match(config,/admin off/);
   assert.match(config,/default_sni 8\.8\.4\.4/);
   assert.match(config,/auto_https disable_redirects/);
@@ -103,3 +105,22 @@ test('managed Caddy stage refuses to expose secret data or proceed from stale/am
   vals.groundcontrol_direct_ipv4_evidence=JSON.stringify({publicUrl:'https://'+ip,checkedAt:new Date(n).toISOString()});
   assert.deepEqual(await read(db,'adopted',true,n),[id,ip]);
 });
+
+
+test('guided slot permits only the same leased and signed off-host trial, still timed and not boot-enabled',()=>fixture(f=>{
+  const lease='d'.repeat(32);
+  assert.equal(f.run('stage',{LEASE:lease}).status,0);
+  assert.notEqual(f.run('abort',{LEASE:'e'.repeat(32)}).status,0);
+  assert.notEqual(f.run('trial',{LEASE:lease,PROBE:'e'.repeat(64)}).status,0);
+  assert.notEqual(f.run('enable',{LEASE:lease,ADOPTED:'yes'}).status,0);
+  const trial=f.run('trial',{LEASE:lease,PROBE:'c'.repeat(64)});
+  assert.equal(trial.status,0,trial.stderr);
+  assert.match(f.text('unit'),/RuntimeMaxSec=\d+s/);
+  assert.match(f.text('unit'),/Restart=no/);
+  assert.match(f.text('owned/Caddyfile'),/header_up X-GroundControl-IP-Phase trial/);
+  assert.doesNotMatch(f.text('owned/Caddyfile'),/respond 404/);
+  assert.doesNotMatch(f.text('ops'),/^enable /m);
+  assert.notEqual(f.run('enable',{LEASE:lease}).status,0);
+  assert.equal(f.run('abort',{LEASE:lease}).status,0);
+  assert.equal(f.present('unit'),false);
+}));
