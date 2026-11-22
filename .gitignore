@@ -47,3 +47,6 @@ dev.db
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Checked-in public trust anchors only; keep other PEM files ignored.
+!scripts/trust/lets-encrypt-isrg-roots.pem
