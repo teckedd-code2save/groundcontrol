@@ -13,6 +13,9 @@ const shell = [
   'set -euo pipefail',
   defs,
   'README_INTERACTIVE="$INTERACTIVE"; PRIVATE_REQUESTED=0; DIRECT_IPV4_REHEARSAL=0; ACCESS_MODE=private; INSTALLER_REF=main; VERSION=latest; PRIVATE=1; TARGET=server; SSH_ARGS=()',
+  'command() { if [ "$*" = "-v python3" ]; then case "${CLIENT_PYTHON:-installed}" in missing) return 1;; apple-stub) printf "/usr/bin/python3\\n"; return;; esac; fi; builtin command "$@"; }',
+  'uname() { if [ "${CLIENT_PYTHON:-}" = apple-stub ]; then printf "Darwin\\n"; else builtin command uname "$@"; fi; }',
+  'guided_ipv4_apple_developer_dir() { printf "developer-directory-query\\n" >> "$LOG"; return 1; }',
   'guided_ipv4_has_tty() { [ "$HAS_TTY" = yes ]; }',
   'guide_step=0',
   'guided_ipv4_read() { guide_step=$((guide_step+1)); answer=""; if [ "$guide_step" = 1 ]; then answer="$OPTION"; fi; if [ "$STOP_STEP" = "$guide_step" ]; then answer=q; fi; }',
@@ -22,7 +25,7 @@ const shell = [
   'ssh() { printf "capability\\n" >> "$LOG"; printf "%s\\n" "$FORMAT"; }',
   'sleep() { :; }',
   'curl() { local src="" dst=""; while [ "$#" -gt 0 ]; do case "$1" in https://*) src="$1";; -o) dst="$2"; shift;; esac; shift; done; printf "download %s\\n" "$src" >> "$LOG"; if [[ "$src" = */trust/* ]]; then [ "$ROOTS" != absent ] || return 22; cp "$ASSETS/trust/lets-encrypt-isrg-roots.pem" "$dst"; if [ "$ROOTS" = wrong ]; then printf changed >> "$dst"; fi; else cp "$ASSETS/${src##*/}" "$dst"; fi; }',
-  'python3() { if [ "$1" = -c ]; then return 0; fi; printf "verify %s\\n" "$*" >> "$LOG"; if [ "$2" = --verify-active ]; then [ "$POSTCHECK" = pass ]; return; fi; IFS= read -r secret; [ "$secret" = "$CHALLENGE" ] && [ "$VERIFY" = pass ] || return 7; if [ "$3" = --trial-check ]; then [ "$TRIAL_CHECK" = pass ] || return 8; printf "%064d\\n" 3; else printf "%064d\\n" 2; fi; }',
+  'python3() { if [ "$1" = -c ]; then printf "python-import\\n" >> "$LOG"; [ "${CLIENT_PYTHON:-installed}" != broken ]; return; fi; printf "verify %s\\n" "$*" >> "$LOG"; if [ "$2" = --verify-active ]; then [ "$POSTCHECK" = pass ]; return; fi; IFS= read -r secret; [ "$secret" = "$CHALLENGE" ] && [ "$VERIFY" = pass ] || return 7; if [ "$3" = --trial-check ]; then [ "$TRIAL_CHECK" = pass ] || return 8; printf "%064d\\n" 3; else printf "%064d\\n" 2; fi; }',
   'guided_ipv4_remote() { printf "remote %s\\n" "$2" >> "$LOG"; case "$2" in stage) return;; trial) [ "$TRIAL" = pass ] && [ "$3" = "$(printf %064d 2)" ];; challenge) printf "%s 8.8.4.4 %s 1790000000\\n" "$INSTANCE" "$CHALLENGE";; enable) [ "$SAVED" = yes ] || return 1; printf "  https://8.8.4.4\\n";; esac; }',
   'if guided_ipv4_offer; then printf "DONE\\n"; else printf "PREVIOUS\\n"; fi'
 ].join('\n');
@@ -43,6 +46,17 @@ test('old latest, no tty and unattended launch have no IPv4 mutations or downloa
     assert.equal(r.status,0,r.stderr);
     assert.match(r.stdout,/PREVIOUS/);
     assert.doesNotMatch(r.log,/remote|download/);
+  }
+});
+test('missing Python, unconfigured Apple shim or broken imports keep recovery without staging or downloading',()=>{
+  for(const mode of ['missing','apple-stub','broken']){
+    const r=run({CLIENT_PYTHON:mode});
+    assert.equal(r.status,0,r.stderr);
+    assert.match(r.stdout,/PREVIOUS/);
+    assert.match(r.stderr,/Your setup link still works/);
+    assert.doesNotMatch(r.log,/remote|download|verify/);
+    if(mode==='apple-stub') assert.match(r.log,/developer-directory-query/);
+    if(mode!=='broken') assert.doesNotMatch(r.log,/python-import/);
   }
 });
 test('standalone guided run verifies exact pinned client files and shows permanent link only after browser adoption and post-promotion check',()=>{

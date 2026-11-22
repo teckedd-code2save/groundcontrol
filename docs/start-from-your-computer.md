@@ -57,7 +57,9 @@ bash groundcontrol-start --remote production
 bash groundcontrol-start --remote ubuntu@YOUR_SERVER -i ~/.ssh/server_key -p 2222
 ```
 
-The launcher downloads and verifies the canonical installer on the server. By default, a fresh server setup creates an outbound temporary HTTPS tunnel, verifies that it reaches this GroundControl instance, and prints your one-time setup link. The command then exits: you can close Terminal and finish setup in the browser. No inbound management port is opened.
+The launcher downloads and verifies the canonical installer on the server. By default, a fresh server setup creates an outbound temporary HTTPS tunnel, verifies that it reaches this GroundControl instance, and prints your one-time setup link. You can finish setup in the browser. For the temporary HTTPS link, you can close Terminal after the command exits. No inbound management port is opened.
+
+If setup offers **Use a stable HTTPS address?**, you can continue from the same Terminal. Choose this only when your server has a reserved public IPv4 and TCP 443 is free and reachable. GroundControl prepares its own verified connector if needed; it does not change firewall rules. The computer where you ran setup needs a working Python 3 for the independent HTTPS check. If this check cannot run, or you skip it, keep using the earlier setup link.
 
 Keep the setup link private. Its fragment contains the one-time owner claim; do not show it in recordings, screenshots or shared terminal logs. After choosing your account, use the sign-in URL without the claim fragment.
 

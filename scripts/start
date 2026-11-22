@@ -239,17 +239,33 @@ guided_ipv4_offer() {
   guided_ipv4_run "$revision"
 }
 
+guided_ipv4_apple_developer_dir() { /usr/bin/xcode-select --print-path; }
+
+guided_ipv4_python() {
+  local python developer_dir
+  python="$(command -v python3)" || return 1
+  if [ "$(uname -s)" = Darwin ] && { [ "$python" = /usr/bin/python3 ] || [ "$python" -ef /usr/bin/python3 ]; }; then
+    # The system shim can open a Command Line Tools installation dialog.
+    # Resolve the already-selected developer directory without invoking it.
+    developer_dir="$(guided_ipv4_apple_developer_dir 2>/dev/null)" || return 1
+    case "$developer_dir" in /*) ;; *) return 1 ;; esac
+    python="$developer_dir/usr/bin/python3"
+    [ -x "$python" ] && [ ! "$python" -ef /usr/bin/python3 ] || return 1
+  fi
+  "$python" -c 'import ssl, http.client, ipaddress' >/dev/null 2>&1 || return 1
+  printf '%s\n' "$python"
+}
+
 guided_ipv4_run() {
   # Never place the challenge in argv, a file, or trace output. The ephemeral
   # one-time proof is displayed solely for the administrator to paste in Access.
   set +x
-  local revision="$1" expected guide_dir base challenge_line id ip challenge expires extra proof enabled answer guide_lease=""
+  local revision="$1" expected guide_dir base challenge_line id ip challenge expires extra proof enabled answer python guide_lease=""
   guide_dir="$CONTROL_DIR/ipv4-client"
   base="https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/$revision/scripts"
   expected="$(field instanceId)"
   if ! [[ "$expected" =~ ^gc_[A-Za-z0-9-]{1,80}$ ]] ||
-    ! command -v python3 >/dev/null ||
-    ! python3 -c 'import ssl, http.client, ipaddress' >/dev/null 2>&1 ||
+    ! python="$(guided_ipv4_python)" ||
     ! mkdir -p -- "$guide_dir/trust" ||
     ! curl --proto '=https' -fSs --max-time 12 "$base/check-direct-ipv4.py" -o "$guide_dir/check-direct-ipv4.py" ||
     ! curl --proto '=https' -fSs --max-time 12 "$base/trust/lets-encrypt-isrg-roots.pem" -o "$guide_dir/trust/lets-encrypt-isrg-roots.pem" ||
@@ -281,7 +297,7 @@ guided_ipv4_run() {
   local attempt
   proof=""
   for attempt in 1 2 3; do
-    proof="$(printf '%s\n' "$challenge" | python3 "$guide_dir/check-direct-ipv4.py" --challenge-stdin "$ip" "$expected" 2>/dev/null)" &&
+    proof="$(printf '%s\n' "$challenge" | "$python" "$guide_dir/check-direct-ipv4.py" --challenge-stdin "$ip" "$expected" 2>/dev/null)" &&
       [[ "$proof" =~ ^[a-f0-9]{64}$ ]] && break
     proof=""
     [ "$attempt" -eq 3 ] || sleep 5
@@ -298,7 +314,7 @@ guided_ipv4_run() {
     return 1
   fi
   unset proof
-  proof="$(printf '%s\n' "$challenge" | python3 "$guide_dir/check-direct-ipv4.py" --challenge-stdin --trial-check "$ip" "$expected")" || proof=""
+  proof="$(printf '%s\n' "$challenge" | "$python" "$guide_dir/check-direct-ipv4.py" --challenge-stdin --trial-check "$ip" "$expected")" || proof=""
   unset challenge
   if [[ ! "$proof" =~ ^[a-f0-9]{64}$ ]]; then
     guided_ipv4_abort "$revision"
@@ -316,7 +332,7 @@ guided_ipv4_run() {
   fi
   if ! enabled="$(guided_ipv4_remote "$revision" enable)" ||
     ! printf '%s\n' "$enabled" | grep -Fqx "  https://$ip" ||
-    ! python3 "$guide_dir/check-direct-ipv4.py" --verify-active "$ip" "$expected" >/dev/null; then
+    ! "$python" "$guide_dir/check-direct-ipv4.py" --verify-active "$ip" "$expected" >/dev/null; then
     guided_ipv4_abort "$revision"
     printf '\nThe new address was not handed off. Keep your recovery link and use Access to inspect or revert the saved address.\n' >&2
     return 1
