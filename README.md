@@ -110,7 +110,7 @@ Choose **this computer** or **a remote Linux server**. Setup returns a working b
 - **This computer:** Docker Desktop/Engine must be running. GroundControl operates a local Docker workspace; native Mac/Windows services are outside this mode.
 - **Remote server:** use your normal SSH address or host alias and an AMD64 Linux server with root/passwordless sudo. Fresh setup hands over a temporary public HTTPS link and exits, so Terminal can close. Configure a permanent domain for ongoing use, or choose `--private` for SSH-only access.
 
-When the installed server supports it, the normal interactive setup also offers continued guided setup for a reserved public IPv4 on TCP 443. Claim or sign in first, approve the address in **Access**, then follow the same Terminal’s verification prompts. This is optional and leaves the earlier link available for recovery; it does not open firewall ports. A supported Linux host needs Caddy 2.11.9 and the computer running setup needs Python 3.
+When the installed server supports it, the normal interactive setup also offers continued guided setup for a reserved public IPv4 on TCP 443. Claim or sign in first, approve the address in **Access**, then follow the same Terminal’s verification prompts. This is optional and leaves the earlier link available for recovery; it does not open firewall ports. The guided installer sets up its own verified HTTPS connector if needed on supported Linux hosts. TCP 443 must be free on the server and reachable from the internet; the computer running setup needs Python 3.
 
 Already installed? Run the same command to receive a login link. See the [complete computer-to-login guide](./docs/start-from-your-computer.md), including SSH keys, reconnecting, platform support, and recovery.
 

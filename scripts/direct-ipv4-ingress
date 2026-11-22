@@ -9,6 +9,7 @@ slot_lock=/run/groundcontrol-direct-ipv4.lock
 cert_owner=/etc/groundcontrol-direct-ipv4.state-owner
 cert_path=/var/lib/groundcontrol-direct-ipv4
 cert_private=/var/lib/private/groundcontrol-direct-ipv4
+managed_caddy=/opt/groundcontrol-direct-ipv4-caddy-v2.11.9
 
 die() { printf 'GroundControl IPv4: %s\n' "$*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
@@ -165,12 +166,76 @@ valid_ip() {
 }
 trusted_caddy() {
   local binary perms dirperms
-  binary="$(command -v caddy || true)"
+  binary="${1:-}"
+  [ -n "$binary" ] || binary="$(command -v caddy || true)"
   [[ "$binary" =~ ^/usr/(local/)?bin/caddy$ ]] && [ -f "$binary" ] && [ ! -L "$binary" ] || return 1
   perms="$(stat -Lc '%u:%A' "$binary")" || return 1
   dirperms="$(stat -c '%u:%A' "$(dirname "$binary")")" || return 1
   [[ "$perms" =~ ^0:.....[^w]..[^w].$ && "$dirperms" =~ ^0:d....[^w]..[^w].$ && "$("$binary" version)" = 'v2.11.9 '* ]] || return 1
   printf '%s\n' "$binary"
+}
+caddy_release() {
+  case "$(uname -m)" in
+    x86_64)
+      release_arch=amd64
+      release_sha=5b8cb7faf8726a2028ad96a66e54e6e81e8f361bc6175e5d22bbd997cc5177fb
+      binary_sha=a563843e11cbce39c557bd429ebb787d56f49d51d9bbb3292cd9b36b37a60cdf
+      ;;
+    aarch64)
+      release_arch=arm64
+      release_sha=5e377cff994fc9362a6fcf695c53f226cfca3a3ef85bd3a3687cf252d6310165
+      binary_sha=762d7763ed8e303d50bf11fb0274627266907ea8c170720d7d9a6fd0b9bf5c65
+      ;;
+    *) return 1 ;;
+  esac
+}
+managed_caddy_parent() {
+  local dir
+  dir="$(dirname "$managed_caddy")"
+  [ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(stat -c '%u:%g:%a' "$dir")" = 0:0:755 ]
+}
+verified_managed_caddy() {
+  caddy_release && managed_caddy_parent &&
+    [ -f "$managed_caddy" ] && [ ! -L "$managed_caddy" ] &&
+    [ "$(stat -c '%u:%g:%a:%h' "$managed_caddy")" = 0:0:755:1 ] &&
+    [ "$(content_digest "$managed_caddy")" = "$binary_sha" ] || return 1
+  printf '%s\n' "$managed_caddy"
+}
+prepare_managed_caddy() (
+  set -euo pipefail
+  local tmp url
+  caddy_release && managed_caddy_parent || return 1
+  if [ -e "$managed_caddy" ] || [ -L "$managed_caddy" ]; then
+    verified_managed_caddy
+    return
+  fi
+  tmp="$(mktemp -d "$(dirname "$managed_caddy")/.gc-caddy.XXXXXXXX")" || return 1
+  trap 'rm -f -- "$tmp/archive" "$tmp/caddy"; rmdir -- "$tmp"' EXIT
+  # Official caddyserver/caddy v2.11.9 Linux release; both digests are pinned.
+  url="https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_linux_${release_arch}.tar.gz"
+  curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+    --connect-timeout 8 --max-time 40 --max-filesize 33554432 --output "$tmp/archive" "$url" &&
+    [ "$(content_digest "$tmp/archive")" = "$release_sha" ] &&
+    tar -xOzf "$tmp/archive" -- caddy > "$tmp/caddy" &&
+    [ "$(content_digest "$tmp/caddy")" = "$binary_sha" ] &&
+    chmod 0755 "$tmp/caddy" &&
+    ln -T -- "$tmp/caddy" "$managed_caddy" &&
+    rm -- "$tmp/caddy" &&
+    verified_managed_caddy || return 1
+)
+slot_caddy() {
+  local binary exec_tail=' run --config %d/Caddyfile --adapter caddyfile'
+  for binary in "$managed_caddy" /usr/bin/caddy /usr/local/bin/caddy; do
+    if grep -Fxq -- "ExecStart=$binary$exec_tail" "$unit_file"; then
+      if [ "$binary" = "$managed_caddy" ]; then
+        verified_managed_caddy
+      else
+        trusted_caddy "$binary"
+      fi
+      return
+    fi
+  done
+  return 1
 }
 loopback_port() {
   local binding n
@@ -188,7 +253,7 @@ promote_slot() {
   local backup
   phase="$1"
   if [ "$phase" = active ]; then lease=""; fi
-  caddy="$(trusted_caddy)" || die 'The trusted Caddy prerequisite is missing.'
+  caddy="$(slot_caddy)" || die 'The staged HTTPS executable did not verify. Keep using recovery access.'
   port="$(loopback_port)" || die 'GroundControl is no longer bound to one loopback port.'
   [ "$port" = "$owner_port" ] || die 'GroundControl loopback port changed; retain recovery and remove the slot.'
   instance_id="$owner_id"; ip="$owner_ip"
@@ -305,8 +370,6 @@ main() {
   fi
 
   command -v ss >/dev/null || die 'Install iproute2 to check that TCP 443 is free.'
-  # Require the operator's verified host package; no distro/global config edits.
-  caddy="$(trusted_caddy)" || die 'Install trusted host Caddy 2.11.9 first. Do not replace an existing listener.'
   state="$(app_state staged)" || die 'Sign in on your existing GroundControl route and prepare a fresh reserved IPv4 check first.'
   IFS=' ' read -r instance_id ip route_key expires extra <<< "$state"
   [ -z "$extra" ] && [[ "$instance_id" =~ ^gc_[[:alnum:]-]{1,80}$ ]] &&
@@ -352,6 +415,14 @@ main() {
   if [ -e "$cert_private" ] || [ -L "$cert_private" ]; then
     [ ! -L "$(dirname "$cert_private")" ] && [ -d "$cert_private" ] && [ ! -L "$cert_private" ] ||
       die 'Certificate storage paths are ambiguous.'
+  fi
+  # Provision only for the approved guided flow and after checking that TCP
+  # 443 is free. Never install a distro package or touch a shared proxy.
+  if ! caddy="$(trusted_caddy)"; then
+    [ -n "$lease" ] || die 'The manual rehearsal requires verified host Caddy 2.11.9.'
+    printf '%s\n' 'Setting up GroundControl’s HTTPS connector…' >&2
+    caddy="$(prepare_managed_caddy)" ||
+      die 'Could not prepare the verified HTTPS connector. Keep using the earlier setup link.'
   fi
   mkdir -m 0700 -- "$owned_dir" || die 'Could not create an exclusive slot directory.'
   # Remove no pre-existing root paths. Use an exclusive create for the unit.
