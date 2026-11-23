@@ -1,365 +1,88 @@
-<div align="center">
+# GroundControl
 
-# 🛰️ GroundControl
+GroundControl is a self-hosted control plane for deploying and operating applications on infrastructure you own. Use the dashboard to manage projects, Docker workloads, logs, terminals and host state, or grant compatible MCP agents access to specific deployments.
 
-### Put your agents to work on infrastructure you own.
+[Install](#install) · [First deployment](#first-deployment) · [Connect an agent](#connect-an-agent) · [Contribute](#local-development)
 
-**Connect ChatGPT and compatible MCP agents to your applications. Deploy changes, inspect workloads, and verify results with access you define. Start on your computer or a Linux server.**
+## Install
 
-[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
-[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Prisma](https://img.shields.io/badge/Prisma-SQLite-2D3748?logo=prisma&logoColor=white)](https://www.prisma.io)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38BDF8?logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
-[![OpenAI](https://img.shields.io/badge/AI-OpenAI-412991?logo=openai&logoColor=white)](https://openai.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-
-</div>
-
----
-
-GroundControl is a self-hosted deployment control plane for operators and software agents. Projects organize your application sources and running instances; MCP and OAuth give agents scoped access to real application state and supported operations. It connects to one or more VPS hosts over SSH (or runs locally on the box itself), reads the real state of Docker, Caddy/Nginx, systemd, and Kubernetes, and turns it into a live topology you can click, inspect, and act on — all behind your own login.
-
-See [Connect an existing deployment](docs/projects-and-deployments.md#connect-an-existing-deployment) to bring a running app into GroundControl without redeploying it.
-
-The next product direction deepens that existing advantage rather than replacing it. GroundControl Loop is the proposed intelligence and recovery engine: it correlates meaningful host changes, maps their likely blast radius, runs targeted customer-facing journeys, investigates regressions with evidence, and prepares the least disruptive reversible recovery. See the [implementation and evaluation contract](./docs/LOOP.md).
-
-It also builds and deploys your applications to multiple targets — Docker Compose, static sites, k3s Kubernetes, Google Cloud Run, or Terraform-provisioned infrastructure — and can provision custom domains and ephemeral preview URLs through Cloudflare automatically.
-
-No agents to install on managed hosts. No SaaS in the middle. No telemetry leaving your network. Just a Next.js app, a SQLite file, and an SSH connection.
-
-> **The twist:** GroundControl is designed to run *inside Docker on the VPS it manages*. That should make host-level operations impossible — but it uses a small namespace bridge to escape the container and run commands on the host OS anyway. Read the story in [`docs/THE-HACK.md`](./docs/THE-HACK.md) and the full design in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
-
-**Single-tenant by design.** Each GroundControl instance has its own SQLite database on its own host/VPS. Your data never sits in someone else's instance, and a friend's GroundControl deployment on their VPS has no access to yours.
-
-> **Live instance:** [https://groundcontrol.serendepify.com](https://groundcontrol.serendepify.com)
-
----
-
-## 🧬 The story
-
-**Live case study:** [Shipping a real BNL playground through GroundControl](docs/articles/bnl-playground-from-the-browser.md) records the supervised terminal workflow, build/test outcomes, public execution check and captioned screenshots. It uses the existing VPS foundation and the application's existing delivery pipeline; it is not an autonomous Loop run.
-
-GroundControl started as a dashboard. Then it became an experiment in **containerized privilege**.
-
-The obvious way to ship a VPS cockpit is to put it in a container on the VPS it manages. But containers are jails: the dashboard could see Docker containers through the mounted socket, yet it could not run `systemctl`, install packages with `apk`/`apt`, call `kubectl`, or even find `caddy` on the host. The terminal reported `command not found` for tools that were clearly installed. The install buttons failed. The dashboard lied.
-
-The conventional fixes were uninspiring:
-
-- Run the container with `--pid=host` — works, but forgets to mention it in `docker-compose.yml`.
-- Force users to set up SSH keys for the local box — correct, but friction.
-- Install a host agent — clean, but now you have two things to update.
-
-GroundControl chose a different path. Since the Docker socket is already root-equivalent, it uses that socket to spawn a one-shot privileged helper container that enters the host's namespaces through `nsenter`. The helper is ephemeral, auto-removed, and lets GC run commands on the host OS as if it were native — without changing the default compose file, without SSH, without a host agent.
-
-That is the hack that makes the terminal feel like a real VPS shell. That is the moment a containerized web app stops being a viewer and becomes a cockpit.
-
-Read the full tale in [`docs/THE-HACK.md`](./docs/THE-HACK.md).
-
----
-
-## ✨ What it does
-
-| | Feature | Why it matters |
-|---|---|---|
-| 🗺️ | **Live Topology** | Visual React Flow graph of hosts → projects → sites → services → containers → Kubernetes pods. Click any node to inspect or act. |
-| 📦 | **Container Ops** | Start, stop, restart, remove, and tail logs. Bulk actions with blast-radius confirmation. |
-| 🗂️ | **Projects** | An application or product with GitHub repositories, source folders, and separately named deployment instances. Browse folders or import a repository. |
-| 🚀 | **Multi-Target Deployments** | Deploy to Docker Compose, static sites, k3s Kubernetes, Google Cloud Run, or Terraform-provisioned infrastructure from one UI. |
-| 🌐 | **Auto-Generated Deploy Links** | Provision custom Cloudflare domains or get ephemeral `trycloudflare.com` preview URLs at deploy time. |
-| 📜 | **Terraform Control Plane** | Generate HCL for Hetzner/GCP, run `plan`/`apply`/`destroy`, and use outputs to drive the deploy pipeline. |
-| ☁️ | **Cloud Accounts** | Store encrypted GCP/AWS/Azure credentials and use them across deployment targets. |
-| 🚀 | **Smart Onboarding** | Auto-detects OS, Docker, compose command, Kubernetes, and server paths from a local or SSH connection. |
-| 🤖 | **AI Ops Assistant** | GPT-powered assistant that reasons about logs, metrics, and deploys with streamed responses. |
-| 💻 | **Persistent Terminal** | Authenticated xterm + PTY session on the selected VPS. Tab/control keys belong to the shell; Copilot links to the separate intelligence workspace. |
-| 🔔 | **Alerts & Incidents** | Auto-generated alerts for memory pressure, disk usage, unhealthy containers, and deploy failures. |
-| 🤖 | **AI Alert Synthesis** | One-line summary of recent alerts plus recommended actions on the dashboard. |
-| 🔁 | **Loop foundation** | Intelligence workspace with a live service graph, change ledger, journeys, evidence-backed investigation, approved recovery, and opt-in live adapters. The production workspace no longer loads demo fixtures; guarded autopilot remains disabled until host evaluation passes. **Intelligence** at `/intelligence`. |
-| 📊 | **Metrics** | CPU, memory, disk, and container health sampled into history and charted with Recharts. |
-| 💓 | **Container Health Scheduler** | Periodic container health checks on a configurable interval. Alerts when containers go down or become unhealthy — runs independently of the dashboard. |
-| 🔀 | **Services** | Containers, reverse proxy, projects, deployments, Cloudflare tunnels/DNS, and one-click installs in one tabbed page. |
-| ⚙️ | **Tabbed Settings** | Connections, server layout, AI provider/model, security, Cloudflare, cloud accounts, deploy targets, infrastructure, and alert rules. |
-| 🌩️ | **Cloudflare Integration** | List/create tunnels and manage DNS records from the UI, automatically at deploy time. |
-| 🛰️ | **Multi-VPS** | Register many hosts; GroundControl talks to whichever VPS is active. |
-| 🔐 | **Built-in Auth** | JWT cookie auth, bcrypt passwords, login rate-limiting, and a guarded UI. |
-
----
-
-## 📸 What it looks like
-
-![Live GroundControl terminal showing recorded BNL verification results](./docs/screenshots/bnl-2026-09-28/gc-bnl-scorecard-20260928.jpg)
-
-Supervised verification on 28 September 2026: a read-only script displays saved scorecard outcomes and the exact BNL runtime identity. The crop excludes infrastructure identifiers and the shell prompt. This is a real terminal capture, not a native GC metrics panel or autonomous Loop run. [Captions and provenance](./docs/screenshots/bnl-2026-09-28/README.md) · [Full case study](./docs/articles/bnl-playground-from-the-browser.md).
-
----
-
-## 🚀 Quick Start
-
-### Start from your computer
-
-Run this in Terminal on macOS/Linux, or in WSL on Windows:
+Run this in Terminal on macOS or Linux, or in WSL on Windows:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/start -o groundcontrol-start
 bash groundcontrol-start
 ```
 
-Choose **this computer** or **a remote Linux server**. Setup returns a working browser link where you choose your own administrator password, then configure GroundControl.
+Choose where to run GroundControl:
 
-- **This computer:** Docker Desktop/Engine must be running. GroundControl operates a local Docker workspace; native Mac/Windows services are outside this mode.
-- **Remote server:** use your normal SSH address or host alias and an AMD64 Linux server with root/passwordless sudo. Fresh setup hands over a temporary public HTTPS link and exits, so Terminal can close. Configure a permanent domain for ongoing use, or choose `--private` for SSH-only access.
+| Location | Requirements and scope |
+| --- | --- |
+| **This computer** | Docker Desktop/Engine running Linux containers. Manages a local Docker workspace, not native Mac/Windows services. Apple Silicon uses AMD64 emulation. |
+| **Remote Linux server** | An AMD64 server reachable over SSH, with root or passwordless sudo. Setup installs Docker if needed. ARM servers are not currently supported. |
 
-Already installed? Run the same command to receive a login link. See the [complete computer-to-login guide](./docs/start-from-your-computer.md), including SSH keys, reconnecting, platform support, and recovery.
+Open the browser link printed by setup and choose your administrator credentials. A fresh installation uses a single-use claim link; there is no default password. Keep that link out of screenshots, recordings and shared logs. Rerun the launcher to reconnect to an existing installation.
 
-### Install directly on a VPS
+Local mode stays private to your computer. Fresh remote setup uses **temporary public HTTPS** by default; configure a permanent domain for ongoing use. For SSH-only access, use `bash groundcontrol-start --remote YOUR_SSH_ALIAS --private` and keep that terminal open. The management port remains bound to loopback.
 
-The canonical installer runs **on the VPS itself**. This is the path automation agents should use after the user has already authorized them to operate that host.
+[Complete setup guide](docs/start-from-your-computer.md) covers SSH keys, permanent addresses, private access and recovery. Already on the server? Use the [canonical on-host installer](docs/agent-assisted-installation.md#canonical-command).
+
+## First deployment
+
+1. Finish the onboarding scan and confirm the selected connection. On a Linux server, use **Services → Install** for any missing workload tools: Git for repository sources, a proxy for routed templates, and build tools where required. A working GroundControl login does not mean those tools are ready.
+2. Open **Projects → Add project**. Choose a folder, import from GitHub, or start without source code. Creating a project does not build or run an application.
+3. Open the project and choose **Add deployment → Launch a new deployment**. Choose its environment, then follow the path for its host:
+
+   | Host | Launch path |
+   | --- | --- |
+   | **This computer** | Name the instance and supply a ready-to-use Docker image and its app port. Choose **Review deployment**, then **Launch deployment**. The app gets a private localhost address. |
+   | **Linux server** | Continue through the template workflow. Review the source/image, required configuration, services, storage and routing before deploying. See [available templates](docs/TEMPLATES.md#implemented). |
+
+4. Check the deployment's status and logs, then test the application at its reported address. A running container alone does not prove the app works.
+
+Local launches currently support one image with its default command and no extra environment configuration. Source builds, multiple services and custom configuration use Linux-server templates.
+
+**Already running an app?** Choose **Add deployment → Connect an existing deployment** instead. Select the discovered app and its environment; enrollment leaves its containers and files in place. Follow the [existing-deployment walkthrough](docs/projects-and-deployments.md#connect-an-existing-deployment).
+
+## Connect an agent
+
+After enrolling a deployment, add `https://YOUR_GROUNDCONTROL_DOMAIN/mcp` to a compatible remote MCP client and complete OAuth consent. Use a stable HTTPS address that the client can reach. Choose the deployments and permissions to grant; enrollment alone does not authorize an agent.
+
+Agents can inspect state, logs and health, then use the operations supported by each deployment. New deployment creation still goes through **Projects → Add deployment**. See [agent access and runtime capabilities](docs/agent-native-access.md).
+
+## Operating GroundControl
+
+GroundControl can execute commands with the privileges of its host connection. Treat dashboard and terminal access as privileged server access. Keep the management port private, use HTTPS for public access, and preserve database backups together with their matching encryption-key configuration. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities and the threat model.
+
+<a id="-roadmap"></a>
+
+Loop is GroundControl's intelligence and recovery workspace. Its current scope and limitations are documented in [docs/LOOP.md](docs/LOOP.md); guarded autopilot is not generally enabled.
+
+| Guide | Use it for |
+| --- | --- |
+| [Projects and deployments](docs/projects-and-deployments.md) | Sources, environments, existing apps and new instances |
+| [Setup and recovery](docs/start-from-your-computer.md) | Reconnecting, permanent HTTPS and platform limits |
+| [Installer lifecycle](docs/agent-assisted-installation.md) | Claims, upgrade previews, backups and uninstall |
+| [Architecture](docs/ARCHITECTURE.md) | Host execution, storage and implementation details |
+| [Known limitations](docs/PENDINGS.md) | Remaining work and sharp edges |
+
+## Local development
+
+Use Node.js **22.13 or newer within 22.x** and npm. A VPS is not needed for local development or fixture tests.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install | sudo bash
-```
-
-For an agent, use machine-readable output:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/teckedd-code2save/groundcontrol/main/scripts/install \
-  | sudo bash -s -- --json
-```
-
-A fresh install does **not** generate an administrator password. GroundControl starts unclaimed and returns a short-lived, single-use claim token. The human completes one claim action in the browser and chooses the first administrator credentials.
-
-GroundControl stays bound to loopback. Fresh setup creates a temporary outbound HTTPS tunnel and returns the owner link. Configure a permanent domain for ongoing use; temporary addresses can change and have no uptime guarantee. Keep the one-time claim link out of shared logs and recordings.
-
-For SSH-only setup, pass `--private` to the installer, then open a tunnel:
-
-```bash
-ssh -L 3003:127.0.0.1:3003 root@YOUR_VPS
-```
-
-Then open the claim URL returned by the installer. Claim tokens are stored only as hashes, expire, are single-use, and all outstanding claims are revoked when the first administrator is created.
-
-Useful installer flags:
-
-| Flag | Meaning |
-|------|---------|
-| `--version TAG` | Install a specific image tag/short SHA instead of `latest` |
-| `--port PORT` | Loopback host port (default `3003`) |
-| `--claim-ttl MINUTES` | Claim lifetime, 5–120 minutes |
-| `--json` | Machine-readable final install/claim result (contains a secret one-time token; keep private) |
-| `--private` | Skip public-access setup; preserve existing public access if already configured |
-| `--upgrade` | Explicitly refresh a healthy existing install |
-
-Rerunning preserves a healthy image and account. It can renew an unused claim and recover or verify the access link. `--upgrade` explicitly updates the runtime; it does not change the publishing choice.
-
-The older [`scripts/bootstrap`](./scripts/bootstrap) is retained for compatibility. New users should use `scripts/start` from their computer or `scripts/install` on the authorized server; both preserve the one-time claim flow.
-
-See [`docs/agent-assisted-installation.md`](./docs/agent-assisted-installation.md) for the install/claim contract and [`DEPLOY.md`](./DEPLOY.md) for HTTPS/reverse-proxy hardening.
-
-### Local development
-
-Run GroundControl on your laptop in minutes. No VPS is required to explore the UI — seed the schema and click around.
-
-```bash
-# 1. Clone
 git clone https://github.com/teckedd-code2save/groundcontrol.git
 cd groundcontrol
-
-# 2. Install dependencies
-npm install
-
-# 3. Configure environment
+npm ci
 cp .env.example .env
-# Edit .env and set JWT_SECRET (generate with: openssl rand -hex 32)
-
-# 4. Set up the database
-npx prisma migrate dev
-
-# 5. Seed the database (creates schema; no hardcoded admin)
-npm run db:seed
-
-# 6. Start the dev server
-npm run dev
+# Set separate JWT_SECRET and GROUNDCONTROL_SECRET values (openssl rand -hex 32).
+# Keep DATABASE_URL="file:./dev.db" for the local SQLite database.
+npx prisma migrate deploy
+npx prisma generate
+HOSTNAME=127.0.0.1 npm run dev
 ```
 
-Open **http://localhost:3000**. On a fresh database you will be redirected to `/setup` to create the first admin account with a strong password. Alternatively, set `GC_SETUP_PASSWORD` before running `npm run db:seed` to create the initial `admin` user non-interactively; that account will be forced to change its password on first login.
+Open **http://localhost:3000/setup** to create the first local admin. This source-checkout flow is separate from installer claiming. `npm run db:seed` optionally loads learning guides; demo records require `GC_SEED_DEMO=1`. It does not create the schema or a shared default account.
 
-### Available scripts
+Run `npm test` and `npm run build`; review the [CI workflows](.github/workflows) for the complete checks. [CONTRIBUTING.md](CONTRIBUTING.md) covers conventions and pull requests. For a bug report, include the commit/image version, reproduction steps and redacted logs; report vulnerabilities privately via [SECURITY.md](SECURITY.md).
 
-| Script | Purpose |
-|---|---|
-| `npm run dev` | Start the dev server (http://localhost:3000) |
-| `npm run build` | Production build |
-| `npm run start` | Serve the production build |
-| `npm run lint` | Lint the codebase |
-| `npm run db:seed` | Seed the database schema (idempotent; no hardcoded password) |
-
-> **Note:** this repo pins **Next.js 16**, which has breaking changes versus older majors. When in doubt, trust `package.json` scripts and the bundled docs over memory.
-
----
-
-## 🏗️ Architecture
-
-GroundControl is a single Next.js 16 (App Router) app. It does **not** run Caddy, Nginx, or Docker inside its own container — it expects those on the host and reaches them through SSH or mounted host volumes.
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  Your VPS Host                                          │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │  GroundControl container (Next.js, port 3000)     │  │
-│  │   • App Router pages + API routes  (src/app)      │  │
-│  │   • node-ssh remote-exec layer     (src/lib/vps)  │  │
-│  │   • Prisma + SQLite                (prisma/)      │  │
-│  │   • JWT cookie auth                (src/lib/auth) │  │
-│  └───────────────────────────────────────────────────┘  │
-│      │ mounts from host                                  │
-│      ├─ /var/run/docker.sock   (run docker on the host) │
-│      ├─ /opt                   (your projects)          │
-│      ├─ /etc                   (Caddy/Nginx configs)    │
-│      ├─ /var/www               (static site roots)      │
-│      └─ /root/.ssh  (ro)       (key auth scanning)      │
-│                                                         │
-│  Caddy / Nginx + Docker daemon  (on the host)           │
-└─────────────────────────────────────────────────────────┘
-        ▲  SSH (node-ssh)
-        └──────────  ... or other remote VPS hosts in the fleet
-```
-
-Every host operation — `docker ps`, reading a Caddyfile, sampling `/proc/loadavg`, running `kubectl`, or executing `terraform` — runs either **locally** (when GroundControl sits on the managed host) or **over SSH** via a cached `node-ssh` connection to the active `VpsConfig`. No agent to install: GroundControl *is* the agent.
-
-Deployments are handled by a pluggable target system (`src/lib/deploy/targets/`). Each target implements a common `DeployTarget` interface, so the UI and API stay agnostic to whether a project lands on Compose, k3s, Cloud Run, or Terraform-provisioned infra.
-
-| Layer | Technology |
-|---|---|
-| Framework | Next.js 16 (App Router), React 19 |
-| Language | TypeScript 5 |
-| Styling | Tailwind CSS v4 |
-| Graph | React Flow + Dagre |
-| Charts | Recharts |
-| Terminal | xterm.js + socket.io |
-| Database | SQLite via Prisma ORM |
-| Remote exec | node-ssh / ssh2 |
-| Kubernetes | k3s, kubectl, Helm |
-| Cloud APIs | GCP Cloud Run (JWT auth), Cloudflare v4 API |
-| IaC | Terraform (runner on active VPS) |
-| AI | OpenAI SDK (streamed chat) |
-| Auth | JWT + bcrypt |
-| 3D Hero | React Three Fiber + Three.js |
-| Packaging | Docker, GHCR, GitHub Actions |
-
----
-
-## 🖥️ Self-host in 5 minutes
-
-GroundControl is designed to run *inside Docker on the VPS it manages*.
-
-```bash
-# On your VPS
-cd /opt
-git clone https://github.com/teckedd-code2save/groundcontrol.git
-cd groundcontrol
-
-# Generate a strong JWT secret straight into .env
-printf 'JWT_SECRET="%s"\n' "$(openssl rand -hex 32)" > .env
-
-# Bring it up (binds 127.0.0.1:3003 -> container:3000)
-docker compose up -d
-```
-
-Then put it behind Caddy or Nginx with SSL. For the full walkthrough — domain, DNS, Caddy, Cloudflare, first-run setup, and updates — see **[DEPLOY.md](./DEPLOY.md)**.
-
-### Deploy via CI/CD
-
-The repo ships a GitHub Actions workflow that builds the image, pushes it to GHCR, and deploys over SSH on push to `main`:
-
-1. Fork the repo.
-2. Change image references in `docker-compose.yml` and `.github/workflows/` to `ghcr.io/YOUR_USERNAME/groundcontrol:latest`.
-3. Add repo secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`.
-4. Push to `main`.
-
----
-
-## 🔐 Security
-
-GroundControl runs commands on your servers. Treat it like the powerful tool it is.
-
-- **Authentication** — every API route is guarded by a JWT cookie (`gc_token`, httpOnly, `secure` in production, 7-day expiry). Passwords are bcrypt-hashed (cost 12). Login is rate-limited (5 attempts / 15 min per IP).
-- **Strong passwords** — first-run setup and password changes enforce a 12-character minimum with uppercase, lowercase, number, and symbol.
-- **Audit log** — login, logout, password-change, and failed sign-in events are recorded with IP and timestamp. Admins can review them in **Settings → Security → Authentication Audit Log**.
-- **Secrets at rest** — VPS keys, passwords, cloud-provider credentials, Terraform variables, and Cloudflare tokens are encrypted at rest in SQLite. **Protect the database file** and run GroundControl only on a host you control.
-- **Blast radius** — the container mounts `/etc` read-write, so it can read and potentially modify host system configs. The browser terminal has a blocked-command guard, but you are effectively root on the managed host.
-- **Never expose it publicly without a reverse proxy + strong credentials.** Run behind HTTPS, prefer key-based SSH auth over passwords, and review the audit log regularly.
-
-Full responsible-disclosure policy and threat model: [SECURITY.md](./SECURITY.md).
-
----
-
-## 🧭 Why this project is impressive
-
-GroundControl is a from-scratch, full-stack DevOps product, not a tutorial clone. It demonstrates:
-
-- **Multi-VPS orchestration** — a single control plane managing a fleet over a cached SSH transport, with a clean local-vs-remote execution abstraction.
-- **An agentic AI ops assistant** — an embedded, context-aware LLM that reasons about real logs, metrics, and deploys, with streamed responses.
-- **Live infrastructure topology** — a clickable, auto-laid-out graph generated from the actual state of Docker, the proxy, and the filesystem.
-- **Real systems integration** — parsing Caddyfiles, inspecting Docker labels to map containers ↔ compose projects, sampling `/proc`, and reconciling `docker-compose` vs `docker compose` quirks.
-- **Production packaging** — Dockerized, published to GHCR, auto-deployed via GitHub Actions, with healthchecks and a persisted SQLite volume.
-- **Security-conscious by default** — JWT auth, bcrypt, rate-limiting, and an explicit threat model.
-
----
-
-## 🛣️ Roadmap
-
-- [x] Encrypted secrets at rest (`GROUNDCONTROL_SECRET`)
-- [x] Configurable model selection for the AI assistant (`AI_MODEL`)
-- [x] Runtime-configurable filesystem paths (per-VPS SystemConfig)
-- [x] First-class multi-VPS switcher in Settings + sidebar onboarding
-- [x] Git-based build + deploy pipeline with deployment targets
-- [x] Cloudflare auto-DNS and ephemeral preview URLs
-- [x] k3s / Kubernetes deploy target
-- [x] Google Cloud Run managed deploy target
-- [x] Terraform-first infrastructure control plane
-- [ ] GroundControl Loop: host-change intelligence, targeted synthetic journeys, evidence-based diagnosis, guided recovery, and guarded autopilot ([implementation contract](./docs/LOOP.md))
-- [ ] AWS Fargate / Azure Container Apps deploy targets
-- [ ] Background job queue + real-time deploy logs
-- [ ] Auto-create VPS connections from Terraform output
-- [ ] Role-based access control beyond single-admin
-- [ ] One-click container/stack rollback from the topology view
-- [ ] Exportable metrics (Prometheus endpoint)
-
-See [docs/PENDINGS.md](./docs/PENDINGS.md) for the full list of known sharp edges and recommended next steps.
-
----
-
-## 🧪 Testing
-
-GroundControl ships a Vitest suite for the server-side core — shell quoting, the VPS exec layer, compose/deploy logic, alert evaluation, and rollback tracking. The tests are deterministic: `child_process` and `node-ssh` are mocked, so no network, Docker, or real VPS is needed.
-
-```bash
-npm test                          # run once
-npm run test:watch                # watch mode
-npx vitest run src/lib/vps.test.ts  # run a single file
-```
-
-The VPS execution layer (`src/lib/vps.ts`) is the most critical coverage: `shQuote()` edge cases (spaces, single quotes, empty strings, unicode, metacharacters) and `execOnVps()` local/SSH paths with mocked exec. CI runs the same suite via `.github/workflows/test.yml` on every push/PR to `main`.
-
----
-
-## 🤝 Contributing
-
-Dev setup, project structure map, code conventions, and how to add a page or API route all live in [CONTRIBUTING.md](./CONTRIBUTING.md). Issues and PRs welcome.
-
-## 📚 Docs
-
-- [DEPLOY.md](./DEPLOY.md) — full self-deployment guide (VPS, domain, Caddy, SSL, Cloudflare)
-- [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup & project map
-- [SECURITY.md](./SECURITY.md) — disclosure policy & threat model
-- [docs/LOOP.md](./docs/LOOP.md) — proposed service graph, change ledger, synthetic journeys, reverse-proxy intelligence, recovery policy, milestones, and evaluation
-- [docs/PRODUCT-DESIGN.md](./docs/PRODUCT-DESIGN.md) — interface evolution, current-to-future navigation, intelligence screens, visual system, motion, and staged adoption
-- [docs/PENDINGS.md](./docs/PENDINGS.md) — known sharp edges, pending work, and recommended next steps
-- [docs/DEMO.md](./docs/DEMO.md) — click-by-click demo recording script
-- [docs/demo-data.md](./docs/demo-data.md) — safe demo seed data (no real VPS needed)
-- [docs/screenshots/](./docs/screenshots/) — what to capture for the README
-
-## 📝 License
-
-[MIT](./LICENSE) © 2026 GroundControl contributors
+[MIT License](LICENSE)
