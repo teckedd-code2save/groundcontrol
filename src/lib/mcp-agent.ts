@@ -383,7 +383,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "deployment.build_publish",
     title: "Build and publish a release image",
-    description: "Build an exact commit SHA, tag the built images with that SHA, push them to the container registry, and verify the artifacts (optionally running tests). Produces a durable build operation whose verified digests a later deployment.release can deploy. Unlike deployment.source.deploy (an in-place git-mode build) this yields a pushable, SHA-tagged, digest-verified image.",
+    description: "Build an exact commit and publish SHA-tagged, digest-verified images, or verify images from a successful named GitHub Actions workflow. Set releaseAfterBuild to queue deployment.release automatically after verification. Supports an owner-prepared first deployment before it has containers; the target must already be included in the agent grant. Returns a durable operation; inspect its releaseOperationId for the release result.",
     requiredScope: "deployment:redeploy",
     inputSchema: {
       type: "object",
@@ -393,6 +393,9 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
         branch: { type: "string", minLength: 1, maxLength: 200, description: "Optional GitHub branch to fetch the SHA from. Defaults to the linked repository default branch." },
         services: { type: "array", items: { type: "string" }, description: "Optional subset of buildable services to build. Defaults to all buildable services." },
         builder: { type: "string", enum: ["local", "buildkit", "docker-agentic"], description: "Build executor. buildkit (default) uses an isolated, resource-capped BuildKit builder on the host; docker-agentic builds in an ephemeral Docker Agentic Platform sandbox (fully off-host, amd64); local builds directly on the host (dev only)." },
+        releaseAfterBuild: { type: "boolean", description: "After a successful build, automatically release its verified digests to this approved deployment, including a prepared first deployment." },
+        verifyPublished: { type: "boolean", description: "Use images already published by a successful GitHub Actions workflow instead of building again. Requires actionsWorkflowName." },
+        actionsWorkflowName: { type: "string", maxLength: 150, description: "Exact name of the successful Actions workflow for this commit." },
         runTests: { type: "boolean", description: "Run the test command against the built image and record pass/fail (default false)." },
         testCommand: { type: "string", maxLength: 1000, description: "Explicit test command; otherwise the package.json test script is used." },
         idempotencyKey: { type: "string", minLength: 8, maxLength: 160, description: "Stable unique key. Reusing it returns the original operation instead of building twice." },
@@ -410,7 +413,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["operation", "reused"],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "deployment.release",
@@ -700,6 +703,9 @@ export async function executeAgentTool(
         : args.builder === "local"
           ? "local"
           : "buildkit",
+      releaseAfterBuild: args.releaseAfterBuild === true,
+      verifyPublished: args.verifyPublished === true,
+      actionsWorkflowName: typeof args.actionsWorkflowName === "string" ? args.actionsWorkflowName.trim().slice(0, 150) : undefined,
       runTests: args.runTests === true,
       testCommand: typeof args.testCommand === "string" ? args.testCommand.trim() : undefined,
       reason: String(args.reason || "").trim().slice(0, 500),

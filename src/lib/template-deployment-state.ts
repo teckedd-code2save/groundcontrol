@@ -28,7 +28,7 @@ export interface PersistTemplateDeploymentInput {
   tunnelId?: string | null;
   vpsConfigId?: number | null;
   durationMs?: number;
-  status?: "success" | "degraded" | "failed";
+  status?: "success" | "degraded" | "failed" | "pending";
   /** Project category: docker (default) or static. */
   category?: "docker" | "static" | "app";
   /** Deployment target type used for this template run. */

@@ -185,6 +185,9 @@ async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
       branch: typeof input.branch === "string" ? input.branch : undefined,
       services: Array.isArray(input.services) ? input.services : undefined,
       builder: input.builder === "local" || input.builder === "docker-agentic" ? input.builder : "buildkit",
+      releaseAfterBuild: input.releaseAfterBuild === true,
+      verifyPublished: input.verifyPublished === true,
+      actionsWorkflowName: input.actionsWorkflowName,
       runTests: input.runTests === true,
       testCommand: typeof input.testCommand === "string" ? input.testCommand : undefined,
     }),
@@ -196,6 +199,23 @@ async function executeBuildPublish({ prisma, operation, baseUrl, jwtSecret }) {
 
   const images = body.images || [];
   const tests = body.tests || { status: "skipped" };
+  if (input.releaseAfterBuild === true) {
+    if (tests.status === "failed" || !images.length || body.commitSha !== commitSha || images.some((image) => !/@sha256:[a-f0-9]{64}$/.test(String(image.digest)))) {
+      return markFailed(prisma, current, "Image delivery stopped: the build did not produce passing evidence and verified digests for the requested commit", body);
+    }
+    // Persist success and the release dependency atomically; interrupted builds
+    // remain uncertain and are never silently replayed.
+    await prisma.$transaction(async (tx) => {
+      const grant = await tx.oAuthGrant.findUnique({ where: { id: current.grantId } });
+      if (!grant || grant.revokedAt || !parseResources(grant.resources).includes(current.deploymentId) || !grant.scope.split(/\s+/).includes("deployment:redeploy")) throw new Error("Delivery grant was revoked while the build was running");
+      const release = await tx.agentOperation.upsert({
+        where: { grantId_idempotencyKey: { grantId: current.grantId, idempotencyKey: `release-build:${current.id}` } }, update: {},
+        create: { grantId: current.grantId, deploymentId: current.deploymentId, type: "deployment.release", idempotencyKey: `release-build:${current.id}`, inputJson: JSON.stringify({ buildOperationId: current.id, commitSha, branch: input.branch, githubDelivery: true, runtimeIdentity: input.runtimeIdentity, reason: "Release verified GitHub images" }) },
+      });
+      await tx.agentOperation.update({ where: { id: current.id }, data: { status: "success", resultJson: JSON.stringify({ images, tests, commitSha, releaseOperationId: release.id, logs: body.logs || [] }), evidenceJson: JSON.stringify({ phase: "build_published", commitSha, images, tests }), finishedAt: new Date(), leaseUntil: null } });
+    });
+    return;
+  }
   await prisma.agentOperation.update({
     where: { id: current.id },
     data: {
@@ -267,6 +287,8 @@ async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
     },
     body: JSON.stringify({
       projectSlug,
+      commitSha: input.githubDelivery ? buildResult.commitSha : undefined,
+      branch: input.githubDelivery ? input.branch : undefined,
       images: images.map((img) => ({ service: img.service, digest: img.digest, ref: img.ref })),
     }),
   });
@@ -294,6 +316,7 @@ async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
   if (!response.ok || body.success === false || body.error) {
     return markFailed(prisma, current, body.error || `Release switch failed with HTTP ${response.status}`, { images, rollbackPair, ...body });
   }
+  if (body.success !== true) return markUncertain(prisma, current, "Release returned no explicit verification evidence", body);
 
   if (body.detached) {
     await prisma.agentOperation.update({
@@ -308,6 +331,7 @@ async function executeRelease({ prisma, operation, baseUrl, jwtSecret }) {
     return;
   }
 
+  if (input.githubDelivery) await prisma.enrolledDeployment.updateMany({ where: { id: current.deploymentId, status: { in: ["pending", "failed"] } }, data: { status: "active", lastSeenAt: new Date() } });
   await prisma.agentOperation.update({
     where: { id: current.id },
     data: {
@@ -359,6 +383,7 @@ async function reconcileDetached({ prisma, operation, baseUrl, jwtSecret }) {
   }
 
   if (body.status === "success") {
+    if (parseJson(current.inputJson)?.githubDelivery) await prisma.enrolledDeployment.updateMany({ where: { id: current.deploymentId, status: { in: ["pending", "failed"] } }, data: { status: "active", lastSeenAt: new Date() } });
     await prisma.agentOperation.update({
       where: { id: current.id },
       data: {

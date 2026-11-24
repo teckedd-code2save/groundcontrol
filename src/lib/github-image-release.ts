@@ -75,7 +75,7 @@ export function releaseImageReference(currentRef: string, sha: string): string {
  * config` output. Services that only pull an external image are excluded —
  * they are consumed, not produced.
  */
-export function buildableServiceImages(effectiveCompose: string): Record<string, string> {
+export function buildableServiceImages(effectiveCompose: string, requireImageForEveryBuild = false): Record<string, string> {
   const parsed = parseComposeDocument(effectiveCompose);
   const services = parsed?.services;
   if (!services || typeof services !== "object" || Array.isArray(services)) return {};
@@ -85,6 +85,7 @@ export function buildableServiceImages(effectiveCompose: string): Record<string,
     const record = config as Record<string, unknown>;
     const hasBuild = Boolean(record.build);
     const image = typeof record.image === "string" ? record.image.trim() : "";
+    if (hasBuild && !image && requireImageForEveryBuild) throw new Error(`Custom service ${name} needs an explicit registry image name before deployment.`);
     if (hasBuild && image) result[name] = image;
   }
   return result;

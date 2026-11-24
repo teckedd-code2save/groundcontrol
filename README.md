@@ -37,7 +37,8 @@ Local mode stays private to your computer. Fresh remote setup uses **temporary p
    | **This computer** | Name the instance and supply a ready-to-use Docker image and its app port. Choose **Review deployment**, then **Launch deployment**. The app gets a private localhost address. |
    | **Linux server** | Continue through the template workflow. Review the source/image, required configuration, services, storage and routing before deploying. See [available templates](docs/TEMPLATES.md#implemented). |
 
-4. Check the deployment's status and logs, then test the application at its reported address. A running container alone does not prove the app works.
+4. For a GitHub repository with a Compose file, choose **GroundControl** to build and publish its images, or **GitHub Actions** to use a named successful build workflow. Review automatic deployment for the selected branch. See the [GitHub image delivery contract](docs/github-image-delivery.md) for required Dockerfiles, GHCR images and credentials.
+5. Check the deployment's status and logs, then test the application at its reported address. A running container alone does not prove the app works.
 
 Local launches currently support one image with its default command and no extra environment configuration. Source builds, multiple services and custom configuration use Linux-server templates.
 

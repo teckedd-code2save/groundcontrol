@@ -1,3 +1,5 @@
+import { deliveryCommit, githubBranchHead, readDelivery } from "@/lib/github-delivery";
+import { jsonObject, runtimeIdentity } from "@/lib/agent-runtime-capabilities";
 import { NextRequest, NextResponse } from "next/server";
 import { decryptMaybe } from "@/lib/crypto";
 import { verifyGithubWebhookSignature } from "@/lib/github-app";
@@ -66,7 +68,7 @@ async function recordLoopChange(deliveryId: string, event: string, payload: Webh
   if (!fullName || !["push", "workflow_run", "deployment", "deployment_status", "pull_request"].includes(event)) return;
   const repository = await prisma.githubRepository.findUnique({
     where: { fullName },
-    include: { deployments: { include: { deployment: true } } },
+    include: { deployments: { include: { deployment: { include: { legacyProject: true } } } } },
   });
   const serviceIds = repository?.deployments.map((link) => link.deployment.slug) || [];
   const host = await prisma.vpsConfig.findFirst({ where: { isActive: true }, select: { id: true } });
@@ -86,14 +88,14 @@ async function recordLoopChange(deliveryId: string, event: string, payload: Webh
 }
 
 async function queueGithubAutoDeploys(deliveryId: string, event: string, payload: WebhookPayload) {
-  if (event !== "push") return [];
+  if (!["push", "workflow_run"].includes(event)) return [];
   const branch = branchFromPushRef(payload.ref);
   const repositoryFullName = payload.repository?.full_name || "";
-  if (!branch || !repositoryFullName || !payload.after || /^0+$/.test(payload.after)) return [];
+  if (!repositoryFullName) return [];
 
   const repository = await prisma.githubRepository.findUnique({
     where: { fullName: repositoryFullName },
-    include: { deployments: { include: { deployment: true } } },
+    include: { deployments: { include: { deployment: { include: { legacyProject: true } } } } },
   });
   if (!repository) return [];
 
@@ -105,6 +107,27 @@ async function queueGithubAutoDeploys(deliveryId: string, event: string, payload
   const queued: Array<{ deploymentId: number; operationId: string; commitSha: string }> = [];
   for (const link of repository.deployments) {
     const deployment = link.deployment;
+    const delivery = readDelivery(deployment.metadataJson);
+    if (delivery) {
+      const sha = deliveryCommit(event, payload as unknown as Record<string, unknown>, delivery);
+      if (!sha || deployment.managementMode !== "managed") continue;
+      // Ignore old workflow completions and pushes that are no longer branch head.
+      if (await githubBranchHead(deployment.id, delivery.branch) !== sha) continue;
+      const grant = grants.find((candidate) => candidate.id === delivery.grantId && grantCanDeploy(candidate.scope, candidate.resources, deployment.id));
+      if (!grant) throw new Error(`GitHub delivery for ${deployment.slug} needs its owner-approved workflow grant.`);
+      const key = `github-images:${deployment.id}:${sha}:${deliveryId}`;
+      const operation = await prisma.$transaction(async (tx) => {
+        await tx.enrolledDeployment.update({ where: { id: deployment.id }, data: { metadataJson: JSON.stringify({ ...jsonObject(deployment.metadataJson), githubDelivery: { ...delivery, requestedSha: sha } }) } });
+        return tx.agentOperation.upsert({
+          where: { grantId_idempotencyKey: { grantId: grant.id, idempotencyKey: key } }, update: {},
+          create: { grantId: grant.id, deploymentId: deployment.id, type: "deployment.build_publish", idempotencyKey: key, inputJson: JSON.stringify({ branch: delivery.branch, commitSha: sha, builder: "buildkit", verifyPublished: delivery.executor === "actions", actionsWorkflowName: delivery.workflowName, releaseAfterBuild: true, runtimeIdentity: runtimeIdentity(deployment), reason: `GitHub ${event} on ${delivery.branch}` }) },
+          select: { id: true },
+        });
+      });
+      queued.push({ deploymentId: deployment.id, operationId: operation.id, commitSha: sha });
+      continue;
+    }
+    if (event !== "push" || !branch || !payload.after || /^0+$/.test(payload.after)) continue;
     const policy = readGithubAutoDeployPolicy(deployment.metadataJson);
     if (!policy.enabled || policy.branch !== branch || deployment.managementMode !== "managed") continue;
     const grant = grants.find((candidate) => grantCanDeploy(candidate.scope, candidate.resources, deployment.id));

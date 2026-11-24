@@ -142,6 +142,36 @@ export default function TemplatesPage() {
   const [proxyConfig, setProxyConfig] = useState("");
   const [deployResult, setDeployResult] = useState<TemplateDeployResult | null>(null);
   const [deployStatus, setDeployStatus] = useState("");
+  const [deliveryExecutor, setDeliveryExecutor] = useState<"agent" | "actions">("agent");
+  const [deliveryWorkflow, setDeliveryWorkflow] = useState("Build & Publish");
+  const [autoDeploy, setAutoDeploy] = useState(true);
+  const [deliveryOperation, setDeliveryOperation] = useState("");
+  const [deliveryFailed, setDeliveryFailed] = useState(false);
+  const [deliveryComplete, setDeliveryComplete] = useState(false);
+  const githubDelivery = Boolean(projectContext?.repositoryUrl && selected?.compose_source === "repository" && sourceType === "github");
+
+  useEffect(() => {
+    if (!deliveryOperation || deliveryComplete || deliveryFailed) return;
+    let cancelled = false;
+    let checking = false;
+    const check = async () => {
+      if (checking || cancelled) return;
+      checking = true;
+      try {
+        const response = await fetch(`/api/github/delivery/${encodeURIComponent(deliveryOperation)}`);
+        const state = await response.json();
+        if (cancelled) return;
+        if (!response.ok) { setDeployStatus(state.error || "Could not read delivery status. Open Deployments to inspect it."); return; }
+        if (state.completed) { setDeliveryComplete(true); setDeployStatus("Images released. Open the deployment to inspect health and test the app."); }
+        else if (["failed", "uncertain", "cancelled"].includes(state.status)) { setDeliveryFailed(true); setDeployStatus(state.error || "Image delivery stopped. Inspect the deployment before retrying."); }
+        else setDeployStatus(state.phase === "release" ? "Deploying verified image digests…" : "Building or verifying GitHub images…");
+      } catch { if (!cancelled) setDeployStatus("Status connection interrupted. The workflow continues; inspect it in Deployments."); }
+      finally { checking = false; }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 3000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [deliveryOperation, deliveryComplete, deliveryFailed]);
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -461,6 +491,7 @@ export default function TemplatesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           templateName: selected._filename,
+          delivery: githubDelivery ? { executor: deliveryExecutor, workflowName: deliveryWorkflow, autoDeploy } : undefined,
           projectGroupId: projectContext?.id,
           environmentName: projectContext?.environment,
           hostId: projectContext?.hostId,
@@ -480,7 +511,11 @@ export default function TemplatesPage() {
         }),
       });
       const data = await res.json();
-      if (data.success || data.deployed) {
+      if (data.queued && data.operationId) {
+        setDeliveryOperation(data.operationId); setDeliveryComplete(false); setDeliveryFailed(false);
+        setDeployStatus(data.message); setDeployResult({ slug: data.slug, enrolled: true, publicVerified: false });
+        setResult(null); setStep("deploy");
+      } else if (data.success || data.deployed) {
         setDeployStatus("Deployment created, enrolled and attached to its environment source.");
         setDeployResult(data);
         const parts = [data.message];
@@ -566,7 +601,7 @@ export default function TemplatesPage() {
 
       {deployStatus && (
         <div className="mb-6 border-l-2 border-border bg-card px-3 py-2 text-xs font-mono text-muted">
-          {loading ? <span className="text-accent">Working · </span> : <span className="text-success">Complete · </span>}
+          {loading || (deliveryOperation && !deliveryComplete && !deliveryFailed) ? <span className="text-accent">Working · </span> : deliveryFailed ? <span className="text-error">Stopped · </span> : <span className="text-success">Complete · </span>}
           {deployStatus}
         </div>
       )}
@@ -856,6 +891,19 @@ export default function TemplatesPage() {
             </div>
           )}
 
+          {githubDelivery && <div className="border border-border bg-card p-5 space-y-3">
+            <h3 className="text-sm font-medium">Build and deploy from GitHub</h3>
+            <label className="block text-xs">Image builder
+              <select aria-label="Image builder" value={deliveryExecutor} onChange={event => setDeliveryExecutor(event.target.value as "agent" | "actions")} className="gc-input mt-2">
+                <option value="agent">GroundControl — build and publish to GHCR</option>
+                <option value="actions">GitHub Actions — use published GHCR images</option>
+              </select>
+            </label>
+            {deliveryExecutor === "actions" && <label className="block text-xs">Build workflow name<input aria-label="Build workflow name" value={deliveryWorkflow} onChange={event => setDeliveryWorkflow(event.target.value)} className="gc-input mt-2" /></label>}
+            <p className="text-xs text-muted">Each custom service needs a Dockerfile, Compose build settings and a GHCR image name. Actions must publish the full commit SHA as its tag and revision label. Database and cache images are pulled from their configured registries.</p>
+            <label className="flex gap-2 text-xs"><input type="checkbox" checked={autoDeploy} onChange={event => setAutoDeploy(event.target.checked)} />Deploy updates from {branch} automatically after a successful image build.</label>
+            <p className="text-xs text-muted">Connect missing repository or package access in <Link href="/settings?tab=connectors" className="underline">Settings → Connectors</Link>. The first deployment uses the same image pipeline as later updates.</p>
+          </div>}
           <div className="flex gap-3">
             <BackBtn onClick={() => setStep("source")} />
             <button onClick={handlePreview} disabled={loading}
@@ -892,7 +940,7 @@ export default function TemplatesPage() {
               <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap bg-background p-4 mt-3 max-h-60 overflow-y-auto">{proxyConfig}</pre>
             </details>
           )}
-          {deployResult && (
+          {deployResult && !deliveryOperation && (
             <div className={`rounded-md border p-5 ${deployResult.publicVerified === false ? "border-warning/30 bg-warning/5" : "border-success/25 bg-success/5"}`}>
               <h3 className={`text-sm font-medium mb-2 ${deployResult.publicVerified === false ? "text-warning" : "text-success"}`}>
                 {deployResult.publicVerified === false ? "Deployed, public route needs attention" : "Deployed and verified"}
@@ -926,6 +974,7 @@ export default function TemplatesPage() {
               </p>
             </div>
           )}
+          {deliveryOperation && <Notice tone={deliveryFailed ? "danger" : deliveryComplete ? "success" : "info"}>{deliveryComplete ? "Image release finished. Verify your application before relying on it." : deliveryFailed ? "Delivery needs attention. Open the deployment to inspect the failed operation." : "Your first deployment is prepared. Image build and release are running in the background."}</Notice>}
           <div className="flex flex-wrap gap-3">
             <BackBtn onClick={() => setStep("configure")} />
             {step === "preview" && (

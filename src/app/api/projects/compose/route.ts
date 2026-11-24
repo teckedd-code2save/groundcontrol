@@ -600,7 +600,7 @@ export async function POST(req: NextRequest) {
         `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, `pull${serviceArgs ? ` ${serviceArgs}` : ""}`, composeFile)}`,
         vps
       );
-      if (serviceArgs && pullResult.code !== 0) {
+      if ((serviceArgs || agentTarget?.operation.type === "deployment.release") && pullResult.code !== 0) {
         throw new HttpError(
           `Image pull failed: ${(pullResult.stderr || pullResult.stdout || "registry rejected the image").trim().slice(0, 500)}`,
           400
@@ -616,7 +616,7 @@ export async function POST(req: NextRequest) {
     }
 
     redeployPhase = "recreate";
-    const deployArgs = `up -d --remove-orphans --force-recreate${serviceArgs ? ` ${serviceArgs}` : ""}`;
+    const deployArgs = `up -d --remove-orphans --force-recreate${agentTarget?.operation.type === "deployment.release" ? " --no-build" : ""}${serviceArgs ? ` ${serviceArgs}` : ""}`;
     let result: { stdout: string; stderr: string; code: number };
     let detached = false;
     const verifyImages = buildRuntimeImageVerificationCommand(composeCmd, composeFile, expectedImages);

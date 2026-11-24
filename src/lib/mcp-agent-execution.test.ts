@@ -72,3 +72,10 @@ it("operation reads remain bound to current resources and the owning grant", asy
   await expect(executeAgentTool(context, "operation.get", { operationId: "operation-1" })).rejects.toThrow(/not found/);
   expect(db.agentOperation.findFirst).toHaveBeenCalledWith({ where: { id: "operation-1", grantId: 5, deploymentId: { in: [7] } } });
 });
+
+it("uses image delivery for an approved prepared deployment before any container exists", async () => {
+ db.enrolledDeployment.findFirst.mockResolvedValue({ id: 7, slug: "new-app", kind: "compose", sourcePath: "/srv/new-app", composePath: "/srv/new-app/compose.yml", vpsConfigId: 2, status: "pending", metadataJson: "{}", githubRepositories: [{ githubRepositoryId: "r1" }] });
+ const result = await executeAgentTool(context, "deployment.build_publish", { deployment: "new-app", commitSha: "a".repeat(40), idempotencyKey: "first-images-001", releaseAfterBuild: true });
+ expect(result).toMatchObject({ operation: { type: "deployment.build_publish" } });
+ expect(JSON.parse(db.agentOperation.create.mock.calls[0][0].data.inputJson)).toMatchObject({ releaseAfterBuild: true });
+});

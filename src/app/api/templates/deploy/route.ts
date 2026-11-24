@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { deliveryOptions, startGithubDelivery } from "@/lib/github-delivery";
+import { posix } from "node:path";
+import { buildableServiceBuildInfo, buildableServiceImages, buildReleaseImageOverride } from "@/lib/github-image-release";
+import { githubRegistryPublicState } from "@/lib/github-registry";
 import { githubProjectAccess } from "@/lib/github-project-import";
 import { linkGithubRepositoryToDeployment } from "@/lib/github-app-service";
 import { requireAuth } from "@/lib/auth";
@@ -264,6 +268,10 @@ export async function POST(req: NextRequest) {
     const repositoryComposeFile = repositoryComposeMode
       ? normalizeRepositoryComposePath(allInputs.compose_file || "docker-compose.yml")
       : "docker-compose.yml";
+    const delivery = deliveryOptions(body.delivery, branch);
+    if (delivery && (!repositoryComposeMode || !repoUrl || !project)) throw new HttpError("GitHub image delivery requires a project and repository-owned Compose configuration.", 400);
+    if (delivery && user.role !== "admin") throw new HttpError("Administrator access is required to deploy.", 403);
+    if (delivery && !(await githubRegistryPublicState()).configured) throw new HttpError("Connect GitHub package access in Settings → Connectors before deploying.", 409);
     const systemConfig = await getSystemConfig();
     const templateRoot = String(systemConfig.templateDeploymentRoot || "/srv/groundcontrol/deployments").replace(/\/+$/, "");
     const staticRoot = String(systemConfig.staticRoot || "/var/www").replace(/\/+$/, "");
@@ -322,6 +330,7 @@ export async function POST(req: NextRequest) {
 
     await execOnTarget(`mkdir -p ${shQuote(templateRoot)}`, vps);
     const access = repoUrl ? await githubProjectAccess(repoUrl) : undefined;
+    if (delivery && !access?.repositoryId) throw new HttpError("Connect this repository to the GroundControl GitHub App in Settings → Connectors, then retry.", 409);
     const source = await resolveTemplateSource({ repoUrl, branch, localPath, deployPath, vps, gitToken: access?.token, githubRepositoryId: access?.repositoryId })
       .catch((err) => ({ error: err instanceof Error ? err.message : "Source validation failed" }));
     if ("error" in source) {
@@ -669,6 +678,19 @@ export async function POST(req: NextRequest) {
       await materializeEnvFile(runtimePath, envValues, vps);
     }
 
+    if (delivery) {
+      const effective = await execOnTarget(`cd ${shQuote(runtimePath)} && docker compose -p ${shQuote(composeProject)} -f ${shQuote(repositoryComposeFile)} config`, vps);
+      if (effective.code !== 0) throw new HttpError("The repository Compose configuration is invalid. Check required environment values.", 400);
+      // Fail before enrollment if custom services cannot be published to a registry.
+      buildReleaseImageOverride(buildableServiceImages(effective.stdout, true), source.commitSha || "");
+      for (const [service, build] of Object.entries(buildableServiceBuildInfo(effective.stdout))) {
+        const context = posix.resolve(runtimePath, build.context || ".");
+        const dockerfile = posix.resolve(context, build.dockerfile || "Dockerfile");
+        if ((context !== runtimePath && !context.startsWith(`${runtimePath}/`)) || !dockerfile.startsWith(`${runtimePath}/`)) throw new HttpError(`Custom service ${service} must use a Dockerfile within its repository.`, 400);
+        const check = await execOnTarget(`test -f ${shQuote(dockerfile)} && echo yes`, vps);
+        if (check.code !== 0 || check.stdout.trim() !== "yes") throw new HttpError(`Custom service ${service} is missing its Dockerfile. Add the build specification before deploying.`, 400);
+      }
+    }
     // Deploy
     const composeCmd = `if docker compose version >/dev/null 2>&1; then printf 'docker compose'; elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'; else printf ''; fi`;
     const composeManagedTunnelConnector = usesTunnelToken ? `${composeProject}-cloudflared-1` : "";
@@ -680,7 +702,7 @@ export async function POST(req: NextRequest) {
     const repositoryBuild = repositoryComposeMode
       ? ` && printf '[build] Building repository services\\n' && $compose_cmd -p ${shQuote(composeProject)}${composeFileArgs} build --pull`
       : "";
-    const upResult = await execOnTarget(
+    const upResult = delivery ? { code: 0, stdout: "Image delivery prepared; runtime has not started.", stderr: "" } : await execOnTarget(
       `cd ${shQuote(runtimePath)} && compose_cmd=$(${composeCmd}) && ` +
       `if [ -z "$compose_cmd" ]; then echo "docker compose plugin or docker-compose is required" >&2; exit 127; fi && ` +
       `printf '[validate] Rendering effective Compose model\\n' && ` +
@@ -699,7 +721,7 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
-    const runtimeVerification = composeInspection
+    const runtimeVerification = !delivery && composeInspection
       ? await verifyRepositoryComposeRuntime({
           runtimePath,
           composeProject,
@@ -773,11 +795,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const healthResults = await verifyPublicEndpoints(domains, vps, allInputs.health_path || "/");
+    const healthResults = delivery ? [] : await verifyPublicEndpoints(domains, vps, allInputs.health_path || "/");
     const verification = deploymentVerificationStatus(domains, dnsResult, healthResults);
     const runtimeVerified = !runtimeVerification || runtimeVerification.code === 0;
     const deployedSuccessfully = runtimeVerified && verification.publicVerified;
-    const deploymentStatus = runtimeVerified ? verification.status : "failed";
+    const deploymentStatus = delivery ? "pending" : runtimeVerified ? verification.status : "failed";
     const runtimeError = runtimeVerified
       ? null
       : [runtimeVerification?.stderr, runtimeVerification?.stdout].filter(Boolean).join("\n").trim()
@@ -836,7 +858,7 @@ export async function POST(req: NextRequest) {
         envStatus: envValidation.ok ? "valid" : "missing",
       },
     });
-    await enrolTemplateDeployment({
+    const enrolled = await enrolTemplateDeployment({
       projectGroupId, environmentName, composeProject,
       projectId: persisted.projectId,
       repositoryId: source.githubRepositoryId,
@@ -848,6 +870,12 @@ export async function POST(req: NextRequest) {
       vpsConfigId: vps.id,
       templateName,
     });
+
+    if (delivery) {
+      if ((dnsResult as { error?: string } | null)?.error) throw new HttpError("Routing configuration failed. Review the prepared deployment before retrying.", 409);
+      const operation = await startGithubDelivery(user.id, enrolled.id, source.commitSha || "", delivery);
+      return NextResponse.json({ queued: true, deployed: false, slug, operationId: operation.id, message: delivery.executor === "actions" ? "Verifying published commit images, then deploying their digests." : "Building and publishing commit images, then deploying their digests." }, { status: 202 });
+    }
 
     return NextResponse.json({
       success: deployedSuccessfully,

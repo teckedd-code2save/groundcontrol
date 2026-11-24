@@ -1,3 +1,4 @@
+import { verifyActionsBuild } from "@/lib/github-delivery";
 import { jsonObject } from "@/lib/agent-runtime-capabilities";
 import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
 import { buildOutput, buildFailureSummary, type BuildOutput } from "@/lib/build-output";
@@ -155,7 +156,7 @@ export async function POST(req: NextRequest) {
         400
       );
     }
-    const buildable = buildableServiceImages(configCheck.stdout);
+    const buildable = buildableServiceImages(configCheck.stdout, body.releaseAfterBuild === true || body.verifyPublished === true);
     if (requestedServices?.length) {
       const missing = requestedServices.filter((s) => !(s in buildable));
       if (missing.length) {
@@ -189,6 +190,21 @@ export async function POST(req: NextRequest) {
         results,
       };
     };
+
+    if (body.verifyPublished === true) {
+      const workflow = await verifyActionsBuild(enrolled.id, commitSha, branch || sourceSync.branch, String(body.actionsWorkflowName || ""));
+      const registry = await ensureGithubRegistryLogin(vps);
+      if (!registry.configured) throw new HttpError("Connect GitHub package access before pulling release images.", 400);
+      const verify = await run("published image verification", buildReleaseVerifyCommand(refs), vps);
+      if (verify.code !== 0) throw new HttpError(buildFailureSummary(logs[logs.length - 1]), 400);
+      const images = parseReleaseVerifyOutput(verify.stdout, refs);
+      for (const image of images) {
+        if (!image.digest) throw new HttpError("Missing published image digest.", 409);
+        const revision = await run("published revision verification", `DOCKER_CONFIG="\${HOME}/.groundcontrol/docker" docker image inspect ${shQuote(image.digest)} --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'`, vps);
+        if (revision.code !== 0 || revision.stdout.trim() !== commitSha) throw new HttpError("Published image revision does not match the approved commit. Add the org.opencontainers.image.revision label to the build workflow.", 409);
+      }
+      return NextResponse.json({ success: true, commitSha, images, tests: { status: "passed", source: "github_actions", ...workflow }, logs, builder: "github-actions" });
+    }
 
     if (builder === "docker-agentic") {
       const ghcr = await githubRegistryCredential();

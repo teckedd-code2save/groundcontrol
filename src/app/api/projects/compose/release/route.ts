@@ -1,3 +1,4 @@
+import { githubBranchHead, readDelivery } from "@/lib/github-delivery";
 import { agentComposeCommand } from "@/lib/agent-health";
 import { agentOperationTarget, assertAgentProject } from "@/lib/agent-operation-target";
 import { NextRequest, NextResponse } from "next/server";
@@ -59,6 +60,14 @@ export async function POST(req: NextRequest) {
     const vps = agentTarget ? agentTarget.vps : await getActiveVps();
     const resolved = agentTarget ? { projectPath: agentTarget.projectPath! } : await resolveComposeProjectPath(projectSlug, undefined, vps);
     const projectPath = resolved.projectPath;
+
+    if (agentTarget?.input.githubDelivery) {
+      const sha = String(body.commitSha || "");
+      const policy = readDelivery(agentTarget.deployment.metadataJson);
+      if ((policy?.requestedSha && policy.requestedSha !== sha) || await githubBranchHead(agentTarget.deployment.id, String(body.branch || policy?.branch || "")) !== sha) {
+        throw new HttpError("A newer GitHub revision superseded this build. No release was started.", 409);
+      }
+    }
 
     const { content, refs } = buildDigestImageOverride(
       parsedImages.map((entry) => ({ service: entry.service, digest: entry.digest }))

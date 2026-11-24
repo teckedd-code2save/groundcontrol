@@ -205,3 +205,7 @@ it("keeps shared image variables coupled when Compose declares defaults", () => 
     image: \${IMAGE:-\${OTHER}}
 `)).toEqual({ api: "API_IMAGE", "research-worker": "API_IMAGE", "research-indexer": "API_IMAGE", web: "WEB_IMAGE" });
 });
+
+it("refuses a partial image pipeline when another custom service has no publishable image", () => {
+ expect(() => buildableServiceImages("services:\n  api:\n    build: .\n    image: ghcr.io/org/api:latest\n  worker:\n    build: .\n  db:\n    image: postgres:16\n", true)).toThrow("worker");
+});
