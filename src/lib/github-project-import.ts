@@ -54,3 +54,23 @@ export async function importGithubProject(body: { repositoryUrl?: unknown; name?
   if (project.repositoryUrl?.toLowerCase().replace(/\.git$/i, "") !== repository.url.toLowerCase()) throw new HttpError("A different project already uses this name. Choose another project name.", 409);
   return { project, repository };
 }
+
+/** Reuse the connected GitHub App for first-launch reads and checkout. Server-only. */
+export async function githubProjectAccess(input: unknown) {
+  const identity = githubProjectIdentity(input);
+  const known = await prisma.githubRepository.findMany({ select: { id: true, fullName: true } });
+  const match = known.find((repo) => repo.fullName.toLowerCase() === identity.toLowerCase());
+  const repository = match ? await prisma.githubRepository.findUnique({ where: { id: match.id }, include: { installation: { include: { connection: true } } } }) : null;
+  let token = process.env.GITHUB_TOKEN || "";
+  if (repository) {
+    if (repository.isArchived || repository.installation.suspendedAt) throw new HttpError("GitHub access is unavailable for this repository. Review the connection.", 403);
+    const privateKey = decryptMaybe(repository.installation.connection.privateKeyEncrypted);
+    if (!privateKey) throw new HttpError("The GitHub connection needs attention. Reconnect GitHub and try again.", 403);
+    const access = await createGithubInstallationToken({ appId: repository.installation.connection.appId, privateKey, installationId: repository.installationId });
+    if (!["read", "write"].includes(access.permissions.contents || "")) throw new HttpError("The GitHub connection needs repository contents access.", 403);
+    token = access.token;
+  }
+  const headers: Record<string, string> = { Accept: "application/vnd.github+json", "User-Agent": "GroundControl" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return { repositoryId: repository?.id, token, headers };
+}

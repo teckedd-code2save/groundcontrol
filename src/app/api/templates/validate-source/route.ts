@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { githubProjectAccess } from "@/lib/github-project-import";
 import { requireAuth } from "@/lib/auth";
 import { loadTemplate } from "@/lib/template-engine";
 import {
@@ -37,9 +38,7 @@ async function probeGithubRepo(
     Accept: "application/vnd.github.v3+json",
     "User-Agent": "groundcontrol-template-validate",
   };
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  }
+  Object.assign(headers, (await githubProjectAccess(repoUrl)).headers);
 
   // Resolve default branch if needed
   let ref = (branch || "").trim();

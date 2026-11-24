@@ -10,6 +10,8 @@ export interface TemplateSourceInput {
   localPath?: string | null;
   deployPath: string;
   vps?: VpsConnection | null;
+  gitToken?: string;
+  githubRepositoryId?: string;
 }
 
 export interface TemplateSourceResolution {
@@ -21,6 +23,7 @@ export interface TemplateSourceResolution {
   branch?: string;
   commitSha?: string;
   defaultBranch?: string;
+  githubRepositoryId?: string;
 }
 
 type ExecOnTarget = typeof execOnTarget;
@@ -51,6 +54,8 @@ export async function resolveTemplateSource(
       deployPath: input.deployPath,
       vps: input.vps,
       run,
+      gitToken: input.gitToken,
+      githubRepositoryId: input.githubRepositoryId,
     });
   }
 
@@ -95,15 +100,33 @@ async function resolveGitSource({
   deployPath,
   vps,
   run,
+  gitToken,
+  githubRepositoryId,
 }: {
   repoUrl: string;
   requestedRef: string;
   deployPath: string;
   vps?: VpsConnection | null;
   run: ExecOnTarget;
+  gitToken?: string;
+  githubRepositoryId?: string;
 }): Promise<TemplateSourceResolution> {
   const script = [
     `set -eu`,
+    `export GIT_TERMINAL_PROMPT=0`,
+    ...(gitToken ? [
+      "umask 077",
+      "IFS= read -r GC_GITHUB_TOKEN",
+      "export GC_GITHUB_TOKEN",
+      "gc_askpass=$(mktemp /tmp/gc-git-askpass.XXXXXX)",
+      "trap 'rm -f \"$gc_askpass\"' EXIT HUP INT TERM",
+      "cat > \"$gc_askpass\" <<'GCASKPASS'",
+      "#!/bin/sh",
+      `case "$1" in *Username*) echo x-access-token ;; *) printf '%s\\n' "$GC_GITHUB_TOKEN" ;; esac`,
+      "GCASKPASS",
+      "chmod 700 \"$gc_askpass\"",
+      "export GIT_ASKPASS=\"$gc_askpass\"",
+    ] : []),
     `repo=${shQuote(repoUrl)}`,
     `ref=${shQuote(requestedRef)}`,
     `path=${shQuote(deployPath)}`,
@@ -115,7 +138,7 @@ async function resolveGitSource({
     `    exit 42`,
     `  fi`,
     `else`,
-    `  rm -rf "$path"`,
+    `  if [ -e "$path" ]; then rmdir "$path"; fi`,
     `  git clone "$repo" "$path"`,
     `  cd "$path"`,
     `fi`,
@@ -134,9 +157,10 @@ async function resolveGitSource({
     `printf 'GC_SOURCE_COMMIT=%s\\nGC_SOURCE_BRANCH=%s\\nGC_SOURCE_DEFAULT_BRANCH=%s\\n' "$commit" "$branch" "$default_branch"`,
   ].join("\n");
 
-  const result = await run(script, vps);
+  const result = gitToken ? await run(script, vps, undefined, `${gitToken}\n`) : await run(script, vps);
   if (result.code !== 0) {
-    throw new Error(result.stderr || result.stdout || "Git source validation failed");
+    const detail = result.stderr || result.stdout || "Git source validation failed";
+    throw new Error(gitToken ? detail.split(gitToken).join("[REDACTED]") : detail);
   }
 
   const metadata = parseKeyValueOutput(result.stdout);
@@ -146,6 +170,7 @@ async function resolveGitSource({
     buildContext: ".",
     repoUrl,
     requestedRef,
+    githubRepositoryId,
     branch: metadata.GC_SOURCE_BRANCH || undefined,
     commitSha: metadata.GC_SOURCE_COMMIT || undefined,
     defaultBranch: metadata.GC_SOURCE_DEFAULT_BRANCH || undefined,

@@ -133,3 +133,14 @@ describe("resolveTemplateSource", () => {
     ).rejects.toThrow("Deployment path already contains a different git remote");
   });
 });
+
+it("uses the connected GitHub credential only on stdin and redacts checkout errors", async () => {
+  const token = "fixture-private-github-token";
+  const exec = vi.fn().mockResolvedValueOnce(execResult()).mockResolvedValueOnce(execResult("yes\n")).mockResolvedValueOnce(execResult("", `denied ${token}`, 1));
+  await expect(resolveTemplateSource({ repoUrl: "https://github.com/team/private", deployPath: "/srv/private", vps, gitToken: token }, { exec })).rejects.toThrow("denied [REDACTED]");
+  const call = exec.mock.calls[2];
+  expect(call[0]).not.toContain(token);
+  expect(call[0]).toContain("GIT_ASKPASS");
+  expect(call[0]).not.toContain('rm -rf "$path"');
+  expect(call[3]).toBe(`${token}\n`);
+});

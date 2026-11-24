@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { githubProjectAccess } from "@/lib/github-project-import";
 import { requireAuth } from "@/lib/auth";
 import { generatePreview, isRepositoryComposeTemplate, listTemplates, loadTemplate, resolveTemplate } from "@/lib/template-engine";
 import { normalizeRepositoryComposePath } from "@/lib/repository-compose";
@@ -10,7 +11,7 @@ async function readGithubPreviewFile(repoUrl: string, ref: string, path: string)
     Accept: "application/vnd.github+json",
     "User-Agent": "GroundControl",
   };
-  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  Object.assign(headers, (await githubProjectAccess(repoUrl)).headers);
   const encodedPath = path.split("/").map(encodeURIComponent).join("/");
   const response = await fetch(
     `https://api.github.com/repos/${match[1]}/${match[2]}/contents/${encodedPath}?ref=${encodeURIComponent(ref || "main")}`,
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
   }
 
   const templates = listTemplates();
+  if (!templates.length) return NextResponse.json({ templates: [], error: "Deployment templates are missing from this GroundControl installation. Update the installation before launching." }, { status: 503 });
   return NextResponse.json({ templates });
 }
 

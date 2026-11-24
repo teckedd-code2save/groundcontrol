@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { githubProjectAccess } from "@/lib/github-project-import";
+import { linkGithubRepositoryToDeployment } from "@/lib/github-app-service";
 import { requireAuth } from "@/lib/auth";
 import { isRepositoryComposeTemplate, isStaticTemplate, loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
 import { getActiveVps, getSystemConfig, shQuote } from "@/lib/vps";
@@ -50,6 +52,7 @@ function collectHostPorts(compose: string): string[] {
 
 async function enrolTemplateDeployment(args: {
   projectId: number;
+  repositoryId?: string;
   name: string;
   slug: string;
   kind: string;
@@ -61,7 +64,7 @@ async function enrolTemplateDeployment(args: {
   environmentName?: string;
   composeProject?: string;
 }) {
-  return prisma.enrolledDeployment.upsert({
+  const deployment = await prisma.enrolledDeployment.upsert({
     where: { legacyProjectId: args.projectId },
     create: {
       name: args.name,
@@ -91,6 +94,8 @@ async function enrolTemplateDeployment(args: {
       metadataJson: JSON.stringify({ source: "template", templateName: args.templateName, composeProject: args.composeProject }),
     },
   });
+  if (args.repositoryId) await linkGithubRepositoryToDeployment({ repositoryId: args.repositoryId, deploymentId: deployment.id });
+  return deployment;
 }
 
 interface CloudflareZone {
@@ -316,7 +321,8 @@ export async function POST(req: NextRequest) {
     }
 
     await execOnTarget(`mkdir -p ${shQuote(templateRoot)}`, vps);
-    const source = await resolveTemplateSource({ repoUrl, branch, localPath, deployPath, vps })
+    const access = repoUrl ? await githubProjectAccess(repoUrl) : undefined;
+    const source = await resolveTemplateSource({ repoUrl, branch, localPath, deployPath, vps, gitToken: access?.token, githubRepositoryId: access?.repositoryId })
       .catch((err) => ({ error: err instanceof Error ? err.message : "Source validation failed" }));
     if ("error" in source) {
       return NextResponse.json({ success: false, error: source.error }, { status: 400 });
@@ -575,8 +581,9 @@ export async function POST(req: NextRequest) {
         outputDir,
       });
       await enrolTemplateDeployment({
-      projectGroupId, environmentName, composeProject,
+        projectGroupId, environmentName, composeProject,
         projectId: persisted.projectId,
+        repositoryId: source.githubRepositoryId,
         name: slug,
         slug,
         kind: "static",
@@ -832,6 +839,7 @@ export async function POST(req: NextRequest) {
     await enrolTemplateDeployment({
       projectGroupId, environmentName, composeProject,
       projectId: persisted.projectId,
+      repositoryId: source.githubRepositoryId,
       name: slug,
       slug,
       kind: "compose",

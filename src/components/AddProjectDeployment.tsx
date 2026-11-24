@@ -8,7 +8,7 @@ import { Notice } from "./ui";
 export type ProjectDeployment = { id: number; name: string; slug: string; environmentName: string; method: string; hostName: string; hostId?: number | null; publicUrl?: string | null; status: string; projectName?: string };
 type Candidate = { id: string; name: string; kind: string; services?: { state: string }[] };
 export function AddProjectDeployment({ project, deployments, connection, onClose, onAdded }: {
-  project: { id: number; name: string }; deployments: ProjectDeployment[];
+  project: { id: number; name: string; repositoryUrl?: string | null }; deployments: ProjectDeployment[];
   connection: { hostId?: number | null; hostName?: string; localDesktop?: boolean };
   onClose: () => void; onAdded: () => Promise<void>;
 }) {
@@ -49,11 +49,11 @@ export function AddProjectDeployment({ project, deployments, connection, onClose
       await onAdded(); onClose();
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); }
   }
-  const launchUrl = `/templates?projectId=${project.id}&environment=${encodeURIComponent(environment)}&hostId=${connection.hostId ?? ""}`;
+  const launchUrl = `/templates?projectId=${project.id}&environment=${encodeURIComponent(environment)}&hostId=${connection.hostId ?? ""}${project.repositoryUrl ? "&source=github" : ""}`;
   return <ModalSurface open onClose={close} title={`Add deployment to ${project.name}`} description="A deployment is one running instance of this project, in an environment you choose." footer={<>
     <button className="gc-button gc-button-quiet" disabled={busy} onClick={onClose}>Cancel</button>
     {mode === "connect" && <button className="gc-button gc-button-primary" disabled={!selected || !environment.trim() || busy || loading} onClick={() => void connect()}>{busy ? "Connecting…" : "Connect deployment"}</button>}
-    {mode === "launch" && !connection.localDesktop && environment.trim() && connection.hostId && <Link href={launchUrl} className="gc-button gc-button-primary">Choose a template →</Link>}
+    {mode === "launch" && !connection.localDesktop && environment.trim() && connection.hostId && <Link href={launchUrl} className="gc-button gc-button-primary">{project.repositoryUrl ? "Deploy from GitHub →" : "Choose a template →"}</Link>}
     {mode === "launch" && connection.localDesktop && <button className="gc-button gc-button-primary" disabled={busy || !environment.trim() || !image.trim() || !launchName.trim() || !port} onClick={() => review ? void launchLocal() : setReview(true)}>{busy ? "Launching…" : review ? "Launch deployment" : "Review deployment"}</button>}
   </>}>
     {error && <div role="alert" className="mb-4"><Notice tone="danger">{error}</Notice></div>}

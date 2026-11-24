@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { FolderGit2, Search } from "lucide-react";
 import type { TemplateDefinition } from "@/lib/template-engine";
 import { getTemplateSourcePlan } from "@/lib/template-source-requirements";
@@ -104,7 +105,7 @@ function isStaticTpl(t: TemplateWithId): boolean {
 
 export default function TemplatesPage() {
   const router = useRouter();
-  const [projectContext, setProjectContext] = useState<{ id: number; name: string; environment: string; hostId: number; hostName: string } | null>(null);
+  const [projectContext, setProjectContext] = useState<{ id: number; name: string; environment: string; hostId: number; hostName: string; repositoryUrl?: string; repositoryDefaultBranch?: string } | null>(null);
   const [projectContextError, setProjectContextError] = useState("");
   const [templates, setTemplates] = useState<TemplateWithId[]>([]);
   const [selected, setSelected] = useState<TemplateWithId | null>(null);
@@ -148,18 +149,29 @@ export default function TemplatesPage() {
       fetch("/api/project-groups").then((r) => r.json()).then((data) => {
         const project = data.projects?.find((p: { id: number }) => p.id === Number(query.get("projectId")));
         if (!project || data.hostId !== Number(query.get("hostId"))) { setProjectContextError("The project or selected host changed. Return to Projects and start again."); return; }
-        setProjectContext({ id: project.id, name: project.name, environment: query.get("environment") || "Production", hostId: data.hostId, hostName: data.hostName });
+        setProjectContext({ id: project.id, name: project.name, environment: query.get("environment") || "Production", hostId: data.hostId, hostName: data.hostName, repositoryUrl: project.repositoryUrl, repositoryDefaultBranch: project.repositoryDefaultBranch });
         if (project.repositoryUrl) setRepoUrl(project.repositoryUrl);
         if (project.repositoryDefaultBranch) setBranch(project.repositoryDefaultBranch);
       }).catch(() => setProjectContextError("Could not load the project. Return to Projects and try again."));
     }
     fetch("/api/templates").then(r => r.json())
-      .then(d => setTemplates(d.templates || [])).catch(() => {});
+      .then(d => { setTemplates(d.templates || []); if (d.error || !d.templates?.length) setResult({ ok: false, msg: d.error || "Deployment templates are unavailable. Update GroundControl before launching." }); }).catch(() => setResult({ ok: false, msg: "Could not load deployment options. Refresh and try again." }));
     fetch("/api/cloudflare/tunnels").then(r => r.json())
       .then(d => setTunnels(d.tunnels || [])).catch(() => setTunnels([]));
     fetch("/api/cloudflare/zones").then(r => r.json())
       .then(d => setZones(d.zones || [])).catch(() => setZones([]));
   }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("source") !== "github" || !projectContext?.repositoryUrl || !templates.length) return;
+    const template = templates.find((item) => item.compose_source === "repository");
+    if (!template) { setResult({ ok: false, msg: "Repository deployment is unavailable in this installation." }); return; }
+    setSelected(template);
+    setInputs(Object.fromEntries((template.inputs || []).filter((input) => input.default != null).map((input) => [input.name, String(input.default)])));
+    setSourceType("github"); setRepoUrl(projectContext.repositoryUrl);
+    setBranch(projectContext.repositoryDefaultBranch || "main"); setDeploymentName(projectContext.name);
+    setCreateDns(false); setSourceValidated(false); setStep("source");
+  }, [projectContext, templates]);
 
   function selectTemplate(t: TemplateWithId) {
     setSelected(t);
@@ -433,6 +445,7 @@ export default function TemplatesPage() {
 
   async function handleDeploy() {
     if (!selected) return;
+    if (new URLSearchParams(window.location.search).has("projectId") && !projectContext) { setResult({ ok: false, msg: projectContextError || "Wait for project details to load." }); return; }
     if (!validateDnsConfiguration()) return;
     setLoading(true); setResult(null);
     const sourceOk = sourceValidated || (await validateSource({ silentOk: true }));
@@ -448,6 +461,9 @@ export default function TemplatesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           templateName: selected._filename,
+          projectGroupId: projectContext?.id,
+          environmentName: projectContext?.environment,
+          hostId: projectContext?.hostId,
           deploymentName: deploymentName.trim() || undefined,
           inputs: deploymentInputs(),
           envVars: envVars.filter(e => e.key),
@@ -533,12 +549,12 @@ export default function TemplatesPage() {
     <div className="gc-page">
       <PageHeader
         eyebrow="Build"
-        title="Templates"
+        title={projectContext?.repositoryUrl ? "Deploy from GitHub" : "Templates"}
         description="Choose how to run your app, configure it, and review before deploying."
       />
 
       {projectContext && <div className="mb-6 border border-border bg-card p-4"><p className="text-sm font-medium">{projectContext.name} / {projectContext.environment}</p><p className="mt-1 text-xs text-muted">New deployment on {projectContext.hostName}. It will appear inside this project.</p></div>}
-      {projectContextError && <Notice tone="danger">{projectContextError} <a href="/projects" className="underline">Back to Projects</a></Notice>}
+      {projectContextError && <Notice tone="danger">{projectContextError} <Link href="/projects" className="underline">Back to Projects</Link></Notice>}
       <ProgressSteps label="Deployment template workflow" steps={steps} current={step} onSelect={setStep} className="mb-8" />
 
       {result && step !== "source" && (
