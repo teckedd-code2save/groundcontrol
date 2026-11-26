@@ -6,7 +6,7 @@ GroundControl exposes a narrow remote MCP surface at `/mcp`. External agents rec
 
 1. Add `https://<your-groundcontrol>/mcp` to a compatible remote MCP client.
 2. The client discovers GroundControl OAuth through RFC 9728 protected-resource metadata.
-3. GroundControl authenticates the operator, requests OAuth consent, and lets the operator choose the exact deployments the client may see.
+3. GroundControl authenticates the operator, requests OAuth consent, and lets the operator choose the exact deployments the client may see. For first launch, an administrator can also grant `deployment:create` on selected hosts; no existing deployment is required.
 4. The client receives short-lived bearer access plus a rotating refresh token when `offline_access` is granted.
 
 OAuth uses Authorization Code + S256 PKCE. Client ID Metadata Documents are supported; dynamic client registration remains available for compatibility.
@@ -47,6 +47,36 @@ New static template deployments retain their build command and output directory 
 Health distinguishes evidence from absence of evidence: `runtime.healthy` and top-level `healthy` can be `null` (unknown). Static sites have no container runtime, so a successful public HTTP check can establish health. Docker health uses the enrolled container or exact Compose project/file and honors Docker healthcheck failures. A missing host, inspection failure, skipped public check, or unsupported runtime is not reported as verified healthy. Public checks do not follow redirects; only a 2xx response counts as success. An operation can successfully apply files while explicitly reporting `publicVerified: false` and `healthy: null`.
 
 No MCP tool exposes SSH credentials, provider secrets, raw terminal access, or generic command execution. Configuration inspection is exact-key only and returns `configured`, `missing`, or `unmanaged` metadata without masked or partial secret values.
+
+## First deployment from GitHub
+
+`deployment.create_options` lists only approved creation hosts plus available connected GitHub
+repositories and registry readiness. `deployment.plan` checks an exact branch commit and the
+repository-owned Compose recipe without changing host state. `deployment.create` atomically
+reserves a new project/deployment and queues preparation through the same launch service used by
+Projects. It never adopts an existing deployment or infers host authority from old workload grants.
+
+Consent requires `deployment:create`, `deployment:read`, `deployment:redeploy`, and `operation:read`
+and at least one explicitly selected host. Existing grants migrate with no allowed creation hosts.
+Only deployments newly created under this permission are appended to the grant. Both the owner and
+the agent can revoke/inspect that same grant; delivery does not silently create another authority.
+
+Provide repository URL, branch and full SHA, deployment name, host, environment, Compose path,
+new domain, public service and loopback port, health path, and one image publisher. Actions requires
+its exact workflow name. `generatedEnvironmentKeys` contains names only: GC generates new random
+credentials privately and stores them encrypted. External provider credentials still need GC's
+configuration path. Use Compose interpolation to assemble connection URLs from new credentials.
+
+The initial route supports an already configured Linux Docker Compose/Caddy host and DNS pointing
+the new hostname at that host. It does not provision a cloud VM, edit DNS/firewalls, install a
+proxy, replace an existing route, or adopt host mounts/shared volumes. Those unsupported boundaries
+are reported explicitly. Source preflight is not proof that ports, DNS, TLS or the app are healthy.
+
+Follow `operation.get` for creation, its `deliveryOperationId` for build/publication verification,
+and that operation's `releaseOperationId` for digest release. Preparation success reports
+`liveVerified: false`. Verify runtime, HTTPS and a real database journey, then exercise a subsequent
+branch update before claiming automatic delivery works. Old server/catalog connections must be
+upgraded/refreshed before these tools are callable. A source patch is not live MCP acceptance.
 
 ## Durable mutations
 

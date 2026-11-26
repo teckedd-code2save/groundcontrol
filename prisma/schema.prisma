@@ -797,6 +797,7 @@ model OAuthGrant {
   clientDbId  Int
   scope       String
   resources   String    @default("[]") // JSON array of EnrolledDeployment ids
+  creationHosts String  @default("[]") // Hosts explicitly approved for NEW deployments; never inferred from existing resources
   revokedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

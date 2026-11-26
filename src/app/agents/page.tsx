@@ -8,6 +8,7 @@ type AgentGrant = {
   id: number;
   client: { id: string; name: string; source: string };
   scopes: string[];
+  creationHostIds: number[];
   deployments: Array<{ id: number; name: string; slug: string }>;
   revoked: boolean;
   createdAt: string;
@@ -151,6 +152,7 @@ export default function AgentsPage() {
                       <span className="font-mono text-[9px] text-muted">{grant.client.source}</span>
                     </div>
                     <p className="mt-2 font-mono text-[10px] text-muted">{grant.scopes.join(" · ")}</p>
+                    {!!grant.creationHostIds?.length && <p className="mt-2 text-xs text-muted">New deployment access: host {grant.creationHostIds.join(", host ")}. Apps created here join this grant; other workloads remain excluded.</p>}
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {grant.deployments.map((deployment) => (
                         <span key={deployment.id} className="border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted">{deployment.slug}</span>

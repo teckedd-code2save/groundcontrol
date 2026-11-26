@@ -11,6 +11,7 @@ export const OAUTH_SCOPES = [
   "deployment:logs",
   "deployment:health",
   "deployment:redeploy",
+  "deployment:create",
   "operation:read",
   "offline_access",
 ] as const;
@@ -22,6 +23,7 @@ export const OAUTH_SCOPE_LABELS: Record<OAuthScope, string> = {
   "deployment:logs": "Read deployment execution evidence and logs",
   "deployment:health": "Check runtime and public endpoint health",
   "deployment:redeploy": "Redeploy or restart an approved workload",
+  "deployment:create": "Create new deployments from connected GitHub repositories on selected hosts",
   "operation:read": "Read durable operation progress and evidence",
   offline_access: "Stay connected using rotating refresh tokens",
 };
@@ -84,8 +86,11 @@ export function validateScope(scope: string, userRole: string): string {
   const normalized = normalizeScope(scope);
   const unknown = [...scopeSet(normalized)].filter((item) => !OAUTH_SCOPES.includes(item as OAuthScope));
   if (unknown.length) throw new OAuthRequestError(`Unsupported scope: ${unknown.join(", ")}`, "invalid_scope");
-  if (hasScope(normalized, "deployment:redeploy") && userRole !== "admin") {
+  if ((hasScope(normalized, "deployment:redeploy") || hasScope(normalized, "deployment:create")) && userRole !== "admin") {
     throw new OAuthRequestError("Administrator approval is required for deployment:redeploy", "invalid_scope");
+  }
+  if (hasScope(normalized, "deployment:create") && !["deployment:read", "deployment:redeploy", "operation:read"].every((scope) => scopeSet(normalized).has(scope))) {
+    throw new OAuthRequestError("First deployment requires deployment:read, deployment:redeploy and operation:read alongside deployment:create", "invalid_scope");
   }
   return normalized;
 }

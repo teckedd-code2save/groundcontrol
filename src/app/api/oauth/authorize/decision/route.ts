@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import {
   createAuthorizationCode,
   OAuthRequestError,
+  scopeSet,
   readAuthorizationRequest,
   requestOrigin,
   validateAuthorizationRequest,
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
       query?: string;
       approved?: boolean;
       deploymentIds?: number[];
+      creationHostIds?: number[];
     };
     const query = new URLSearchParams(String(body.query || ""));
     const authRequest = readAuthorizationRequest(query);
@@ -50,7 +52,12 @@ export async function POST(req: NextRequest) {
         .map(Number)
         .filter((id) => Number.isSafeInteger(id) && id > 0)
     ));
-    if (!requestedIds.length) {
+    const creationHostIds = scopeSet(validated.scope).has("deployment:create")
+      ? [...new Set((Array.isArray(body.creationHostIds) ? body.creationHostIds : []).map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
+    const hosts = await prisma.vpsConfig.findMany({ where: { id: { in: creationHostIds } }, select: { id: true } });
+    if (hosts.length !== creationHostIds.length) return NextResponse.json({ error: "A selected creation host no longer exists." }, { status: 400 });
+    if (scopeSet(validated.scope).has("deployment:create") && !creationHostIds.length) return NextResponse.json({ error: "Select a host for new deployments, or reconnect without deployment:create." }, { status: 400 });
+    if (!requestedIds.length && !creationHostIds.length) {
       return NextResponse.json({ error: "Select at least one deployment for this agent." }, { status: 400 });
     }
     const allowed = await prisma.enrolledDeployment.findMany({
@@ -68,10 +75,12 @@ export async function POST(req: NextRequest) {
         clientDbId: validated.client.id,
         scope: validated.scope,
         resources: JSON.stringify(requestedIds),
+        creationHosts: JSON.stringify(creationHostIds),
       },
       update: {
         scope: validated.scope,
         resources: JSON.stringify(requestedIds),
+        creationHosts: JSON.stringify(creationHostIds),
         revokedAt: null,
       },
     });
@@ -96,6 +105,7 @@ export async function POST(req: NextRequest) {
       clientId: validated.client.clientId,
       scopes: validated.scope,
       deploymentIds: requestedIds,
+      creationHostIds,
     });
 
     return NextResponse.json({ redirectTo: redirect.toString() }, {

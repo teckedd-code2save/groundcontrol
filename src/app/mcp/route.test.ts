@@ -106,7 +106,7 @@ describe("GroundControl MCP transport", () => {
       name: "GroundControl",
       version: "0.1.0",
     });
-    expect(data.result._meta["io.groundcontrol/toolsetRevision"]).toBe("2026-11-12.help.1");
+    expect(data.result._meta["io.groundcontrol/toolsetRevision"]).toBe("2026-11-27.create.1");
     expect(response.headers.get("MCP-Protocol-Version")).toBe("2026-07-28");
     expect(mock.authenticateAccessToken).not.toHaveBeenCalled();
   });
@@ -199,6 +199,6 @@ for (const method of ["initialize", "server/discover"]) {
   it(`communicates current workload help through ${method} without claiming unreleased local parity`, async () => {
     const response = await POST(request({ jsonrpc: "2.0", id: 1, method, params: {} }));
     const { result } = await response.json();
-    for (const text of ["Preserve working Compose", "one ready image", "do not claim local Dockerfile", "offer help installing", "never request secret values", "not an available MCP creation tool", "runtime evidence"]) expect(result.instructions).toContain(text);
+    for (const text of ["Preserve working Compose", "one ready image", "do not claim local Dockerfile", "offer help installing", "never request secret values", "deployment.create_options", "explicit deployment:create permission", "Preparation success is not live acceptance", "runtime evidence"]) expect(result.instructions).toContain(text);
   });
 }

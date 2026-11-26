@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
           source: grant.client.source,
         },
         scopes: grant.scope.split(" ").filter(Boolean),
+        creationHostIds: parseResourceIds(grant.creationHosts),
         deployments: parseResourceIds(grant.resources).map((id) => byId.get(id) || { id, name: "Removed deployment", slug: String(id) }),
         revoked: Boolean(grant.revokedAt),
         createdAt: grant.createdAt,

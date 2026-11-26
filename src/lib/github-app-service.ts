@@ -204,7 +204,7 @@ export async function linkGithubRepositoryToDeployment(input: {
   };
 }
 
-export async function useInferredGithubRepositoryIdentity(deploymentId: number) {
+export async function applyInferredGithubRepositoryIdentity(deploymentId: number) {
   const deployment = await prisma.enrolledDeployment.findUnique({ where: { id: deploymentId } });
   if (!deployment) throw new Error("Deployment not found.");
   await prisma.githubRepositoryDeployment.deleteMany({

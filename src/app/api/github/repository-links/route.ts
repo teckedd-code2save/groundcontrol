@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import {
   linkGithubRepositoryToDeployment,
-  useInferredGithubRepositoryIdentity,
+  applyInferredGithubRepositoryIdentity,
 } from "@/lib/github-app-service";
 import { prisma } from "@/lib/prisma";
 
@@ -80,7 +80,7 @@ export async function DELETE(req: NextRequest) {
     if (!Number.isSafeInteger(deploymentId) || deploymentId <= 0) {
       return NextResponse.json({ error: "deploymentId is required" }, { status: 400 });
     }
-    const result = await useInferredGithubRepositoryIdentity(deploymentId);
+    const result = await applyInferredGithubRepositoryIdentity(deploymentId);
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     return handleApiError(error);

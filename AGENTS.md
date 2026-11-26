@@ -67,6 +67,19 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Additional VPS targets are explicit later connections. Do not conflate “where GroundControl runs” with “all servers GroundControl may manage.”
 
 
+### Agent first deployment
+
+- `deployment:create` is a separate administrator-consented scope with explicit `creationHosts`.
+  Existing resource grants never imply creation authority; an empty deployment inventory is valid
+  when creation hosts are selected. Only newly created targets join that grant.
+- UI and MCP use `src/lib/template-launch.ts`. New MCP creation reserves identities atomically,
+  pins host/source SHA and uses the same durable build/publish → digest release pipeline.
+- Keep creation, build and release evidence readable through the approving external grant.
+  Recheck revocation and identity before each consequential phase; never replay uncertain work.
+- The initial route is repository Compose on configured Docker/Caddy hosts. No cloud provisioning,
+  firewall/DNS edits, host mounts or adoption of existing shared resources. Generated credential
+  values stay server-side and encrypted; evidence contains names/status only.
+
 ### Upgrade safety
 
 - `scripts/install --preview` must remain non-mutating with respect to the running GroundControl instance.
