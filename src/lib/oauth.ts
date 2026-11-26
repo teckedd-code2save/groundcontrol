@@ -384,7 +384,7 @@ export class OAuthBearerError extends Error {
   constructor(
     message: string,
     public readonly status: number,
-    public readonly requiredScope?: OAuthScope
+    public readonly requiredScope?: string
   ) {
     super(message);
   }

@@ -71,7 +71,7 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     if (input.includes("/commits/")) return Response.json({ sha });
     if (input.includes("/contents/")) return Response.json({ type: "file", encoding: "base64", size: compose.length, content: Buffer.from(compose).toString("base64") });
-    if (input.endsWith("/api/agent-operations/create")) return POST(new NextRequest(input, init));
+    if (input.endsWith("/api/agent-operations/create")) return POST(new NextRequest(input, { ...init, signal: init?.signal || undefined }));
     throw new Error("Unexpected external request");
   }));
 });
@@ -89,13 +89,13 @@ async function run(id: string) {
 it("goes from empty MCP inventory through reservation and the real shared launch to a readable delivery operation", async () => {
   expect(await executeAgentTool(context, "deployment.list", {})).toEqual({ deployments: [] });
   const created = await queue(); expect(created.reused).toBe(false); expect(state.exec).not.toHaveBeenCalled();
-  const freshGrant = await state.db.oAuthGrant.findUniqueOrThrow({ where: { id: context.grant.id } });
+  const freshGrant = await state.db.oAuthGrant.findUniqueOrThrow({ where: { id: context.grant.id }, include: { user: true, client: true } });
   await expect(executeAgentTool({ ...context, grant: freshGrant, resources: JSON.parse(freshGrant.resources) }, "deployment.redeploy", { deployment: String(created.operation.deploymentId), idempotencyKey: "not-prepared-001" })).rejects.toThrow(/preparation has not finished/);
   const result = await run(created.operation.id);
   expect(result.status, result.error || "").toBe("success");
   const evidence = JSON.parse(result.resultJson!);
   expect(evidence).toMatchObject({ prepared: true, liveVerified: false, commitSha: sha });
-  const grant = await state.db.oAuthGrant.findUniqueOrThrow({ where: { id: context.grant.id } });
+  const grant = await state.db.oAuthGrant.findUniqueOrThrow({ where: { id: context.grant.id }, include: { user: true, client: true } });
   const refreshed = { ...context, grant, resources: JSON.parse(grant.resources) };
   const delivery = await executeAgentTool(refreshed, "operation.get", { operationId: evidence.deliveryOperationId });
   expect(delivery).toMatchObject({ operation: { type: "deployment.build_publish", status: "pending" } });
@@ -154,11 +154,20 @@ it("accepts OAuth consent with no deployments only when a creation host is expli
   const response = await consent(request([Number(spec.hostId)]));
   expect(response.status).toBe(200);
   expect((await response.json()).redirectTo).toContain("https://client.example/callback?code=");
-  const grant = await state.db.oAuthGrant.findUniqueOrThrow({ where: { id: context.grant.id } });
+  const grant = await state.db.oAuthGrant.findUniqueOrThrow({ where: { id: context.grant.id }, include: { user: true, client: true } });
   expect(grant.resources).toBe("[]"); expect(grant.creationHosts).toBe(JSON.stringify([spec.hostId]));
 });
 it("converges concurrent identical creation calls onto one reservation", async () => {
   const [first, second] = await Promise.all([queue(), queue()]);
   expect(first.operation.id).toBe(second.operation.id);
   expect(await state.db.enrolledDeployment.count()).toBe(1);
+});
+
+it("requests the complete usable scope set in the native MCP OAuth recovery challenge", async () => {
+  await state.db.oAuthToken.updateMany({ data: { scope: "deployment:read" } });
+  const response = await mcp(new NextRequest("http://localhost/mcp", { method: "POST", headers: { Authorization: "Bearer test-bearer", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "deployment.create", arguments: spec } }) }));
+  expect(response.status).toBe(403);
+  expect(response.headers.get("WWW-Authenticate")).toContain('scope="deployment:create deployment:read deployment:redeploy operation:read"');
+  expect(await state.db.enrolledDeployment.count()).toBe(0);
+  expect(state.exec).not.toHaveBeenCalled();
 });

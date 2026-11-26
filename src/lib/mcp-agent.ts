@@ -7,6 +7,7 @@ import { inspectDeploymentEnvKeyPresence } from "@/lib/env-management";
 import { normalizeReleaseSha } from "@/lib/github-image-release";
 import {
   authenticateAccessToken,
+  OAuthBearerError,
   type OAuthScope,
   requireTokenScope,
 } from "@/lib/oauth";
@@ -608,6 +609,10 @@ export async function executeAgentTool(
 ): Promise<unknown> {
   const definition = TOOL_DEFINITIONS.find((tool) => tool.name === name);
   if (!definition) throw new Error(`Unknown tool: ${name}`);
+  if (definition.requiredScope === "deployment:create") {
+    const scopes = ["deployment:create", "deployment:read", "deployment:redeploy", "operation:read"];
+    if (!scopes.every(scope => context.scopes.has(scope))) throw new OAuthBearerError("First deployment requires explicit creation-host consent and delivery/read access.", 403, scopes.join(" "));
+  }
   requireTokenScope(context, definition.requiredScope);
 
   if (name === "deployment.create_options") return creationOptions(context);

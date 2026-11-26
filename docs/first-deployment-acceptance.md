@@ -9,6 +9,8 @@ Locally executed on 2026-11-26:
 - Complete Vitest suite: 733 tests across 109 files passed.
 - Additional final focused run: 16 creation/runtime tests passed after locking reserved targets
   against runtime operations until preparation finishes.
+- Native OAuth recovery additionally passed 28 focused MCP/OAuth tests: creation advertises the
+  complete required scope set in its HTTP challenge, so consent does not loop on a partial grant.
 - Production Next.js build passed, including TypeScript. Existing QA-harness file-tracing warning.
 - Lint passed with zero errors and 18 existing warnings. The lint configuration now scopes React
   rules to supported files and permits CommonJS require in .cjs files; a non-hook server helper
