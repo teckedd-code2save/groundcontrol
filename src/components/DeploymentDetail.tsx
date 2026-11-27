@@ -47,7 +47,6 @@ type Release = {
   createdAt: string;
   target?: { name: string; type: string; configJson?: string | null } | null;
   imageDigest?: string | null;
-  runtimeRecovery?: { composeProject: string; containers: string[] } | null;
   previousImageDigest?: string | null;
   changedFields?: string | null;
 };
@@ -59,6 +58,7 @@ type ContainerInfo = {
   service?: string | null;
 };
 type DeploymentDetailRecord = {
+  runtimeRecovery?: { composeProject: string; containers: string[] } | null;
   sourceProject?: SourceProject | null;
   id: number;
   name: string;
