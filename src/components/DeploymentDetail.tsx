@@ -58,6 +58,7 @@ type ContainerInfo = {
   service?: string | null;
 };
 type DeploymentDetailRecord = {
+  runtimeRecovery?: { composeProject: string; containers: string[] } | null;
   sourceProject?: SourceProject | null;
   id: number;
   name: string;
@@ -515,6 +516,21 @@ export default function DeploymentDetail({
     }
   }
 
+  async function reconcileRuntime() {
+    if (!deployment) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/deployment-inventory/${encodeURIComponent(deployment.slug)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reconcileRuntime: true }),
+      });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not link runtime.");
+      await load();
+      setMessage({ tone: "success", text: "Existing services linked. Containers and storage were preserved." });
+    } catch (error) { setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) }); }
+    finally { setBusy(false); }
+  }
+
   async function openImageEditor(container: ContainerInfo) {
     if (!deployment?.legacyProjectSlug || !container.service) {
       setMessage({ tone: "error", text: "This container is not linked to an exact Compose service." });
@@ -783,6 +799,13 @@ export default function DeploymentDetail({
               )}
 
               {/* Containers list */}
+              {deployment.runtimeRecovery && (
+                <section className="border border-border bg-card p-5">
+                  <h2 className="text-base font-medium">Running services need linking</h2>
+                  <p className="mt-2 text-sm text-muted">A previous recovery started {deployment.runtimeRecovery.containers.length} services from this deployment folder under Compose project {deployment.runtimeRecovery.composeProject}. Link these existing services to restore their controls and preserve their storage.</p>
+                  <button type="button" disabled={busy} onClick={() => void reconcileRuntime()} className="gc-button gc-button-secondary mt-3">Link existing services</button>
+                </section>
+              )}
               {containers.length > 0 && (
                 <section className="border border-border bg-card">
                   <div className="border-b border-border px-5 py-4">

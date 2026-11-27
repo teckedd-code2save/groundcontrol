@@ -372,13 +372,14 @@ export async function getDockerStats(vps?: VpsConnection | null) {
     });
 }
 
-export async function getDockerContainerLabels(vps?: VpsConnection | null): Promise<DockerContainerLabelInfo[]> {
+export async function getDockerContainerLabels(vps?: VpsConnection | null, options: { requireSuccess?: boolean } = {}): Promise<DockerContainerLabelInfo[]> {
   const conn = vps || (await getActiveVps());
   // Fetch container names first, then inspect each individually to avoid xargs -r portability issues
   const namesResult = await execOnVps(
-    `docker ps -aq --format "{{.Names}}" 2>/dev/null || echo ""`,
+    `docker ps -aq --format "{{.Names}}"${options.requireSuccess ? "" : ' 2>/dev/null || echo ""'}`,
     conn
   );
+  if (options.requireSuccess) assertDockerDiscovery(namesResult);
   const names = namesResult.stdout.trim().split("\n").filter(Boolean);
   if (names.length === 0) return [];
 
@@ -386,6 +387,7 @@ export async function getDockerContainerLabels(vps?: VpsConnection | null): Prom
     `docker inspect --format '{{.Name}}\t{{json .Config.Labels}}\t{{.Created}}\t{{.State.StartedAt}}\t{{.RestartCount}}' ${names.map(shQuote).join(" ")}`,
     conn
   );
+  if (options.requireSuccess) assertDockerDiscovery(inspect);
   const results: DockerContainerLabelInfo[] = [];
   for (const line of inspect.stdout.split("\n")) {
     try {
