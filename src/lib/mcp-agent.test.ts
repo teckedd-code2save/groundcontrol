@@ -35,6 +35,7 @@ describe("GroundControl MCP tool catalog", () => {
   it("publishes a complete public action catalog for ChatGPT discovery", () => {
     const tools = toolDefinitionsForScopes();
     expect(tools.map((tool) => tool.name)).toEqual([
+      "deployment.create_options", "deployment.plan", "deployment.create",
       "deployment.list",
       "deployment.inspect",
       "deployment.logs",
@@ -48,6 +49,7 @@ describe("GroundControl MCP tool catalog", () => {
       "operation.get",
     ]);
 
+    expect(tools.find(tool => tool.name === "deployment.create")?.securitySchemes[0].scopes).toEqual(["deployment:create", "deployment:read", "deployment:redeploy", "operation:read"]);
     const configTool = tools.find((tool) => tool.name === "deployment.config.check");
     expect(configTool?.securitySchemes[0].scopes).toEqual(["deployment:read"]);
     expect(JSON.stringify(configTool?.outputSchema)).not.toContain('"value"');

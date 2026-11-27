@@ -24,7 +24,7 @@ export function jsonObject(value?: string | null): Record<string, unknown> {
 }
 
 export function deploymentRuntime(deployment: AgentRuntimeDeployment) {
-  if (deployment.kind === "source") return "unsupported";
+  if (deployment.kind === "source" || jsonObject(deployment.metadataJson).creationPending === true) return "unsupported";
   if (deployment.kind === "static" || deployment.legacyProject?.category === "static") return "static";
   if (deployment.kind === "compose" || deployment.composePath || deployment.legacyProject?.dockerCompose) return "compose";
   if (deployment.kind === "container" && deployment.containerName) return "container";
@@ -74,7 +74,7 @@ export function runtimeCapabilities(deployment: AgentRuntimeDeployment) {
   const publish = runtime === "static" && Boolean(staticRecipe(deployment));
   const recreate = runtime === "container" && Boolean(parseStandaloneRecipe(deployment));
   const linkedSource = Boolean(deployment.githubRepositories?.length);
-  const support = (supported: boolean, reason: string) => ({ supported: host && supported, reason: !host ? "No deployment host is recorded." : supported ? null : reason });
+  const support = (supported: boolean, reason: string) => ({ supported: host && supported, reason: jsonObject(deployment.metadataJson).creationPending === true ? "First-deployment preparation has not finished. Follow its creation operation before using runtime controls." : !host ? "No deployment host is recorded." : supported ? null : reason });
   return {
     runtime,
     operations: {

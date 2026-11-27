@@ -1,3 +1,4 @@
+import { parseResourceIds } from "./oauth";
 import { prisma } from "./prisma";
 import { HttpError } from "./errors";
 import { jsonObject, runtimeIdentity } from "./agent-runtime-capabilities";
@@ -20,21 +21,25 @@ export function readDelivery(metadata: string | null | undefined): GithubDeliver
 }
 
 /** An owner-approved workflow grant has no redirect URI or issued OAuth tokens.
- * It never enlarges the resource list of an external agent grant. */
-export async function startGithubDelivery(userId: number, deploymentId: number, commitSha: string, policy: GithubDelivery) {
+ * MCP creation instead uses its already-approved external grant so operation evidence and
+ * subsequent delivery remain revocable and visible through the same connection. */
+export async function startGithubDelivery(userId: number, deploymentId: number, commitSha: string, policy: GithubDelivery, externalGrantId?: number) {
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user || user.role !== "admin" || user.forcePasswordChange) throw new HttpError("Administrator access is required to deploy.", 403);
     const deployment = await tx.enrolledDeployment.findUniqueOrThrow({ where: { id: deploymentId }, include: { legacyProject: true } });
+    const grant = externalGrantId ? await tx.oAuthGrant.findUniqueOrThrow({ where: { id: externalGrantId } }) : await (async () => {
     const client = await tx.oAuthClient.upsert({
       where: { clientId: `urn:groundcontrol:delivery:${userId}:${deploymentId}` },
       create: { clientId: `urn:groundcontrol:delivery:${userId}:${deploymentId}`, clientName: `GitHub delivery: ${deployment.name}`, source: "internal", redirectUris: "[]" }, update: {},
     });
-    const grant = await tx.oAuthGrant.upsert({
+    return tx.oAuthGrant.upsert({
       where: { userId_clientDbId: { userId, clientDbId: client.id } },
       create: { userId, clientDbId: client.id, scope: "deployment:read deployment:redeploy", resources: JSON.stringify([deploymentId]) },
       update: { scope: "deployment:read deployment:redeploy", resources: JSON.stringify([deploymentId]), revokedAt: null },
     });
+    })();
+    if (externalGrantId && (grant.userId !== userId || grant.revokedAt || !parseResourceIds(grant.resources).includes(deploymentId) || !grant.scope.split(/\s+/).includes("deployment:redeploy") || !grant.scope.split(/\s+/).includes("deployment:create") || !parseResourceIds(grant.creationHosts).includes(deployment.vpsConfigId || 0))) throw new HttpError("First-deployment permission changed before delivery was queued.", 403);
     const sha = normalizeCommitSha(commitSha);
     if (!sha) throw new HttpError("An exact repository commit is required.", 400);
     await tx.enrolledDeployment.update({ where: { id: deploymentId }, data: { status: "pending", metadataJson: JSON.stringify({ ...jsonObject(deployment.metadataJson), githubDelivery: { ...policy, grantId: grant.id, requestedSha: sha } }) } });

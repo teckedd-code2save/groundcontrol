@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
       }),
     ]);
     const requestedScopes = validated.scope.split(" ").filter(Boolean);
+    const creationHosts = requestedScopes.includes("deployment:create") ? await prisma.vpsConfig.findMany({ select: { id: true, name: true, host: true } }) : [];
     return NextResponse.json({
       client: {
         id: validated.client.clientId,
@@ -49,9 +50,11 @@ export async function GET(req: NextRequest) {
       scopes: requestedScopes.map((scope) => ({
         id: scope,
         label: OAUTH_SCOPE_LABELS[scope as keyof typeof OAUTH_SCOPE_LABELS] || scope,
-        write: scope === "deployment:redeploy",
+        write: scope === "deployment:redeploy" || scope === "deployment:create",
       })),
       deployments,
+      creationHosts,
+      selectedCreationHostIds: existingGrant && !existingGrant.revokedAt ? parseResourceIds(existingGrant.creationHosts) : [],
       selectedDeploymentIds: existingGrant && !existingGrant.revokedAt
         ? parseResourceIds(existingGrant.resources)
         : deployments.map((deployment) => deployment.id),

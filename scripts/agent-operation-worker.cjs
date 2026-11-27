@@ -65,6 +65,21 @@ async function markUncertain(prisma, operation, error, evidence) {
   });
 }
 
+async function executeCreate({ prisma, operation, baseUrl, jwtSecret }) {
+  const current = await prisma.agentOperation.findUnique({ where: { id: operation.id }, include: { grant: { include: { user: true } }, deployment: true } });
+  if (!current) return;
+  const input = parseJson(current.inputJson) || {};
+  const grant = current.grant;
+  if (current.type !== "deployment.create" || grant.revokedAt || grant.user.role !== "admin" || grant.user.forcePasswordChange || !["deployment:create", "deployment:redeploy"].every(scope => String(grant.scope).split(/\s+/).includes(scope)) || !parseResources(grant.creationHosts).includes(input.hostId) || !parseResources(grant.resources).includes(current.deploymentId)) return markFailed(prisma, current, "First-deployment permission was revoked or changed before execution");
+  const { response, body } = await fetchJson(`${baseUrl}/api/agent-operations/create`, {
+    method: "POST", headers: { "Content-Type": "application/json", Cookie: sessionCookie(grant.user, jwtSecret), "X-GroundControl-Agent-Operation": current.id }, body: "{}",
+  });
+  if (body.uncertain || response.status >= 500) return markUncertain(prisma, current, "Creation outcome needs inspection before retrying", { phase: "creation_outcome_uncertain" });
+  if (!response.ok || body.success !== true || typeof body.deliveryOperationId !== "string") return markFailed(prisma, current, body.error || "Creation was not confirmed");
+  const result = { prepared: true, liveVerified: false, deploymentId: current.deploymentId, deliveryOperationId: body.deliveryOperationId, publicUrl: body.publicUrl, commitSha: body.commitSha };
+  await prisma.agentOperation.update({ where: { id: current.id }, data: { status: "success", resultJson: JSON.stringify(result), evidenceJson: JSON.stringify({ phase: "creation_prepared", ...result }), finishedAt: new Date(), leaseUntil: null } });
+}
+
 async function executeRedeploy({ prisma, operation, baseUrl, jwtSecret }) {
   const current = await prisma.agentOperation.findUnique({
     where: { id: operation.id },
@@ -478,7 +493,7 @@ function startAgentOperationWorker({ prisma, port, jwtSecret }) {
 
       const operation = await claimPending(prisma);
       if (operation) {
-        const handler = operation.type === "deployment.build_publish"
+        const handler = operation.type === "deployment.create" ? executeCreate : operation.type === "deployment.build_publish"
           ? executeBuildPublish
           : operation.type === "deployment.release"
             ? executeRelease
@@ -512,4 +527,4 @@ function startAgentOperationWorker({ prisma, port, jwtSecret }) {
   };
 }
 
-module.exports = { startAgentOperationWorker, executeBuildPublish, executeRedeploy, executeRelease, reconcileDetached, recoverInterrupted };
+module.exports = { startAgentOperationWorker, executeCreate, executeBuildPublish, executeRedeploy, executeRelease, reconcileDetached, recoverInterrupted };

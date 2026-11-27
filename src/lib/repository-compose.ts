@@ -91,7 +91,7 @@ export function repositoryComposeEnvSchema(environment: RepositoryComposeEnviron
 
 function extractComposeEnvironment(content: string): RepositoryComposeEnvironment[] {
   const found = new Map<string, RepositoryComposeEnvironment>();
-  const pattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:\?|\?|:-|-)([^}]*))?\}/g;
+  const pattern = /(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:\?|\?|:-|-)([^}]*))?\}/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(content)) !== null) {
     const [, key, operator, operand = ""] = match;

@@ -1,3 +1,4 @@
+import { creationOptions, inspectCreationSpec, normalizeCreationSpec, assertCreationGrant, queueCreation } from "./agent-creation";
 import { runtimeCapabilities, runtimeIdentity, requireRuntimeOperation, jsonObject } from "./agent-runtime-capabilities";
 import { runtimeHealth, probePublicUrl, overallHealth } from "./agent-health";
 import { prisma } from "@/lib/prisma";
@@ -6,6 +7,7 @@ import { inspectDeploymentEnvKeyPresence } from "@/lib/env-management";
 import { normalizeReleaseSha } from "@/lib/github-image-release";
 import {
   authenticateAccessToken,
+  OAuthBearerError,
   type OAuthScope,
   requireTokenScope,
 } from "@/lib/oauth";
@@ -79,7 +81,35 @@ const OPERATION_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+const CREATION_PROPERTIES = {
+  hostId: { type: "integer", minimum: 1 }, repositoryUrl: { type: "string" }, branch: { type: "string" },
+  commitSha: { type: "string", pattern: "^[a-fA-F0-9]{40}$" }, name: { type: "string" }, environmentName: { type: "string" },
+  composeFile: { type: "string" }, domain: { type: "string" }, publicService: { type: "string" }, publicPort: { type: "string" },
+  healthPath: { type: "string" }, executor: { type: "string", enum: ["actions", "agent"] }, workflowName: { type: "string" },
+  autoDeploy: { type: "boolean" }, generatedEnvironmentKeys: { type: "array", items: { type: "string" }, description: "Names of new random credentials GC should generate and retain privately. Never existing external credentials or connection URLs." },
+};
+const CREATION_REQUIRED = ["hostId", "repositoryUrl", "branch", "commitSha", "name", "composeFile", "domain", "publicService", "publicPort", "executor"];
+
 const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    name: "deployment.create_options", title: "First deployment options",
+    description: "Read explicitly approved creation hosts, connected GitHub repositories and package-access readiness. Works before any deployment exists. Requires opt-in deployment:create permission; old workload grants are not host creation grants.",
+    requiredScope: "deployment:create", inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    outputSchema: { type: "object", additionalProperties: true }, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: "deployment.plan", title: "Check first deployment",
+    description: "Read-only preflight for a new GitHub Compose app at an exact branch SHA. Checks connected repository, image registry and isolated Compose resources. Host port/path/DNS checks still run at execution. Generates no secrets and changes no host state.",
+    requiredScope: "deployment:create", inputSchema: { type: "object", properties: CREATION_PROPERTIES, required: CREATION_REQUIRED, additionalProperties: false },
+    outputSchema: { type: "object", additionalProperties: true }, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+  },
+  {
+    name: "deployment.create", title: "Create first deployment",
+    description: "Reserve a NEW scoped deployment and queue durable preparation, image verification/build and digest release from its connected GitHub repository. Requires explicit creation-host consent. Never adopts an existing workload. Use operation.get, then the returned deliveryOperationId and releaseOperationId. Successful preparation is not live acceptance. Same idempotencyKey returns the existing operation, including uncertain outcomes. DNS must already point to this host; no cloud/firewall changes. Random app/database credentials are generated server-side by key name.",
+    requiredScope: "deployment:create", inputSchema: { type: "object", properties: { ...CREATION_PROPERTIES, idempotencyKey: { type: "string", minLength: 8, maxLength: 160 } }, required: [...CREATION_REQUIRED, "idempotencyKey"], additionalProperties: false },
+    outputSchema: { type: "object", properties: { operation: OPERATION_SCHEMA, reused: { type: "boolean" } }, required: ["operation", "reused"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
   {
     name: "deployment.list",
     title: "List deployments",
@@ -470,7 +500,7 @@ export function toolDefinitionsForScopes(scopes?: Set<string>) {
     : TOOL_DEFINITIONS;
 
   return visible.map(({ requiredScope, ...tool }) => {
-    const securitySchemes = [{ type: "oauth2" as const, scopes: [requiredScope] }];
+    const securitySchemes = [{ type: "oauth2" as const, scopes: requiredScope === "deployment:create" ? ["deployment:create", "deployment:read", "deployment:redeploy", "operation:read"] : [requiredScope] }];
     return {
       ...tool,
       securitySchemes,
@@ -579,7 +609,22 @@ export async function executeAgentTool(
 ): Promise<unknown> {
   const definition = TOOL_DEFINITIONS.find((tool) => tool.name === name);
   if (!definition) throw new Error(`Unknown tool: ${name}`);
+  if (definition.requiredScope === "deployment:create") {
+    const scopes = ["deployment:create", "deployment:read", "deployment:redeploy", "operation:read"];
+    if (!scopes.every(scope => context.scopes.has(scope))) throw new OAuthBearerError("First deployment requires explicit creation-host consent and delivery/read access.", 403, scopes.join(" "));
+  }
   requireTokenScope(context, definition.requiredScope);
+
+  if (name === "deployment.create_options") return creationOptions(context);
+  if (name === "deployment.plan") {
+    const spec = normalizeCreationSpec(args);
+    assertCreationGrant(context.grant, context.user, spec.hostId);
+    return { spec, source: await inspectCreationSpec(spec), state: "source_checked", liveVerified: false };
+  }
+  if (name === "deployment.create") {
+    const result = await queueCreation(context, args);
+    return { ...result, operation: serializeOperation(result.operation) };
+  }
 
   if (name === "deployment.list") {
     const deployments = await prisma.enrolledDeployment.findMany({
