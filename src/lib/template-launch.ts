@@ -11,7 +11,7 @@ import { githubProjectAccess } from "@/lib/github-project-import";
 import { linkGithubRepositoryToDeployment } from "@/lib/github-app-service";
 import { isRepositoryComposeTemplate, isStaticTemplate, loadTemplate, resolveTemplate, validateComposeDocument } from "@/lib/template-engine";
 import { getActiveVps, getSystemConfig, shQuote } from "@/lib/vps";
-import { execOnTarget } from "@/lib/host-exec";
+import { execOnTargetStrict as execOnTarget } from "@/lib/host-exec";
 import { provisionCustomDomain } from "@/lib/deploy/cloudflare-links";
 import { deploymentEnvironment } from "@/lib/project-deployments";
 import { HttpError } from "@/lib/errors";
@@ -40,6 +40,7 @@ import {
   type RepositoryComposeInspection,
 } from "@/lib/repository-compose";
 import { getVpsPublicIp } from "@/lib/k8s/utils";
+import { claimPreparationRetry } from "./template-preparation-retry";
 
 function normalizeDomain(value: unknown): string {
   return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -70,6 +71,7 @@ async function enrolTemplateDeployment(args: {
   projectGroupId?: number;
   environmentName?: string;
   composeProject?: string;
+  status?: string;
 }) {
   const deployment = await prisma.enrolledDeployment.upsert({
     where: { legacyProjectId: args.projectId },
@@ -82,7 +84,7 @@ async function enrolTemplateDeployment(args: {
       managementMode: "managed",
       sourcePath: args.sourcePath,
       composePath: args.composePath,
-      status: "active",
+      status: args.status || "active",
       lastSeenAt: new Date(),
       vpsConfigId: args.vpsConfigId,
       legacyProjectId: args.projectId,
@@ -96,7 +98,7 @@ async function enrolTemplateDeployment(args: {
       sourcePath: args.sourcePath,
       composePath: args.composePath,
       managementMode: "managed",
-      status: "active",
+      status: args.status || "active",
       lastSeenAt: new Date(),
       metadataJson: JSON.stringify({ source: "template", templateName: args.templateName, composeProject: args.composeProject }),
     },
@@ -235,6 +237,7 @@ async function readInfisicalProjectRef(sourcePath: string, vps: Awaited<ReturnTy
 
 export type CreationLaunchContext = { deploymentId: number; projectId: number; grantId: number; sourcePath: string; spec: CreationSpec; composeHash: string; vps: VpsConnection; assertAuthorized: () => Promise<void> };
 export async function launchTemplateDeployment(user: { id: number; role: string }, body: Record<string, any>, creation?: CreationLaunchContext) {
+  let releasePreparation: (() => Promise<void>) | undefined;
   try {
     if (creation) await creation.assertAuthorized();
     const projectGroupId = body.projectGroupId ? Number(body.projectGroupId) : undefined;
@@ -300,7 +303,8 @@ export async function launchTemplateDeployment(user: { id: number; role: string 
     const slug = slugifyDeploymentName(project ? `${project.slug.slice(0, 35)}-${environmentName || "production"}-${inferredName}` : inferredName);
     const existing = await prisma.enrolledDeployment.findUnique({ where: { slug } });
     const previousRecord = projectGroupId ? await prisma.project.findUnique({ where: { slug } }) : null;
-    if (projectGroupId && (existing || previousRecord) && !(creation && existing?.id === creation.deploymentId && previousRecord?.id === creation.projectId)) throw new HttpError("A deployment with this name already exists. Choose another name, or open that deployment to release an update.", 409);
+    const retryPreparation = projectGroupId && (existing || previousRecord) && !(creation && existing?.id === creation.deploymentId && previousRecord?.id === creation.projectId);
+    if (retryPreparation && (creation || !delivery || !repositoryComposeMode)) throw new HttpError("A deployment with this name already exists. Open that deployment to release an update.", 409);
     const composeProject = staticMode ? "" : `gc_${slug.replace(/-/g, "_")}`.slice(0, 63);
     const deployPath = `${templateRoot}/${slug}`;
     const staticDir = `${staticRoot}/${slug}`;
@@ -326,6 +330,12 @@ export async function launchTemplateDeployment(user: { id: number; role: string 
       return NextResponse.json({
         success: false, error: "No active VPS connected. Go to Settings → VPS to connect a server.",
       }, { status: 400 });
+    }
+
+    if (retryPreparation) {
+      releasePreparation = await claimPreparationRetry({ existing, project: previousRecord, projectGroupId: projectGroupId!,
+        templateName, repoUrl, branch: branch || "main", domain: allInputs.domain || "",
+        sourcePath: deployPath, composePath: `${deployPath}/${repositoryComposeFile}`, composeProject, vps }, prisma);
     }
 
     // Static / source-build need real source early — fail with a clear message.
@@ -449,7 +459,7 @@ export async function launchTemplateDeployment(user: { id: number; role: string 
       if (!composeValidation.ok) {
         return NextResponse.json({ success: false, error: composeValidation.error }, { status: 400 });
       }
-      composeInspection = inspectRepositoryCompose(composeContent);
+      composeInspection = inspectRepositoryCompose(composeContent, envValues);
       allInputs.public_service = allInputs.public_service || composeInspection.suggestedPublicService || "";
       allInputs.public_port = allInputs.public_port || composeInspection.suggestedPublicPort || "";
       if (!allInputs.public_service || !composeInspection.services.includes(allInputs.public_service)) {
@@ -849,7 +859,8 @@ export async function launchTemplateDeployment(user: { id: number; role: string 
     const verification = deploymentVerificationStatus(domains, dnsResult, healthResults);
     const runtimeVerified = !runtimeVerification || runtimeVerification.code === 0;
     const deployedSuccessfully = runtimeVerified && verification.publicVerified;
-    const deploymentStatus = delivery ? "pending" : runtimeVerified ? verification.status : "failed";
+    const routingFailed = Boolean((dnsResult as { error?: string } | null)?.error);
+    const deploymentStatus = delivery ? routingFailed ? "failed" : "pending" : runtimeVerified ? verification.status : "failed";
     const runtimeError = runtimeVerified
       ? null
       : [runtimeVerification?.stderr, runtimeVerification?.stdout].filter(Boolean).join("\n").trim()
@@ -909,6 +920,7 @@ export async function launchTemplateDeployment(user: { id: number; role: string 
       },
     });
     const enrolled = await enrolTemplateDeployment({
+      status: releasePreparation ? "preparing" : "active",
       projectGroupId, environmentName, composeProject,
       projectId: persisted.projectId,
       repositoryId: source.githubRepositoryId,
@@ -922,7 +934,8 @@ export async function launchTemplateDeployment(user: { id: number; role: string 
     });
 
     if (delivery) {
-      if ((dnsResult as { error?: string } | null)?.error) throw new HttpError("Routing configuration failed. Review the prepared deployment before retrying.", 409);
+      if (routingFailed) return NextResponse.json({ success: false, prepared: true, deployed: false, slug,
+        error: "DNS configuration failed before image delivery. Check the selected Cloudflare zone and host address, then retry this same deployment. If DNS is already configured, turn off Configure DNS before retrying." }, { status: 409 });
       if (creation) {
         await creation.assertAuthorized();
         if (enrolled.id !== creation.deploymentId) throw new HttpError("Prepared deployment identity changed.", 409);
@@ -968,5 +981,7 @@ export async function launchTemplateDeployment(user: { id: number; role: string 
       success: false, error: err instanceof Error ? err.message : "Deploy failed",
       ...(creation && err instanceof HttpError ? { safeCreationError: err.message } : {}),
     }, { status: err instanceof HttpError ? err.status : 500 });
+  } finally {
+    if (releasePreparation) await releasePreparation();
   }
 }

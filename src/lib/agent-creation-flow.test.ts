@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -44,6 +44,7 @@ let context: AgentAccessContext;
 let spec: Record<string, unknown>;
 beforeAll(async () => {
   directory = mkdtempSync(join(tmpdir(), "gc-create-test-"));
+  writeFileSync(join(directory, "test.db"), "");
   const url = `file:${join(directory, "test.db")}`;
   execFileSync(process.execPath, ["node_modules/prisma/build/index.js", "db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], { env: { ...process.env, DATABASE_URL: url }, stdio: "pipe" });
   state.db = new PrismaClient({ datasources: { db: { url } } });

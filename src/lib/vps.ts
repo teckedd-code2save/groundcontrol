@@ -640,9 +640,17 @@ export async function resolveComposeFile(
   requestedComposePath?: string | null
 ): Promise<string | null> {
   const conn = vps || (await getActiveVps());
+  // Import lazily: host-exec uses vps for the low-level local/SSH transport.
+  const { execOnWorkloadTarget } = await import("./host-exec");
+  const inspectFile = async (command: string) => {
+    const result = await execOnWorkloadTarget(command, conn);
+    // Exit 4 is our explicit missing-file result. Preserve execution failures.
+    if (result.code !== 0 && result.code !== 4) throw new Error(result.stderr || "Could not inspect the deployment filesystem on its host.");
+    return result;
+  };
   const explicit = String(requestedComposePath || "").trim();
   if (explicit) {
-    const result = await execOnVps(`test -f ${shQuote(explicit)} && printf '%s\\n' ${shQuote(explicit)} || exit 4`, conn);
+    const result = await inspectFile(`test -f ${shQuote(explicit)} && printf '%s\\n' ${shQuote(explicit)} || exit 4`);
     if (result.code === 0 && result.stdout.trim().startsWith("/")) return result.stdout.trim().split("\n")[0];
   }
 
@@ -654,7 +662,7 @@ export async function resolveComposeFile(
     .map((file) => file.trim())
     .filter((file, index, files) => file.startsWith("/") && files.indexOf(file) === index);
   for (const labelFile of labelFiles) {
-    const result = await execOnVps(`test -f ${shQuote(labelFile)} && printf '%s\\n' ${shQuote(labelFile)} || exit 4`, conn);
+    const result = await inspectFile(`test -f ${shQuote(labelFile)} && printf '%s\\n' ${shQuote(labelFile)} || exit 4`);
     if (result.code === 0) return labelFile;
   }
 
@@ -665,7 +673,7 @@ export async function resolveComposeFile(
     `done`,
     `exit 4`,
   ].join("\n");
-  const result = await execOnVps(command, conn);
+  const result = await inspectFile(command);
   if (result.code !== 0) return null;
   const resolved = result.stdout.trim().split("\n")[0] || "";
   return resolved.startsWith("/") ? resolved : null;

@@ -17,6 +17,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - run: npm test -- src/lib/repository-compose.test.ts src/lib/compose-source-host.test.ts src/lib/k8s/public-ip.test.ts src/lib/template-source.test.ts src/lib/template-preparation-retry.test.ts src/app/api/templates/deploy/route.test.ts src/lib/agent-creation-flow.test.ts
       - run: bash -n scripts/install
       - run: bash -n scripts/start
       - run: node --test scripts/check-start.cjs

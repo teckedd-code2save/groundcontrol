@@ -3,7 +3,8 @@
  */
 
 import { execOnVps, shQuote, getActiveVps, type VpsConnection } from "@/lib/vps";
-import { getServerIp } from "@/lib/bootstrap";
+import { execOnTargetStrict } from "@/lib/host-exec";
+import { isIP } from "node:net";
 import type { K8sList, K8sNamespace, K8sService } from "./types";
 
 export const K3S_KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
@@ -31,26 +32,35 @@ export async function execKubectl(
 
 /**
  * Resolve the public IP address of the active/target VPS.
- * Prefers external IP discovery services, falling back to the local interface
- * IP returned by {@link getServerIp} (the same logic used by /api/vps/ip).
+ * Use an explicit public host address first. Discovery must run on that host,
+ * never inside the control-plane container or against a different active VPS.
  */
 export async function getVpsPublicIp(vps?: VpsConnection | null): Promise<string> {
   const conn = vps || (await getActiveVps().catch(() => null));
   if (!conn) return "";
+  if (publicIpv4(conn.host)) return conn.host;
 
   const publicServices = ["https://api.ipify.org", "https://ifconfig.me", "https://icanhazip.com"];
   for (const svc of publicServices) {
-    const res = await execOnVps(
-      `curl -s --max-time 5 ${shQuote(svc)} 2>/dev/null || echo ""`,
+    const res = await execOnTargetStrict(
+      `curl -4 -fsS --max-time 5 ${shQuote(svc)} 2>/dev/null`,
       conn
     );
     const ip = res.stdout.trim();
-    if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+    if (res.code === 0 && publicIpv4(ip)) {
       return ip;
     }
   }
 
-  return getServerIp(conn);
+  const addresses = await execOnTargetStrict("ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1", conn);
+  return addresses.code === 0 ? addresses.stdout.split(/\s+/).find(publicIpv4) || "" : "";
+}
+
+function publicIpv4(value: string): boolean {
+  if (isIP(value) !== 4) return false;
+  const [a, b] = value.split(".").map(Number);
+  return !(a === 0 || a === 10 || a === 127 || a >= 224 || a === 169 && b === 254
+    || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 100 && b >= 64 && b <= 127);
 }
 
 /**

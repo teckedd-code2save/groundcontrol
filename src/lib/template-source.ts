@@ -1,5 +1,5 @@
 import { installGit } from "./bootstrap";
-import { execOnTarget } from "./host-exec";
+import { execOnTargetStrict as execOnTarget } from "./host-exec";
 import { shQuote, type VpsConnection } from "./vps";
 
 export type TemplateSourceKind = "empty" | "git" | "local";
@@ -44,7 +44,8 @@ export async function resolveTemplateSource(
   const localPath = clean(input.localPath);
   const requestedRef = clean(input.branch) || "main";
 
-  await run(`mkdir -p ${shQuote(input.deployPath)}`, input.vps);
+  const prepared = await run(`mkdir -p ${shQuote(input.deployPath)}`, input.vps);
+  if (prepared.code !== 0) throw new Error(prepared.stderr || "Could not prepare the source directory on the selected host.");
 
   if (repoUrl) {
     await ensureGitAvailable(input.vps, run, install);
