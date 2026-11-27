@@ -6,11 +6,11 @@ import {
   protectedResourceMetadataUrl,
   requestOrigin,
 } from "@/lib/oauth";
-import { executeAgentTool, toolDefinitionsForScopes } from "@/lib/mcp-agent";
+import { executeAgentTool, toolDefinitionsForScopes, toolAuthorizationScopes } from "@/lib/mcp-agent";
 
 const LEGACY_PROTOCOL_VERSION = "2025-11-25";
 const LEGACY_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
-const TOOLSET_REVISION = "2026-11-27.create.1";
+const TOOLSET_REVISION = "2026-11-27.refresh.1";
 const SERVER_INFO = {
   name: "GroundControl",
   title: "GroundControl",
@@ -124,7 +124,12 @@ function authToolResult(
   error: OAuthBearerError
 ) {
   const kind = error.status === 403 ? "insufficient_scope" : "invalid_token";
-  const challenge = bearerChallenge(req, kind, error.message, error.requiredScope);
+  // A reconnect must request refresh access even if the client cached an older
+  // catalog. This only changes the consent request, never the current grant.
+  const requestedScopes = error.requiredScope
+    ? [...new Set([...error.requiredScope.split(/\s+/).filter(Boolean), "offline_access"])]
+    : toolAuthorizationScopes(String(body.params?.name || ""));
+  const challenge = bearerChallenge(req, kind, error.message, requestedScopes?.join(" "));
   // HTTP clients drive OAuth recovery from 401/403, not from an MCP isError
   // payload. Keep the tool-level challenge for ChatGPT while also returning
   // the transport status required by native MCP OAuth clients such as Hermes.

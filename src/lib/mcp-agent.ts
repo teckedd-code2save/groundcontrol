@@ -494,13 +494,23 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
+/** Request renewable sessions during consent; short-lived existing grants still work. */
+export function toolAuthorizationScopes(name: string): string[] | undefined {
+  const tool = TOOL_DEFINITIONS.find(tool => tool.name === name);
+  if (!tool) return undefined;
+  const scopes = tool.requiredScope === "deployment:create"
+    ? ["deployment:create", "deployment:read", "deployment:redeploy", "operation:read"]
+    : [tool.requiredScope];
+  return [...scopes, "offline_access"];
+}
+
 export function toolDefinitionsForScopes(scopes?: Set<string>) {
   const visible = scopes
     ? TOOL_DEFINITIONS.filter((tool) => scopes.has(tool.requiredScope))
     : TOOL_DEFINITIONS;
 
-  return visible.map(({ requiredScope, ...tool }) => {
-    const securitySchemes = [{ type: "oauth2" as const, scopes: requiredScope === "deployment:create" ? ["deployment:create", "deployment:read", "deployment:redeploy", "operation:read"] : [requiredScope] }];
+  return visible.map(({ requiredScope: _requiredScope, ...tool }) => {
+    const securitySchemes = [{ type: "oauth2" as const, scopes: toolAuthorizationScopes(tool.name)! }];
     return {
       ...tool,
       securitySchemes,

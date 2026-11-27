@@ -49,9 +49,9 @@ describe("GroundControl MCP tool catalog", () => {
       "operation.get",
     ]);
 
-    expect(tools.find(tool => tool.name === "deployment.create")?.securitySchemes[0].scopes).toEqual(["deployment:create", "deployment:read", "deployment:redeploy", "operation:read"]);
+    expect(tools.find(tool => tool.name === "deployment.create")?.securitySchemes[0].scopes).toEqual(["deployment:create", "deployment:read", "deployment:redeploy", "operation:read", "offline_access"]);
     const configTool = tools.find((tool) => tool.name === "deployment.config.check");
-    expect(configTool?.securitySchemes[0].scopes).toEqual(["deployment:read"]);
+    expect(configTool?.securitySchemes[0].scopes).toEqual(["deployment:read", "offline_access"]);
     expect(JSON.stringify(configTool?.outputSchema)).not.toContain('"value"');
 
     for (const tool of tools) {
@@ -61,7 +61,7 @@ describe("GroundControl MCP tool catalog", () => {
       expect(tool.outputSchema).toMatchObject({ type: "object" });
       expect(tool.securitySchemes).toHaveLength(1);
       expect(tool.securitySchemes[0]).toMatchObject({ type: "oauth2" });
-      expect(tool.securitySchemes[0].scopes.length).toBeGreaterThan(0);
+      expect(tool.securitySchemes[0].scopes).toContain("offline_access");
       expect(tool._meta.securitySchemes).toEqual(tool.securitySchemes);
     }
   });

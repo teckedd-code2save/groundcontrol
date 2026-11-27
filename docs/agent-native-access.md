@@ -11,6 +11,24 @@ GroundControl exposes a narrow remote MCP surface at `/mcp`. External agents rec
 
 OAuth uses Authorization Code + S256 PKCE. Client ID Metadata Documents are supported; dynamic client registration remains available for compatibility.
 
+### Renewable connections
+
+The public tool catalog and OAuth recovery challenges request `offline_access` alongside
+that action's capabilities. Consent explains that the connection can stay signed in using
+rotating refresh tokens. Access tokens still expire after one hour; refresh tokens expire
+after 30 days and rotate on use. Resource and host restrictions remain unchanged.
+
+Existing grants without `offline_access` remain usable until their access token expires;
+they are not upgraded silently. Refresh the client's tool catalog, then reconnect once to
+consent to renewable access and select the required deployments. A reconnect that omits
+`offline_access` still creates a short-lived session. An app missing from deployment.list
+may exist outside its grant; check the owner UI before creating a duplicate.
+
+Verification must exchange an authorization code, expire the access token, refresh through
+`/oauth/token`, and call MCP with the renewed token. Verify the original resource boundary,
+refresh rotation and revocation too. A successful login or healthy dashboard is insufficient.
+
+
 ## Capability surface
 
 Read:
