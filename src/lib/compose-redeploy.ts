@@ -134,10 +134,12 @@ export function buildRuntimeImageVerificationCommand(
       `else`,
       `  gc_actual=$(docker inspect --format '{{.Config.Image}}' "$gc_container_id" 2>/dev/null || true)`,
       `  gc_exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$gc_container_id" 2>/dev/null || true)`,
+      `  gc_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$gc_container_id" 2>/dev/null || true)`,
       `  gc_image_ok=0`,
       `  if [ "$gc_actual" = "$gc_expected" ] || [ "$gc_actual" = "docker.io/library/$gc_expected" ]; then gc_image_ok=1; fi`,
       `  if [ "$gc_image_ok" -ne 1 ]; then gc_all_ready=0; fi`,
       `  if [ "$gc_observed_state" != "running" ] && { [ "$gc_observed_state" != "exited" ] || [ "$gc_exit_code" != "0" ]; }; then gc_all_ready=0; fi`,
+      `  if [ "$gc_observed_state" = "running" ] && [ "$gc_health" != "none" ] && [ "$gc_health" != "healthy" ]; then gc_all_ready=0; fi`,
       `fi`,
     ];
   });
@@ -155,6 +157,7 @@ export function buildRuntimeImageVerificationCommand(
       `fi`,
       `gc_actual=$(docker inspect --format '{{.Config.Image}}' "$gc_container_id" 2>/dev/null || true)`,
       `gc_exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$gc_container_id" 2>/dev/null || true)`,
+      `gc_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$gc_container_id" 2>/dev/null || true)`,
       `printf '%s\\n' ${shQuote(`[verify] ${service}: expected ${expected}`)}`,
       `if [ -z "$gc_container_id" ]; then`,
       `  printf '%s\\n' ${shQuote(`[verify] ${service}: observed no container`)}`,
@@ -162,7 +165,7 @@ export function buildRuntimeImageVerificationCommand(
       `elif [ "$gc_observed_state" = "exited" ] && [ "$gc_exit_code" = "0" ]; then`,
       `  printf '%s\\n' "[verify] ${service}: completed one-shot $gc_actual (exit 0)"`,
       `elif [ "$gc_observed_state" = "running" ]; then`,
-      `  printf '%s\\n' "[verify] ${service}: running $gc_actual"`,
+      `  printf '%s\\n' "[verify] ${service}: running $gc_actual health $gc_health"`,
       `else`,
       `  printf '%s\\n' "[verify] ${service}: state $gc_observed_state image $gc_actual exit $gc_exit_code"`,
       `fi`,
@@ -171,6 +174,9 @@ export function buildRuntimeImageVerificationCommand(
       `fi`,
       `if [ -n "$gc_container_id" ] && [ "$gc_observed_state" != "running" ] && { [ "$gc_observed_state" != "exited" ] || [ "$gc_exit_code" != "0" ]; }; then`,
       `  printf '%s\\n' "[failure] phase=verify service=${service} error=container not running state=$gc_observed_state exit=$gc_exit_code image=$gc_actual"`,
+      `fi`,
+      `if [ -n "$gc_container_id" ] && [ "$gc_observed_state" = "running" ] && [ "$gc_health" != "none" ] && [ "$gc_health" != "healthy" ]; then`,
+      `  printf '%s\\n' "[failure] phase=verify service=${service} error=container health not ready health=$gc_health image=$gc_actual"`,
       `fi`,
     ];
   });
