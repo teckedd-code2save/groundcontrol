@@ -200,13 +200,39 @@ container_health() {
   docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' groundcontrol-web 2>/dev/null || true
 }
 
+assert_canonical_compose_inputs() {
+  # Implicit overrides can silently replace the requested image or DB volume.
+  # Refuse before changing anything; never discard an operator's configuration.
+  if [ -n "${COMPOSE_FILE:-}" ] || { [ -f "$INSTALL_DIR/.env" ] && grep -Eq '^[[:space:]]*COMPOSE_FILE[[:space:]]*=' "$INSTALL_DIR/.env"; }; then
+    fail "COMPOSE_FILE changes the installer Compose input. Reconcile it before preview or upgrade; existing configuration was preserved."
+  fi
+  local candidate
+  for candidate in compose.yaml compose.yml compose.override.yaml compose.override.yml docker-compose.yaml docker-compose.override.yaml docker-compose.override.yml; do
+    if [ -e "$INSTALL_DIR/$candidate" ]; then
+      fail "Additional Compose file $INSTALL_DIR/$candidate can override the requested image or storage. Reconcile it before preview or upgrade; the file was preserved."
+    fi
+  done
+}
+
+running_image_matches() {
+  local expected actual
+  expected="$(docker image inspect "$1" --format '{{.Id}}' 2>/dev/null)" || return 1
+  actual="$(docker inspect --format '{{.Image}}' groundcontrol-web 2>/dev/null)" || return 1
+  [ -n "$expected" ] && [ "$actual" = "$expected" ]
+}
+
 wait_healthy() {
   local tries="$1"
+  local expected_image="${2:-}"
   local i
   for i in $(seq 1 "$tries"); do
     local health
     health="$(container_health)"
     if [ "$health" = "healthy" ] || [ "$health" = "running" ]; then
+      if [ -n "$expected_image" ] && ! running_image_matches "$expected_image"; then
+        log "[verify] Running GroundControl image does not match the requested image"
+        return 1
+      fi
       return 0
     fi
     sleep 2
@@ -282,7 +308,7 @@ EOF
 
   cd "$INSTALL_DIR"
   $COMPOSE up -d --remove-orphans >/dev/null
-  wait_healthy 36
+  wait_healthy 36 "$image_id"
 }
 
 write_upgrade_evidence() {
@@ -357,6 +383,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
 fi
 
 if [ "$PREVIEW" -eq 1 ]; then
+  assert_canonical_compose_inputs
   target_status="ready"
   if ! docker manifest inspect "$TARGET_REF" >/dev/null 2>&1; then
     target_status="failed"
@@ -388,6 +415,8 @@ if [ "$PREVIEW" -eq 1 ]; then
   [ "$storage_status" != "failed" ] || exit 1
   exit 0
 fi
+
+if [ "$UPGRADE" -eq 1 ]; then assert_canonical_compose_inputs; fi
 
 if [ "$EXISTING_HEALTHY" -eq 1 ] && [ "$UPGRADE" -eq 0 ]; then
   log "[install] healthy GroundControl already exists; leaving image and Compose unchanged"
@@ -565,7 +594,7 @@ if ! $COMPOSE up -d --remove-orphans >/dev/null; then
   start_ok=0
 fi
 
-if [ "$start_ok" -ne 1 ] || ! wait_healthy 36; then
+if [ "$start_ok" -ne 1 ] || ! wait_healthy 36 "$RESOLVED_IMAGE"; then
   $COMPOSE ps >&2 || true
   $COMPOSE logs --tail=120 web >&2 || true
 
