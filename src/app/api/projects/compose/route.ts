@@ -3,7 +3,7 @@ import { jsonObject } from "@/lib/agent-runtime-capabilities";
 import { NextRequest, NextResponse } from "next/server";
 import {
   resolveComposeProjectPath, shQuote,
-  getActiveVps, getDockerComposeCommand,
+  getActiveVps, getDockerComposeCommand, getDockerContainerLabels,
   buildManagedComposeInvocation, getImageDigest,
   getPreviousDeploymentDigest, computeChangedFields, resolveComposeFile,
 } from "@/lib/vps";
@@ -32,6 +32,7 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError, HttpError } from "@/lib/errors";
 import { validateSafePath } from "@/lib/host-safety";
 import { syncGithubDeploymentSource } from "@/lib/github-source-deploy";
+import { templateRuntimeRecovery } from "@/lib/template-runtime-recovery";
 
 function normalizePath(value: unknown): string {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -369,6 +370,16 @@ export async function POST(req: NextRequest) {
         ],
       },
     });
+    let recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
+    if (!agentTarget && project) {
+      const enrolled = await prisma.enrolledDeployment.findUnique({ where: { legacyProjectId: project.id } });
+      if (enrolled && enrolled.vpsConfigId === (vps?.id ?? null) && enrolled.sourcePath === target.projectPath && enrolled.composePath === composeFile) {
+        if (templateRuntimeRecovery(enrolled, await getDockerContainerLabels(vps, { requireSuccess: true }))) {
+          throw new HttpError("Link the existing services from this deployment's Manage tab before redeploying. This preserves the current database volume.", 409);
+        }
+        recordedProject = jsonObject(enrolled.metadataJson).composeProject;
+      }
+    }
     const recentReleaseUrls = project
       ? await prisma.deployment.findMany({
           where: { projectId: project.id },
@@ -402,7 +413,6 @@ export async function POST(req: NextRequest) {
 
       let result: { stdout: string; stderr: string; code: number };
       const baseComposeCmd = await getDockerComposeCommand(vps, execOnWorkloadTarget);
-      const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
       const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
       const command = `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, args, composeFile)}`;
 
@@ -517,7 +527,6 @@ export async function POST(req: NextRequest) {
       vps
     );
     const baseComposeCmd = await getDockerComposeCommand(vps, execOnWorkloadTarget);
-    const recordedProject = agentTarget ? jsonObject(agentTarget.deployment.metadataJson).composeProject : null;
     const composeCmd = typeof recordedProject === "string" && recordedProject ? `${baseComposeCmd} -p ${shQuote(recordedProject)}` : baseComposeCmd;
     let configCheck = await execOnWorkloadTarget(
       `cd ${shQuote(target.projectPath)} && ${buildManagedComposeInvocation(composeCmd, "config", composeFile)}`,

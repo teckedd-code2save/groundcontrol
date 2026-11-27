@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { handleApiError } from "@/lib/errors";
+import { handleApiError, HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { getActiveVps, getDockerContainerLabels, getDockerContainers } from "@/lib/vps";
 import { scanProjects } from "@/lib/vps";
 import { isDesktopMode } from "@/lib/runtime";
 import { scanProjectsTree } from "@/lib/project-scan";
+import { templateRuntimeRecovery } from "@/lib/template-runtime-recovery";
 import {
   readDeploymentOverrides,
   resolveDeploymentEvidence,
@@ -116,6 +117,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
         domain: deployment.legacyProject?.domain || null,
         publicUrl: evidence.publicUrl || latestRelease?.publicUrl || latestRelease?.previewUrl || null,
         runtime: evidence.runtime,
+        runtimeRecovery: templateRuntimeRecovery(deployment, labels),
         route: evidence.route,
         identitySource: evidence.identitySource,
         runtimeEvents,
@@ -188,9 +190,28 @@ function parseSourceRepair(value: unknown) {
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: string }> }) {
   try {
-    requireAuth(req);
+    const user = requireAuth(req);
     const { slug } = await ctx.params;
     const body = await req.json();
+    if (body.reconcileRuntime === true) {
+      if (user.role !== "admin") return NextResponse.json({ error: "Administrator access required." }, { status: 403 });
+      const vps = await getActiveVps();
+      const deployment = await prisma.enrolledDeployment.findUnique({ where: { slug } });
+      if (!deployment || deployment.vpsConfigId !== vps?.id) return NextResponse.json({ error: "Deployment not found on this host." }, { status: 404 });
+      const recovery = templateRuntimeRecovery(deployment, await getDockerContainerLabels(vps, { requireSuccess: true }));
+      if (!recovery) return NextResponse.json({ error: "Runtime identity changed or is ambiguous. Refresh before retrying." }, { status: 409 });
+      await prisma.$transaction(async tx => {
+        const active = await tx.agentOperation.count({ where: { deploymentId: deployment.id, status: { in: ["pending", "running", "verifying", "uncertain"] } } });
+        const uiActive = await tx.deploymentLog.count({ where: { projectSlug: deployment.slug, status: "running" } });
+        if (active || uiActive) throw new HttpError("Reconcile active or uncertain operations before linking runtime.", 409);
+        const updated = await tx.enrolledDeployment.updateMany({
+          where: { id: deployment.id, updatedAt: deployment.updatedAt, metadataJson: deployment.metadataJson },
+          data: { metadataJson: JSON.stringify({ ...JSON.parse(deployment.metadataJson), composeProject: recovery.composeProject, runtimeReconciledAt: new Date().toISOString() }) },
+        });
+        if (updated.count !== 1) throw new HttpError("Deployment changed. Refresh before linking runtime.", 409);
+      });
+      return NextResponse.json({ success: true, composeProject: recovery.composeProject });
+    }
     const hasPublicUrl = Object.prototype.hasOwnProperty.call(body, "publicUrl");
     const hasRepoUrl = Object.prototype.hasOwnProperty.call(body, "repoUrl");
     const hasSourceRepair = Object.prototype.hasOwnProperty.call(body, "sourceRepair");
