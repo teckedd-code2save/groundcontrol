@@ -23,6 +23,7 @@ vi.mock("@/lib/oauth", () => ({
 vi.mock("@/lib/mcp-agent", () => ({
   executeAgentTool: mock.executeAgentTool,
   toolDefinitionsForScopes: mock.tools,
+  toolAuthorizationScopes: (name: string) => name.startsWith("deployment.") ? ["deployment:read", "offline_access"] : undefined,
 }));
 
 import { POST } from "./route";
@@ -106,7 +107,7 @@ describe("GroundControl MCP transport", () => {
       name: "GroundControl",
       version: "0.1.0",
     });
-    expect(data.result._meta["io.groundcontrol/toolsetRevision"]).toBe("2026-11-27.create.1");
+    expect(data.result._meta["io.groundcontrol/toolsetRevision"]).toBe("2026-11-27.refresh.1");
     expect(response.headers.get("MCP-Protocol-Version")).toBe("2026-07-28");
     expect(mock.authenticateAccessToken).not.toHaveBeenCalled();
   });
@@ -160,7 +161,7 @@ describe("GroundControl MCP transport", () => {
     }));
     const data = await response.json();
     expect(response.status).toBe(403);
-    expect(response.headers.get("WWW-Authenticate")).toContain('scope="deployment:redeploy"');
+    expect(response.headers.get("WWW-Authenticate")).toContain('scope="deployment:redeploy offline_access"');
     expect(response.headers.get("WWW-Authenticate")).toContain('error="insufficient_scope"');
     expect(data.result._meta["mcp/www_authenticate"]).toEqual([response.headers.get("WWW-Authenticate")]);
     expect(mock.executeAgentTool).toHaveBeenCalledOnce();

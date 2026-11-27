@@ -168,7 +168,7 @@ it("requests the complete usable scope set in the native MCP OAuth recovery chal
   await state.db.oAuthToken.updateMany({ data: { scope: "deployment:read" } });
   const response = await mcp(new NextRequest("http://localhost/mcp", { method: "POST", headers: { Authorization: "Bearer test-bearer", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "deployment.create", arguments: spec } }) }));
   expect(response.status).toBe(403);
-  expect(response.headers.get("WWW-Authenticate")).toContain('scope="deployment:create deployment:read deployment:redeploy operation:read"');
+  expect(response.headers.get("WWW-Authenticate")).toContain('scope="deployment:create deployment:read deployment:redeploy operation:read offline_access"');
   expect(await state.db.enrolledDeployment.count()).toBe(0);
   expect(state.exec).not.toHaveBeenCalled();
 });
