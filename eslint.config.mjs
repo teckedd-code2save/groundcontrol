@@ -34,6 +34,15 @@ const eslintConfig = defineConfig([
           caughtErrorsIgnorePattern: "^_",
         },
       ],
+    },
+  },
+  {
+    // eslint-config-next registers the react-hooks and @next/next plugins
+    // only for these extensions, so rules from those plugins must be scoped
+    // to the same files. Otherwise files like server.cjs get a rule whose
+    // plugin isn't loaded and ESLint fails while loading the config.
+    files: ["**/*.{js,jsx,mjs,ts,tsx,mts,cts}"],
+    rules: {
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/exhaustive-deps": "warn",
       "@next/next/no-img-element": "warn",
