@@ -36,7 +36,7 @@ export function normalizeRepositoryComposePath(value?: string | null): string {
   return path;
 }
 
-export function inspectRepositoryCompose(content: string): RepositoryComposeInspection {
+export function inspectRepositoryCompose(content: string, values: Record<string, string> = {}): RepositoryComposeInspection {
   let parsed: unknown;
   try {
     parsed = parse(content);
@@ -56,7 +56,7 @@ export function inspectRepositoryCompose(content: string): RepositoryComposeInsp
     const definition = asRecord(rawService);
     const ports = Array.isArray(definition.ports) ? definition.ports : [];
     for (const rawPort of ports) {
-      const port = parsePublishedPort(service, rawPort);
+      const port = parsePublishedPort(service, rawPort, values);
       if (port) publishedPorts.push(port);
     }
   }
@@ -108,29 +108,46 @@ function extractComposeEnvironment(content: string): RepositoryComposeEnvironmen
   return [...found.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
-function parsePublishedPort(service: string, value: unknown): RepositoryComposePublishedPort | null {
+// Inspect only supplied deployment values, never the control-plane process.env.
+// Compose remains the final configuration validator before any runtime mutation.
+function resolvePortValue(value: unknown, values: Record<string, string>): string {
+  return scalar(value).replace(/\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-|:\?|\?|:\+|\+)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+    (expression, braced: string | undefined, operator: string | undefined, operand: string | undefined, bare: string | undefined) => {
+      if (expression === "$$") return "$";
+      const key = braced || bare!;
+      const set = Object.hasOwn(values, key);
+      const value = set ? values[key] : "";
+      const present = set && (!operator?.startsWith(":") || value !== "");
+      if (operator === ":-" || operator === "-") return present ? value : operand || "";
+      if (operator === ":+" || operator === "+") return present ? operand || "" : "";
+      return present ? value : "";
+    });
+}
+
+function isPort(value: string): boolean {
+  return /^\d+$/.test(value) && Number(value) <= 65535;
+}
+
+function parsePublishedPort(service: string, value: unknown, values: Record<string, string>): RepositoryComposePublishedPort | null {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     const record = value as ComposeRecord;
-    const hostPort = scalar(record.published);
-    const containerPort = scalar(record.target);
-    if (!hostPort || !containerPort) return null;
+    const hostPort = resolvePortValue(record.published, values);
+    const containerPort = resolvePortValue(record.target, values);
+    if (!isPort(hostPort) || !isPort(containerPort) || Number(containerPort) === 0) return null;
     return {
       service,
       hostPort,
       containerPort,
-      hostIp: scalar(record.host_ip) || undefined,
+      hostIp: resolvePortValue(record.host_ip, values) || undefined,
     };
   }
 
-  const resolved = String(value || "")
-    .replace(/\/(tcp|udp)$/i, "")
-    .replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(?::-|-)([^}]*)\}/g, "$1")
-    .replace(/\$\{[^}]+\}/g, "");
-  const match = resolved.match(/^(?:(.+):)?(\d+):(\d+)$/);
+  const resolved = resolvePortValue(value, values).replace(/\/(tcp|udp)$/i, "");
+  const match = resolved.match(/^(?:(\[[^\]]+\]|[^:]+):)?(\d+):(\d+)$/);
   if (!match) return null;
-  const hostPrefix = match[1] || "";
-  const hostIp = hostPrefix && !/^\d+$/.test(hostPrefix) ? hostPrefix : undefined;
-  const hostPort = hostIp ? match[2] : hostPrefix || match[2];
+  const hostIp = match[1] || undefined;
+  const hostPort = match[2];
+  if (!isPort(hostPort) || !isPort(match[3]) || Number(match[3]) === 0) return null;
   return {
     service,
     hostPort,

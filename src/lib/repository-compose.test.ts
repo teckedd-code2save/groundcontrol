@@ -33,6 +33,28 @@ services:
 `;
 
 describe("repository Compose inspection", () => {
+  it.each(["${APP_PORT}", "${APP_PORT:?Choose a port}", "${APP_PORT?Choose a port}", "${APP_PORT:-3000}", "${APP_PORT-3000}", "$APP_PORT"])("resolves the supplied host port in %s", (expression) => {
+    const content = `services:\n  app:\n    ports: ["127.0.0.1:${expression}:3000"]\n`;
+    const result = inspectRepositoryCompose(content, { APP_PORT: "13030" });
+    expect(result.publishedPorts).toEqual([{ service: "app", hostIp: "127.0.0.1", hostPort: "13030", containerPort: "3000" }]);
+  });
+
+  it("resolves long syntax with the same environment and never returns an unresolved port", () => {
+    const content = `services:\n  app:\n    ports:\n      - host_ip: 127.0.0.1\n        published: \${APP_PORT:?required}\n        target: \${CONTAINER_PORT:-3000}\n`;
+    expect(inspectRepositoryCompose(content).publishedPorts).toEqual([]);
+    expect(inspectRepositoryCompose(content, { APP_PORT: "13030" }).publishedPorts).toEqual([
+      { service: "app", hostIp: "127.0.0.1", hostPort: "13030", containerPort: "3000" },
+    ]);
+  });
+
+  it("honors unset versus empty defaults and does not read the control-plane environment", () => {
+    const content = (value: string) => `services:\n  app:\n    ports: ["127.0.0.1:${value}:3000"]\n`;
+    expect(inspectRepositoryCompose(content("${PORT:-13030}"), { PORT: "" }).suggestedPublicPort).toBe("13030");
+    expect(inspectRepositoryCompose(content("${PORT-13030}"), { PORT: "" }).publishedPorts).toEqual([]);
+    expect(inspectRepositoryCompose(content("$${PORT:-13030}")).publishedPorts).toEqual([]);
+    expect(inspectRepositoryCompose(content("${PORT:?required}"), { PORT: "not-a-port" }).publishedPorts).toEqual([]);
+  });
+
   it("discovers a Scenegraph-style stack without requiring a root Dockerfile", () => {
     const inspected = inspectRepositoryCompose(scenegraphCompose);
 

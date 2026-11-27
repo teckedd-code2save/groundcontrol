@@ -1,9 +1,10 @@
 // @vitest-environment node
 import { beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-const f = vi.hoisted(() => ({ exec: vi.fn(), queue: vi.fn(), access: vi.fn(), registry: vi.fn(), enroll: vi.fn() }));
+const f = vi.hoisted(() => ({ exec: vi.fn(), queue: vi.fn(), access: vi.fn(), registry: vi.fn(), enroll: vi.fn(), zones: vi.fn() }));
+vi.mock("@/lib/cloudflare", () => ({ listZones: f.zones }));
 vi.mock("@/lib/auth", () => ({ requireAuth: () => ({ id: 1, role: "admin" }) }));
-vi.mock("@/lib/host-exec", () => ({ execOnTarget: f.exec }));
+vi.mock("@/lib/host-exec", () => ({ execOnTargetStrict: f.exec }));
 vi.mock("@/lib/vps", async original => ({ ...await original<object>(), getActiveVps: async () => ({ id: 1, isLocal: true }), getSystemConfig: async () => ({}) }));
 vi.mock("@/lib/github-project-import", () => ({ githubProjectAccess: f.access }));
 vi.mock("@/lib/github-app-service", () => ({ linkGithubRepositoryToDeployment: async () => ({}) }));
@@ -25,4 +26,27 @@ it("prepares the first GitHub deployment and queues image delivery without start
 });
 it("does not create a running app when package access is missing", async () => {
  f.registry.mockResolvedValue({ configured: false }); const response = await POST(request()); expect((await response.json()).error).toContain("package access"); expect(f.exec).not.toHaveBeenCalled(); expect(f.queue).not.toHaveBeenCalled();
+});
+it("resolves required repository port variables from the submitted environment", async () => {
+ const previous = f.exec.getMockImplementation()!;
+ f.exec.mockImplementation(async (cmd: string) => {
+   const result = await previous(cmd);
+   return { ...result, stdout: result.stdout === compose ? compose.replace("8088:3000", "${APP_HOST_PORT:?Select a port}:3000") : result.stdout };
+ });
+ const body = await request().json(); body.envVars = [{ key: "APP_HOST_PORT", value: "8088" }];
+ const response = await POST(new NextRequest("http://localhost/api/templates/deploy", { method: "POST", body: JSON.stringify(body) }));
+ expect(await response.json()).toMatchObject({ queued: true }); expect(response.status).toBe(202);
+});
+it("stops when the selected host cannot execute preparation", async () => {
+ f.exec.mockRejectedValue(new Error("Host execution unavailable"));
+ const response = await POST(request());
+ expect(response.status).toBe(500); expect(f.enroll).not.toHaveBeenCalled(); expect(f.queue).not.toHaveBeenCalled();
+});
+it("identifies a prepared DNS failure and keeps image delivery stopped", async () => {
+ f.zones.mockRejectedValue(new Error("provider unavailable"));
+ const body = await request().json(); body.createDns = true;
+ const response = await POST(new NextRequest("http://localhost/api/templates/deploy", { method: "POST", body: JSON.stringify(body) }));
+ expect(response.status).toBe(409);
+ expect(await response.json()).toMatchObject({ prepared: true, deployed: false, error: expect.stringContaining("retry this same deployment") });
+ expect(f.enroll).toHaveBeenCalled(); expect(f.queue).not.toHaveBeenCalled();
 });
